@@ -58,7 +58,6 @@ export async function completeFlow(input: {
     code: authCode,
     redirect_uri: input.redirect_uri,
     code_verifier: input.code_verifier,
-    state: returnedState,
   };
   const res = await fetch(CLAUDE_OAUTH.tokenUrl, {
     method: "POST",

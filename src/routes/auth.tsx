@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { checkOwnerExists } from "@/lib/public.functions";
 
 export const Route = createFileRoute("/auth")({
   ssr: false,
@@ -18,12 +19,17 @@ function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [ownerExists, setOwnerExists] = useState<boolean | null>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (data.user) navigate({ to: "/overview", replace: true });
     });
   }, [navigate]);
+
+  useEffect(() => {
+    checkOwnerExists().then(({ ownerExists }) => setOwnerExists(ownerExists)).catch(() => setOwnerExists(true));
+  }, []);
 
   async function signIn(e: React.FormEvent) {
     e.preventDefault();
@@ -62,33 +68,43 @@ function AuthPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="signin">
-            <TabsList className="grid grid-cols-2 w-full">
-              <TabsTrigger value="signin">Sign in</TabsTrigger>
-              <TabsTrigger value="signup">Claim owner</TabsTrigger>
-            </TabsList>
-            <TabsContent value="signin">
-              <form onSubmit={signIn} className="space-y-3 mt-4">
-                <Field label="Email" value={email} onChange={setEmail} type="email" />
-                <Field label="Password" value={password} onChange={setPassword} type="password" />
-                <Button type="submit" disabled={loading} className="w-full">
-                  {loading ? "…" : "Sign in"}
-                </Button>
-              </form>
-            </TabsContent>
-            <TabsContent value="signup">
-              <form onSubmit={signUp} className="space-y-3 mt-4">
-                <Field label="Email" value={email} onChange={setEmail} type="email" />
-                <Field label="Password" value={password} onChange={setPassword} type="password" />
-                <Button type="submit" disabled={loading} className="w-full">
-                  {loading ? "…" : "Create owner account"}
-                </Button>
-                <p className="text-xs text-muted-foreground">
-                  Only the first account is granted owner. Subsequent signups have no access.
-                </p>
-              </form>
-            </TabsContent>
-          </Tabs>
+          {ownerExists === false ? (
+            <Tabs defaultValue="signin">
+              <TabsList className="grid grid-cols-2 w-full">
+                <TabsTrigger value="signin">Sign in</TabsTrigger>
+                <TabsTrigger value="signup">Claim owner</TabsTrigger>
+              </TabsList>
+              <TabsContent value="signin">
+                <form onSubmit={signIn} className="space-y-3 mt-4">
+                  <Field label="Email" value={email} onChange={setEmail} type="email" />
+                  <Field label="Password" value={password} onChange={setPassword} type="password" />
+                  <Button type="submit" disabled={loading} className="w-full">
+                    {loading ? "…" : "Sign in"}
+                  </Button>
+                </form>
+              </TabsContent>
+              <TabsContent value="signup">
+                <form onSubmit={signUp} className="space-y-3 mt-4">
+                  <Field label="Email" value={email} onChange={setEmail} type="email" />
+                  <Field label="Password" value={password} onChange={setPassword} type="password" />
+                  <Button type="submit" disabled={loading} className="w-full">
+                    {loading ? "…" : "Create owner account"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Only the first account is granted owner. Subsequent signups have no access.
+                  </p>
+                </form>
+              </TabsContent>
+            </Tabs>
+          ) : (
+            <form onSubmit={signIn} className="space-y-3">
+              <Field label="Email" value={email} onChange={setEmail} type="email" />
+              <Field label="Password" value={password} onChange={setPassword} type="password" />
+              <Button type="submit" disabled={loading} className="w-full">
+                {loading ? "…" : "Sign in"}
+              </Button>
+            </form>
+          )}
         </CardContent>
       </Card>
     </div>

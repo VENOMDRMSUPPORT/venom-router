@@ -5,14 +5,13 @@
       "name": "dev",
       "runtimeExecutable": "bun",
       "runtimeArgs": ["run", "dev"],
-      "port": 8080,
-      "autoPort": true
+      "port": 8081
     },
     {
       "name": "preview",
       "runtimeExecutable": "bun",
       "runtimeArgs": ["run", "preview"],
-      "port": 4173
+      "port": 8081
     }
   ]
 }

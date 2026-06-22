@@ -2,12 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Fixed Rules — Never Break
+
+- **Dev server port is always 8081** — `http://localhost:8081`. Never changes. Configured via `vite.config.ts` with `strictPort: true`.
+- **Claude must start/restart the server itself** — never ask the user to restart manually. After any server change, kill existing processes on 8081, run `bun dev`, confirm it responds at `http://localhost:8081`, then report it's live.
+
 ## Commands
 
 ```bash
-bun dev          # start dev server (Vite + TanStack Start)
+bun dev          # start dev server — always on http://localhost:8081
 bun build        # production build (Nitro/Cloudflare target)
-bun preview      # preview production build locally
+bun preview      # preview production build locally — always on http://localhost:8081
 bun lint         # ESLint
 bun format       # Prettier write
 bun run test:sync-sim   # run simulate-sync.ts script (tsx)

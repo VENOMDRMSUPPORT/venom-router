@@ -14,7 +14,6 @@
 
     // === Utilities ===
     "wayou.vscode-todo-highlight",
-    "gruntfuggly.todo-tree",
     "christian-kohler.path-intellisense",
     "streetsidesoftware.code-spell-checker",
 
@@ -25,7 +24,5 @@
     "pkief.material-icon-theme",
     "catppuccin.catppuccin-vsc-icons"
   ],
-  "unwantedRecommendations": [
-    "ms-vscode.vscode-typescript-next"
-  ]
+  "unwantedRecommendations": ["ms-vscode.vscode-typescript-next"]
 }
