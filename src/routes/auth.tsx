@@ -28,7 +28,9 @@ function AuthPage() {
   }, [navigate]);
 
   useEffect(() => {
-    checkOwnerExists().then(({ ownerExists }) => setOwnerExists(ownerExists)).catch(() => setOwnerExists(true));
+    checkOwnerExists()
+      .then(({ ownerExists }) => setOwnerExists(ownerExists))
+      .catch(() => setOwnerExists(true));
   }, []);
 
   async function signIn(e: React.FormEvent) {
@@ -54,7 +56,7 @@ function AuthPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 bg-[radial-gradient(circle_at_top,_oklch(0.78_0.18_145/15%),_transparent_60%)]">
+    <div className="min-h-screen flex items-center justify-center px-4 bg-[radial-gradient(circle_at_top,oklch(0.78_0.18_145/15%),transparent_60%)]">
       <Card className="w-full max-w-md border-border/60">
         <CardHeader className="space-y-1">
           <div className="flex items-center gap-2">
