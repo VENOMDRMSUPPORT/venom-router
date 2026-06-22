@@ -324,7 +324,10 @@ function ModelsBody() {
                       </td>
                       <td className="px-4 py-3">
                         <Badge
-                          className={cn("text-[10px] tabular-nums", qualityBadgeClass(m.quality_rating))}
+                          className={cn(
+                            "text-[10px] tabular-nums",
+                            qualityBadgeClass(m.quality_rating),
+                          )}
                           variant="outline"
                         >
                           {m.quality_rating}
