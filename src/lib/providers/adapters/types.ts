@@ -48,7 +48,7 @@ export interface StoredCredentials {
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: string | Array<{ type: string; [key: string]: unknown }>;
 }
 
 export interface ChatRequest {
