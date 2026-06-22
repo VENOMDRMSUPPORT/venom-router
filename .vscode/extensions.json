@@ -1,0 +1,31 @@
+{
+  "recommendations": [
+    // === Essential ===
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+
+    // === TypeScript & React ===
+    "usernamehw.errorlens",
+    "bradlc.vscode-tailwindcss",
+    "dsznajder.es7-react-js-snippets",
+
+    // === Git ===
+    "eamodio.gitlens",
+
+    // === Utilities ===
+    "wayou.vscode-todo-highlight",
+    "gruntfuggly.todo-tree",
+    "christian-kohler.path-intellisense",
+    "streetsidesoftware.code-spell-checker",
+
+    // === Markdown ===
+    "yzhang.markdown-all-in-one",
+
+    // === Theme (optional) ===
+    "pkief.material-icon-theme",
+    "catppuccin.catppuccin-vsc-icons"
+  ],
+  "unwantedRecommendations": [
+    "ms-vscode.vscode-typescript-next"
+  ]
+}
