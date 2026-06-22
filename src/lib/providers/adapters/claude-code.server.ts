@@ -16,6 +16,24 @@ const CLAUDE_CODE_BETA =
 const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
 const USER_AGENT = "claude-cli/2.1.92 (external, sdk-cli)";
 
+export class ClaudeAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClaudeAuthError";
+  }
+}
+
+function isUnrecoverableRefreshError(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes("invalid_grant") ||
+    lower.includes("invalid_request") ||
+    lower.includes("refresh_token_expired") ||
+    lower.includes("refresh_token_reused") ||
+    lower.includes("refresh_token_invalidated")
+  );
+}
+
 function oauthHeaders(token: string) {
   return {
     Authorization: `Bearer ${token}`,
@@ -49,26 +67,35 @@ export async function completeFlow(input: {
   state: string;
   redirect_uri: string;
 }): Promise<StoredCredentials> {
-  const [authCode, returnedState] = input.code.includes("#")
+  const [authCode, codeState] = input.code.includes("#")
     ? input.code.split("#")
-    : [input.code, input.state];
-  const body = {
+    : [input.code, ""];
+  const tokenBody = {
+    code: authCode,
+    state: codeState || input.state,
     grant_type: "authorization_code",
     client_id: CLAUDE_OAUTH.clientId,
-    code: authCode,
     redirect_uri: input.redirect_uri,
     code_verifier: input.code_verifier,
   };
+  console.log("[claude-oauth] token exchange →", JSON.stringify(tokenBody));
   const res = await fetch(CLAUDE_OAUTH.tokenUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify(body),
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(tokenBody),
   });
   if (!res.ok) {
     const text = await res.text();
+    console.log("[claude-oauth] token exchange ←", res.status, text.slice(0, 300));
     throw new Error(`Claude token exchange failed (${res.status}): ${text.slice(0, 300)}`);
   }
   const j: any = await res.json();
+  if (!j.access_token) {
+    throw new Error("Claude token exchange succeeded but no access_token in response");
+  }
   return {
     kind: "oauth2",
     access_token: j.access_token,
@@ -84,14 +111,21 @@ async function refreshIfNeeded(creds: StoredCredentials): Promise<StoredCredenti
   if (creds.expires_at && creds.expires_at - Date.now() > lead) return creds;
   const res = await fetch(CLAUDE_OAUTH.tokenUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({
       grant_type: "refresh_token",
       refresh_token: creds.refresh_token,
       client_id: CLAUDE_OAUTH.clientId,
     }),
   });
-  if (!res.ok) throw new Error("Claude token refresh failed");
+  if (!res.ok) {
+    const text = await res.text();
+    console.log("[claude-oauth] token refresh ←", res.status, text.slice(0, 300));
+    if (isUnrecoverableRefreshError(text)) {
+      throw new ClaudeAuthError(`Claude token expired — re-login required (${res.status})`);
+    }
+    throw new Error(`Claude token refresh failed (${res.status}): ${text.slice(0, 300)}`);
+  }
   const j: any = await res.json();
   return {
     ...creds,
@@ -202,9 +236,16 @@ async function resolveProfile(token: string): Promise<ClaudeProfile> {
 
 export async function fetchIdentity(
   credsIn: StoredCredentials,
-): Promise<{ creds: StoredCredentials; identity: AccountIdentity }> {
+): Promise<{
+  creds: StoredCredentials;
+  identity: AccountIdentity;
+  health: { ok: boolean; error?: string };
+}> {
   const creds = await refreshIfNeeded(credsIn);
-  const token = creds.access_token!;
+  const token = creds.access_token;
+  if (!token) {
+    throw new ClaudeAuthError("No access token — re-login required");
+  }
 
   const [profile, usage] = await Promise.all([resolveProfile(token), fetchClaudeUsage(token)]);
 
@@ -218,8 +259,21 @@ export async function fetchIdentity(
     quota_unit = "%";
   }
 
+  const hasEmail = !!profile.email;
+  const hasQuota = !!sessionQuota;
+  let healthError: string | undefined;
+  if (!hasEmail) {
+    healthError = "Could not fetch profile email";
+  } else if (!hasQuota) {
+    healthError = usage.message ?? "Could not fetch usage quota";
+  }
+
   return {
     creds,
+    health: {
+      ok: hasEmail && hasQuota,
+      error: healthError,
+    },
     identity: {
       email: profile.email ?? null,
       plan: profile.plan ?? usage.plan ?? "Free",
@@ -237,6 +291,7 @@ export async function fetchIdentity(
         quotas: usage.quotas,
         extraUsage: usage.extraUsage,
         usageMessage: usage.message,
+        health_error: healthError,
         fetchedAt: new Date().toISOString(),
       },
     },

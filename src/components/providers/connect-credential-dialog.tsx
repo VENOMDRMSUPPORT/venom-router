@@ -19,11 +19,13 @@ import { connectCredential } from "@/lib/providers/integrations.functions";
 export function ConnectCredentialDialog({
   open,
   onOpenChange,
+  onSuccess,
   providerSlug,
   providerName,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
+  onSuccess?: () => void;
   providerSlug: string;
   providerName: string;
 }) {
@@ -51,6 +53,7 @@ export function ConnectCredentialDialog({
         toast.success(`${providerName} connected`);
       }
       await qc.invalidateQueries({ queryKey: ["integrations"] });
+      onSuccess?.();
       setCredential("");
       setLabel("");
       onOpenChange(false);

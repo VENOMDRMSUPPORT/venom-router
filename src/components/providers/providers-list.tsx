@@ -484,6 +484,7 @@ function Body({ category }: { category: "oauth" | "free" }) {
           onOpenChange={(o) => {
             if (!o) setConnectFor(null);
           }}
+          onSuccess={() => setTab("connected")}
           providerSlug={connectFor.slug}
           providerName={connectFor.name}
         />
@@ -494,6 +495,7 @@ function Body({ category }: { category: "oauth" | "free" }) {
           onOpenChange={(o) => {
             if (!o) setConnectFor(null);
           }}
+          onSuccess={() => setTab("connected")}
           providerSlug={connectFor.slug}
           providerName={connectFor.name}
         />

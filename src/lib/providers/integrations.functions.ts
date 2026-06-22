@@ -454,6 +454,12 @@ async function syncAccountInternal(supabase: any, accountId: string): Promise<Sy
       creds = r.creds;
       identity = r.identity;
       models = await a.listModels(creds);
+      health = {
+        ok: r.health.ok,
+        latency_ms: Date.now() - startedAt,
+        checked_at: syncedAt,
+        error: r.health.error,
+      };
     } else if (slug === "antigravity") {
       const a = await import("./adapters/antigravity.server");
       const r = await a.syncAntigravityAccount(creds);
@@ -476,14 +482,30 @@ async function syncAccountInternal(supabase: any, accountId: string): Promise<Sy
       models = await a.listModels(creds);
     }
   } catch (e: any) {
+    const isClaudeAuth =
+      slug === "claude-code" &&
+      (e?.name === "ClaudeAuthError" || String(e?.message ?? "").includes("re-login required"));
     await supabase
       .from("accounts")
-      .update({ status: "expired", last_health_check_at: syncedAt })
+      .update({
+        status: isClaudeAuth ? "expired" : slug === "claude-code" ? "degraded" : "expired",
+        last_health_check_at: syncedAt,
+        ...(slug === "claude-code" && !isClaudeAuth
+          ? { quota_extra: { health_error: e?.message ?? String(e) } }
+          : {}),
+      })
       .eq("id", accountId);
     throw e;
   }
 
-  const accountStatus: SyncAccountStatus = health.ok ? "healthy" : "degraded";
+  const accountStatus: SyncAccountStatus =
+    slug === "claude-code" && health.ok
+      ? "healthy"
+      : slug === "claude-code" && creds.access_token
+        ? "degraded"
+        : health.ok
+          ? "healthy"
+          : "degraded";
   const label = identity.email ?? "Connected account";
   const quotaExtra = (identity.quota_extra ?? null) as Record<string, unknown> | null;
   const quotaGroups = quotaGroupsFromExtra(quotaExtra);

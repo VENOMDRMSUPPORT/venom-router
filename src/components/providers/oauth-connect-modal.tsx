@@ -26,11 +26,13 @@ interface CallbackPayload {
 export function OAuthConnectModal({
   open,
   onOpenChange,
+  onSuccess,
   providerSlug,
   providerName,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
+  onSuccess?: () => void;
   providerSlug: string;
   providerName: string;
 }) {
@@ -74,6 +76,7 @@ export function OAuthConnectModal({
         }
         await qc.invalidateQueries({ queryKey: ["integrations"] });
         await invalidateModelViews(qc);
+        onSuccess?.();
         setStep("success");
         setTimeout(() => onOpenChange(false), 1200);
       } catch (e: any) {
@@ -81,7 +84,7 @@ export function OAuthConnectModal({
         setStep("error");
       }
     },
-    [complete, flowId, onOpenChange, providerName, qc],
+    [complete, flowId, onOpenChange, onSuccess, providerName, qc],
   );
 
   const launchFlow = useCallback(async () => {
