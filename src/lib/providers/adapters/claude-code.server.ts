@@ -1,5 +1,5 @@
 /* Claude Code OAuth adapter (PKCE, JSON token exchange). Server-only. */
-import type { StoredCredentials, AccountIdentity, DiscoveredModel, ModelTestResult } from "./types";
+import type { StoredCredentials, AccountIdentity, DiscoveredModel, ModelTestResult, ChatRequest, ChatResult } from "./types";
 import { CLAUDE_CURATED_MODELS, CLAUDE_OAUTH } from "./_shared/oauth-clients.server";
 import {
   buildOAuthAuthorizeUrl,
@@ -279,5 +279,70 @@ export async function testModel(
     return { external_id, ok: true, latency_ms: Date.now() - t0 };
   } catch (e: any) {
     return { external_id, ok: false, latency_ms: Date.now() - t0, error: String(e?.message ?? e) };
+  }
+}
+
+export async function chat(
+  credsIn: StoredCredentials,
+  externalId: string,
+  req: ChatRequest,
+): Promise<ChatResult> {
+  const creds = await refreshIfNeeded(credsIn);
+  const t0 = Date.now();
+  try {
+    // Extract system messages and convert to Anthropic format
+    const systemParts = req.messages
+      .filter((m) => m.role === "system")
+      .map((m) => ({ type: "text", text: m.content }));
+
+    const conversationMessages = req.messages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+    if (conversationMessages.length === 0) {
+      return { ok: false, inputTokens: 0, outputTokens: 0, error: "No user/assistant messages" };
+    }
+
+    const body: Record<string, unknown> = {
+      model: externalId,
+      max_tokens: req.maxTokens ?? 1024,
+      messages: conversationMessages,
+    };
+    if (systemParts.length > 0) body.system = systemParts;
+
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${creds.access_token}`,
+        "anthropic-version": API_VERSION,
+        "anthropic-beta": CLAUDE_CODE_BETA,
+        "User-Agent": USER_AGENT,
+        "X-App": "cli",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!r.ok) {
+      const text = await r.text();
+      return { ok: false, inputTokens: 0, outputTokens: 0, error: text.slice(0, 300) };
+    }
+
+    const j: any = await r.json();
+    const content =
+      j?.content
+        ?.filter((b: any) => b.type === "text")
+        .map((b: any) => b.text)
+        .join("") ?? "";
+    const inputTokens = j?.usage?.input_tokens ?? 0;
+    const outputTokens = j?.usage?.output_tokens ?? 0;
+    return { ok: true, content, inputTokens, outputTokens };
+  } catch (e: any) {
+    return {
+      ok: false,
+      inputTokens: 0,
+      outputTokens: 0,
+      error: String(e?.message ?? e).slice(0, 300),
+    };
   }
 }
