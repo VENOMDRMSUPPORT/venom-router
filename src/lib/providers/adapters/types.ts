@@ -45,3 +45,22 @@ export interface StoredCredentials {
   // Any provider extras
   extra?: Record<string, unknown>;
 }
+
+export interface ChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export interface ChatRequest {
+  messages: ChatMessage[];
+  maxTokens?: number;
+  temperature?: number;
+}
+
+export interface ChatResult {
+  ok: boolean;
+  content?: string;
+  inputTokens: number;
+  outputTokens: number;
+  error?: string;
+}
