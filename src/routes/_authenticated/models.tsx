@@ -43,6 +43,20 @@ import { invalidateModelViews } from "@/lib/providers/sync-cache";
 import { ProviderIcon } from "@/components/providers/provider-icon";
 import { ModelCapabilityIcons } from "@/components/providers/model-capability-icons";
 
+function qualityBadgeClass(rating: number): string {
+  if (rating >= 85) return "bg-emerald-500/10 text-emerald-600 border-emerald-500/20";
+  if (rating >= 70) return "bg-amber-500/10 text-amber-600 border-amber-500/20";
+  return "bg-muted text-muted-foreground";
+}
+
+function accountStatusClass(status: string): string {
+  if (status === "healthy")
+    return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+  if (status === "error")
+    return "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20";
+  return "bg-muted text-muted-foreground border-border";
+}
+
 export const Route = createFileRoute("/_authenticated/models")({
   head: () => ({ meta: [{ title: "Models — Venom Router" }] }),
   component: ModelsPage,
@@ -310,14 +324,7 @@ function ModelsBody() {
                       </td>
                       <td className="px-4 py-3">
                         <Badge
-                          className={cn(
-                            "text-[10px] tabular-nums",
-                            m.quality_rating >= 85
-                              ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
-                              : m.quality_rating >= 70
-                                ? "bg-amber-500/10 text-amber-600 border-amber-500/20"
-                                : "bg-muted text-muted-foreground",
-                          )}
+                          className={cn("text-[10px] tabular-nums", qualityBadgeClass(m.quality_rating))}
                           variant="outline"
                         >
                           {m.quality_rating}
@@ -393,11 +400,7 @@ function ModelsBody() {
                                   <span
                                     className={cn(
                                       "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold border uppercase tracking-wider shrink-0",
-                                      a.status === "healthy"
-                                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                                        : a.status === "error"
-                                          ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
-                                          : "bg-muted text-muted-foreground border-border",
+                                      accountStatusClass(a.status),
                                     )}
                                   >
                                     <span
