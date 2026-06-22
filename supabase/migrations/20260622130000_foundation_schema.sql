@@ -82,21 +82,16 @@ CREATE INDEX IF NOT EXISTS quota_snapshots_account_id_idx
   ON public.quota_snapshots (account_id, snapped_at DESC);
 
 -- ----------------------------------------------------------
--- 5. New table: routing_traces
--- (stores decision metadata only — NO provider secrets)
+-- 5. Extend routing_traces (table already exists from migration 1)
+-- Add missing columns for routing engine decision metadata
 -- ----------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.routing_traces (
-  id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  usage_record_id      UUID,
-  candidates_evaluated INTEGER     NOT NULL DEFAULT 0,
-  candidates_filtered  INTEGER     NOT NULL DEFAULT 0,
-  selected_rule_id     UUID,
-  decision_reason      TEXT,
-  fallback_attempts    INTEGER     NOT NULL DEFAULT 0,
-  modality             TEXT        NOT NULL DEFAULT 'text',
-                                   -- text | vision | audio | documents
-  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+ALTER TABLE public.routing_traces
+  ADD COLUMN IF NOT EXISTS usage_record_id      UUID,
+  ADD COLUMN IF NOT EXISTS candidates_evaluated INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS candidates_filtered  INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS decision_reason      TEXT,
+  ADD COLUMN IF NOT EXISTS fallback_attempts    INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS modality             TEXT    NOT NULL DEFAULT 'text';
 
 CREATE INDEX IF NOT EXISTS routing_traces_usage_record_idx
   ON public.routing_traces (usage_record_id);
