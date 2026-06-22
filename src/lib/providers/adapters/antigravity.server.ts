@@ -1,6 +1,6 @@
 /* Antigravity (Google Cloud Code Assist) OAuth adapter. Server-only. Picoclaw + 9router parity. */
 import { createHash, randomBytes } from "crypto";
-import type { StoredCredentials, AccountIdentity, DiscoveredModel, ModelTestResult } from "./types";
+import type { StoredCredentials, AccountIdentity, DiscoveredModel, ModelTestResult, ChatRequest, ChatResult } from "./types";
 import {
   antigravityClientForRedirect,
   ANTIGRAVITY_OAUTH_CLIENT,
@@ -747,5 +747,95 @@ export async function testModel(
     return { external_id, ok: true, latency_ms: Date.now() - t0 };
   } catch (e: any) {
     return { external_id, ok: false, latency_ms: Date.now() - t0, error: String(e?.message ?? e) };
+  }
+}
+
+export async function chat(
+  credsIn: StoredCredentials,
+  externalId: string,
+  req: ChatRequest,
+): Promise<ChatResult> {
+  const creds = await refreshIfNeeded(credsIn);
+  try {
+    // Extract system instruction
+    const systemTexts = req.messages
+      .filter((m) => m.role === "system")
+      .map((m) => m.content)
+      .join("\n");
+
+    // Convert messages to Gemini contents format (role: "user" | "model")
+    const contents = req.messages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      }));
+
+    if (contents.length === 0) {
+      return { ok: false, inputTokens: 0, outputTokens: 0, error: "No user/assistant messages" };
+    }
+
+    const body: Record<string, unknown> = {
+      project: creds.project_id,
+      model: externalId,
+      request: {
+        contents,
+        generationConfig: { maxOutputTokens: req.maxTokens ?? 1024 },
+        ...(systemTexts ? { systemInstruction: { parts: [{ text: systemTexts }] } } : {}),
+      },
+      requestType: "agent",
+      userAgent: USER_AGENT,
+      requestId: `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    };
+
+    const r = await fetch(GENERATE, {
+      method: "POST",
+      headers: {
+        ...bearerHeaders(creds.access_token!),
+        "Content-Type": "application/json",
+        ...COMMON_HEADERS,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!r.ok) {
+      const text = await r.text();
+      return { ok: false, inputTokens: 0, outputTokens: 0, error: text.slice(0, 300) };
+    }
+
+    // Parse SSE stream: collect all text parts, grab final usageMetadata
+    const raw = await r.text();
+    const lines = raw.split("\n");
+    let fullText = "";
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const jsonStr = line.slice(6).trim();
+      if (!jsonStr || jsonStr === "[DONE]") continue;
+      try {
+        const event: any = JSON.parse(jsonStr);
+        const parts = event?.candidates?.[0]?.content?.parts ?? [];
+        for (const p of parts) {
+          if (typeof p.text === "string") fullText += p.text;
+        }
+        if (event?.usageMetadata) {
+          inputTokens = event.usageMetadata.promptTokenCount ?? 0;
+          outputTokens = event.usageMetadata.candidatesTokenCount ?? 0;
+        }
+      } catch {
+        // skip malformed SSE line
+      }
+    }
+
+    return { ok: true, content: fullText, inputTokens, outputTokens };
+  } catch (e: any) {
+    return {
+      ok: false,
+      inputTokens: 0,
+      outputTokens: 0,
+      error: String(e?.message ?? e).slice(0, 300),
+    };
   }
 }
