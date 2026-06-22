@@ -1,5 +1,5 @@
 /* OpenCode Zen — OpenAI-compatible API key adapter. Server-only. */
-import type { StoredCredentials, AccountIdentity, DiscoveredModel, ModelTestResult } from "./types";
+import type { StoredCredentials, AccountIdentity, DiscoveredModel, ModelTestResult, ChatRequest, ChatResult } from "./types";
 
 const BASE = "https://opencode.ai/zen";
 
@@ -83,5 +83,45 @@ export async function testModel(
     return { external_id, ok: true, latency_ms: Date.now() - t0 };
   } catch (e: any) {
     return { external_id, ok: false, latency_ms: Date.now() - t0, error: String(e?.message ?? e) };
+  }
+}
+
+export async function chat(
+  creds: StoredCredentials,
+  externalId: string,
+  req: ChatRequest,
+): Promise<ChatResult> {
+  const t0 = Date.now();
+  try {
+    const r = await fetch(`${BASE}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${creds.api_key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: externalId,
+        messages: req.messages,
+        max_tokens: req.maxTokens ?? 1024,
+        temperature: req.temperature ?? 0.7,
+        stream: false,
+      }),
+    });
+    if (!r.ok) {
+      const text = await r.text();
+      return { ok: false, inputTokens: 0, outputTokens: 0, error: text.slice(0, 300) };
+    }
+    const j: any = await r.json();
+    const content = j?.choices?.[0]?.message?.content ?? "";
+    const inputTokens = j?.usage?.prompt_tokens ?? 0;
+    const outputTokens = j?.usage?.completion_tokens ?? 0;
+    return { ok: true, content, inputTokens, outputTokens };
+  } catch (e: any) {
+    return {
+      ok: false,
+      inputTokens: 0,
+      outputTokens: 0,
+      error: String(e?.message ?? e).slice(0, 300),
+    };
   }
 }
