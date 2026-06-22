@@ -15,6 +15,7 @@ import {
   Boxes,
   Zap,
   AlertTriangle,
+  User,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Card } from "@/components/ui/card";
@@ -286,7 +287,7 @@ function ModelsBody() {
                         </button>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-3 min-w-[200px]">
+                        <div className="flex items-center gap-3 min-w-50">
                           <ProviderIcon slug={m.provider_slug} className="h-9 w-9 shrink-0" />
                           <div className="min-w-0">
                             <div className="font-medium truncate">{m.display_name}</div>
@@ -355,29 +356,66 @@ function ModelsBody() {
                       </td>
                     </tr>
                     {isExpanded && (
-                      <tr className="bg-muted/10 border-b border-border/50">
-                        <td colSpan={11} className="px-8 py-3">
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">
-                            Accounts exposing this model
-                          </p>
-                          <ul className="space-y-1">
-                            {m.accounts.map((a) => (
-                              <li
-                                key={a.id}
-                                className="text-xs flex items-center gap-2 text-muted-foreground"
-                              >
-                                <span className="font-medium text-foreground">
-                                  {a.label ?? a.email ?? a.id.slice(0, 8)}
-                                </span>
-                                <Badge variant="outline" className="text-[9px]">
-                                  {a.status}
-                                </Badge>
-                                {a.email && a.label && (
-                                  <span className="font-mono text-[10px]">{a.email}</span>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
+                      <tr className="bg-muted/15 border-b border-border/50">
+                        <td colSpan={11} className="px-8 py-4">
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-3">
+                              <span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
+                                Accounts exposing this model
+                              </span>
+                              <div className="h-px flex-1 bg-border/40" />
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                              {m.accounts.map((a) => (
+                                <div
+                                  key={a.id}
+                                  className="flex items-center justify-between p-3 rounded-xl border border-border bg-card/65 hover:bg-card/90 hover:shadow-sm transition-all duration-200"
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <div className="size-8 rounded-full bg-muted/80 flex items-center justify-center text-muted-foreground border border-border/40 shrink-0">
+                                      <User className="h-4 w-4" />
+                                    </div>
+                                    <div className="flex flex-col min-w-0">
+                                      <span className="font-medium text-xs text-foreground truncate">
+                                        {a.label ?? a.email ?? a.id.slice(0, 8)}
+                                      </span>
+                                      {a.email && a.label && a.email !== a.label ? (
+                                        <span className="font-mono text-[9px] text-muted-foreground truncate mt-0.5">
+                                          {a.email}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[9px] text-muted-foreground mt-0.5">
+                                          ID: <span className="font-mono">{a.id.slice(0, 8)}</span>
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <span
+                                    className={cn(
+                                      "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold border uppercase tracking-wider shrink-0",
+                                      a.status === "healthy"
+                                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                        : a.status === "error"
+                                          ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                                          : "bg-muted text-muted-foreground border-border",
+                                    )}
+                                  >
+                                    <span
+                                      className={cn(
+                                        "size-1.5 rounded-full",
+                                        a.status === "healthy"
+                                          ? "bg-emerald-500 dark:bg-emerald-400 animate-pulse"
+                                          : a.status === "error"
+                                            ? "bg-rose-500 dark:bg-rose-400"
+                                            : "bg-muted-foreground",
+                                      )}
+                                    />
+                                    {a.status}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         </td>
                       </tr>
                     )}
