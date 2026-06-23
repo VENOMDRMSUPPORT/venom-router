@@ -35,3 +35,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Dev server manager runtime files
+.dev/
+scripts/dev-gui.ps1
+Dev Server.vbs
