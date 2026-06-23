@@ -178,75 +178,110 @@ export type Database = {
           },
         ];
       };
-      models: {
+      account_models: {
         Row: {
-          account_id: string | null;
-          capabilities: Json;
-          context_window: number | null;
+          account_id: string;
           created_at: string;
-          display_name: string;
           enabled: boolean;
-          external_id: string;
           id: string;
-          input_cost_per_mtok: number | null;
           last_test_error: string | null;
           last_tested_at: string | null;
           latency_ms: number | null;
           lifecycle: Database["public"]["Enums"]["model_lifecycle"];
-          output_cost_per_mtok: number | null;
-          provider_id: string;
-          quality_rating: number;
+          model_id: string;
           test_status: string;
           updated_at: string;
         };
         Insert: {
-          account_id?: string | null;
-          capabilities?: Json;
-          context_window?: number | null;
+          account_id: string;
           created_at?: string;
-          display_name: string;
           enabled?: boolean;
-          external_id: string;
           id?: string;
-          input_cost_per_mtok?: number | null;
           last_test_error?: string | null;
           last_tested_at?: string | null;
           latency_ms?: number | null;
           lifecycle?: Database["public"]["Enums"]["model_lifecycle"];
-          output_cost_per_mtok?: number | null;
-          provider_id: string;
-          quality_rating?: number;
+          model_id: string;
           test_status?: string;
           updated_at?: string;
         };
         Update: {
-          account_id?: string | null;
-          capabilities?: Json;
-          context_window?: number | null;
+          account_id?: string;
           created_at?: string;
-          display_name?: string;
           enabled?: boolean;
-          external_id?: string;
           id?: string;
-          input_cost_per_mtok?: number | null;
           last_test_error?: string | null;
           last_tested_at?: string | null;
           latency_ms?: number | null;
           lifecycle?: Database["public"]["Enums"]["model_lifecycle"];
-          output_cost_per_mtok?: number | null;
-          provider_id?: string;
-          quality_rating?: number;
+          model_id?: string;
           test_status?: string;
           updated_at?: string;
         };
         Relationships: [
           {
-            foreignKeyName: "models_account_id_fkey";
+            foreignKeyName: "account_models_account_id_fkey";
             columns: ["account_id"];
             isOneToOne: false;
             referencedRelation: "accounts";
             referencedColumns: ["id"];
           },
+          {
+            foreignKeyName: "account_models_model_id_fkey";
+            columns: ["model_id"];
+            isOneToOne: false;
+            referencedRelation: "models";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      models: {
+        Row: {
+          capabilities: Json;
+          context_window: number | null;
+          created_at: string;
+          display_name: string;
+          external_id: string;
+          id: string;
+          input_cost_per_mtok: number | null;
+          last_tested_at: string | null;
+          lifecycle: Database["public"]["Enums"]["model_lifecycle"];
+          output_cost_per_mtok: number | null;
+          provider_id: string;
+          quality_rating: number;
+          updated_at: string;
+        };
+        Insert: {
+          capabilities?: Json;
+          context_window?: number | null;
+          created_at?: string;
+          display_name: string;
+          external_id: string;
+          id?: string;
+          input_cost_per_mtok?: number | null;
+          last_tested_at?: string | null;
+          lifecycle?: Database["public"]["Enums"]["model_lifecycle"];
+          output_cost_per_mtok?: number | null;
+          provider_id: string;
+          quality_rating?: number;
+          updated_at?: string;
+        };
+        Update: {
+          capabilities?: Json;
+          context_window?: number | null;
+          created_at?: string;
+          display_name?: string;
+          external_id?: string;
+          id?: string;
+          input_cost_per_mtok?: number | null;
+          last_tested_at?: string | null;
+          lifecycle?: Database["public"]["Enums"]["model_lifecycle"];
+          output_cost_per_mtok?: number | null;
+          provider_id?: string;
+          quality_rating?: number;
+          updated_at?: string;
+        };
+        Relationships: [
           {
             foreignKeyName: "models_provider_id_fkey";
             columns: ["provider_id"];
