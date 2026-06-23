@@ -54,7 +54,6 @@ src/lib/db/
   venom.server.ts       ← venom models, routing rules
   usage.server.ts       ← usage records, metrics, traffic
   api-keys.server.ts    ← API key queries
-  index.ts              ← barrel re-export (no .server suffix — only re-exports)
 ```
 
 ---
@@ -256,16 +255,18 @@ getApiKey(supabase, id: string): Promise<ApiKey>
 
 ---
 
-## Barrel Export (`index.ts`)
+## No Barrel Export
+
+Each domain file is imported directly:
 
 ```ts
-export * from "./providers.server"
-export * from "./venom.server"
-export * from "./usage.server"
-export * from "./api-keys.server"
+import { getAccountInfo } from "@/lib/db/providers.server"
+import { listVenomModels } from "@/lib/db/venom.server"
+import { getTraffic7d } from "@/lib/db/usage.server"
+import { listApiKeys } from "@/lib/db/api-keys.server"
 ```
 
-Note: `index.ts` (no `.server` suffix) only re-exports — contains no direct Supabase calls.
+A barrel `index.ts` (without `.server` suffix) would bypass the Vite server-only boundary check — client code could accidentally import server functions without a build-time error. Direct imports keep the boundary explicit.
 
 ---
 
@@ -278,7 +279,7 @@ Note: `index.ts` (no `.server` suffix) only re-exports — contains no direct Su
 const { data } = await supabase.from("accounts").select("...").eq("id", id)
 
 // After — delegate to core
-import { getAccountInfo } from "@/lib/db"
+import { getAccountInfo } from "@/lib/db/providers.server"
 const account = await getAccountInfo(context.supabase, id)
 ```
 
@@ -289,7 +290,7 @@ const account = await getAccountInfo(context.supabase, id)
 const { data: accounts } = await supabase.from("accounts").select("...").neq("status", "expired")
 
 // After
-import { listAccounts } from "@/lib/db"
+import { listAccounts } from "@/lib/db/providers.server"
 const accounts = await listAccounts(supabaseAdmin, { status: ["healthy", "degraded"] })
 ```
 
