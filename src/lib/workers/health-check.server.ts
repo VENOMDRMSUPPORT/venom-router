@@ -20,8 +20,7 @@ function isClaudeAuthError(slug: string, e: unknown): boolean {
   if (slug !== "claude-code") return false;
   const err = e as { name?: string; message?: string } | null;
   return (
-    err?.name === "ClaudeAuthError" ||
-    String(err?.message ?? "").includes("re-login required")
+    err?.name === "ClaudeAuthError" || String(err?.message ?? "").includes("re-login required")
   );
 }
 
@@ -30,9 +29,7 @@ export async function runHealthChecks(
 ): Promise<AccountHealthCheckResult[]> {
   const { data: accounts, error } = await supabase
     .from("accounts")
-    .select(
-      "id,credentials_enc,credentials_iv,credentials_tag,quota_extra,providers(slug)",
-    )
+    .select("id,credentials_enc,credentials_iv,credentials_tag,quota_extra,providers(slug)")
     .neq("status", "expired");
 
   if (error) throw new Error(`Health check: failed to fetch accounts: ${error.message}`);
@@ -55,12 +52,6 @@ export async function runHealthChecks(
     };
 
     let refreshedCreds: StoredCredentials | null = null;
-
-    // Skip providers with no health check method
-    if (slug === "opencode-zen") {
-      console.log(`[health-check] ${slug}/${acct.id} → skipped (no health check)`);
-      continue;
-    }
 
     try {
       const credsIn = unpackCredentials({
@@ -100,8 +91,17 @@ export async function runHealthChecks(
           quota_unit: r.identity.quota_unit,
           quota_extra: (r.identity.quota_extra as Record<string, unknown>) ?? null,
         };
+      } else if (slug === "opencode-zen") {
+        const adapter = await import("@/lib/providers/adapters/opencode-zen.server");
+        const health = await adapter.checkAccountHealth(credsIn);
+        result = {
+          ...result,
+          ok: health.ok,
+          latency_ms: health.latency_ms,
+          error: health.error,
+          new_status: health.ok ? "healthy" : "degraded",
+        };
       }
-      // opencode-zen: no health check method — skip silently
     } catch (e: unknown) {
       result.ok = false;
       result.error = String((e as { message?: string } | null)?.message ?? e).slice(0, 500);
@@ -125,10 +125,7 @@ export async function runHealthChecks(
       patch.credentials_tag = packed.credentials_tag;
     }
 
-    const { error: updateErr } = await supabase
-      .from("accounts")
-      .update(patch)
-      .eq("id", acct.id);
+    const { error: updateErr } = await supabase.from("accounts").update(patch).eq("id", acct.id);
     if (updateErr) {
       console.error(`[health-check] failed to update account ${acct.id}:`, updateErr.message);
     }
