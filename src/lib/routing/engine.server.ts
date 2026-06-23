@@ -55,11 +55,9 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
         id,
         external_id,
         lifecycle,
-        enabled,
         input_cost_per_mtok,
         output_cost_per_mtok,
         capabilities,
-        latency_ms,
         providers!provider_id (
           adapter,
           base_url
@@ -95,6 +93,25 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
     };
   }
 
+  const modelIds = [...new Set(rawRules.map((r: { model_id: string }) => r.model_id))];
+  const accountIds = [...new Set(rawRules.map((r: { account_id: string }) => r.account_id))];
+  const { data: accountModelRows } = await supabaseAdmin
+    .from("account_models")
+    .select("account_id, model_id, enabled, lifecycle, latency_ms, test_status")
+    .in("model_id", modelIds)
+    .in("account_id", accountIds);
+  const accountModelByKey = new Map(
+    (accountModelRows ?? []).map(
+      (r: {
+        account_id: string;
+        model_id: string;
+        enabled: boolean;
+        lifecycle: string;
+        latency_ms: number | null;
+      }) => [`${r.account_id}:${r.model_id}`, r],
+    ),
+  );
+
   // 4. Shape raw DB rows into RoutingCandidate[]
   const allCandidates: RoutingCandidate[] = rawRules
     .filter((r: any) => r.models && r.accounts)
@@ -103,6 +120,7 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
       const account = Array.isArray(r.accounts) ? r.accounts[0] : r.accounts;
       const provider = Array.isArray(model?.providers) ? model.providers[0] : model?.providers;
       const quotaRow = account?.quotas?.[0] ?? null;
+      const accountModel = accountModelByKey.get(`${account.id}:${model.id}`);
 
       return {
         ruleId: r.id,
@@ -112,14 +130,18 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
         model: {
           id: model.id,
           externalId: model.external_id,
-          lifecycle: model.lifecycle,
-          enabled: model.enabled,
+          lifecycle: accountModel?.lifecycle ?? model.lifecycle,
+          enabled: accountModel?.enabled ?? false,
           inputCostPerMtok:
             model.input_cost_per_mtok !== null ? Number(model.input_cost_per_mtok) : null,
           outputCostPerMtok:
             model.output_cost_per_mtok !== null ? Number(model.output_cost_per_mtok) : null,
-          capabilities: Array.isArray(model.capabilities) ? model.capabilities : [],
-          latencyMs: model.latency_ms ?? null,
+          capabilities: Array.isArray(model.capabilities?.list)
+            ? model.capabilities.list
+            : Array.isArray(model.capabilities)
+              ? model.capabilities
+              : [],
+          latencyMs: accountModel?.latency_ms ?? null,
           provider: {
             adapter: provider?.adapter ?? "",
             baseUrl: provider?.base_url ?? null,

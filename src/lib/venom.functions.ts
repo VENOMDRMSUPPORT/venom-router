@@ -2,6 +2,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { aggregateCatalogModels } from "@/lib/providers/integrations.functions";
+import {
+  ACCOUNT_MODELS_SELECT,
+  mapJoinToCatalogRow,
+  type AccountModelJoinRow,
+} from "@/lib/providers/catalog-queries.server";
 
 type VenomSlug = "lite" | "pro" | "max";
 
@@ -34,7 +39,7 @@ export const getDashboardMetrics = createServerFn({ method: "GET" })
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
 
     const [
-      modelRows,
+      accountModelRows,
       venomModels,
       routingRules,
       apiKeys,
@@ -43,11 +48,7 @@ export const getDashboardMetrics = createServerFn({ method: "GET" })
       accounts,
       allAccounts,
     ] = await Promise.all([
-      supabase
-        .from("models")
-        .select(
-          "id,external_id,display_name,capabilities,quality_rating,context_window,input_cost_per_mtok,output_cost_per_mtok,test_status,latency_ms,last_tested_at,lifecycle,enabled,accounts(id,email,label,status),providers(slug,name)",
-        ),
+      supabase.from("account_models").select(ACCOUNT_MODELS_SELECT),
       supabase.from("venom_models").select("id", { count: "exact", head: true }),
       supabase
         .from("routing_rules")
@@ -75,17 +76,19 @@ export const getDashboardMetrics = createServerFn({ method: "GET" })
       supabase.from("accounts").select("status"),
     ]);
 
-    const catalog = aggregateCatalogModels((modelRows.data ?? []) as any);
+    const catalog = aggregateCatalogModels(
+      (accountModelRows.data ?? []).map((row: AccountModelJoinRow) =>
+        mapJoinToCatalogRow(row),
+      ) as any,
+    );
     const usageRecords = usage7d.data ?? [];
     const accountRows = accounts.data ?? [];
 
     const modelsEnabledByAccount: Record<string, number> = {};
-    for (const row of modelRows.data ?? []) {
-      const caps = row.capabilities as Record<string, unknown> | null;
-      if (caps?.stale) continue;
-      const acctId = (row as any).accounts?.id as string | undefined;
-      if (!acctId) continue;
-      if (row.enabled) modelsEnabledByAccount[acctId] = (modelsEnabledByAccount[acctId] ?? 0) + 1;
+    for (const row of accountModelRows.data ?? []) {
+      const join = row as AccountModelJoinRow;
+      const acctId = join.account_id;
+      if (join.enabled) modelsEnabledByAccount[acctId] = (modelsEnabledByAccount[acctId] ?? 0) + 1;
     }
 
     const distributionMap = new Map<string, number>();
@@ -166,10 +169,11 @@ export const getOverviewStats = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const { supabase } = context;
-    const [providers, accounts, models, rules, traces] = await Promise.all([
+    const [providers, accounts, models, accountModels, rules, traces] = await Promise.all([
       supabase.from("providers").select("id", { count: "exact", head: true }),
       supabase.from("accounts").select("id,status", { count: "exact" }),
       supabase.from("models").select("id,lifecycle", { count: "exact" }),
+      supabase.from("account_models").select("id,lifecycle", { count: "exact" }),
       supabase.from("routing_rules").select("id,venom_slug,active"),
       supabase
         .from("usage_records")
@@ -179,6 +183,7 @@ export const getOverviewStats = createServerFn({ method: "GET" })
 
     const accountRows = accounts.data ?? [];
     const modelRows = models.data ?? [];
+    const accountModelRows = accountModels.data ?? [];
     const ruleRows = rules.data ?? [];
     const traceRows = traces.data ?? [];
 
@@ -208,8 +213,9 @@ export const getOverviewStats = createServerFn({ method: "GET" })
       providers: providers.count ?? 0,
       accountsHealthy: accountRows.filter((a) => a.status === "healthy").length,
       accountsTotal: accountRows.length,
-      modelsApproved: modelRows.filter((m) => m.lifecycle === "approved").length,
+      modelsApproved: accountModelRows.filter((m) => m.lifecycle === "approved").length,
       modelsTotal: modelRows.length,
+      accountModelsTotal: accountModelRows.length,
       totalTokens,
       totalCost,
       perVenom,
