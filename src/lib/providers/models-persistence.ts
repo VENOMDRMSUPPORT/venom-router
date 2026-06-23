@@ -1,4 +1,4 @@
-import { modelRowLookupKeys, providerExternalId, toDbExternalId } from "./model-keys";
+import { providerExternalId } from "./model-keys";
 
 export interface ProviderModelInput {
   external_id: string;
@@ -37,9 +37,9 @@ export function createModelStore(providerUnique = true) {
     accountId: string,
     providerExt: string,
   ): ModelRow | undefined {
-    for (const k of modelRowLookupKeys(accountId, providerExt)) {
-      for (const row of rows.values()) {
-        if (row.account_id === accountId && row.external_id === k) return row;
+    for (const row of rows.values()) {
+      if (row.account_id === accountId && providerExternalId(row.external_id, row.capabilities) === providerExt) {
+        return row;
       }
     }
     return undefined;
@@ -116,7 +116,7 @@ export function upsertModelsForAccountStore(
   let removed = 0;
 
   for (const m of models) {
-    const dbExternalId = toDbExternalId(accountId, m.external_id);
+    const dbExternalId = m.external_id;
     const capabilities = {
       list: m.capabilities,
       provider_external_id: m.external_id,

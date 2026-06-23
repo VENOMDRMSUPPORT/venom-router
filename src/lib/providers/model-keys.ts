@@ -1,10 +1,4 @@
-/** DB unique is (provider_id, external_id) — scope rows per account without a migration. */
-
-const PREFIX = "acct:";
-
-export function toDbExternalId(accountId: string, providerExternalId: string): string {
-  return `${PREFIX}${accountId}:${providerExternalId}`;
-}
+/** Model external_id helpers and spec inference. */
 
 export function providerExternalId(
   dbExternalId: string,
@@ -12,16 +6,12 @@ export function providerExternalId(
 ): string {
   const fromCaps = capabilities?.provider_external_id;
   if (typeof fromCaps === "string" && fromCaps.length > 0) return fromCaps;
-  if (dbExternalId.startsWith(PREFIX)) {
-    const rest = dbExternalId.slice(PREFIX.length);
+  if (dbExternalId.startsWith("acct:")) {
+    const rest = dbExternalId.slice("acct:".length);
     const sep = rest.indexOf(":");
     if (sep > 0) return rest.slice(sep + 1);
   }
   return dbExternalId;
-}
-
-export function modelRowLookupKeys(accountId: string, providerExternalId: string): string[] {
-  return [toDbExternalId(accountId, providerExternalId), providerExternalId];
 }
 
 function inferQualityRating(externalId: string): number {
@@ -33,19 +23,9 @@ function inferQualityRating(externalId: string): number {
   return 50;
 }
 
-const CLAUDE_MODEL_SPECS: Record<string, { context_window: number; quality_rating: number }> = {
-  "claude-opus-4-8": { context_window: 200_000, quality_rating: 96 },
-  "claude-opus-4-7": { context_window: 200_000, quality_rating: 95 },
-  "claude-opus-4-6": { context_window: 200_000, quality_rating: 94 },
-  "claude-sonnet-4-6": { context_window: 200_000, quality_rating: 85 },
-  "claude-opus-4-5-20251101": { context_window: 200_000, quality_rating: 93 },
-  "claude-sonnet-4-5-20250929": { context_window: 200_000, quality_rating: 84 },
-  "claude-haiku-4-5-20251001": { context_window: 200_000, quality_rating: 72 },
-};
-
 export function resolveModelSpecs(
   externalId: string,
-  providerSlug: string,
+  _providerSlug: string,
   caps: Record<string, unknown> | null,
   dbContextWindow: number | null | undefined,
   dbQualityRating: number | null | undefined,
@@ -58,13 +38,7 @@ export function resolveModelSpecs(
     if (typeof raw?.maxTokens === "number") context_window = raw.maxTokens;
   }
 
-  if (providerSlug === "claude-code") {
-    const spec = CLAUDE_MODEL_SPECS[externalId];
-    if (spec) {
-      if (!context_window) context_window = spec.context_window;
-      if (!dbQualityRating || dbQualityRating === 50) quality_rating = spec.quality_rating;
-    }
-  } else if (!dbQualityRating || dbQualityRating === 50) {
+  if (!dbQualityRating || dbQualityRating === 50) {
     quality_rating = inferQualityRating(externalId);
   }
 

@@ -2,6 +2,10 @@
 import { createHash, randomBytes } from "crypto";
 import type { StoredCredentials, AccountIdentity, DiscoveredModel, ModelTestResult, ChatRequest, ChatResult } from "./types";
 import {
+  MODEL_TEST_PROMPT,
+  validateModelTestResponse,
+} from "./_shared/model-test-validation.server";
+import {
   antigravityClientForRedirect,
   ANTIGRAVITY_OAUTH_CLIENT,
 } from "./_shared/oauth-clients.server";
@@ -713,6 +717,44 @@ export async function diagnoseAntigravityFetch(
   };
 }
 
+function extractAntigravityResponseText(bodyText: string): string {
+  const chunks: string[] = [];
+  for (const line of bodyText.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) continue;
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const j = JSON.parse(payload) as {
+        response?: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      };
+      const candidates = j.response?.candidates ?? j.candidates ?? [];
+      for (const c of candidates) {
+        for (const part of c.content?.parts ?? []) {
+          if (part.text) chunks.push(part.text);
+        }
+      }
+    } catch {
+      /* non-JSON SSE line */
+    }
+  }
+  if (chunks.length) return chunks.join("");
+  try {
+    const j = JSON.parse(bodyText) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    return (
+      j.candidates
+        ?.flatMap((c) => c.content?.parts ?? [])
+        .map((p) => p.text ?? "")
+        .join("") ?? bodyText
+    );
+  } catch {
+    return bodyText;
+  }
+}
+
 export async function testModel(
   credsIn: StoredCredentials,
   external_id: string,
@@ -731,19 +773,28 @@ export async function testModel(
         project: creds.project_id,
         model: external_id,
         request: {
-          contents: [{ role: "user", parts: [{ text: "ping" }] }],
-          generationConfig: { maxOutputTokens: 8 },
+          contents: [{ role: "user", parts: [{ text: MODEL_TEST_PROMPT }] }],
+          generationConfig: { maxOutputTokens: 16 },
         },
         requestType: "agent",
         userAgent: USER_AGENT,
         requestId: `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       }),
     });
+    const bodyText = await r.text();
     if (!r.ok) {
-      const text = await r.text();
-      return { external_id, ok: false, latency_ms: Date.now() - t0, error: text.slice(0, 200) };
+      return { external_id, ok: false, latency_ms: Date.now() - t0, error: bodyText.slice(0, 200) };
     }
-    await r.text();
+    const extracted = extractAntigravityResponseText(bodyText);
+    const validation = validateModelTestResponse(extracted);
+    if (!validation.ok) {
+      return {
+        external_id,
+        ok: false,
+        latency_ms: Date.now() - t0,
+        error: validation.error,
+      };
+    }
     return { external_id, ok: true, latency_ms: Date.now() - t0 };
   } catch (e: any) {
     return { external_id, ok: false, latency_ms: Date.now() - t0, error: String(e?.message ?? e) };

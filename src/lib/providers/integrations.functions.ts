@@ -4,12 +4,21 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import type { SyncAccountResponse, SyncAccountStatus } from "./sync-response.types";
 import { quotaGroupsFromExtra } from "./sync-cache";
+import { providerExternalId, resolveModelSpecs } from "./model-keys";
 import {
-  providerExternalId,
-  toDbExternalId,
-  modelRowLookupKeys,
-  resolveModelSpecs,
-} from "./model-keys";
+  syncModelsForAccount,
+  countAccountModels,
+  unlinkAccountModels,
+  updateAccountModelTestResult,
+  type LiveModelInput,
+} from "./model-sync.server";
+import { buildIdeVisibleUpsertInput } from "./antigravity-persistence";
+import {
+  ACCOUNT_MODELS_SELECT,
+  mapJoinToAccountModelView,
+  mapJoinToCatalogRow,
+  type AccountModelJoinRow,
+} from "./catalog-queries.server";
 import {
   buildAntigravityLiveFetchSnapshot,
   mergeDbOverlay,
@@ -21,7 +30,6 @@ import {
   type AntigravityLiveFetchSnapshot,
   type AntigravityLiveModelEntry,
 } from "./antigravity-live-snapshot";
-import { upsertAntigravityIdeVisibleModelsSupabase } from "./antigravity-persistence";
 
 export type { SyncAccountResponse } from "./sync-response.types";
 
@@ -47,12 +55,10 @@ export const listIntegrations = createServerFn({ method: "GET" })
     const modelsByAccount: Record<string, { total: number; enabled: number }> = {};
     if (accountIds.length) {
       const { data: m } = await supabase
-        .from("models")
-        .select("account_id,enabled,capabilities")
+        .from("account_models")
+        .select("account_id,enabled")
         .in("account_id", accountIds);
       for (const row of m ?? []) {
-        const caps = row.capabilities as Record<string, unknown> | null;
-        if (caps?.stale) continue;
         const k = row.account_id as string;
         if (!modelsByAccount[k]) modelsByAccount[k] = { total: 0, enabled: 0 };
         modelsByAccount[k].total++;
@@ -288,127 +294,27 @@ export const connectCredential = createServerFn({ method: "POST" })
     return { ok: true, account_id: account.id, health };
   });
 
-function modelSpecsForUpsert(
-  externalId: string,
-  providerSlug: string,
-  extra_capabilities?: Record<string, unknown>,
-) {
-  const caps = extra_capabilities ? { ...extra_capabilities } : null;
-  return resolveModelSpecs(externalId, providerSlug, caps, null, null);
-}
-
-async function upsertModelsForAccount(
+async function runProviderModelSync(
   supabase: any,
-  accountId: string,
-  providerId: string,
-  providerSlug: string,
-  models: {
-    external_id: string;
-    display_name: string;
-    capabilities: string[];
-    extra_capabilities?: Record<string, unknown>;
-    context_window?: number;
-    quality_rating?: number;
-  }[],
-  removeStale = false,
+  opts: {
+    accountId: string;
+    providerId: string;
+    providerSlug: string;
+    liveModels: LiveModelInput[];
+    creds: import("./adapters/types").StoredCredentials;
+  },
 ) {
-  const { data: existing } = await supabase
-    .from("models")
-    .select("id,external_id,capabilities,display_name")
-    .eq("account_id", accountId);
-  const byProviderExt = new Map(
-    (existing ?? []).map((m: any) => [
-      providerExternalId(m.external_id, m.capabilities),
-      { id: m.id as string, display_name: m.display_name as string, capabilities: m.capabilities },
-    ]),
-  );
-  let added = 0;
-  let updated = 0;
-  let unchanged = 0;
-  let removed = 0;
+  const adapter =
+    opts.providerSlug === "claude-code"
+      ? await import("./adapters/claude-code.server")
+      : opts.providerSlug === "antigravity"
+        ? await import("./adapters/antigravity.server")
+        : await import("./adapters/opencode-zen.server");
 
-  function buildCapabilities(m: (typeof models)[number]) {
-    return {
-      list: m.capabilities,
-      provider_external_id: m.external_id,
-      ...(m.extra_capabilities ?? {}),
-    };
-  }
-
-  for (const m of models) {
-    const capabilities = buildCapabilities(m);
-    const specs =
-      m.context_window != null && m.quality_rating != null
-        ? { context_window: m.context_window, quality_rating: m.quality_rating }
-        : modelSpecsForUpsert(m.external_id, providerSlug, m.extra_capabilities);
-    const prev = byProviderExt.get(m.external_id);
-    if (prev) {
-      const same =
-        prev.display_name === m.display_name &&
-        JSON.stringify(prev.capabilities) === JSON.stringify(capabilities);
-      if (same) {
-        unchanged++;
-        continue;
-      }
-      const { error } = await supabase
-        .from("models")
-        .update({
-          display_name: m.display_name,
-          capabilities,
-          enabled: true,
-          context_window: specs.context_window,
-          quality_rating: specs.quality_rating,
-        })
-        .eq("id", prev.id);
-      if (error) throw new Error(`Model update failed (${m.external_id}): ${error.message}`);
-      updated++;
-      continue;
-    }
-
-    const { error } = await supabase.from("models").insert({
-      provider_id: providerId,
-      account_id: accountId,
-      external_id: toDbExternalId(accountId, m.external_id),
-      display_name: m.display_name,
-      capabilities,
-      lifecycle: "discovered",
-      enabled: true,
-      context_window: specs.context_window,
-      quality_rating: specs.quality_rating,
-    });
-    if (error) throw new Error(`Model insert failed (${m.external_id}): ${error.message}`);
-    added++;
-  }
-
-  if (removeStale && models.length) {
-    const keep = new Set(models.map((m) => m.external_id));
-    for (const [providerExt, row] of byProviderExt) {
-      if (!keep.has(providerExt)) {
-        await supabase.from("models").delete().eq("id", row.id);
-        removed++;
-      }
-    }
-  }
-
-  return { count: models.length, added, updated, unchanged, removed };
-}
-
-async function countAccountModels(
-  supabase: any,
-  accountId: string,
-): Promise<{ total: number; enabled: number }> {
-  const { data: rows } = await supabase
-    .from("models")
-    .select("enabled,capabilities")
-    .eq("account_id", accountId);
-  const list = (rows ?? []).filter(
-    (r: { capabilities?: Record<string, unknown> | null }) =>
-      !(r.capabilities as Record<string, unknown> | null)?.stale,
-  );
-  return {
-    total: list.length,
-    enabled: list.filter((r: { enabled?: boolean }) => r.enabled).length,
-  };
+  return syncModelsForAccount(supabase, {
+    ...opts,
+    testModel: (creds, externalId) => adapter.testModel(creds, externalId),
+  });
 }
 
 async function syncAccountInternal(supabase: any, accountId: string): Promise<SyncAccountResponse> {
@@ -476,23 +382,44 @@ async function syncAccountInternal(supabase: any, accountId: string): Promise<Sy
       providerCalls = r.provider_calls;
     } else if (slug === "opencode-zen") {
       const a = await import("./adapters/opencode-zen.server");
-      providerCalls.push("fetchIdentity", "listModels");
-      const r = await a.fetchIdentity(creds);
+      const r = await a.syncOpenCodeZenAccount(creds);
       identity = r.identity;
-      models = await a.listModels(creds);
+      models = r.models;
+      health = {
+        ok: r.health.ok,
+        latency_ms: r.health.latency_ms,
+        checked_at: syncedAt,
+        error: r.health.error,
+      };
+      providerCalls = r.provider_calls;
     }
   } catch (e: any) {
     const isClaudeAuth =
       slug === "claude-code" &&
       (e?.name === "ClaudeAuthError" || String(e?.message ?? "").includes("re-login required"));
+    const isOpenCodeHealth = slug === "opencode-zen" && e?.health && typeof e.health === "object";
+    if (isOpenCodeHealth) {
+      health = {
+        ok: false,
+        latency_ms: e.health.latency_ms ?? Date.now() - startedAt,
+        checked_at: syncedAt,
+        error: e.health.error ?? e?.message,
+      };
+    }
     await supabase
       .from("accounts")
       .update({
-        status: isClaudeAuth ? "expired" : slug === "claude-code" ? "degraded" : "expired",
+        status: isClaudeAuth
+          ? "expired"
+          : slug === "claude-code" || slug === "opencode-zen"
+            ? "degraded"
+            : "expired",
         last_health_check_at: syncedAt,
         ...(slug === "claude-code" && !isClaudeAuth
           ? { quota_extra: { health_error: e?.message ?? String(e) } }
-          : {}),
+          : slug === "opencode-zen"
+            ? { quota_extra: { health_error: e?.message ?? String(e) } }
+            : {}),
       })
       .eq("id", accountId);
     throw e;
@@ -540,39 +467,37 @@ async function syncAccountInternal(supabase: any, accountId: string): Promise<Sy
     ideVisible: 0,
     rawFetched: 0,
   };
+
+  let liveModels: LiveModelInput[] = [];
   if (slug === "antigravity" && antigravityRawResponse) {
-    const agStats = await upsertAntigravityIdeVisibleModelsSupabase(
-      supabase,
+    liveModels = buildIdeVisibleUpsertInput(antigravityRawResponse);
+    modelStats.rawFetched = Object.keys(
+      (antigravityRawResponse as { models?: Record<string, unknown> }).models ?? {},
+    ).length;
+    modelStats.ideVisible = liveModels.length;
+  } else {
+    liveModels = models;
+    modelStats.rawFetched = models.length;
+    modelStats.ideVisible = models.length;
+  }
+
+  if (liveModels.length) {
+    const syncStats = await runProviderModelSync(supabase, {
       accountId,
-      acct.provider_id,
-      antigravityRawResponse,
-    );
+      providerId: acct.provider_id,
+      providerSlug: slug,
+      liveModels,
+      creds,
+    });
     modelStats = {
-      count: agStats.ideVisibleFetchedCount,
-      added: agStats.insertedNewCount,
-      updated: agStats.updatedExistingCount,
-      removed: agStats.removedStaleCount,
-      unchanged: agStats.unchangedCount,
-      ideVisible: agStats.ideVisibleFetchedCount,
-      rawFetched: agStats.rawFetchedCount,
+      ...modelStats,
+      count: syncStats.count,
+      added: syncStats.added.length,
+      updated: syncStats.linked,
+      removed: syncStats.removed.length,
+      unchanged: syncStats.unchanged,
     };
-    dbWrites.push("models");
-  } else if (models.length) {
-    const stats = await upsertModelsForAccount(
-      supabase,
-      accountId,
-      acct.provider_id,
-      slug,
-      models,
-      false,
-    );
-    modelStats = {
-      ...stats,
-      unchanged: stats.unchanged ?? 0,
-      ideVisible: stats.count,
-      rawFetched: stats.count,
-    };
-    dbWrites.push("models");
+    dbWrites.push("models", "account_models");
   }
 
   const modelCounts = await countAccountModels(supabase, accountId);
@@ -683,6 +608,14 @@ async function testAntigravityModelsConcurrent(
   }> = [];
   const queue = [...externalIds];
 
+  const { data: catalogRows } = await supabase
+    .from("models")
+    .select("id, external_id")
+    .in("external_id", externalIds);
+  const modelIdByExt = new Map(
+    (catalogRows ?? []).map((r: { id: string; external_id: string }) => [r.external_id, r.id]),
+  );
+
   async function worker() {
     while (queue.length) {
       const ext = queue.shift();
@@ -690,18 +623,12 @@ async function testAntigravityModelsConcurrent(
       const r = await adapter.testModel(creds, ext);
       const exhausted = quotaById.get(ext) ?? false;
       const eligible = r.ok && !exhausted;
-      await supabase
-        .from("models")
-        .update({
-          test_status: r.ok ? "working" : "failed",
-          latency_ms: r.latency_ms,
-          last_test_error: r.ok ? null : (r.error ?? null),
-          last_tested_at: new Date().toISOString(),
-          lifecycle: r.ok ? "approved" : "blocked",
+      const modelId = modelIdByExt.get(ext);
+      if (modelId) {
+        await updateAccountModelTestResult(supabase, accountId, modelId, r, {
           enabled: eligible,
-        })
-        .eq("account_id", accountId)
-        .in("external_id", modelRowLookupKeys(accountId, ext));
+        });
+      }
       results.push({ external_id: ext, ok: r.ok, latency_ms: r.latency_ms, error: r.error });
     }
   }
@@ -807,12 +734,13 @@ async function runAntigravityLiveSnapshotFetch(
       .eq("id", accountId);
   }
 
-  const upsertStats = await upsertAntigravityIdeVisibleModelsSupabase(
-    supabase,
+  const upsertStats = await runProviderModelSync(supabase, {
     accountId,
-    acct.provider_id,
-    live.rawResponse,
-  );
+    providerId: acct.provider_id,
+    providerSlug: "antigravity",
+    liveModels: buildIdeVisibleUpsertInput(live.rawResponse),
+    creds: live.creds,
+  });
 
   const snapshotBase = buildAntigravityLiveFetchSnapshot({
     rawResponse: live.rawResponse,
@@ -820,11 +748,11 @@ async function runAntigravityLiveSnapshotFetch(
     planTier: live.planTier,
     loadCodeAssistUsed: live.loadCodeAssistUsed,
     persistenceStats: {
-      insertedNewCount: upsertStats.insertedNewCount,
-      updatedExistingCount: upsertStats.updatedExistingCount,
-      unchangedCount: upsertStats.unchangedCount,
-      duplicatePreventedCount: upsertStats.duplicatePreventedCount,
-      removedStaleCount: upsertStats.removedStaleCount,
+      insertedNewCount: upsertStats.added.length,
+      updatedExistingCount: upsertStats.linked,
+      unchangedCount: upsertStats.unchanged,
+      duplicatePreventedCount: 0,
+      removedStaleCount: upsertStats.removed.length,
     },
   });
 
@@ -840,12 +768,12 @@ async function runAntigravityLiveSnapshotFetch(
     error?: string;
   }> = [];
 
-  if (autoTest && ideVisibleIds.length > 0) {
+  if (autoTest && upsertStats.added.length > 0) {
     testResults = await testAntigravityModelsConcurrent(
       supabase,
       accountId,
       live.creds,
-      ideVisibleIds,
+      upsertStats.added,
       quotaById,
       3,
     );
@@ -855,17 +783,25 @@ async function runAntigravityLiveSnapshotFetch(
 
   const snapshotIds = new Set(snapshotWithTests.visibleCatalog.models.map((m) => m.id));
   const { data: dbRows } = await supabase
-    .from("models")
-    .select(
-      "id,external_id,display_name,capabilities,latency_ms,test_status,enabled,last_test_error,last_tested_at",
-    )
+    .from("account_models")
+    .select(ACCOUNT_MODELS_SELECT)
     .eq("account_id", accountId);
 
-  const overlayRows = (dbRows ?? []).filter((row: any) => {
-    const ext = providerExternalId(row.external_id, row.capabilities);
-    if ((row.capabilities as Record<string, unknown> | null)?.stale) return false;
-    return snapshotIds.has(ext);
-  });
+  const overlayRows = (dbRows ?? [])
+    .map((row: AccountModelJoinRow) => mapJoinToCatalogRow(row))
+    .filter((row) => snapshotIds.has(row.external_id))
+    .map((row) => ({
+      id: row.id,
+      external_id: row.external_id,
+      display_name: row.display_name,
+      capabilities: row.capabilities,
+      test_status: row.test_status,
+      enabled: row.enabled,
+      last_test_error: null,
+      last_tested_at: row.last_tested_at,
+      latency_ms: row.latency_ms,
+      updated_at: row.last_tested_at,
+    }));
 
   const visibleModels = mergeDbOverlay(
     snapshotWithTests.visibleCatalog.models,
@@ -878,7 +814,7 @@ async function runAntigravityLiveSnapshotFetch(
       const eligible = isEligibleForRouting(m);
       if (m.routing.dbRowId) {
         await supabase
-          .from("models")
+          .from("account_models")
           .update({ enabled: eligible && m.routing.selected })
           .eq("id", m.routing.dbRowId);
       }
@@ -933,7 +869,7 @@ export const fetchModels = createServerFn({ method: "POST" })
         failed: snapshot.stats.failedCount,
         selected: snapshot.stats.selectedForRoutingCount,
         duplicatePrevented: snapshot.stats.duplicatePreventedCount,
-        removedStale: snapshot.stats.removedStaleCount,
+        removed: snapshot.stats.removedStaleCount,
       };
     }
 
@@ -943,27 +879,35 @@ export const fetchModels = createServerFn({ method: "POST" })
       credentials_tag: acct.credentials_tag,
     });
 
-    let models: { external_id: string; display_name: string; capabilities: string[] }[] = [];
+    let liveModels: LiveModelInput[] = [];
     if (slug === "claude-code") {
       const a = await import("./adapters/claude-code.server");
       creds = (await a.fetchIdentity(creds)).creds;
-      models = await a.listModels(creds);
+      liveModels = await a.listModels(creds);
     } else if (slug === "opencode-zen") {
       const a = await import("./adapters/opencode-zen.server");
-      models = await a.listModels(creds);
+      liveModels = await a.listModels(creds);
     } else {
       throw new Error("Fetch models not supported for this provider");
     }
 
-    const stats = await upsertModelsForAccount(
-      supabase,
-      data.account_id,
-      acct.provider_id,
+    const stats = await runProviderModelSync(supabase, {
+      accountId: data.account_id,
+      providerId: acct.provider_id,
+      providerSlug: slug,
+      liveModels,
+      creds,
+    });
+    return {
       slug,
-      models,
-      false,
-    );
-    return stats;
+      count: stats.count,
+      added: stats.added.length,
+      linked: stats.linked,
+      removed: stats.removed.length,
+      unchanged: stats.unchanged,
+      tested: stats.tested,
+      failed: stats.failed,
+    };
   });
 
 export const fetchAntigravityLiveSnapshot = createServerFn({ method: "POST" })
@@ -989,28 +933,29 @@ export const loadAntigravityStoredSnapshot = createServerFn({ method: "GET" })
     }
 
     const { data: rows, error } = await supabase
-      .from("models")
-      .select(
-        "id,external_id,display_name,capabilities,latency_ms,test_status,enabled,last_test_error,last_tested_at,updated_at",
-      )
+      .from("account_models")
+      .select(ACCOUNT_MODELS_SELECT)
       .eq("account_id", data.account_id)
-      .order("display_name");
+      .order("display_name", { foreignTable: "models" });
     if (error) throw new Error(error.message);
 
     const extra = (acct.quota_extra ?? null) as Record<string, unknown> | null;
     const snapshot = buildAntigravitySnapshotFromDbRows(
-      (rows ?? []).map((row: Record<string, unknown>) => ({
-        id: row.id as string,
-        external_id: row.external_id as string,
-        display_name: (row.display_name as string) ?? "",
-        capabilities: (row.capabilities as Record<string, unknown> | null) ?? null,
-        test_status: row.test_status as string | null,
-        enabled: row.enabled as boolean | null,
-        last_test_error: row.last_test_error as string | null,
-        last_tested_at: row.last_tested_at as string | null,
-        latency_ms: row.latency_ms as number | null,
-        updated_at: row.updated_at as string | null,
-      })),
+      (rows ?? []).map((row: AccountModelJoinRow) => {
+        const mapped = mapJoinToCatalogRow(row);
+        return {
+          id: mapped.id,
+          external_id: mapped.external_id,
+          display_name: mapped.display_name,
+          capabilities: mapped.capabilities,
+          test_status: mapped.test_status,
+          enabled: mapped.enabled,
+          last_test_error: null,
+          last_tested_at: mapped.last_tested_at,
+          latency_ms: mapped.latency_ms,
+          updated_at: mapped.last_tested_at,
+        };
+      }),
       {
         projectId: typeof extra?.projectId === "string" ? extra.projectId : undefined,
         planTier: (acct.plan as string | null) ?? undefined,
@@ -1079,6 +1024,8 @@ export type CatalogModel = {
 
 type CatalogRowInput = {
   id: string;
+  model_id?: string;
+  account_id?: string;
   external_id: string;
   display_name: string;
   capabilities: Record<string, unknown> | null;
@@ -1127,7 +1074,6 @@ export function aggregateCatalogModels(rows: CatalogRowInput[]): CatalogModel[] 
 
   for (const row of rows) {
     const caps = row.capabilities;
-    if (caps?.stale) continue;
     if (!row.enabled && row.lifecycle === "blocked") continue;
 
     const providerSlug = row.providers?.slug ?? "unknown";
@@ -1161,7 +1107,7 @@ export function aggregateCatalogModels(rows: CatalogRowInput[]): CatalogModel[] 
     for (const r of group) {
       const acct = r.accounts;
       if (acct) accountsMap.set(acct.id, acct);
-      accountRows.push({ id: r.id, account_id: acct?.id ?? "", enabled: r.enabled });
+      accountRows.push({ id: r.id, account_id: acct?.id ?? r.account_id ?? "", enabled: r.enabled });
     }
 
     let testStatus: "working" | "failed" | "untested" = "untested";
@@ -1221,13 +1167,13 @@ export const listCatalogModels = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { supabase } = context as any;
     const { data: rows, error } = await supabase
-      .from("models")
-      .select(
-        "id,external_id,display_name,capabilities,quality_rating,context_window,input_cost_per_mtok,output_cost_per_mtok,test_status,latency_ms,last_tested_at,lifecycle,enabled,accounts(id,email,label,status),providers(slug,name)",
-      )
-      .order("display_name");
+      .from("account_models")
+      .select(ACCOUNT_MODELS_SELECT)
+      .order("display_name", { foreignTable: "models" });
     if (error) throw new Error(error.message);
-    return aggregateCatalogModels((rows ?? []) as CatalogRowInput[]);
+    return aggregateCatalogModels(
+      (rows ?? []).map((row: AccountModelJoinRow) => mapJoinToCatalogRow(row)) as CatalogRowInput[],
+    );
   });
 
 export const listAccountModels = createServerFn({ method: "GET" })
@@ -1236,19 +1182,18 @@ export const listAccountModels = createServerFn({ method: "GET" })
   .handler(async ({ data, context }) => {
     const { supabase } = context as any;
     const { data: rows, error } = await supabase
-      .from("models")
+      .from("account_models")
       .select(
-        "id,external_id,display_name,capabilities,latency_ms,test_status,enabled,last_test_error,last_tested_at",
+        `${ACCOUNT_MODELS_SELECT}`,
       )
       .eq("account_id", data.account_id)
-      .order("display_name");
+      .order("display_name", { foreignTable: "models" });
     if (error) throw new Error(error.message);
-    return (rows ?? []).map((row: any) => {
-      const caps = row.capabilities as Record<string, unknown> | null;
+    return (rows ?? []).map((row: AccountModelJoinRow) => {
+      const mapped = mapJoinToAccountModelView(row);
       return {
-        ...row,
-        external_id: providerExternalId(row.external_id, caps),
-        capabilities: extractCapabilityList(caps),
+        ...mapped,
+        capabilities: extractCapabilityList(mapped.capabilities),
       };
     });
   });
@@ -1268,7 +1213,7 @@ export const testAccountModels = createServerFn({ method: "POST" })
     const { unpackCredentials } = await import("@/lib/credentials.server");
     const { data: acct } = await supabase
       .from("accounts")
-      .select("credentials_enc,credentials_iv,credentials_tag,providers(slug)")
+      .select("credentials_enc,credentials_iv,credentials_tag,provider_id,providers(slug)")
       .eq("id", data.account_id)
       .single();
     if (!acct) throw new Error("Account not found");
@@ -1288,17 +1233,15 @@ export const testAccountModels = createServerFn({ method: "POST" })
     const results = await Promise.all(
       data.external_ids.map(async (ext) => {
         const r = await adapter.testModel(creds, ext);
-        await supabase
+        const { data: modelRow } = await supabase
           .from("models")
-          .update({
-            test_status: r.ok ? "working" : "failed",
-            latency_ms: r.latency_ms,
-            last_test_error: r.ok ? null : (r.error ?? null),
-            last_tested_at: new Date().toISOString(),
-            lifecycle: r.ok ? "approved" : "blocked",
-          })
-          .eq("account_id", data.account_id)
-          .in("external_id", modelRowLookupKeys(data.account_id, ext));
+          .select("id")
+          .eq("provider_id", acct.provider_id)
+          .eq("external_id", ext)
+          .maybeSingle();
+        if (modelRow?.id) {
+          await updateAccountModelTestResult(supabase, data.account_id, modelRow.id, r);
+        }
         return r;
       }),
     );
@@ -1319,7 +1262,7 @@ export const setModelsEnabled = createServerFn({ method: "POST" })
     const { supabase } = context as any;
     await Promise.all(
       Object.entries(data.enabled).map(([id, enabled]) =>
-        supabase.from("models").update({ enabled }).eq("id", id),
+        supabase.from("account_models").update({ enabled }).eq("id", id),
       ),
     );
     return { ok: true };
@@ -1330,6 +1273,7 @@ export const disconnectAccount = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => z.object({ account_id: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
     const { supabase } = context as any;
+    await unlinkAccountModels(supabase, data.account_id);
     const { error } = await supabase.from("accounts").delete().eq("id", data.account_id);
     if (error) throw new Error(error.message);
     return { ok: true };

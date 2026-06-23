@@ -1,6 +1,10 @@
 /* Claude Code OAuth adapter (PKCE, JSON token exchange). Server-only. */
 import type { StoredCredentials, AccountIdentity, DiscoveredModel, ModelTestResult, ChatRequest, ChatResult } from "./types";
-import { CLAUDE_CURATED_MODELS, CLAUDE_OAUTH } from "./_shared/oauth-clients.server";
+import { CLAUDE_OAUTH } from "./_shared/oauth-clients.server";
+import {
+  MODEL_TEST_PROMPT,
+  validateModelTestResponse,
+} from "./_shared/model-test-validation.server";
 import {
   buildOAuthAuthorizeUrl,
   generateCodeChallenge,
@@ -298,8 +302,34 @@ export async function fetchIdentity(
   };
 }
 
-export async function listModels(_creds: StoredCredentials): Promise<DiscoveredModel[]> {
-  return CLAUDE_CURATED_MODELS.map((m) => ({ ...m, capabilities: [...m.capabilities] }));
+export async function listModels(credsIn: StoredCredentials): Promise<DiscoveredModel[]> {
+  const creds = await refreshIfNeeded(credsIn);
+  const token = creds.access_token;
+  if (!token) throw new ClaudeAuthError("No access token — re-login required");
+
+  const r = await fetch("https://api.anthropic.com/v1/models", {
+    headers: {
+      ...oauthHeaders(token),
+      "anthropic-beta": CLAUDE_CODE_BETA,
+      "X-App": "cli",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(`Claude models list failed (${r.status}): ${text.slice(0, 200)}`);
+  }
+
+  const j = (await r.json()) as {
+    data?: Array<{ id?: string; display_name?: string; type?: string }>;
+  };
+  return (j.data ?? [])
+    .filter((m) => typeof m.id === "string" && m.id.length > 0)
+    .map((m) => ({
+      external_id: m.id!,
+      display_name: m.display_name ?? m.id!,
+      capabilities: ["chat", "tools", "vision"],
+    }));
 }
 
 export async function testModel(
@@ -323,12 +353,27 @@ export async function testModel(
         model: external_id,
         max_tokens: 8,
         system: [{ type: "text", text: CLAUDE_CODE_IDENTITY }],
-        messages: [{ role: "user", content: "ping" }],
+        messages: [{ role: "user", content: MODEL_TEST_PROMPT }],
       }),
     });
     if (!r.ok) {
       const text = await r.text();
       return { external_id, ok: false, latency_ms: Date.now() - t0, error: text.slice(0, 200) };
+    }
+    const j: { content?: Array<{ type?: string; text?: string }> } = await r.json();
+    const text =
+      j.content
+        ?.filter((b) => b.type === "text")
+        .map((b) => b.text ?? "")
+        .join("") ?? "";
+    const validation = validateModelTestResponse(text);
+    if (!validation.ok) {
+      return {
+        external_id,
+        ok: false,
+        latency_ms: Date.now() - t0,
+        error: validation.error,
+      };
     }
     return { external_id, ok: true, latency_ms: Date.now() - t0 };
   } catch (e: any) {

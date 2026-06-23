@@ -39,20 +39,14 @@ export function ProviderIcon({
   if (slug === "opencode-zen") {
     return (
       <div
-        className={`${className} rounded-xl flex items-center justify-center bg-[#0F1A14] border border-emerald-500/30`}
+        className={`${className} rounded-xl flex items-center justify-center bg-[#1A120E] dark:bg-[#1A120E] border border-[#E87040]/30 overflow-hidden`}
       >
-        <svg
-          viewBox="0 0 24 24"
-          className="size-6"
-          fill="none"
-          stroke="#10b981"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+        <img
+          src="/providers/opencode.png"
+          className="size-6 object-contain"
+          alt="OpenCode Zen"
           aria-hidden
-        >
-          <path d="M8 6l-5 6 5 6M16 6l5 6-5 6M14 4l-4 16" />
-        </svg>
+        />
       </div>
     );
   }
