@@ -28,7 +28,6 @@ describe("getVenomModel", () => {
     const supabase = makeSupabaseMock({
       venom_models: {
         data: {
-          id: "vm-1",
           slug: "pro",
           weight_cost: 0.3,
           weight_speed: 0.3,
@@ -58,9 +57,9 @@ describe("listVenomModels", () => {
     const supabase = makeSupabaseMock({
       venom_models: {
         data: [
-          { id: "1", slug: "lite", weight_cost: 0.5, weight_speed: 0.3, weight_quality: 0.2, max_fallback_attempts: 2, timeout_ms: 15000 },
-          { id: "2", slug: "pro", weight_cost: 0.3, weight_speed: 0.3, weight_quality: 0.4, max_fallback_attempts: 3, timeout_ms: 30000 },
-          { id: "3", slug: "max", weight_cost: 0.2, weight_speed: 0.2, weight_quality: 0.6, max_fallback_attempts: 5, timeout_ms: 60000 },
+          { slug: "lite", weight_cost: 0.5, weight_speed: 0.3, weight_quality: 0.2, max_fallback_attempts: 2, timeout_ms: 15000 },
+          { slug: "pro", weight_cost: 0.3, weight_speed: 0.3, weight_quality: 0.4, max_fallback_attempts: 3, timeout_ms: 30000 },
+          { slug: "max", weight_cost: 0.2, weight_speed: 0.2, weight_quality: 0.6, max_fallback_attempts: 5, timeout_ms: 60000 },
         ],
         error: null,
       },

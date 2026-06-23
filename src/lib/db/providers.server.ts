@@ -238,6 +238,10 @@ export async function checkAccountModels(
     targets = models.map((m) => m.external_id)
   }
 
+  if (!["claude-code", "antigravity", "opencode-zen"].includes(slug)) {
+    throw new Error(`checkAccountModels: unknown provider slug "${slug}"`)
+  }
+
   const adapter =
     slug === "claude-code"
       ? await import("@/lib/providers/adapters/claude-code.server")
@@ -282,7 +286,7 @@ export async function getProviderHealth(
 
 export async function listAccounts(
   supabase: SupabaseClient,
-  opts?: { status?: AccountStatus | AccountStatus[]; providerSlug?: string },
+  opts?: { status?: AccountStatus | AccountStatus[] },
 ): Promise<AccountInfo[]> {
   let q = supabase
     .from("accounts")

@@ -3,7 +3,6 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export type VenomModel = {
-  id: string
   slug: "lite" | "pro" | "max"
   weight_cost: number
   weight_speed: number
@@ -32,7 +31,7 @@ export async function getVenomModel(
 ): Promise<VenomModel> {
   const { data, error } = await supabase
     .from("venom_models")
-    .select("id,slug,weight_cost,weight_speed,weight_quality,max_fallback_attempts,timeout_ms")
+    .select("slug,weight_cost,weight_speed,weight_quality,max_fallback_attempts,timeout_ms")
     .eq("slug", slug)
     .single()
   if (error || !data) throw new Error(`getVenomModel: ${error?.message ?? "not found"}`)
@@ -42,7 +41,7 @@ export async function getVenomModel(
 export async function listVenomModels(supabase: SupabaseClient): Promise<VenomModel[]> {
   const { data, error } = await supabase
     .from("venom_models")
-    .select("id,slug,weight_cost,weight_speed,weight_quality,max_fallback_attempts,timeout_ms")
+    .select("slug,weight_cost,weight_speed,weight_quality,max_fallback_attempts,timeout_ms")
     .order("slug")
   if (error) throw new Error(`listVenomModels: ${error.message}`)
   return (data ?? []) as unknown as VenomModel[]
