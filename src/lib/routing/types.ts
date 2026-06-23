@@ -1,5 +1,22 @@
 export type Modality = "text" | "vision" | "audio" | "documents";
 
+/** Derived from model cost per million tokens. */
+export type CostType = "free" | "cheap" | "balanced" | "premium";
+
+/**
+ * Task classification derived from request messages.
+ * Used to weight scoring and select escalation stage entry points.
+ */
+export type TaskClass =
+  | "simple_chat"
+  | "coding"
+  | "vision"
+  | "tool_calling"
+  | "long_context"
+  | "reasoning_heavy"
+  | "agentic_task"
+  | "critical_task";
+
 export interface RoutingCondition {
   requires?: string[];
   min_context_tokens?: number;
@@ -37,11 +54,40 @@ export interface RoutingCandidate {
     credentialsTag: unknown;
     quota: { used: number; total: number | null; confidence: string } | null;
   };
+  /** Derived at engine time — not stored in DB. */
+  costType?: CostType;
+  /** Derived quality score (0–1) from priority. Higher priority = higher quality. */
+  qualityScore?: number;
 }
 
 export interface ScoredCandidate {
   candidate: RoutingCandidate;
   score: number;
+}
+
+export interface RoutingTraceCandidate {
+  rule_id: string;
+  external_id: string;
+  adapter: string;
+  priority: number;
+  role: string;
+  score?: number;
+  status: "eligible" | "filtered" | "attempted" | "selected";
+  filter_reason?: string;
+  error?: string;
+}
+
+export interface RoutingTrace {
+  modality: Modality;
+  task_class: TaskClass;
+  candidates_evaluated: number;
+  candidates_filtered: number;
+  decision_reason: string;
+  selected_rule_id: string | null;
+  fallback_attempts: number;
+  escalation_stage: number;
+  candidates: RoutingTraceCandidate[];
+  cost_usd: number;
 }
 
 export interface RoutingRequest {
@@ -50,6 +96,7 @@ export interface RoutingRequest {
   maxTokens?: number;
   temperature?: number;
   apiKeyId?: string;
+  includeTrace?: boolean;
 }
 
 export interface RoutingResult {
@@ -64,4 +111,6 @@ export interface RoutingResult {
   selectedRuleId?: string;
   modality: Modality;
   providerAdapter?: string;
+  trace?: RoutingTrace;
+  costUsd?: number;
 }
