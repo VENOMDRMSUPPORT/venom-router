@@ -302,7 +302,7 @@ Starts directly from the core — no justification for writing raw queries.
 
 ## Migration Strategy
 
-1. **Build `src/lib/db/`** — all 4 files + index. No changes to existing code yet.
+1. **Build `src/lib/db/`** — `providers.server.ts`, `venom.server.ts`, `usage.server.ts`, `api-keys.server.ts` only. No `index.ts` / no barrel export. No changes to existing code yet.
 2. **Migrate workers first** — `health-check.server.ts` and `quota-snapshot.server.ts` are the most painful duplication points.
 3. **Migrate `createServerFn` files incrementally** — when a file is touched for another reason, refactor its queries to use the core.
 4. **New features always use the core** — no new raw Supabase queries outside `src/lib/db/`.
