@@ -1,0 +1,9 @@
+# wrangler.toml — Cloudflare Workers deployment config
+# The main build is handled by @lovable.dev/vite-tanstack-config.
+# This file only declares the cron schedule for background workers.
+
+name = "venom-router"
+compatibility_date = "2024-09-23"
+
+[triggers]
+crons = ["*/5 * * * *"]
