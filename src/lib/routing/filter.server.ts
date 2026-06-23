@@ -1,14 +1,14 @@
 import type { ChatMessage } from "@/lib/providers/adapters/types";
-import type { Modality, RoutingCandidate, RoutingCondition } from "@/lib/routing/types";
+import type { CostType, Modality, RoutingCandidate, RoutingCondition } from "@/lib/routing/types";
+import type { TierStrategyConfig } from "@/lib/routing/strategy.types";
+import { getCostType } from "@/lib/routing/policy.server";
 
 /**
  * Detects the modality of a request from its messages.
- * Checks content arrays for image_url (vision), audio (audio), or file/document (documents).
  */
 export function detectModality(messages: ChatMessage[]): Modality {
   for (const msg of messages) {
     if (typeof msg.content !== "string") {
-      // content is an array of content parts (multimodal)
       const parts = msg.content as unknown as Array<{ type: string }>;
       if (!Array.isArray(parts)) continue;
       for (const part of parts) {
@@ -21,54 +21,97 @@ export function detectModality(messages: ChatMessage[]): Modality {
   return "text";
 }
 
-function isQuotaExhausted(
+export function isQuotaExhausted(
   quota: { used: number; total: number | null; confidence: string } | null,
+  thresholdPct: number,
 ): boolean {
   if (!quota) return false;
   if (quota.confidence !== "high") return false;
   if (quota.total === null || quota.total <= 0) return false;
-  const remaining = quota.total - quota.used;
-  return remaining / quota.total < 0.05;
+  const remainingPct = ((quota.total - quota.used) / quota.total) * 100;
+  return remainingPct < thresholdPct;
 }
 
-function matchesCondition(
-  condition: RoutingCondition | null,
-  capabilities: string[],
-  modality: Modality,
+function isPremiumReserved(
+  candidate: RoutingCandidate,
+  quota: { used: number; total: number | null; confidence: string } | null,
+  reservePct: number,
 ): boolean {
-  if (!condition) return true;
+  const costType = candidate.costType ?? getCostType(candidate);
+  if (costType !== "premium") return false;
+  if (!quota || quota.confidence !== "high") return false;
+  if (quota.total === null || quota.total <= 0) return false;
+  const remainingPct = ((quota.total - quota.used) / quota.total) * 100;
+  return remainingPct < reservePct;
+}
 
+function matchesCondition(condition: RoutingCondition | null, capabilities: string[]): boolean {
+  if (!condition) return true;
   if (condition.requires?.length) {
     for (const cap of condition.requires) {
       if (!capabilities.includes(cap)) return false;
     }
   }
-
   return true;
 }
 
-/**
- * Filters candidates by: lifecycle, enabled, account health, quota, modality, condition.
- * Returns only eligible candidates.
- */
+export function getFilterReason(
+  candidate: RoutingCandidate,
+  modality: Modality,
+  strategy: TierStrategyConfig,
+): string | null {
+  if (candidate.model.lifecycle !== "approved") return "lifecycle_not_approved";
+  if (!candidate.model.enabled) return "model_disabled";
+  if (candidate.account.status !== "healthy") return "account_unhealthy";
+
+  const quota = candidate.account.quota;
+
+  if (isPremiumReserved(candidate, quota, strategy.premium_reserve_pct)) return "premium_reserved";
+
+  if (isQuotaExhausted(quota, strategy.quota_threshold_pct)) return "quota_exhausted";
+
+  if (modality !== "text") {
+    const caps = candidate.model.capabilities;
+    if (!caps.includes(modality)) return `missing_capability:${modality}`;
+  }
+
+  if (!matchesCondition(candidate.condition, candidate.model.capabilities)) {
+    const required = candidate.condition?.requires?.join(",") ?? "unknown";
+    return `condition_requires:${required}`;
+  }
+
+  return null;
+}
+
+export interface FilterDiagnostics {
+  eligible: RoutingCandidate[];
+  rejected: Array<{ candidate: RoutingCandidate; reason: string }>;
+}
+
+export function filterCandidatesWithDiagnostics(
+  candidates: RoutingCandidate[],
+  modality: Modality,
+  strategy: TierStrategyConfig,
+): FilterDiagnostics {
+  const eligible: RoutingCandidate[] = [];
+  const rejected: Array<{ candidate: RoutingCandidate; reason: string }> = [];
+
+  for (const c of candidates) {
+    const reason = getFilterReason(c, modality, strategy);
+    if (reason) {
+      rejected.push({ candidate: c, reason });
+    } else {
+      eligible.push(c);
+    }
+  }
+
+  return { eligible, rejected };
+}
+
 export function filterCandidates(
   candidates: RoutingCandidate[],
   modality: Modality,
+  strategy: TierStrategyConfig,
 ): RoutingCandidate[] {
-  return candidates.filter((c) => {
-    if (c.model.lifecycle !== "approved") return false;
-    if (!c.model.enabled) return false;
-    if (c.account.status !== "healthy") return false;
-    if (isQuotaExhausted(c.account.quota)) return false;
-
-    // Modality capability check
-    if (modality !== "text") {
-      const caps = c.model.capabilities;
-      if (!caps.includes(modality)) return false;
-    }
-
-    if (!matchesCondition(c.condition, c.model.capabilities, modality)) return false;
-
-    return true;
-  });
+  return filterCandidatesWithDiagnostics(candidates, modality, strategy).eligible;
 }
