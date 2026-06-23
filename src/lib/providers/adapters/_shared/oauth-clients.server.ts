@@ -3,7 +3,7 @@
 export const CLAUDE_OAUTH = {
   clientId: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
   authorizeUrl: "https://claude.ai/oauth/authorize",
-  tokenUrl: "https://api.anthropic.com/v1/oauth/token",
+  tokenUrl: "https://platform.claude.com/v1/oauth/token",
   scopes: ["org:create_api_key", "user:profile", "user:inference"],
   refreshLeadMs: 14_400_000,
 } as const;
