@@ -125,7 +125,13 @@ export async function runHealthChecks(
       patch.credentials_tag = packed.credentials_tag;
     }
 
-    await supabase.from("accounts").update(patch).eq("id", acct.id);
+    const { error: updateErr } = await supabase
+      .from("accounts")
+      .update(patch)
+      .eq("id", acct.id);
+    if (updateErr) {
+      console.error(`[health-check] failed to update account ${acct.id}:`, updateErr.message);
+    }
 
     await supabase.from("account_health_checks").insert({
       account_id: acct.id,

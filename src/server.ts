@@ -67,7 +67,7 @@ export default {
         }
       }
 
-      // ── Dev worker trigger (local testing only) ───────────────────────
+      // ── Internal worker trigger (protected by DEV_WORKER_SECRET header) ──
       if (url.pathname === "/api/internal/run-workers" && request.method === "POST") {
         const secret = request.headers.get("x-worker-secret") ?? "";
         if (!DEV_WORKER_SECRET || secret !== DEV_WORKER_SECRET) {
