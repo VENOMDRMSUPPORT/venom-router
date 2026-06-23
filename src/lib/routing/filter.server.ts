@@ -1,5 +1,5 @@
 import type { ChatMessage } from "@/lib/providers/adapters/types";
-import type { CostType, Modality, RoutingCandidate, RoutingCondition } from "@/lib/routing/types";
+import type { Modality, RoutingCandidate, RoutingCondition } from "@/lib/routing/types";
 import type { TierStrategyConfig } from "@/lib/routing/strategy.types";
 import { getCostType } from "@/lib/routing/policy.server";
 

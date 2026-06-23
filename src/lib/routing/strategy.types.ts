@@ -11,9 +11,12 @@ export type FallbackBehavior = "sequential" | "skip_exhausted" | "premium_last";
 export type TierStrategyConfig = {
   quota_threshold_pct: number;
   premium_reserve_pct: number;
+  // NOT YET WIRED — defined for future engine use
   auto_escalation: AutoEscalation;
   account_rotation: AccountRotation;
+  // NOT YET WIRED — defined for future engine use
   health_requirement: HealthRequirement;
+  // NOT YET WIRED — defined for future engine use
   fallback_behavior: FallbackBehavior;
 };
 

@@ -110,11 +110,7 @@ describe("getFilterReason with strategy", () => {
   });
 
   it("does not reserve premium when outside reserve window", () => {
-    // lite reserve = 5%, 10% remaining is outside reserve
-    const quota = { used: 90, total: 100, confidence: "high" };
-    const c = makeCandidate({ quota, costType: "premium" });
-    // Should be null (not filtered) since 10% > 5% reserve AND 10% > 15% threshold?
-    // Actually 10% < 15% lite threshold, so it's quota_exhausted. Use a different quota.
+    // lite reserve = 5%, 30% remaining is outside both reserve (5%) and quota threshold (15%)
     const quota2 = { used: 70, total: 100, confidence: "high" };
     const c2 = makeCandidate({ quota: quota2, costType: "premium" });
     expect(getFilterReason(c2, "text", liteStrategy)).toBeNull();

@@ -34,6 +34,8 @@ function taskFitScore(candidate: RoutingCandidate, taskClass: TaskClass): number
       return caps.includes("long_context") ? 1 : 0.5;
     case "reasoning_heavy":
       return caps.includes("reasoning") ? 1 : 0.6;
+    case "critical_task":
+      return 1.0;
     default:
       return 0.7;
   }

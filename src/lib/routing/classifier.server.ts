@@ -45,6 +45,11 @@ export function classifyTask(messages: ChatMessage[]): TaskClass {
     return "agentic_task";
   }
 
+  // Critical: high-stakes situations requiring the best model
+  if (/\b(critical|production|urgent|security vulnerability|data loss|breaking change|final decision)\b/i.test(text)) {
+    return "critical_task";
+  }
+
   // Coding: code blocks or programming keywords
   if (/```|\bfunction\b|\bclass\b|\bconst\b|\bdef\b|\bimport\b|\bfix (this|the) (code|bug|error)\b/i.test(text)) {
     return "coding";

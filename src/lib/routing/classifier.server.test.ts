@@ -50,6 +50,10 @@ describe("classifyTask", () => {
     expect(classifyTask([textMsg("Explain in depth why functional programming is better")])).toBe("reasoning_heavy");
   });
 
+  it("classifies critical/urgent keywords as critical_task", () => {
+    expect(classifyTask([textMsg("This is a critical production issue causing data loss")])).toBe("critical_task");
+  });
+
   it("prioritizes vision over coding", () => {
     const mixed: ChatMessage = {
       role: "user",
