@@ -56,6 +56,12 @@ export async function runHealthChecks(
 
     let refreshedCreds: StoredCredentials | null = null;
 
+    // Skip providers with no health check method
+    if (slug === "opencode-zen") {
+      console.log(`[health-check] ${slug}/${acct.id} → skipped (no health check)`);
+      continue;
+    }
+
     try {
       const credsIn = unpackCredentials({
         credentials_enc: acct.credentials_enc,
