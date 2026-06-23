@@ -38,11 +38,14 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
   });
 }
 
+const DEV_WORKER_SECRET = process.env.DEV_WORKER_SECRET ?? "";
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
-      // Intercept Venom API routes before TanStack handles them
       const url = new URL(request.url);
+
+      // ── Venom proxy API ──────────────────────────────────────────────
       if (url.pathname === "/api/v1/chat/completions") {
         if (request.method === "OPTIONS") {
           return new Response(null, { status: 204, headers: { Allow: "POST, OPTIONS" } });
@@ -64,6 +67,32 @@ export default {
         }
       }
 
+      // ── Dev worker trigger (local testing only) ───────────────────────
+      if (url.pathname === "/api/internal/run-workers" && request.method === "POST") {
+        const secret = request.headers.get("x-worker-secret") ?? "";
+        if (!DEV_WORKER_SECRET || secret !== DEV_WORKER_SECRET) {
+          return new Response(JSON.stringify({ error: "Unauthorized" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        try {
+          const { runScheduled } = await import("./lib/workers/index.server");
+          await runScheduled("manual");
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (e: unknown) {
+          const msg = String((e as { message?: string } | null)?.message ?? e);
+          return new Response(JSON.stringify({ ok: false, error: msg }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      // ── TanStack SSR ─────────────────────────────────────────────────
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return await normalizeCatastrophicSsrResponse(response);
@@ -74,5 +103,18 @@ export default {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
     }
+  },
+
+  // ── Cloudflare Workers cron handler ────────────────────────────────
+  async scheduled(
+    event: { cron: string; scheduledTime: number },
+    _env: unknown,
+    ctx: { waitUntil: (p: Promise<unknown>) => void },
+  ) {
+    ctx.waitUntil(
+      import("./lib/workers/index.server").then(({ runScheduled }) =>
+        runScheduled(event.cron),
+      ),
+    );
   },
 };
