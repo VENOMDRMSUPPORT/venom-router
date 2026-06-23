@@ -11,6 +11,10 @@ import type { VenomTier } from "@/lib/routing/strategy.types";
 const COST_CHEAP_THRESHOLD = 0.5;
 const COST_BALANCED_THRESHOLD = 5;
 
+/**
+ * Simple average of input and output cost per million tokens.
+ * If output cost is missing, falls back to 3× input as an estimate.
+ */
 function avgCostPerMtok(c: RoutingCandidate): number {
   const input = c.model.inputCostPerMtok;
   const output = c.model.outputCostPerMtok;
@@ -29,7 +33,7 @@ export function getCostType(c: RoutingCandidate): CostType {
 }
 
 export function getQualityScore(c: RoutingCandidate): number {
-  // priority 1 → score near 1.0; priority 10 → score near 0.1
+  // priority 1 → score near 1.0; priority 10 → score near 0.18
   // 1 / (priority + 1) * 2 capped at 1
   return Math.min(1, 2 / (c.priority + 1));
 }
@@ -49,7 +53,7 @@ export function enrichCandidate(c: RoutingCandidate): RoutingCandidate {
 export interface EscalationStage {
   /** Cost types allowed in this stage. */
   allowedCostTypes: CostType[];
-  /** If true, only candidates with qualityScore >= 0.6 pass. Used in Max stage 1. */
+  /** If true, only candidates with qualityScore >= 0.6 pass. Used in Max stages 1 and 4. */
   requireHighQuality?: boolean;
 }
 
