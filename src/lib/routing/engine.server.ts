@@ -3,23 +3,87 @@ import type {
   RoutingRequest,
   RoutingResult,
   RoutingCandidate,
+  RoutingTrace,
+  RoutingTraceCandidate,
   VenomWeights,
+  TaskClass,
 } from "@/lib/routing/types";
-import { detectModality, filterCandidates } from "@/lib/routing/filter.server";
+import { detectModality, filterCandidatesWithDiagnostics } from "@/lib/routing/filter.server";
 import { scoreCandidate } from "@/lib/routing/scorer.server";
 import { executeWithFallback } from "@/lib/routing/executor.server";
 import { persistUsageAndTrace } from "@/lib/routing/trace.server";
+import { classifyTask } from "@/lib/routing/classifier.server";
+import { enrichCandidate, getEscalationStages } from "@/lib/routing/policy.server";
+import { applyAccountRotation } from "@/lib/routing/rotation.server";
+import { mergeStrategyConfig } from "@/lib/routing/strategy.types";
+import type { VenomTier } from "@/lib/routing/strategy.types";
+
+function toTraceCandidate(
+  c: RoutingCandidate,
+  overrides: Partial<RoutingTraceCandidate> & Pick<RoutingTraceCandidate, "status">,
+): RoutingTraceCandidate {
+  return {
+    rule_id: c.ruleId,
+    external_id: c.model.externalId,
+    adapter: c.model.provider.adapter,
+    priority: c.priority,
+    role: c.role,
+    ...overrides,
+  };
+}
+
+function buildTraceCandidates(
+  rejected: Array<{ candidate: RoutingCandidate; reason: string }>,
+  scored: Array<{ candidate: RoutingCandidate; score: number }>,
+  attemptLog: Array<{ ruleId: string; error: string }>,
+  selectedRuleId: string | undefined,
+): RoutingTraceCandidate[] {
+  const byRuleId = new Map<string, RoutingTraceCandidate>();
+
+  for (const { candidate, reason } of rejected) {
+    byRuleId.set(
+      candidate.ruleId,
+      toTraceCandidate(candidate, { status: "filtered", filter_reason: reason }),
+    );
+  }
+
+  for (const { candidate, score } of scored) {
+    byRuleId.set(candidate.ruleId, toTraceCandidate(candidate, { status: "eligible", score }));
+  }
+
+  for (const attempt of attemptLog) {
+    const existing = byRuleId.get(attempt.ruleId);
+    if (existing) {
+      byRuleId.set(attempt.ruleId, {
+        ...existing,
+        status: "attempted",
+        error: attempt.error,
+      });
+    }
+  }
+
+  if (selectedRuleId) {
+    const existing = byRuleId.get(selectedRuleId);
+    if (existing) {
+      byRuleId.set(selectedRuleId, { ...existing, status: "selected" });
+    }
+  }
+
+  return [...byRuleId.values()];
+}
 
 export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> {
   const startedAt = Date.now();
+  const requestId = crypto.randomUUID();
 
-  // 1. Detect modality from message content
   const modality = detectModality(req.messages);
+  const taskClass: TaskClass = classifyTask(req.messages);
 
-  // 2. Load venom model weights
   const { data: venomModel } = await supabaseAdmin
     .from("venom_models")
-    .select("slug, cost_weight, speed_weight, quality_weight, max_fallback_attempts")
+    .select(
+      "slug, weight_cost, weight_speed, weight_quality, max_fallback_attempts, strategy_config",
+    )
     .eq("slug", req.venomSlug)
     .single();
 
@@ -37,16 +101,22 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
   }
 
   const weights: VenomWeights = {
-    costWeight: Number(venomModel.cost_weight),
-    speedWeight: Number(venomModel.speed_weight),
-    qualityWeight: Number(venomModel.quality_weight),
+    costWeight: Number(venomModel.weight_cost),
+    speedWeight: Number(venomModel.weight_speed),
+    qualityWeight: Number(venomModel.weight_quality),
     maxFallbackAttempts: venomModel.max_fallback_attempts ?? 3,
   };
 
-  // 3. Load routing rules with model + account data
+  const tier = req.venomSlug as VenomTier;
+  const strategy = mergeStrategyConfig(
+    tier,
+    venomModel.strategy_config as Partial<import("@/lib/routing/strategy.types").TierStrategyConfig> | null,
+  );
+
   const { data: rawRules } = await supabaseAdmin
     .from("routing_rules")
-    .select(`
+    .select(
+      `
       id,
       priority,
       role,
@@ -76,7 +146,8 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
           confidence
         )
       )
-    `)
+    `,
+    )
     .eq("venom_slug", req.venomSlug)
     .eq("active", true);
 
@@ -112,8 +183,7 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
     ),
   );
 
-  // 4. Shape raw DB rows into RoutingCandidate[]
-  const allCandidates: RoutingCandidate[] = rawRules
+  const rawCandidates: RoutingCandidate[] = rawRules
     .filter((r: any) => r.models && r.accounts)
     .map((r: any) => {
       const model = Array.isArray(r.models) ? r.models[0] : r.models;
@@ -164,105 +234,138 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
       } satisfies RoutingCandidate;
     });
 
-  // 5. Filter candidates by modality + eligibility rules
-  const eligible = filterCandidates(allCandidates, modality);
-  const filteredCount = allCandidates.length - eligible.length;
+  // Enrich all candidates with costType and qualityScore
+  const allCandidates = rawCandidates.map(enrichCandidate);
 
-  if (eligible.length === 0) {
-    persistUsageAndTrace({
-      venomSlug: req.venomSlug,
-      ruleId: null,
-      accountId: null,
-      modelId: null,
-      apiKeyId: req.apiKeyId,
-      inputTokens: 0,
-      outputTokens: 0,
-      costUsd: 0,
-      latencyMs: Date.now() - startedAt,
-      success: false,
-      fallbackUsed: false,
-      fallbackCount: 0,
-      candidatesEvaluated: allCandidates.length,
-      candidatesFiltered: filteredCount,
-      selectedRuleId: null,
-      decisionReason: `No eligible candidates after filtering (${filteredCount} filtered from ${allCandidates.length})`,
-      modality,
-    }).catch(() => {});
+  // Global filter: lifecycle, enabled, account health, quota, capability, conditions
+  const { eligible: globalEligible, rejected } = filterCandidatesWithDiagnostics(
+    allCandidates,
+    modality,
+    strategy,
+  );
+  const filteredCount = rejected.length;
 
-    return {
-      success: false,
-      inputTokens: 0,
-      outputTokens: 0,
-      latencyMs: Date.now() - startedAt,
-      fallbackUsed: false,
-      fallbackCount: 0,
-      errorCode: "NO_ELIGIBLE_CANDIDATES",
-      modality,
-    };
-  }
-
-  // 6. Score + sort candidates descending
-  const scored = eligible
-    .map((c) => ({ candidate: c, score: scoreCandidate(c, weights) }))
-    .sort((a, b) => b.score - a.score);
-
-  // 7. Execute with fallback
   const chatReq = {
     messages: req.messages,
     maxTokens: req.maxTokens,
     temperature: req.temperature,
   };
 
-  const result = await executeWithFallback(scored, chatReq, weights.maxFallbackAttempts);
+  const stages = getEscalationStages(tier);
+  const allAttemptLog: Array<{ ruleId: string; error: string }> = [];
+  const allScored: Array<{ candidate: RoutingCandidate; score: number }> = [];
+  let finalResult: Awaited<ReturnType<typeof executeWithFallback>> | null = null;
+  let escalationStage = 0;
 
-  // 8. Calculate cost (inputCostPerMtok * inputTokens / 1_000_000 + outputCostPerMtok * outputTokens / 1_000_000)
-  const selectedRule = result.selectedRuleId
-    ? allCandidates.find((c) => c.ruleId === result.selectedRuleId)
+  for (let si = 0; si < stages.length; si++) {
+    const stage = stages[si];
+
+    // Filter eligible candidates to those allowed in this stage
+    let stageEligible = globalEligible.filter((c) =>
+      stage.allowedCostTypes.includes(c.costType ?? "free"),
+    );
+
+    if (stage.requireHighQuality) {
+      stageEligible = stageEligible.filter((c) => (c.qualityScore ?? 0) >= 0.6);
+    }
+
+    // Remove candidates already attempted in previous stages
+    const attemptedRuleIds = new Set(allAttemptLog.map((a) => a.ruleId));
+    stageEligible = stageEligible.filter((c) => !attemptedRuleIds.has(c.ruleId));
+
+    if (stageEligible.length === 0) continue;
+
+    const stageScored = stageEligible
+      .map((c) => ({ candidate: c, score: scoreCandidate(c, tier, taskClass, stageEligible) }))
+      .sort((a, b) => b.score - a.score);
+
+    allScored.push(...stageScored);
+
+    const rotated = applyAccountRotation(stageScored, strategy.account_rotation);
+
+    escalationStage = si + 1;
+    const result = await executeWithFallback(rotated, chatReq, weights.maxFallbackAttempts);
+    allAttemptLog.push(...result.attemptLog);
+
+    if (result.ok) {
+      finalResult = result;
+      break;
+    }
+  }
+
+  // Compute cost
+  const selectedRule = finalResult?.selectedRuleId
+    ? allCandidates.find((c) => c.ruleId === finalResult!.selectedRuleId)
     : null;
   const inputCostPerMtok = selectedRule?.model.inputCostPerMtok ?? 0;
   const outputCostPerMtok = selectedRule?.model.outputCostPerMtok ?? 0;
+  const inputTokens = finalResult?.inputTokens ?? 0;
+  const outputTokens = finalResult?.outputTokens ?? 0;
   const costUsd =
-    (result.inputTokens * inputCostPerMtok) / 1_000_000 +
-    (result.outputTokens * outputCostPerMtok) / 1_000_000;
+    (inputTokens * inputCostPerMtok) / 1_000_000 +
+    (outputTokens * outputCostPerMtok) / 1_000_000;
 
-  // 9. Build decision reason — rule IDs only, no secrets
-  const decisionReason = result.ok
-    ? `${result.fallbackCount > 0 ? `Fallback ${result.fallbackCount}: ` : "Primary: "}selected rule ${result.selectedRuleId} (score=${scored[0]?.score.toFixed(3) ?? "?"})${result.attemptLog.length > 0 ? ` after ${result.attemptLog.map((a) => a.ruleId).join(", ")} failed` : ""}`
-    : `All ${Math.min(weights.maxFallbackAttempts, scored.length)} candidates failed`;
+  const ok = finalResult?.ok ?? false;
+  const decisionReason = ok
+    ? `Stage ${escalationStage}: selected rule ${finalResult!.selectedRuleId} (taskClass=${taskClass})${allAttemptLog.length > 0 ? ` after ${allAttemptLog.map((a) => a.ruleId).join(", ")} failed` : ""}`
+    : `All ${stages.length} escalation stages exhausted (taskClass=${taskClass})`;
 
-  // 10. Persist usage + trace — fire-and-forget, never blocks the response
+  const traceCandidates = req.includeTrace
+    ? buildTraceCandidates(rejected, allScored, allAttemptLog, finalResult?.selectedRuleId)
+    : undefined;
+  const fallbackChain = allAttemptLog.map((a) => a.ruleId);
+
+  const trace: RoutingTrace | undefined = req.includeTrace
+    ? {
+        modality,
+        task_class: taskClass,
+        candidates_evaluated: allCandidates.length,
+        candidates_filtered: filteredCount,
+        decision_reason: decisionReason,
+        selected_rule_id: finalResult?.selectedRuleId ?? null,
+        fallback_attempts: finalResult?.fallbackCount ?? 0,
+        escalation_stage: escalationStage,
+        candidates: traceCandidates ?? [],
+        cost_usd: costUsd,
+      }
+    : undefined;
+
   persistUsageAndTrace({
     venomSlug: req.venomSlug,
-    ruleId: result.selectedRuleId ?? null,
+    ruleId: finalResult?.selectedRuleId ?? null,
     accountId: selectedRule?.account.id ?? null,
     modelId: selectedRule?.model.id ?? null,
     apiKeyId: req.apiKeyId,
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
+    inputTokens,
+    outputTokens,
     costUsd,
-    latencyMs: result.latencyMs,
-    success: result.ok,
-    fallbackUsed: result.fallbackUsed,
-    fallbackCount: result.fallbackCount,
+    latencyMs: finalResult?.latencyMs ?? Date.now() - startedAt,
+    success: ok,
+    fallbackUsed: finalResult?.fallbackUsed ?? false,
+    fallbackCount: finalResult?.fallbackCount ?? 0,
     candidatesEvaluated: allCandidates.length,
     candidatesFiltered: filteredCount,
-    selectedRuleId: result.selectedRuleId ?? null,
+    selectedRuleId: finalResult?.selectedRuleId ?? null,
     decisionReason,
     modality,
+    requestId,
+    candidates: traceCandidates,
+    fallbackChain,
   }).catch(() => {});
 
-  // 11. Return RoutingResult
   return {
-    success: result.ok,
-    content: result.content,
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
-    latencyMs: result.latencyMs,
-    fallbackUsed: result.fallbackUsed,
-    fallbackCount: result.fallbackCount,
-    errorCode: result.errorCode,
-    selectedRuleId: result.selectedRuleId,
+    success: ok,
+    content: finalResult?.content,
+    inputTokens,
+    outputTokens,
+    latencyMs: finalResult?.latencyMs ?? Date.now() - startedAt,
+    fallbackUsed: finalResult?.fallbackUsed ?? false,
+    fallbackCount: finalResult?.fallbackCount ?? 0,
+    errorCode: ok ? undefined : (finalResult?.errorCode ?? "ALL_STAGES_EXHAUSTED"),
+    selectedRuleId: finalResult?.selectedRuleId,
     modality,
-    providerAdapter: result.providerAdapter,
+    providerAdapter: finalResult?.providerAdapter,
+    trace,
+    costUsd,
   };
 }
