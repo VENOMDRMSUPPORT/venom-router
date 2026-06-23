@@ -1,5 +1,4 @@
 import { useSuspenseQuery, queryOptions, useQueryClient } from "@tanstack/react-query";
-import { useServerFn } from "@tanstack/react-start";
 import { Suspense, useState } from "react";
 import {
   Plus,
@@ -32,20 +31,15 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import {
-  listIntegrations,
-  listCatalogModels,
-  syncAccount,
-  toggleAccount,
-  disconnectAccount,
-  fetchModels,
-} from "@/lib/providers/integrations.functions";
+import { api } from "@/lib/api-client";
+import { type CatalogModel } from "@/lib/providers/integrations.functions";
 import {
   formatSyncToast,
   parseSyncResponse,
   patchAccountInProviders,
   invalidateModelViews,
 } from "@/lib/providers/sync-cache";
+import type { SyncAccountResult } from "@/lib/providers/sync-response.types";
 import { ProviderAccordion, type ProviderRow } from "@/components/providers/account-row";
 import { IntegrationCard } from "@/components/providers/integration-card";
 import { ConnectCredentialDialog } from "@/components/providers/connect-credential-dialog";
@@ -147,25 +141,19 @@ export function ProvidersList({ category }: { category: "oauth" | "free" }) {
 }
 
 function Body({ category }: { category: "oauth" | "free" }) {
-  const list = useServerFn(listIntegrations);
-  const catalogFn = useServerFn(listCatalogModels);
-  const sync = useServerFn(syncAccount);
-  const fetchM = useServerFn(fetchModels);
-  const toggle = useServerFn(toggleAccount);
-  const disconnect = useServerFn(disconnectAccount);
   const qc = useQueryClient();
 
   const { data } = useSuspenseQuery(
     queryOptions({
       queryKey: ["integrations", category],
-      queryFn: () => list({ data: { category } }) as unknown as Promise<ProviderRow[]>,
+      queryFn: () => api.get<ProviderRow[]>(`/api/dashboard/integrations?category=${category}`),
     }),
   );
 
   const { data: catalog } = useSuspenseQuery(
     queryOptions({
       queryKey: ["catalog-models"],
-      queryFn: () => catalogFn(),
+      queryFn: () => api.get<CatalogModel[]>("/api/dashboard/catalog-models"),
     }),
   );
 
@@ -220,7 +208,11 @@ function Body({ category }: { category: "oauth" | "free" }) {
 
   async function doSyncAll(ids: string[]) {
     for (const id of ids) {
-      const r = await parseSyncResponse(await sync({ data: { account_id: id } }));
+      const r = await parseSyncResponse(
+        await api.post<SyncAccountResult>(`/api/dashboard/accounts/${id}/sync`, {
+          account_id: id,
+        }),
+      );
       if (r?.ok) {
         qc.setQueryData(["integrations", category], (prev: ProviderRow[] | undefined) =>
           patchAccountInProviders(prev, r),
@@ -242,7 +234,7 @@ function Body({ category }: { category: "oauth" | "free" }) {
     const req = { account_id: id };
     const dbId = startDebug(id, "syncAccount", req);
     try {
-      const raw = await sync({ data: req });
+      const raw = await api.post<SyncAccountResult>(`/api/dashboard/accounts/${id}/sync`, req);
       const r = await parseSyncResponse(raw);
       resolveDebug(dbId, r, Date.now() - t0);
       if (r?.ok) {
@@ -266,7 +258,7 @@ function Body({ category }: { category: "oauth" | "free" }) {
     const req = { account_id: id };
     const dbId = startDebug(id, "fetchModels", req);
     try {
-      const r: any = await fetchM({ data: req });
+      const r: any = await api.post(`/api/dashboard/accounts/${id}/fetch-models`, req);
       resolveDebug(dbId, r, Date.now() - t0);
       if (r?.slug === "antigravity") {
         toast.success(formatAntigravityFetchToast({ visibleCount: r.ideVisible ?? 0 }));
@@ -282,7 +274,7 @@ function Body({ category }: { category: "oauth" | "free" }) {
   }
   async function doToggle(id: string, status: "healthy" | "degraded") {
     try {
-      await toggle({ data: { account_id: id, status } });
+      await api.post(`/api/dashboard/accounts/${id}/toggle`, { account_id: id, status });
       await invalidateProviderData();
     } catch (e: any) {
       toast.error(e?.message ?? "Failed");
@@ -291,7 +283,7 @@ function Body({ category }: { category: "oauth" | "free" }) {
   async function doDelete(id: string) {
     if (!confirm("Disconnect this account?")) return;
     try {
-      await disconnect({ data: { account_id: id } });
+      await api.post(`/api/dashboard/accounts/${id}/disconnect`, { account_id: id });
       toast.success("Disconnected");
       await invalidateProviderData();
     } catch (e: any) {

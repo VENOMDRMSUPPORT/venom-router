@@ -2,6 +2,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { unpackCredentials, packCredentials } from "@/lib/credentials.server";
 import type { StoredCredentials } from "@/lib/providers/adapters/types";
+import { listAccounts } from "@/lib/db/providers.server";
 
 export interface AccountHealthCheckResult {
   account_id: string;
@@ -27,20 +28,40 @@ function isClaudeAuthError(slug: string, e: unknown): boolean {
 export async function runHealthChecks(
   supabase: SupabaseClient,
 ): Promise<AccountHealthCheckResult[]> {
-  const { data: accounts, error } = await supabase
-    .from("accounts")
-    .select("id,credentials_enc,credentials_iv,credentials_tag,quota_extra,providers(slug)")
-    .neq("status", "expired");
+  const accounts = await listAccounts(supabase, { status: ["healthy", "degraded"] });
 
-  if (error) throw new Error(`Health check: failed to fetch accounts: ${error.message}`);
+  if (!accounts.length) return [];
+
+  const { data: credRows, error: credErr } = await supabase
+    .from("accounts")
+    .select("id,credentials_enc,credentials_iv,credentials_tag,quota_extra")
+    .in("id", accounts.map((a) => a.id));
+
+  if (credErr) throw new Error(`Health check: failed to fetch credentials: ${credErr.message}`);
+
+  type CredRow = {
+    id: string;
+    credentials_enc: unknown;
+    credentials_iv: unknown;
+    credentials_tag: unknown;
+    quota_extra: Record<string, unknown> | null;
+  };
+  const credMap = new Map<string, CredRow>(
+    ((credRows ?? []) as CredRow[]).map((r) => [r.id, r]),
+  );
 
   const results: AccountHealthCheckResult[] = [];
   const checkedAt = new Date().toISOString();
 
-  for (const acct of accounts ?? []) {
-    const slug = (acct.providers as { slug?: string } | null)?.slug ?? "";
+  for (const acct of accounts) {
+    const credRow = credMap.get(acct.id);
+    if (!credRow) {
+      console.warn(`[health-check] no credentials row for account ${acct.id}, skipping`);
+      continue;
+    }
+    const slug = acct.provider_slug;
     let result: AccountHealthCheckResult = {
-      account_id: acct.id as string,
+      account_id: acct.id,
       provider_slug: slug,
       ok: false,
       latency_ms: 0,
@@ -55,9 +76,9 @@ export async function runHealthChecks(
 
     try {
       const credsIn = unpackCredentials({
-        credentials_enc: acct.credentials_enc,
-        credentials_iv: acct.credentials_iv,
-        credentials_tag: acct.credentials_tag,
+        credentials_enc: credRow.credentials_enc,
+        credentials_iv: credRow.credentials_iv,
+        credentials_tag: credRow.credentials_tag,
       });
       const t0 = Date.now();
 

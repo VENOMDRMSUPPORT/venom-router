@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSuspenseQuery, queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useServerFn } from "@tanstack/react-start";
 import { Suspense, useState } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,7 +31,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Key, KeyRound, Plus, Copy, Check, Ban, Trash2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
-import { listApiKeys, createApiKey, revokeApiKey, deleteApiKey } from "@/lib/venom.functions";
+import { api } from "@/lib/api-client";
+import type { ApiKey } from "@/lib/db/api-keys.server";
 
 export const Route = createFileRoute("/_authenticated/api-keys")({
   head: () => ({ meta: [{ title: "API Keys — Venom Router" }] }),
@@ -60,8 +60,12 @@ function ApiKeysPage() {
 }
 
 function ApiKeysList() {
-  const fn = useServerFn(listApiKeys);
-  const { data } = useSuspenseQuery(queryOptions({ queryKey: ["api-keys"], queryFn: () => fn() }));
+  const { data } = useSuspenseQuery(
+    queryOptions({
+      queryKey: ["api-keys"],
+      queryFn: () => api.get<KeyRowData[]>("/api/dashboard/api-keys"),
+    }),
+  );
   if (data.length === 0) {
     return (
       <Card className="border-border/60">
@@ -84,14 +88,12 @@ function ApiKeysList() {
   );
 }
 
-type KeyRowData = Awaited<ReturnType<typeof listApiKeys>>[number];
+type KeyRowData = ApiKey;
 
 function KeyRow({ k }: { k: KeyRowData }) {
   const qc = useQueryClient();
-  const revokeFn = useServerFn(revokeApiKey);
-  const deleteFn = useServerFn(deleteApiKey);
   const revoke = useMutation({
-    mutationFn: () => revokeFn({ data: { id: k.id } }),
+    mutationFn: () => api.patch<{ ok: true }>(`/api/dashboard/api-keys/${k.id}`),
     onSuccess: () => {
       toast.success("Key revoked");
       qc.invalidateQueries({ queryKey: ["api-keys"] });
@@ -99,7 +101,7 @@ function KeyRow({ k }: { k: KeyRowData }) {
     onError: (e: Error) => toast.error(e.message),
   });
   const del = useMutation({
-    mutationFn: () => deleteFn({ data: { id: k.id } }),
+    mutationFn: () => api.delete<{ ok: true }>(`/api/dashboard/api-keys/${k.id}`),
     onSuccess: () => {
       toast.success("Key deleted");
       qc.invalidateQueries({ queryKey: ["api-keys"] });
@@ -192,7 +194,6 @@ const ALL_MODELS: VenomSlug[] = ["lite", "pro", "max"];
 
 function CreateKeyButton() {
   const qc = useQueryClient();
-  const createFn = useServerFn(createApiKey);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [allowed, setAllowed] = useState<VenomSlug[]>(["lite", "pro", "max"]);
@@ -204,14 +205,12 @@ function CreateKeyButton() {
 
   const m = useMutation({
     mutationFn: () =>
-      createFn({
-        data: {
-          name: name.trim(),
-          allowed_models: allowed,
-          rpm_limit: rpm ? +rpm : null,
-          tpd_limit: tpd ? +tpd : null,
-          monthly_cap_usd: cap ? +cap : null,
-        },
+      api.post<{ id: string; raw: string; prefix: string }>("/api/dashboard/api-keys", {
+        name: name.trim(),
+        allowed_models: allowed,
+        rpm_limit: rpm ? +rpm : null,
+        tpd_limit: tpd ? +tpd : null,
+        monthly_cap_usd: cap ? +cap : null,
       }),
     onSuccess: (res) => {
       setRevealed(res.raw);

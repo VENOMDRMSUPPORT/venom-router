@@ -1,5 +1,4 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { useServerFn } from "@tanstack/react-start";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Loader2,
@@ -32,13 +31,7 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import {
-  fetchAntigravityLiveSnapshot,
-  loadAntigravityStoredSnapshot,
-  diagnoseAntigravityFetch,
-  testAccountModels,
-  setModelsEnabled,
-} from "@/lib/providers/integrations.functions";
+import { api } from "@/lib/api-client";
 import type { AntigravityFetchDiagnosis } from "@/lib/providers/antigravity-fetch-diagnostics.types";
 import {
   filterSnapshotModels,
@@ -89,11 +82,6 @@ export function AntigravityLiveModelDialog({
   accountId: string | null;
 }) {
   const qc = useQueryClient();
-  const fetchLive = useServerFn(fetchAntigravityLiveSnapshot);
-  const loadStored = useServerFn(loadAntigravityStoredSnapshot);
-  const diagnose = useServerFn(diagnoseAntigravityFetch);
-  const test = useServerFn(testAccountModels);
-  const setEnabled = useServerFn(setModelsEnabled);
 
   const [snapshot, setSnapshot] = useState<AntigravityLiveFetchSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
@@ -151,9 +139,9 @@ export function AntigravityLiveModelDialog({
       setBusy(true);
       setBusyMessage("Loading saved models…");
       try {
-        const result = (await loadStored({
-          data: { account_id: accountId },
-        })) as AntigravityLiveFetchSnapshot | null;
+        const result = (await api.get(
+          `/api/dashboard/accounts/${accountId}/antigravity/stored-snapshot`,
+        )) as AntigravityLiveFetchSnapshot | null;
         if (cancelled || !result) return;
         setSnapshot(result);
         setSelection(
@@ -174,7 +162,7 @@ export function AntigravityLiveModelDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, accountId, loadStored]);
+  }, [open, accountId]);
 
   /* ─── actions ──────────────────────────────────────────────────── */
 
@@ -184,9 +172,10 @@ export function AntigravityLiveModelDialog({
     setBusyMessage("Refreshing Antigravity models…");
     setFetchError(null);
     try {
-      const result = (await fetchLive({
-        data: { account_id: accountId },
-      })) as AntigravityLiveFetchSnapshot;
+      const result = (await api.post(
+        `/api/dashboard/accounts/${accountId}/antigravity/live-snapshot`,
+        { account_id: accountId },
+      )) as AntigravityLiveFetchSnapshot;
       setSnapshot(result);
       setSelection(
         Object.fromEntries(
@@ -204,15 +193,15 @@ export function AntigravityLiveModelDialog({
       setBusy(false);
       setBusyMessage(null);
     }
-  }, [accountId, fetchLive, qc]);
+  }, [accountId, qc]);
 
   async function runDeepDiagnostics() {
     if (!accountId) return;
     setBusy(true);
     setBusyMessage("Running deep diagnostics…");
     try {
-      const result = (await diagnose({
-        data: { account_id: accountId },
+      const result = (await api.post(`/api/dashboard/accounts/${accountId}/antigravity/diagnose`, {
+        account_id: accountId,
       })) as AntigravityFetchDiagnosis;
       setDiagnosis(result);
       setRawDrawer({ kind: "diagnosis", data: result });
@@ -235,8 +224,9 @@ export function AntigravityLiveModelDialog({
 
     for (const id of ids) {
       try {
-        const results = (await test({
-          data: { account_id: accountId, external_ids: [id] },
+        const results = (await api.post(`/api/dashboard/accounts/${accountId}/models/test`, {
+          account_id: accountId,
+          external_ids: [id],
         })) as Array<{
           external_id: string;
           ok: boolean;
@@ -302,7 +292,10 @@ export function AntigravityLiveModelDialog({
     }
     setBusy(true);
     try {
-      await setEnabled({ data: { account_id: accountId, enabled: patch } });
+      await api.post(`/api/dashboard/accounts/${accountId}/models/enabled`, {
+        account_id: accountId,
+        enabled: patch,
+      });
       await invalidateModelViews(qc);
       await qc.invalidateQueries({ queryKey: ["integrations"] });
       toast.success("Routing selection saved");

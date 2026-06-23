@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { checkOwnerExists } from "@/lib/public.functions";
+
 
 export const Route = createFileRoute("/auth")({
   ssr: false,
@@ -28,7 +28,8 @@ function AuthPage() {
   }, [navigate]);
 
   useEffect(() => {
-    checkOwnerExists()
+    fetch("/api/public/owner-exists")
+      .then((res) => res.json())
       .then(({ ownerExists }) => setOwnerExists(ownerExists))
       .catch(() => setOwnerExists(true));
   }, []);

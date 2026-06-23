@@ -1,6 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import {
   Gauge,
@@ -22,13 +21,14 @@ import {
 import { Header } from "@/components/layout/header";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { listIntegrations, syncAccount } from "@/lib/providers/integrations.functions";
+import { api } from "@/lib/api-client";
 import {
   formatSyncToast,
   parseSyncResponse,
   patchAccountInProviders,
   invalidateModelViews,
 } from "@/lib/providers/sync-cache";
+import type { SyncAccountResult } from "@/lib/providers/sync-response.types";
 import type { ProviderRow, AccountRow } from "@/components/providers/account-row";
 import { ProviderIcon } from "@/components/providers/provider-icon";
 import {
@@ -60,8 +60,6 @@ function QuotaDashboardRoute() {
 }
 
 function QuotaDashboard() {
-  const list = useServerFn(listIntegrations);
-  const sync = useServerFn(syncAccount);
   const qc = useQueryClient();
 
   const [search, setSearch] = useState("");
@@ -76,7 +74,7 @@ function QuotaDashboard() {
     isRefetching: oauthRefetching,
   } = useQuery({
     queryKey: ["integrations", "oauth"],
-    queryFn: () => list({ data: { category: "oauth" } }) as unknown as Promise<ProviderRow[]>,
+    queryFn: () => api.get<ProviderRow[]>("/api/dashboard/integrations?category=oauth"),
   });
 
   const {
@@ -85,7 +83,7 @@ function QuotaDashboard() {
     isRefetching: freeRefetching,
   } = useQuery({
     queryKey: ["integrations", "free"],
-    queryFn: () => list({ data: { category: "free" } }) as unknown as Promise<ProviderRow[]>,
+    queryFn: () => api.get<ProviderRow[]>("/api/dashboard/integrations?category=free"),
   });
 
   const isLoading = oauthLoading || freeLoading;
@@ -118,7 +116,11 @@ function QuotaDashboard() {
   async function handleSyncAccount(accountId: string, email: string, category: "oauth" | "free") {
     setSyncingAccounts((prev) => ({ ...prev, [accountId]: true }));
     try {
-      const r = await parseSyncResponse(await sync({ data: { account_id: accountId } }));
+      const r = await parseSyncResponse(
+        await api.post<SyncAccountResult>(`/api/dashboard/accounts/${accountId}/sync`, {
+          account_id: accountId,
+        }),
+      );
       if (r?.ok) {
         qc.setQueryData(["integrations", category], (prev: ProviderRow[] | undefined) =>
           patchAccountInProviders(prev, r),
@@ -148,7 +150,11 @@ function QuotaDashboard() {
     await Promise.all(
       allAccounts.map(async (acc) => {
         try {
-          const r = await parseSyncResponse(await sync({ data: { account_id: acc.id } }));
+          const r = await parseSyncResponse(
+            await api.post<SyncAccountResult>(`/api/dashboard/accounts/${acc.id}/sync`, {
+              account_id: acc.id,
+            }),
+          );
           if (r?.ok) {
             qc.setQueryData(["integrations", acc.category], (prev: ProviderRow[] | undefined) =>
               patchAccountInProviders(prev, r),

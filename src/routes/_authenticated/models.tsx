@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSuspenseQuery, queryOptions, useQueryClient } from "@tanstack/react-query";
-import { useServerFn } from "@tanstack/react-start";
 import { Suspense, useMemo, useState, Fragment } from "react";
 import {
   Brain,
@@ -33,12 +32,8 @@ import {
 } from "@/components/ui/select";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
-import {
-  listCatalogModels,
-  testAccountModels,
-  setModelsEnabled,
-  type CatalogModel,
-} from "@/lib/providers/integrations.functions";
+import { api } from "@/lib/api-client";
+import { type CatalogModel } from "@/lib/providers/integrations.functions";
 import { invalidateModelViews } from "@/lib/providers/sync-cache";
 import { ProviderIcon } from "@/components/providers/provider-icon";
 import { ModelCapabilityIcons } from "@/components/providers/model-capability-icons";
@@ -118,13 +113,13 @@ function TestStatusBadge({
 }
 
 function ModelsBody() {
-  const fn = useServerFn(listCatalogModels);
   const qc = useQueryClient();
-  const testFn = useServerFn(testAccountModels);
-  const setEnabledFn = useServerFn(setModelsEnabled);
 
   const { data } = useSuspenseQuery(
-    queryOptions({ queryKey: ["catalog-models"], queryFn: () => fn() }),
+    queryOptions({
+      queryKey: ["catalog-models"],
+      queryFn: () => api.get<CatalogModel[]>("/api/dashboard/catalog-models"),
+    }),
   );
 
   const [search, setSearch] = useState("");
@@ -165,7 +160,10 @@ function ModelsBody() {
     if (!first) return;
     setBusyKey(model.key);
     try {
-      await testFn({ data: { account_id: first.id, external_ids: [model.external_id] } });
+      await api.post(`/api/dashboard/accounts/${first.id}/models/test`, {
+        account_id: first.id,
+        external_ids: [model.external_id],
+      });
       await invalidateModelViews(qc);
       toast.success(`Tested ${model.display_name}`);
     } catch (e: unknown) {
@@ -180,8 +178,9 @@ function ModelsBody() {
     try {
       for (const row of model.account_rows) {
         if (!row.account_id) continue;
-        await setEnabledFn({
-          data: { account_id: row.account_id, enabled: { [row.id]: enabled } },
+        await api.post(`/api/dashboard/accounts/${row.account_id}/models/enabled`, {
+          account_id: row.account_id,
+          enabled: { [row.id]: enabled },
         });
       }
       await invalidateModelViews(qc);

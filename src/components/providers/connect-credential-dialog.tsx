@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useServerFn } from "@tanstack/react-start";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, ShieldCheck } from "lucide-react";
 import {
@@ -14,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { connectCredential } from "@/lib/providers/integrations.functions";
+import { api } from "@/lib/api-client";
 
 export function ConnectCredentialDialog({
   open,
@@ -30,7 +29,6 @@ export function ConnectCredentialDialog({
   providerName: string;
 }) {
   const qc = useQueryClient();
-  const submit = useServerFn(connectCredential);
   const [credential, setCredential] = useState("");
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
@@ -39,13 +37,11 @@ export function ConnectCredentialDialog({
     if (!credential.trim()) return;
     setBusy(true);
     try {
-      const r: any = await submit({
-        data: {
-          provider_slug: providerSlug,
-          auth_type: "api_key",
-          credential: credential.trim(),
-          label: label.trim() || undefined,
-        },
+      const r: any = await api.post("/api/dashboard/credentials/connect", {
+        provider_slug: providerSlug,
+        auth_type: "api_key",
+        credential: credential.trim(),
+        label: label.trim() || undefined,
       });
       if (r?.health?.ok === false) {
         toast.warning(`Saved, but health check failed: ${r.health.error ?? "unknown"}`);

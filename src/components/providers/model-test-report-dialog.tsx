@@ -1,5 +1,4 @@
 import { useState, useMemo } from "react";
-import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Play, RefreshCw, Search } from "lucide-react";
 import {
@@ -17,13 +16,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import {
-  listAccountModels,
-  testAccountModels,
-  syncAccount,
-  setModelsEnabled,
-} from "@/lib/providers/integrations.functions";
+import { api } from "@/lib/api-client";
 import { parseSyncResponse, invalidateModelViews } from "@/lib/providers/sync-cache";
+import type { SyncAccountResult } from "@/lib/providers/sync-response.types";
 
 export function ModelTestReportDialog({
   open,
@@ -37,10 +32,6 @@ export function ModelTestReportDialog({
   providerName: string;
 }) {
   const qc = useQueryClient();
-  const list = useServerFn(listAccountModels);
-  const test = useServerFn(testAccountModels);
-  const sync = useServerFn(syncAccount);
-  const setEnabled = useServerFn(setModelsEnabled);
 
   const [tab, setTab] = useState<"fetch" | "test">("test");
   const [search, setSearch] = useState("");
@@ -49,7 +40,7 @@ export function ModelTestReportDialog({
 
   const q = useQuery({
     queryKey: ["account-models", accountId],
-    queryFn: () => list({ data: { account_id: accountId! } }),
+    queryFn: () => api.get(`/api/dashboard/accounts/${accountId!}/models`),
     enabled: open && !!accountId,
   });
 
@@ -72,7 +63,11 @@ export function ModelTestReportDialog({
     if (!accountId) return;
     setBusy(true);
     try {
-      await parseSyncResponse(await sync({ data: { account_id: accountId } }));
+      await parseSyncResponse(
+        await api.post<SyncAccountResult>(`/api/dashboard/accounts/${accountId}/sync`, {
+          account_id: accountId,
+        }),
+      );
       await q.refetch();
       await invalidateModelViews(qc);
       toast.success("Models refreshed");
@@ -89,7 +84,10 @@ export function ModelTestReportDialog({
     if (!ids.length) return;
     setBusy(true);
     try {
-      await test({ data: { account_id: accountId, external_ids: ids } });
+      await api.post(`/api/dashboard/accounts/${accountId}/models/test`, {
+        account_id: accountId,
+        external_ids: ids,
+      });
       await q.refetch();
       await invalidateModelViews(qc);
       toast.success("Test complete");
@@ -113,7 +111,10 @@ export function ModelTestReportDialog({
         onOpenChange(false);
         return;
       }
-      await setEnabled({ data: { account_id: accountId, enabled: patch } });
+      await api.post(`/api/dashboard/accounts/${accountId}/models/enabled`, {
+        account_id: accountId,
+        enabled: patch,
+      });
       await qc.invalidateQueries({ queryKey: ["integrations"] });
       await invalidateModelViews(qc);
       await q.refetch();

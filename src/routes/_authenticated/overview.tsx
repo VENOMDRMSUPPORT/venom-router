@@ -1,6 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useSuspenseQuery, queryOptions } from "@tanstack/react-query";
-import { useServerFn } from "@tanstack/react-start";
 import { Suspense } from "react";
 import {
   LayoutDashboard,
@@ -31,7 +30,7 @@ import { Header } from "@/components/layout/header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useDashboardChrome } from "@/lib/use-dashboard-chrome";
-import { getDashboardMetrics } from "@/lib/venom.functions";
+import { api } from "@/lib/api-client";
 import { cn, formatRelativeTime } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/overview")({
@@ -60,10 +59,9 @@ function OverviewSkeleton() {
 
 function Overview() {
   const { onOpenSidebar } = useDashboardChrome();
-  const fn = useServerFn(getDashboardMetrics);
   const { data: metrics } = useSuspenseQuery(
-    queryOptions({ queryKey: ["dashboard-metrics"], queryFn: () => fn() }),
-  );
+    queryOptions({ queryKey: ["dashboard-metrics"], queryFn: () => api.get("/api/dashboard/metrics") }),
+  )  as { data: any };
 
   const checklistDone = [
     metrics.checklist.owner_created,

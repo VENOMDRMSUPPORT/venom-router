@@ -4,6 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 
 export type VenomModel = {
   slug: "lite" | "pro" | "max"
+  display_name: string
+  description: string | null
   weight_cost: number
   weight_speed: number
   weight_quality: number
@@ -20,7 +22,11 @@ export type RoutingRule = {
   active: boolean
   role: string
   model_external_id: string
+  model_display_name: string
   provider_slug: string
+  provider_name: string
+  account_email: string | null
+  account_label: string | null
 }
 
 // ── Exported functions ─────────────────────────────────────────────────────────
@@ -31,7 +37,7 @@ export async function getVenomModel(
 ): Promise<VenomModel> {
   const { data, error } = await supabase
     .from("venom_models")
-    .select("slug,weight_cost,weight_speed,weight_quality,max_fallback_attempts,timeout_ms")
+    .select("slug,display_name,description,weight_cost,weight_speed,weight_quality,max_fallback_attempts,timeout_ms")
     .eq("slug", slug)
     .single()
   if (error || !data) throw new Error(`getVenomModel: ${error?.message ?? "not found"}`)
@@ -41,7 +47,7 @@ export async function getVenomModel(
 export async function listVenomModels(supabase: SupabaseClient): Promise<VenomModel[]> {
   const { data, error } = await supabase
     .from("venom_models")
-    .select("slug,weight_cost,weight_speed,weight_quality,max_fallback_attempts,timeout_ms")
+    .select("slug,display_name,description,weight_cost,weight_speed,weight_quality,max_fallback_attempts,timeout_ms")
     .order("slug")
   if (error) throw new Error(`listVenomModels: ${error.message}`)
   return (data ?? []) as unknown as VenomModel[]
@@ -54,7 +60,7 @@ export async function listRoutingRules(
   let q = supabase
     .from("routing_rules")
     .select(
-      "id,venom_slug,model_id,account_id,priority,active,role,models!inner(external_id,providers!inner(slug))",
+      "id,venom_slug,model_id,account_id,priority,active,role,models!inner(external_id,display_name,providers!inner(slug,name)),accounts!inner(email,label)",
     )
     .order("priority", { ascending: false })
   if (opts?.venomSlug) q = (q as any).eq("venom_slug", opts.venomSlug)
@@ -72,6 +78,10 @@ export async function listRoutingRules(
     active: row.active,
     role: row.role ?? "",
     model_external_id: row.models?.external_id ?? "",
+    model_display_name: row.models?.display_name ?? "",
     provider_slug: row.models?.providers?.slug ?? "",
+    provider_name: row.models?.providers?.name ?? "",
+    account_email: row.accounts?.email ?? null,
+    account_label: row.accounts?.label ?? null,
   }))
 }

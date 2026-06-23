@@ -236,22 +236,15 @@ export const listProviders = createServerFn({ method: "GET" })
 export const listVenomModels = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { data, error } = await context.supabase.from("venom_models").select("*").order("slug");
-    if (error) throw new Error(error.message);
-    return data ?? [];
+    const { listVenomModels: dbListVenomModels } = await import("@/lib/db/venom.server");
+    return dbListVenomModels(context.supabase);
   });
 
 export const listApiKeys = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { data, error } = await context.supabase
-      .from("venom_api_keys")
-      .select(
-        "id,name,key_prefix,allowed_models,rpm_limit,tpd_limit,monthly_cap_usd,revoked_at,last_used_at,created_at",
-      )
-      .order("created_at", { ascending: false });
-    if (error) throw new Error(error.message);
-    return data ?? [];
+    const { listApiKeys: dbListApiKeys } = await import("@/lib/db/api-keys.server");
+    return dbListApiKeys(context.supabase);
   });
 
 // ───── Venom Models: update weights, timeout, fallback attempts ─────
@@ -372,6 +365,86 @@ export const deleteApiKey = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => z.object({ id: z.string().uuid() }).parse(data))
   .handler(async ({ data, context }) => {
     const { error } = await context.supabase.from("venom_api_keys").delete().eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ───── Routing Rules ─────
+
+export const listRules = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { listRoutingRules } = await import("@/lib/db/venom.server");
+    return listRoutingRules(context.supabase);
+  });
+
+export const listApprovedAccountModels = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase
+      .from("account_models")
+      .select(
+        "id,account_id,model_id,models!inner(external_id,display_name,providers!inner(slug,name)),accounts!inner(email,label)",
+      )
+      .eq("lifecycle", "approved")
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    return ((data ?? []) as any[]).map((row) => ({
+      id: row.id as string,
+      account_id: row.account_id as string,
+      model_id: row.model_id as string,
+      model_external_id: (row.models?.external_id ?? "") as string,
+      model_display_name: (row.models?.display_name ?? "") as string,
+      provider_slug: (row.models?.providers?.slug ?? "") as string,
+      provider_name: (row.models?.providers?.name ?? "") as string,
+      account_email: (row.accounts?.email ?? null) as string | null,
+      account_label: (row.accounts?.label ?? null) as string | null,
+    }));
+  });
+
+const createRuleSchema = z.object({
+  venom_slug: z.enum(["lite", "pro", "max"]),
+  model_id: z.string().uuid(),
+  account_id: z.string().uuid(),
+  priority: z.number().int().min(0).max(9999),
+  role: z.enum(["primary", "fallback"]).default("primary"),
+  active: z.boolean().default(true),
+});
+export const createRoutingRule = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((data: unknown) => createRuleSchema.parse(data))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase.from("routing_rules").insert({
+      venom_slug: data.venom_slug,
+      model_id: data.model_id,
+      account_id: data.account_id,
+      priority: data.priority,
+      role: data.role,
+      active: data.active,
+    });
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteRoutingRule = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((data: unknown) => z.object({ id: z.string().uuid() }).parse(data))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase.from("routing_rules").delete().eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const toggleRoutingRule = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((data: unknown) =>
+    z.object({ id: z.string().uuid(), active: z.boolean() }).parse(data),
+  )
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("routing_rules")
+      .update({ active: data.active })
+      .eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });

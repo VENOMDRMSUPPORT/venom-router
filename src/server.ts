@@ -92,6 +92,24 @@ export default {
         }
       }
 
+      // ── Public REST API (no auth) ────────────────────────────────────
+      if (url.pathname === "/api/public/owner-exists" && request.method === "GET") {
+        const { data } = await (
+          await import("@/integrations/supabase/client.server")
+        ).supabaseAdmin.auth.admin.listUsers({ perPage: 1, page: 1 });
+        return new Response(JSON.stringify({ ownerExists: (data?.users?.length ?? 0) > 0 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // ── Dashboard REST API ───────────────────────────────────────────
+      if (url.pathname.startsWith("/api/dashboard/")) {
+        const { handleDashboardAPI } = await import("./lib/api/dashboard-router.server");
+        const res = await handleDashboardAPI(request);
+        if (res) return res;
+      }
+
       // ── TanStack SSR ─────────────────────────────────────────────────
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);

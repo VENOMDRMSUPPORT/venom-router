@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useServerFn } from "@tanstack/react-start";
 import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Loader2, AlertCircle } from "lucide-react";
 import {
@@ -11,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { completeOAuthFlow, startOAuthFlow } from "@/lib/providers/integrations.functions";
+import { api } from "@/lib/api-client";
 import { invalidateModelViews } from "@/lib/providers/sync-cache";
 
 type Step = "waiting" | "success" | "error";
@@ -37,8 +36,6 @@ export function OAuthConnectModal({
   providerName: string;
 }) {
   const qc = useQueryClient();
-  const start = useServerFn(startOAuthFlow);
-  const complete = useServerFn(completeOAuthFlow);
 
   const [step, setStep] = useState<Step>("waiting");
   const [error, setError] = useState<string | null>(null);
@@ -66,8 +63,10 @@ export function OAuthConnectModal({
 
       processedRef.current = true;
       try {
-        const r: any = await complete({
-          data: { flow_id: flowId, code: payload.code, state: payload.state },
+        const r: any = await api.post("/api/dashboard/oauth/complete", {
+          flow_id: flowId,
+          code: payload.code,
+          state: payload.state,
         });
         if (r?.health?.ok === false) {
           toast.warning(`Connected, but sync failed: ${r.health.error ?? "unknown"}`);
@@ -84,7 +83,7 @@ export function OAuthConnectModal({
         setStep("error");
       }
     },
-    [complete, flowId, onOpenChange, onSuccess, providerName, qc],
+    [flowId, onOpenChange, onSuccess, providerName, qc],
   );
 
   const launchFlow = useCallback(async () => {
@@ -94,8 +93,9 @@ export function OAuthConnectModal({
       setStep("waiting");
       processedRef.current = false;
       const redirect_uri = `${window.location.origin}/callback`;
-      const r: any = await start({
-        data: { provider_slug: providerSlug as "claude-code" | "antigravity", redirect_uri },
+      const r: any = await api.post("/api/dashboard/oauth/start", {
+        provider_slug: providerSlug as "claude-code" | "antigravity",
+        redirect_uri,
       });
       setFlowId(r.flow_id);
       popupRef.current = window.open(
@@ -111,7 +111,7 @@ export function OAuthConnectModal({
       setError(e?.message ?? "Failed to start OAuth");
       setStep("error");
     }
-  }, [providerSlug, start]);
+  }, [providerSlug]);
 
   useEffect(() => {
     if (open && providerSlug) {

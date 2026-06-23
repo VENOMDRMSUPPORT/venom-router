@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSuspenseQuery, queryOptions } from "@tanstack/react-query";
-import { useServerFn } from "@tanstack/react-start";
 import { Suspense } from "react";
 import { Zap } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { listVenomModels } from "@/lib/venom.functions";
+import { api } from "@/lib/api-client";
+import type { VenomModel } from "@/lib/db/venom.server";
 
 export const Route = createFileRoute("/_authenticated/venom-models")({
   head: () => ({ meta: [{ title: "Venom Models — Venom Router" }] }),
@@ -27,9 +27,8 @@ export const Route = createFileRoute("/_authenticated/venom-models")({
 });
 
 function VenomModelsBody() {
-  const fn = useServerFn(listVenomModels);
   const { data } = useSuspenseQuery(
-    queryOptions({ queryKey: ["venom-models"], queryFn: () => fn() }),
+    queryOptions({ queryKey: ["venom-models"], queryFn: () => api.get<VenomModel[]>("/api/dashboard/venom-models") }),
   );
 
   return (

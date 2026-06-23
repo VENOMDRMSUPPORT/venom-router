@@ -294,7 +294,7 @@ export const connectCredential = createServerFn({ method: "POST" })
     return { ok: true, account_id: account.id, health };
   });
 
-async function runProviderModelSync(
+export async function runProviderModelSync(
   supabase: any,
   opts: {
     accountId: string;
@@ -317,7 +317,10 @@ async function runProviderModelSync(
   });
 }
 
-async function syncAccountInternal(supabase: any, accountId: string): Promise<SyncAccountResponse> {
+export async function syncAccountInternal(
+  supabase: any,
+  accountId: string,
+): Promise<SyncAccountResponse> {
   const startedAt = Date.now();
   const syncedAt = new Date().toISOString();
   const dbWrites: string[] = [];
@@ -573,7 +576,7 @@ function slimQuotaExtraForWire(
   };
 }
 
-function toSyncAccountWireResponse(result: SyncAccountResponse): SyncAccountResponse {
+export function toSyncAccountWireResponse(result: SyncAccountResponse): SyncAccountResponse {
   return {
     ...result,
     account: {
@@ -687,7 +690,7 @@ async function persistAntigravityQuotaToAccount(
   await supabase.from("accounts").update(patch).eq("id", accountId);
 }
 
-async function runAntigravityLiveSnapshotFetch(
+export async function runAntigravityLiveSnapshotFetch(
   supabase: any,
   accountId: string,
   opts: { autoTest?: boolean } = {},
@@ -779,7 +782,7 @@ async function runAntigravityLiveSnapshotFetch(
     );
   }
 
-  let snapshotWithTests = applyTestResultsToSnapshot(snapshotBase, testResults, autoTest);
+  const snapshotWithTests = applyTestResultsToSnapshot(snapshotBase, testResults, autoTest);
 
   const snapshotIds = new Set(snapshotWithTests.visibleCatalog.models.map((m) => m.id));
   const { data: dbRows } = await supabase
@@ -990,7 +993,7 @@ export const diagnoseAntigravityFetch = createServerFn({ method: "POST" })
     return adapter.diagnoseAntigravityFetch(credsIn);
   });
 
-function extractCapabilityList(caps: Record<string, unknown> | null): string[] {
+export function extractCapabilityList(caps: Record<string, unknown> | null): string[] {
   if (!caps) return [];
   // New format: { list: string[], provider_external_id: string }
   if (Array.isArray(caps.list)) return caps.list as string[];
@@ -1107,7 +1110,11 @@ export function aggregateCatalogModels(rows: CatalogRowInput[]): CatalogModel[] 
     for (const r of group) {
       const acct = r.accounts;
       if (acct) accountsMap.set(acct.id, acct);
-      accountRows.push({ id: r.id, account_id: acct?.id ?? r.account_id ?? "", enabled: r.enabled });
+      accountRows.push({
+        id: r.id,
+        account_id: acct?.id ?? r.account_id ?? "",
+        enabled: r.enabled,
+      });
     }
 
     let testStatus: "working" | "failed" | "untested" = "untested";
@@ -1183,9 +1190,7 @@ export const listAccountModels = createServerFn({ method: "GET" })
     const { supabase } = context as any;
     const { data: rows, error } = await supabase
       .from("account_models")
-      .select(
-        `${ACCOUNT_MODELS_SELECT}`,
-      )
+      .select(`${ACCOUNT_MODELS_SELECT}`)
       .eq("account_id", data.account_id)
       .order("display_name", { foreignTable: "models" });
     if (error) throw new Error(error.message);
