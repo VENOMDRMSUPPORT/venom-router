@@ -1,7 +1,6 @@
 /** Shared model test prompt and response validation. Server-only. */
 
-export const MODEL_TEST_PROMPT =
-  'Reply with exactly the word "ok" and nothing else.';
+export const MODEL_TEST_PROMPT = 'Reply with exactly the word "ok" and nothing else.';
 
 export function responseContainsOk(text: string): boolean {
   return /\bok\b/i.test(text.trim());

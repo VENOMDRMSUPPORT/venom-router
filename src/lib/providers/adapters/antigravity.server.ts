@@ -1,6 +1,17 @@
 /* Antigravity (Google Cloud Code Assist) OAuth adapter. Server-only. Picoclaw + 9router parity. */
 import { createHash, randomBytes } from "crypto";
-import type { StoredCredentials, AccountIdentity, DiscoveredModel, ModelTestResult, ChatRequest, ChatResult } from "./types";
+import type {
+  StoredCredentials,
+  AccountIdentity,
+  DiscoveredModel,
+  ModelTestResult,
+  ChatRequest,
+  ChatResult,
+} from "./types";
+import {
+  extractAntigravityResponseText,
+  MODEL_TEST_MAX_OUTPUT_TOKENS,
+} from "./_shared/antigravity-sse.server";
 import {
   MODEL_TEST_PROMPT,
   validateModelTestResponse,
@@ -717,44 +728,6 @@ export async function diagnoseAntigravityFetch(
   };
 }
 
-function extractAntigravityResponseText(bodyText: string): string {
-  const chunks: string[] = [];
-  for (const line of bodyText.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("data:")) continue;
-    const payload = trimmed.slice(5).trim();
-    if (!payload || payload === "[DONE]") continue;
-    try {
-      const j = JSON.parse(payload) as {
-        response?: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-      };
-      const candidates = j.response?.candidates ?? j.candidates ?? [];
-      for (const c of candidates) {
-        for (const part of c.content?.parts ?? []) {
-          if (part.text) chunks.push(part.text);
-        }
-      }
-    } catch {
-      /* non-JSON SSE line */
-    }
-  }
-  if (chunks.length) return chunks.join("");
-  try {
-    const j = JSON.parse(bodyText) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    return (
-      j.candidates
-        ?.flatMap((c) => c.content?.parts ?? [])
-        .map((p) => p.text ?? "")
-        .join("") ?? bodyText
-    );
-  } catch {
-    return bodyText;
-  }
-}
-
 export async function testModel(
   credsIn: StoredCredentials,
   external_id: string,
@@ -774,7 +747,7 @@ export async function testModel(
         model: external_id,
         request: {
           contents: [{ role: "user", parts: [{ text: MODEL_TEST_PROMPT }] }],
-          generationConfig: { maxOutputTokens: 16 },
+          generationConfig: { maxOutputTokens: MODEL_TEST_MAX_OUTPUT_TOKENS },
         },
         requestType: "agent",
         userAgent: USER_AGENT,
@@ -854,29 +827,29 @@ export async function chat(
       return { ok: false, inputTokens: 0, outputTokens: 0, error: text.slice(0, 300) };
     }
 
-    // Parse SSE stream: collect all text parts, grab final usageMetadata
     const raw = await r.text();
-    const lines = raw.split("\n");
-    let fullText = "";
+    const fullText = extractAntigravityResponseText(raw);
     let inputTokens = 0;
     let outputTokens = 0;
-
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      const jsonStr = line.slice(6).trim();
-      if (!jsonStr || jsonStr === "[DONE]") continue;
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
       try {
-        const event: any = JSON.parse(jsonStr);
-        const parts = event?.candidates?.[0]?.content?.parts ?? [];
-        for (const p of parts) {
-          if (typeof p.text === "string") fullText += p.text;
-        }
-        if (event?.usageMetadata) {
-          inputTokens = event.usageMetadata.promptTokenCount ?? 0;
-          outputTokens = event.usageMetadata.candidatesTokenCount ?? 0;
+        const event = JSON.parse(payload) as {
+          usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+          response?: {
+            usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+          };
+        };
+        const usage = event.usageMetadata ?? event.response?.usageMetadata;
+        if (usage) {
+          inputTokens = usage.promptTokenCount ?? inputTokens;
+          outputTokens = usage.candidatesTokenCount ?? outputTokens;
         }
       } catch {
-        // skip malformed SSE line
+        /* skip malformed SSE line */
       }
     }
 

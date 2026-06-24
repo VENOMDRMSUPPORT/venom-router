@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { PageControls, type DebugEntry } from "@/components/layout/page-controls";
 import {
   Gauge,
   RefreshCw,
@@ -39,6 +40,22 @@ import {
 } from "@/components/providers/antigravity-quota-details";
 import type { QuotaGroup } from "@/lib/providers/adapters/_shared/quota-types";
 
+interface QuotaExtra {
+  groups?: QuotaGroup[];
+  fiveHour?: {
+    total: number;
+    used: number;
+    resetAt?: string;
+  };
+  sevenDay?: {
+    total: number;
+    used: number;
+    resetAt?: string;
+  };
+  planInfo?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export const Route = createFileRoute("/_authenticated/quota")({
   head: () => ({ meta: [{ title: "Quota & Limits — Venom Router" }] }),
   component: QuotaDashboardRoute,
@@ -52,7 +69,7 @@ function QuotaDashboardRoute() {
         description="Per-account quota snapshots, rolling limit windows, and rate limit headroom."
         icon={<Gauge className="h-5 w-5" />}
       />
-      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 bg-background/30 scrollbar-thin">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 bg-background/30 scrollbar-app">
         <QuotaDashboard />
       </div>
     </>
@@ -66,6 +83,32 @@ function QuotaDashboard() {
   const [filterCategory, setFilterCategory] = useState<"all" | "oauth" | "free">("all");
   const [filterStatus, setFilterStatus] = useState<"all" | "healthy" | "issues">("all");
   const [syncingAll, setSyncingAll] = useState(false);
+  const [debugLog, setDebugLog] = useState<DebugEntry[]>([]);
+
+  function startDebug(op: string, req: unknown, label: string): string {
+    const entry: DebugEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      ts: Date.now(),
+      op,
+      label,
+      req,
+      status: "pending",
+    };
+    setDebugLog((prev) => [entry, ...prev.slice(0, 49)]);
+    return entry.id;
+  }
+
+  function resolveDebug(entryId: string, res: unknown, ms: number) {
+    setDebugLog((prev) =>
+      prev.map((e) => (e.id === entryId ? { ...e, res, ms, status: "success" } : e)),
+    );
+  }
+
+  function rejectDebug(entryId: string, err: string, ms: number) {
+    setDebugLog((prev) =>
+      prev.map((e) => (e.id === entryId ? { ...e, err, ms, status: "error" } : e)),
+    );
+  }
 
   // Fetch OAuth and Free providers in parallel
   const {
@@ -115,12 +158,16 @@ function QuotaDashboard() {
 
   async function handleSyncAccount(accountId: string, email: string, category: "oauth" | "free") {
     setSyncingAccounts((prev) => ({ ...prev, [accountId]: true }));
+    const t0 = Date.now();
+    const req = { account_id: accountId };
+    const dbId = startDebug("syncAccount", req, email);
     try {
-      const r = await parseSyncResponse(
-        await api.post<SyncAccountResult>(`/api/dashboard/accounts/${accountId}/sync`, {
-          account_id: accountId,
-        }),
+      const rawRes = await api.post<SyncAccountResult>(
+        `/api/dashboard/accounts/${accountId}/sync`,
+        req,
       );
+      const r = await parseSyncResponse(rawRes);
+      resolveDebug(dbId, rawRes, Date.now() - t0);
       if (r?.ok) {
         qc.setQueryData(["integrations", category], (prev: ProviderRow[] | undefined) =>
           patchAccountInProviders(prev, r),
@@ -130,8 +177,10 @@ function QuotaDashboard() {
       } else {
         toast.error(`Sync failed for ${email}`);
       }
-    } catch (e: any) {
-      toast.error(e?.message ?? `Sync failed for ${email}`);
+    } catch (e: unknown) {
+      const msg = (e as { message?: string })?.message ?? `Sync failed for ${email}`;
+      rejectDebug(dbId, msg, Date.now() - t0);
+      toast.error(msg);
       await qc.invalidateQueries({ queryKey: ["integrations", category] });
     } finally {
       setSyncingAccounts((prev) => ({ ...prev, [accountId]: false }));
@@ -145,32 +194,42 @@ function QuotaDashboard() {
     let successCount = 0;
     let failCount = 0;
 
+    const t0 = Date.now();
+    const dbId = startDebug("syncAll", { accounts: allAccounts.map((a) => a.id) }, "All Accounts");
     toast.info(`Syncing quota details for ${allAccounts.length} account(s)...`);
 
-    await Promise.all(
-      allAccounts.map(async (acc) => {
-        try {
-          const r = await parseSyncResponse(
-            await api.post<SyncAccountResult>(`/api/dashboard/accounts/${acc.id}/sync`, {
-              account_id: acc.id,
-            }),
-          );
-          if (r?.ok) {
-            qc.setQueryData(["integrations", acc.category], (prev: ProviderRow[] | undefined) =>
-              patchAccountInProviders(prev, r),
+    try {
+      await Promise.all(
+        allAccounts.map(async (acc) => {
+          try {
+            const rawRes = await api.post<SyncAccountResult>(
+              `/api/dashboard/accounts/${acc.id}/sync`,
+              {
+                account_id: acc.id,
+              },
             );
-            successCount++;
-          } else {
+            const r = await parseSyncResponse(rawRes);
+            if (r?.ok) {
+              qc.setQueryData(["integrations", acc.category], (prev: ProviderRow[] | undefined) =>
+                patchAccountInProviders(prev, r),
+              );
+              successCount++;
+            } else {
+              failCount++;
+            }
+          } catch {
             failCount++;
           }
-        } catch {
-          failCount++;
-        }
-      }),
-    );
+        }),
+      );
 
-    await invalidateModelViews(qc);
-    setSyncingAll(false);
+      resolveDebug(dbId, { success: successCount, failed: failCount }, Date.now() - t0);
+      await invalidateModelViews(qc);
+    } catch (e: unknown) {
+      rejectDebug(dbId, (e as { message?: string })?.message ?? "Sync all failed", Date.now() - t0);
+    } finally {
+      setSyncingAll(false);
+    }
 
     if (failCount === 0) {
       toast.success(`Successfully synced all ${successCount} accounts!`);
@@ -201,8 +260,8 @@ function QuotaDashboard() {
   const healthyAccounts = allAccounts.filter((a) => a.status === "healthy").length;
   const issueAccounts = totalAccounts - healthyAccounts;
   const accountsWithQuotas = allAccounts.filter((a) => {
-    const extra = a.quota_extra as Record<string, unknown> | null;
-    const groups = (extra?.groups as QuotaGroup[] | undefined) ?? [];
+    const extra = a.quota_extra as QuotaExtra | null;
+    const groups = extra?.groups ?? [];
     return (
       groups.length > 0 ||
       extra?.fiveHour != null ||
@@ -210,6 +269,27 @@ function QuotaDashboard() {
       (a.quota_used != null && a.quota_total != null)
     );
   }).length;
+
+  const tabs = [
+    {
+      id: "all",
+      label: "All Accounts",
+      count: allAccounts.length,
+      icon: <Layers className="h-3.5 w-3.5" />,
+    },
+    {
+      id: "healthy",
+      label: "Healthy",
+      count: allAccounts.filter((a) => a.status === "healthy").length,
+      icon: <ShieldCheck className="h-3.5 w-3.5" />,
+    },
+    {
+      id: "issues",
+      label: "Issues",
+      count: allAccounts.filter((a) => a.status !== "healthy").length,
+      icon: <AlertTriangle className="h-3.5 w-3.5" />,
+    },
+  ];
 
   if (isLoading) {
     return (
@@ -236,6 +316,14 @@ function QuotaDashboard() {
 
   return (
     <div className="space-y-6">
+      <PageControls
+        breadcrumbs={["Dashboard", "Analytics", "Quota"]}
+        debugLog={debugLog}
+        onClearDebug={() => setDebugLog([])}
+        tabs={tabs}
+        activeTab={filterStatus}
+        onTabChange={(id) => setFilterStatus(id as "all" | "healthy" | "issues")}
+      />
       {/* Premium Stats Row */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="relative overflow-hidden rounded-xl border border-border/60 bg-gradient-to-br from-card/60 to-card/20 p-5 shadow-sm backdrop-blur-sm">
@@ -482,8 +570,8 @@ function AccountQuotaCard({
 }) {
   const healthy = account.status === "healthy";
   const isUnreachable = account.status === "expired";
-  const extra = account.quota_extra as Record<string, any> | null;
-  const groups = (extra?.groups as QuotaGroup[] | undefined) ?? [];
+  const extra = account.quota_extra as QuotaExtra | null;
+  const groups = extra?.groups ?? [];
   const isAntigravity = account.providerSlug === "antigravity";
   const isClaude = account.providerSlug === "claude-code";
 
@@ -645,9 +733,10 @@ function AccountQuotaCard({
                     <QuotaPeriodRow
                       label="Session Quota (5-Hour)"
                       period={{
-                        remainingFraction: 1 - extra.fiveHour.used / extra.fiveHour.total,
+                        remainingFraction:
+                          1 - (extra.fiveHour.used ?? 0) / (extra.fiveHour.total ?? 1),
                         resetTime: extra.fiveHour.resetAt ?? new Date().toISOString(),
-                        isExhausted: extra.fiveHour.used >= extra.fiveHour.total,
+                        isExhausted: (extra.fiveHour.used ?? 0) >= (extra.fiveHour.total ?? 0),
                       }}
                       description="5-hour session limit"
                     />
@@ -658,9 +747,10 @@ function AccountQuotaCard({
                     <QuotaPeriodRow
                       label="Weekly Quota (7-Day)"
                       period={{
-                        remainingFraction: 1 - extra.sevenDay.used / extra.sevenDay.total,
+                        remainingFraction:
+                          1 - (extra.sevenDay.used ?? 0) / (extra.sevenDay.total ?? 1),
                         resetTime: extra.sevenDay.resetAt ?? new Date().toISOString(),
-                        isExhausted: extra.sevenDay.used >= extra.sevenDay.total,
+                        isExhausted: (extra.sevenDay.used ?? 0) >= (extra.sevenDay.total ?? 0),
                       }}
                       description="7-day weekly limit"
                     />

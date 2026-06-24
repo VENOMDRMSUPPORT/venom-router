@@ -22,9 +22,11 @@
 ### Task 1: Harden Encryption Key
 
 **Files:**
+
 - Modify: `src/lib/crypto.server.ts:4-11`
 
 **Interfaces:**
+
 - Produces: `getKey()` throws `Error` when `VENOM_ENCRYPTION_KEY` is unset instead of silently using a weak fallback
 
 - [ ] **Step 1: Read the current file**
@@ -39,9 +41,7 @@ Replace lines 4–17 in `src/lib/crypto.server.ts`:
 function getKey(): Buffer {
   const raw = process.env.VENOM_ENCRYPTION_KEY;
   if (!raw) {
-    throw new Error(
-      "VENOM_ENCRYPTION_KEY is required. Generate one with: openssl rand -hex 32",
-    );
+    throw new Error("VENOM_ENCRYPTION_KEY is required. Generate one with: openssl rand -hex 32");
   }
   // Accept hex (64 chars), base64 (>=43 chars), or raw 32-byte string.
   if (/^[0-9a-f]{64}$/i.test(raw)) return Buffer.from(raw, "hex");
@@ -79,9 +79,11 @@ git commit -m "security: throw on missing VENOM_ENCRYPTION_KEY instead of fallba
 ### Task 2: Fix OAuth CSRF State Check
 
 **Files:**
+
 - Modify: `src/lib/providers/integrations.functions.ts:130-154`
 
 **Interfaces:**
+
 - Consumes: existing `completeOAuthFlow` server function shape
 - Produces: `state` field is required (not optional) in the Zod schema; the CSRF check runs unconditionally
 
@@ -95,7 +97,7 @@ z.object({
   flow_id: z.string().uuid(),
   code: z.string().min(1),
   state: z.string().optional(),
-})
+});
 ```
 
 To:
@@ -106,7 +108,7 @@ z.object({
   flow_id: z.string().uuid(),
   code: z.string().min(1),
   state: z.string().min(1),
-})
+});
 ```
 
 - [ ] **Step 2: Remove the conditional guard on the state check**
@@ -159,9 +161,11 @@ git commit -m "security: make OAuth state required and enforce CSRF check uncond
 ### Task 3: Fix QuotaRing Color When Exhausted
 
 **Files:**
+
 - Modify: `src/components/providers/antigravity-quota-details.tsx:28-29`
 
 **Interfaces:**
+
 - Produces: `QuotaRing` shows red (`#ef4444`) when `remainingFraction <= 0`, orange when `< 0.2`, green otherwise
 
 - [ ] **Step 1: Fix the color logic**
@@ -170,16 +174,14 @@ In `src/components/providers/antigravity-quota-details.tsx`, find line 28–29:
 
 ```ts
 // BEFORE
-const color =
-  remainingFraction <= 0 ? "#22c55e" : remainingFraction < 0.2 ? "#f97316" : "#22c55e";
+const color = remainingFraction <= 0 ? "#22c55e" : remainingFraction < 0.2 ? "#f97316" : "#22c55e";
 ```
 
 Replace with:
 
 ```ts
 // AFTER
-const color =
-  remainingFraction <= 0 ? "#ef4444" : remainingFraction < 0.2 ? "#f97316" : "#22c55e";
+const color = remainingFraction <= 0 ? "#ef4444" : remainingFraction < 0.2 ? "#f97316" : "#22c55e";
 ```
 
 - [ ] **Step 2: Verify visually**
@@ -189,6 +191,7 @@ bun dev
 ```
 
 Navigate to a provider that has quota data. Confirm:
+
 - Full quota → green ring
 - Below 20% → orange ring
 - At 0% / exhausted → red ring (was incorrectly green before)
@@ -205,11 +208,13 @@ git commit -m "fix: quota ring shows red when exhausted instead of green"
 ### Task 4: Extract `formatRelativeTime` + Remove Dead Time Buttons
 
 **Files:**
+
 - Modify: `src/lib/utils.ts`
 - Modify: `src/routes/_authenticated/overview.tsx`
 - Modify: `src/routes/_authenticated/models.tsx`
 
 **Interfaces:**
+
 - Produces: `formatRelativeTime(dateStr: string | null): string` exported from `@/lib/utils`
 - Consumes: both `overview.tsx` and `models.tsx` import from `@/lib/utils` — local copies deleted
 
@@ -237,6 +242,7 @@ bun --eval "import { formatRelativeTime } from './src/lib/utils.ts'; console.log
 ```
 
 Expected output:
+
 ```
 never
 just now
@@ -248,11 +254,13 @@ just now
 In `src/routes/_authenticated/models.tsx`:
 
 1. Add import at the top (inside existing imports from `@/lib/utils`):
+
 ```ts
 import { cn, formatRelativeTime } from "@/lib/utils";
 ```
 
 2. Delete the local `formatRelativeTime` function (lines 67–76):
+
 ```ts
 // DELETE this entire function:
 function formatRelativeTime(dateStr: string | null): string {
@@ -272,6 +280,7 @@ function formatRelativeTime(dateStr: string | null): string {
 In `src/routes/_authenticated/overview.tsx`:
 
 1. Update the import from `@/lib/utils`:
+
 ```ts
 import { cn, formatRelativeTime } from "@/lib/utils";
 ```
@@ -344,9 +353,11 @@ git commit -m "refactor: extract formatRelativeTime to shared utils, remove dead
 ### Task 5: Make Model Testing Concurrent + Parallel Enable Updates
 
 **Files:**
+
 - Modify: `src/lib/providers/integrations.functions.ts:1266-1301`
 
 **Interfaces:**
+
 - Consumes: `adapter.testModel(creds, ext)` returns `{ ok: boolean; latency_ms: number; error?: string }`
 - Produces: `testAccountModels` tests all external IDs concurrently; `setModelsEnabled` writes all rows in parallel
 
@@ -440,6 +451,7 @@ bun dev
 ```
 
 Go to `/models`, select one or more models and click the test (▶) button. Confirm:
+
 - When testing multiple models, they all complete faster than before (concurrent vs sequential)
 - Toggle enable/disable on multiple models — UI updates correctly
 
@@ -455,9 +467,11 @@ git commit -m "perf: run model tests concurrently, parallelize setModelsEnabled 
 ### Task 6: Sidebar User from Route Context
 
 **Files:**
+
 - Modify: `src/components/layout/sidebar.tsx`
 
 **Interfaces:**
+
 - Consumes: `/_authenticated` route context `{ user: User }` via `useRouteContext({ from: '/_authenticated' })`
 - Produces: `SidebarFooter` removes `useEffect` + `useState` for email; reads `user.email` directly
 
@@ -534,9 +548,11 @@ git commit -m "refactor: sidebar reads user email from route context, removes ex
 ### Task 7: Database Schema Migration
 
 **Files:**
+
 - Create: `supabase/migrations/20260622130000_foundation_schema.sql`
 
 **Interfaces:**
+
 - Produces: all columns and tables required by the routing engine, workers, and dashboard pages
 - Note: All changes are `IF NOT EXISTS` / `IF NOT EXISTS` safe — re-running is idempotent
 
@@ -692,11 +708,13 @@ CREATE INDEX IF NOT EXISTS audit_log_entries_occurred_at_idx
 - [ ] **Step 2: Apply the migration**
 
 Option A — Supabase CLI (if logged in):
+
 ```bash
 bun supabase db push
 ```
 
 Option B — Supabase Dashboard (always works):
+
 1. Open your Supabase project → SQL Editor
 2. Paste the full content of the migration file
 3. Click "Run"
@@ -705,6 +723,7 @@ Option B — Supabase Dashboard (always works):
 - [ ] **Step 3: Verify tables exist**
 
 In Supabase Dashboard → Table Editor, confirm these tables are visible:
+
 - `account_health_checks`
 - `quota_snapshots`
 - `routing_traces`
@@ -712,6 +731,7 @@ In Supabase Dashboard → Table Editor, confirm these tables are visible:
 - `audit_log_entries`
 
 And confirm these columns exist on existing tables:
+
 - `models.input_cost_per_mtok`, `models.output_cost_per_mtok`, `models.blocked_reason`
 - `routing_rules.condition`, `routing_rules.role`, `routing_rules.max_fallback_attempts`
 - `venom_models.cost_weight`, `venom_models.speed_weight`, `venom_models.quality_weight`
@@ -719,11 +739,13 @@ And confirm these columns exist on existing tables:
 - [ ] **Step 4: Verify venom_models seeded**
 
 In SQL Editor:
+
 ```sql
 SELECT slug, display_name, cost_weight, speed_weight, quality_weight FROM venom_models;
 ```
 
 Expected 3 rows:
+
 ```
 lite | Venom Lite | 0.7 | 0.2 | 0.1
 pro  | Venom Pro  | 0.3 | 0.3 | 0.4
@@ -750,6 +772,7 @@ git commit -m "feat: add foundation schema — health checks, quota snapshots, r
 ## Self-Review
 
 **Spec coverage check:**
+
 - ✅ Phase 0.1 — encryption key throw: Task 1
 - ✅ Phase 0.2 — OAuth CSRF fix: Task 2
 - ✅ Phase 1.1 — quota ring color: Task 3
@@ -765,6 +788,7 @@ git commit -m "feat: add foundation schema — health checks, quota snapshots, r
 **Placeholder scan:** No TBD, TODO, or vague steps. All code blocks are complete.
 
 **Type consistency:**
+
 - `formatRelativeTime(dateStr: string | null): string` — same signature in utils.ts and both usages
 - `useRouteContext({ from: '/_authenticated' })` returns `{ user: User }` — matches `route.tsx` return type
 - SQL column names match spec exactly

@@ -23,21 +23,23 @@
 
 ## File Map
 
-| Path | Action | Responsibility |
-|------|--------|----------------|
-| `src/lib/workers/health-check.server.ts` | Create | Health check + token refresh for all non-expired accounts |
-| `src/lib/workers/quota-snapshot.server.ts` | Create | Insert `quota_snapshots` rows from health check results |
-| `src/lib/workers/index.server.ts` | Create | Dispatcher — runs both workers in sequence |
-| `src/server.ts` | Modify | Add `scheduled` handler + dev trigger endpoint |
+| Path                                       | Action | Responsibility                                            |
+| ------------------------------------------ | ------ | --------------------------------------------------------- |
+| `src/lib/workers/health-check.server.ts`   | Create | Health check + token refresh for all non-expired accounts |
+| `src/lib/workers/quota-snapshot.server.ts` | Create | Insert `quota_snapshots` rows from health check results   |
+| `src/lib/workers/index.server.ts`          | Create | Dispatcher — runs both workers in sequence                |
+| `src/server.ts`                            | Modify | Add `scheduled` handler + dev trigger endpoint            |
 
 ---
 
 ### Task 1: Health Check Worker
 
 **Files:**
+
 - Create: `src/lib/workers/health-check.server.ts`
 
 **Interfaces:**
+
 - Consumes: `supabaseAdmin` (passed in), adapters `fetchIdentity` (claude-code), `syncAntigravityAccount` (antigravity), `unpackCredentials` / `packCredentials`
 - Produces: `AccountHealthCheckResult[]` — consumed by Task 2
 
@@ -66,8 +68,7 @@ function isClaudeAuthError(slug: string, e: unknown): boolean {
   if (slug !== "claude-code") return false;
   const err = e as { name?: string; message?: string } | null;
   return (
-    err?.name === "ClaudeAuthError" ||
-    String(err?.message ?? "").includes("re-login required")
+    err?.name === "ClaudeAuthError" || String(err?.message ?? "").includes("re-login required")
   );
 }
 
@@ -76,9 +77,7 @@ export async function runHealthChecks(
 ): Promise<AccountHealthCheckResult[]> {
   const { data: accounts, error } = await supabase
     .from("accounts")
-    .select(
-      "id,credentials_enc,credentials_iv,credentials_tag,quota_extra,providers(slug)",
-    )
+    .select("id,credentials_enc,credentials_iv,credentials_tag,quota_extra,providers(slug)")
     .neq("status", "expired");
 
   if (error) throw new Error(`Health check: failed to fetch accounts: ${error.message}`);
@@ -203,9 +202,11 @@ git commit -m "feat(workers): add health check worker for all non-expired accoun
 ### Task 2: Quota Snapshot Worker
 
 **Files:**
+
 - Create: `src/lib/workers/quota-snapshot.server.ts`
 
 **Interfaces:**
+
 - Consumes: `AccountHealthCheckResult[]` from Task 1
 - Produces: rows inserted into `quota_snapshots` table
 
@@ -220,9 +221,7 @@ export async function runQuotaSnapshots(
   supabase: SupabaseClient,
   results: AccountHealthCheckResult[],
 ): Promise<void> {
-  const withQuota = results.filter(
-    (r) => r.quota_used !== null && r.quota_total !== null,
-  );
+  const withQuota = results.filter((r) => r.quota_used !== null && r.quota_total !== null);
 
   if (!withQuota.length) return;
 
@@ -237,9 +236,7 @@ export async function runQuotaSnapshots(
       used: r.quota_used,
       total: r.quota_total,
       remaining:
-        r.quota_total !== null && r.quota_used !== null
-          ? r.quota_total - r.quota_used
-          : null,
+        r.quota_total !== null && r.quota_used !== null ? r.quota_total - r.quota_used : null,
       quota_source: "provider_reported",
       confidence: "high",
     })),
@@ -270,9 +267,11 @@ git commit -m "feat(workers): add quota snapshot worker"
 ### Task 3: Worker Dispatcher
 
 **Files:**
+
 - Create: `src/lib/workers/index.server.ts`
 
 **Interfaces:**
+
 - Consumes: `runHealthChecks` from Task 1, `runQuotaSnapshots` from Task 2, `supabaseAdmin`
 - Produces: `runScheduled()` exported function — consumed by Task 4
 
@@ -291,9 +290,7 @@ export async function runScheduled(_cron: string): Promise<void> {
   try {
     const results = await runHealthChecks(supabaseAdmin);
     const healthy = results.filter((r) => r.ok).length;
-    console.log(
-      `[workers] health checks: ${results.length} accounts, ${healthy} healthy`,
-    );
+    console.log(`[workers] health checks: ${results.length} accounts, ${healthy} healthy`);
 
     await runQuotaSnapshots(supabaseAdmin, results);
     console.log("[workers] quota snapshots done");
@@ -322,13 +319,16 @@ git commit -m "feat(workers): add worker dispatcher"
 ### Task 4: Wire Up Scheduled Handler + Dev Trigger
 
 **Files:**
+
 - Modify: `src/server.ts`
 
 **Interfaces:**
+
 - Consumes: `runScheduled` from `src/lib/workers/index.server.ts`
 - Produces: Cloudflare Workers `scheduled` handler + `POST /api/internal/run-workers` for local testing
 
 The current `src/server.ts` exports:
+
 ```ts
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) { ... }
@@ -336,6 +336,7 @@ export default {
 ```
 
 We add:
+
 1. A `scheduled` handler to the export (Cloudflare Workers cron)
 2. A branch in `fetch` for `POST /api/internal/run-workers` protected by `X-Worker-Secret` header (dev testing only)
 
@@ -362,8 +363,17 @@ export default {
         }
         if (request.method !== "POST") {
           return new Response(
-            JSON.stringify({ error: { message: "Method not allowed", type: "invalid_request_error", code: "method_not_allowed" } }),
-            { status: 405, headers: { "Content-Type": "application/json", Allow: "POST, OPTIONS" } },
+            JSON.stringify({
+              error: {
+                message: "Method not allowed",
+                type: "invalid_request_error",
+                code: "method_not_allowed",
+              },
+            }),
+            {
+              status: 405,
+              headers: { "Content-Type": "application/json", Allow: "POST, OPTIONS" },
+            },
           );
         }
         try {
@@ -371,7 +381,13 @@ export default {
         } catch (apiErr) {
           console.error("[venom/api] unhandled error in chat/completions:", apiErr);
           return new Response(
-            JSON.stringify({ error: { message: "Internal server error.", type: "server_error", code: "internal_error" } }),
+            JSON.stringify({
+              error: {
+                message: "Internal server error.",
+                type: "server_error",
+                code: "internal_error",
+              },
+            }),
             { status: 500, headers: { "Content-Type": "application/json" } },
           );
         }
@@ -422,9 +438,7 @@ export default {
     ctx: { waitUntil: (p: Promise<unknown>) => void },
   ) {
     ctx.waitUntil(
-      import("./lib/workers/index.server").then(({ runScheduled }) =>
-        runScheduled(event.cron),
-      ),
+      import("./lib/workers/index.server").then(({ runScheduled }) => runScheduled(event.cron)),
     );
   },
 };
@@ -478,6 +492,7 @@ git commit -m "feat(workers): wire scheduled handler and dev trigger to server e
 ### Task 5: Cloudflare Cron Configuration
 
 **Files:**
+
 - Create: `wrangler.toml` (project root, if it does not exist yet)
 
 The `scheduled` handler in `src/server.ts` is inert until Cloudflare knows to call it on a schedule. This is configured in `wrangler.toml`.
@@ -489,6 +504,7 @@ Run: `ls F:\projects\venom-router-react\wrangler.toml 2>/dev/null && echo exists
 - [ ] **Step 2a: If it exists — add the triggers block**
 
 Append to the existing `wrangler.toml`:
+
 ```toml
 [triggers]
 crons = ["*/5 * * * *"]

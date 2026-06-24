@@ -8,6 +8,7 @@
 ## Project Goal
 
 Venom Router is a **private single-owner AI gateway** that:
+
 - Centralizes all AI provider accounts (Claude, Antigravity, OpenCode Zen, etc.)
 - Exposes exactly 3 unified model names: `venom/lite`, `venom/pro`, `venom/max`
 - Routes requests through a scoring engine (cost/speed/quality weights)
@@ -18,34 +19,34 @@ Venom Router is a **private single-owner AI gateway** that:
 
 ## Stack (Final — No Changes)
 
-| Layer | Technology |
-|-------|-----------|
-| Framework | TanStack Start (SSR React) + Vite |
-| Auth | Supabase Auth |
-| Database | Supabase (PostgreSQL) |
-| API | `createServerFn` from TanStack Start |
-| UI | shadcn/ui (Radix + Tailwind) |
-| Charts | Recharts |
-| Package Manager | Bun |
+| Layer           | Technology                           |
+| --------------- | ------------------------------------ |
+| Framework       | TanStack Start (SSR React) + Vite    |
+| Auth            | Supabase Auth                        |
+| Database        | Supabase (PostgreSQL)                |
+| API             | `createServerFn` from TanStack Start |
+| UI              | shadcn/ui (Radix + Tailwind)         |
+| Charts          | Recharts                             |
+| Package Manager | Bun                                  |
 
 ---
 
 ## Pages Status
 
-| Page | Route | Status |
-|------|-------|--------|
-| Overview | `/overview` | ✅ Done |
-| OAuth Providers | `/providers/oauth` | ✅ Done |
-| Free Providers | `/providers/free` | ✅ Done |
-| Models | `/models` | ✅ Done |
-| API Keys | `/api-keys` | ✅ Done |
-| Settings | `/settings` | 🔶 Skeleton only |
-| Venom Models | `/venom-models` | ❌ Stub |
-| Routing Rules | `/routing` | ❌ Stub |
-| Playground | `/playground` | ❌ Stub |
-| Usage & Analytics | `/usage` | ❌ Stub |
-| Quota & Limits | `/quota` | ❌ Stub |
-| Diagnostics | `/diagnostics` | ❌ Stub |
+| Page              | Route              | Status           |
+| ----------------- | ------------------ | ---------------- |
+| Overview          | `/overview`        | ✅ Done          |
+| OAuth Providers   | `/providers/oauth` | ✅ Done          |
+| Free Providers    | `/providers/free`  | ✅ Done          |
+| Models            | `/models`          | ✅ Done          |
+| API Keys          | `/api-keys`        | ✅ Done          |
+| Settings          | `/settings`        | 🔶 Skeleton only |
+| Venom Models      | `/venom-models`    | ❌ Stub          |
+| Routing Rules     | `/routing`         | ❌ Stub          |
+| Playground        | `/playground`      | ❌ Stub          |
+| Usage & Analytics | `/usage`           | ❌ Stub          |
+| Quota & Limits    | `/quota`           | ❌ Stub          |
+| Diagnostics       | `/diagnostics`     | ❌ Stub          |
 
 ---
 
@@ -64,16 +65,17 @@ priorityScore = 1 / (priority + 1)
 **Venom Model Default Weights:**
 
 | Model | cost_weight | speed_weight | quality_weight |
-|-------|-------------|--------------|----------------|
-| lite | 0.7 | 0.2 | 0.1 |
-| pro | 0.3 | 0.3 | 0.4 |
-| max | 0.1 | 0.1 | 0.8 |
+| ----- | ----------- | ------------ | -------------- |
+| lite  | 0.7         | 0.2          | 0.1            |
+| pro   | 0.3         | 0.3          | 0.4            |
+| max   | 0.1         | 0.1          | 0.8            |
 
 ---
 
 ## Routing Candidate Filter Rules
 
 A candidate passes if ALL of:
+
 - `lifecycle = 'approved'`
 - `account.status = 'healthy'`
 - `model.enabled = true`
@@ -98,18 +100,18 @@ A candidate passes if ALL of:
 **Estimated: 1 hour**
 
 ### 0.1 — Harden encryption key fallback
+
 File: `src/lib/crypto.server.ts:9`
 
 ```ts
 // REMOVE the "venom-dev" fallback. Replace with:
 if (!raw) {
-  throw new Error(
-    "VENOM_ENCRYPTION_KEY is required. Generate one with: openssl rand -hex 32"
-  );
+  throw new Error("VENOM_ENCRYPTION_KEY is required. Generate one with: openssl rand -hex 32");
 }
 ```
 
 ### 0.2 — Fix OAuth CSRF state check
+
 File: `src/lib/providers/integrations.functions.ts:152`
 
 ```ts
@@ -128,14 +130,14 @@ if (flow.state !== data.state) {
 
 **Estimated: 3-4 hours**
 
-| # | File | Fix |
-|---|------|-----|
-| 1.1 | `src/components/providers/antigravity-quota-details.tsx:29` | QuotaRing: `remainingFraction <= 0` → red (#ef4444), not green |
-| 1.2 | `src/routes/_authenticated/overview.tsx:202` | 30d/90d buttons: wire to state+query or remove until built |
-| 1.3 | `src/lib/utils.ts` | Extract `formatRelativeTime` to shared utils, import in overview + models |
-| 1.4 | `src/lib/providers/integrations.functions.ts:1267` | `testAccountModels`: replace for-loop with concurrent worker-pool |
-| 1.5 | `src/lib/providers/integrations.functions.ts:1296` | `setModelsEnabled`: replace for-loop with `Promise.all` |
-| 1.6 | `src/components/layout/sidebar.tsx:230` | Read user email from route context instead of extra `getUser()` call |
+| #   | File                                                        | Fix                                                                       |
+| --- | ----------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 1.1 | `src/components/providers/antigravity-quota-details.tsx:29` | QuotaRing: `remainingFraction <= 0` → red (#ef4444), not green            |
+| 1.2 | `src/routes/_authenticated/overview.tsx:202`                | 30d/90d buttons: wire to state+query or remove until built                |
+| 1.3 | `src/lib/utils.ts`                                          | Extract `formatRelativeTime` to shared utils, import in overview + models |
+| 1.4 | `src/lib/providers/integrations.functions.ts:1267`          | `testAccountModels`: replace for-loop with concurrent worker-pool         |
+| 1.5 | `src/lib/providers/integrations.functions.ts:1296`          | `setModelsEnabled`: replace for-loop with `Promise.all`                   |
+| 1.6 | `src/components/layout/sidebar.tsx:230`                     | Read user email from route context instead of extra `getUser()` call      |
 
 ---
 
@@ -253,6 +255,7 @@ ON CONFLICT (slug) DO UPDATE SET
 **Reference:** `F:\projects\venom-router\lib\routing\engine.ts`
 
 ### Files to create:
+
 ```
 src/lib/routing/
   engine.server.ts       — main routeRequest() function
@@ -263,6 +266,7 @@ src/lib/routing/
 ```
 
 ### Core flow:
+
 ```
 routeRequest(venomSlug, messages, apiKeyId)
   │
@@ -284,6 +288,7 @@ routeRequest(venomSlug, messages, apiKeyId)
 **Reference:** `F:\projects\venom-router\app\api\v1\chat\completions\route.ts`
 
 ### Endpoint spec:
+
 ```
 POST /v1/chat/completions
 Authorization: Bearer vk_live_*
@@ -307,6 +312,7 @@ Response: OpenAI-compatible JSON
 ```
 
 ### API key validation:
+
 1. Format check: starts with `vk_live_`
 2. bcrypt compare with stored hash
 3. Check `revoked_at` is null
@@ -322,12 +328,14 @@ Response: OpenAI-compatible JSON
 **Estimated: 8-10 days**
 
 ### 5.1 — Venom Models `/venom-models`
+
 - Display lite/pro/max cards
 - Sliders for cost/speed/quality weights (must sum to 1.0)
 - Associated routing rules count per tier
 - Quick link to add routing rule
 
 ### 5.2 — Routing Rules `/routing`
+
 - Full table: priority, role, venom tier, provider model, account, condition
 - Add/edit/delete rules
 - Drag-and-drop priority reordering
@@ -339,6 +347,7 @@ Response: OpenAI-compatible JSON
   - `{ "quota_risk": "low" }` → healthy quota only
 
 ### 5.3 — Playground `/playground`
+
 - Select venom model (lite/pro/max)
 - Message input
 - Send via routing engine
@@ -350,6 +359,7 @@ Response: OpenAI-compatible JSON
   - Final response
 
 ### 5.4 — Usage & Analytics `/usage`
+
 - Query `usage_records` table
 - Charts (Recharts):
   - Requests over time (7d / 30d / 90d — actually wired)
@@ -360,6 +370,7 @@ Response: OpenAI-compatible JSON
 - Total spend estimate
 
 ### 5.5 — Quota & Limits `/quota`
+
 - Read from `quota_snapshots` + live `accounts.quota_*`
 - Per-account quota with confidence indicator:
   - `provider_reported` → show boldly
@@ -369,6 +380,7 @@ Response: OpenAI-compatible JSON
 - Warning indicators: orange at 15%, red at 5%
 
 ### 5.6 — Diagnostics `/diagnostics`
+
 - Blocked models list (with blocked_reason)
 - Degraded/unreachable accounts (with error from health checks)
 - Recent routing failures (from usage_records where status=failed)
@@ -376,6 +388,7 @@ Response: OpenAI-compatible JSON
 - Health check history per account
 
 ### 5.7 — Settings `/settings`
+
 - **General:** system name, timezone
 - **Routing:** request timeout, max fallback attempts, trace retention days
 - **Health:** check interval minutes, quota warning %, quota critical %
@@ -390,6 +403,7 @@ Response: OpenAI-compatible JSON
 **Reference:** `F:\projects\venom-router\lib\workers\`
 
 ### Option A: Supabase Edge Functions + pg_cron (Recommended)
+
 ```sql
 -- Run every 5 minutes via pg_cron or Supabase cron
 SELECT cron.schedule('health-check', '*/5 * * * *', 'SELECT run_health_check()');
@@ -397,14 +411,16 @@ SELECT cron.schedule('quota-snapshot', '*/5 * * * *', 'SELECT run_quota_snapshot
 ```
 
 ### Option B: External cron (GitHub Actions / Vercel Cron)
+
 ```yaml
 # .github/workflows/workers.yml
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: "*/5 * * * *"
 ```
 
 ### 6.1 — Health Check Worker
+
 ```ts
 // For each active account:
 // 1. Decrypt credentials
@@ -414,6 +430,7 @@ on:
 ```
 
 ### 6.2 — Quota Snapshot Worker
+
 ```ts
 // For each active account:
 // 1. Call provider quota API (or estimate from usage_records)
@@ -452,12 +469,12 @@ Week 5
 
 ## Decisions Made
 
-| Question | Decision | Reason |
-|----------|----------|--------|
-| Auth: Supabase vs Better Auth | **Supabase Auth** | Code already exists, no need to rewrite |
-| DB: Supabase vs Prisma | **Supabase** | Adapters and server functions already wired |
-| /v1 API location | **TanStack Start server route** | Needs routing engine in same runtime |
-| Background workers | **Supabase Cron or GitHub Actions** | Simplest deployment, no extra infra |
+| Question                      | Decision                            | Reason                                      |
+| ----------------------------- | ----------------------------------- | ------------------------------------------- |
+| Auth: Supabase vs Better Auth | **Supabase Auth**                   | Code already exists, no need to rewrite     |
+| DB: Supabase vs Prisma        | **Supabase**                        | Adapters and server functions already wired |
+| /v1 API location              | **TanStack Start server route**     | Needs routing engine in same runtime        |
+| Background workers            | **Supabase Cron or GitHub Actions** | Simplest deployment, no extra infra         |
 
 ---
 

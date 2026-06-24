@@ -28,6 +28,8 @@ type CatalogRow = {
   external_id: string;
   display_name: string;
   capabilities: Record<string, unknown> | null;
+  context_window: number | null;
+  quality_rating: number | null;
 };
 
 type AccountLinkRow = {
@@ -112,7 +114,7 @@ export async function syncModelsForAccount(
 
   const { data: catalogRows, error: catErr } = await supabase
     .from("models")
-    .select("id, external_id, display_name, capabilities")
+    .select("id, external_id, display_name, capabilities, context_window, quality_rating")
     .eq("provider_id", providerId);
   if (catErr) throw new Error(catErr.message);
 
@@ -122,7 +124,9 @@ export async function syncModelsForAccount(
 
   const { data: accountLinks, error: linkErr } = await supabase
     .from("account_models")
-    .select("id, model_id, enabled, test_status, lifecycle, models(id, external_id, display_name, capabilities)")
+    .select(
+      "id, model_id, enabled, test_status, lifecycle, models(id, external_id, display_name, capabilities)",
+    )
     .eq("account_id", accountId);
   if (linkErr) throw new Error(linkErr.message);
 
@@ -145,12 +149,48 @@ export async function syncModelsForAccount(
 
   for (const m of liveModels) {
     const existingLink = linkByExt.get(m.external_id);
+    const catalogRow = catalogByExt.get(m.external_id);
+
+    // Update catalog row if capabilities or context_window changed
+    if (catalogRow) {
+      const newCapabilities = buildCapabilities(m);
+      // Prefer live context_window from models.dev; fall back to DB value for resolveModelSpecs
+      const effectiveContextWindow = m.context_window ?? catalogRow.context_window;
+      const specs =
+        m.context_window != null && m.quality_rating != null
+          ? { context_window: m.context_window, quality_rating: m.quality_rating }
+          : resolveModelSpecs(
+              m.external_id,
+              providerSlug,
+              newCapabilities,
+              effectiveContextWindow,
+              catalogRow.quality_rating,
+            );
+
+      const capsChanged =
+        JSON.stringify(catalogRow.capabilities) !== JSON.stringify(newCapabilities);
+      const contextChanged =
+        specs.context_window != null && catalogRow.context_window !== specs.context_window;
+      const qualityMissing =
+        (catalogRow.quality_rating == null || catalogRow.quality_rating === 50) &&
+        specs.quality_rating !== 50;
+
+      if (capsChanged || contextChanged || qualityMissing) {
+        const patch: Record<string, unknown> = {};
+        if (capsChanged) patch.capabilities = newCapabilities;
+        if (contextChanged) patch.context_window = specs.context_window;
+        if (qualityMissing) patch.quality_rating = specs.quality_rating;
+        const { error } = await supabase.from("models").update(patch).eq("id", catalogRow.id);
+        if (error) throw new Error(`Model update failed (${m.external_id}): ${error.message}`);
+        stats.updated++;
+      }
+    }
+
     if (existingLink) {
       stats.unchanged++;
       continue;
     }
 
-    const catalogRow = catalogByExt.get(m.external_id);
     if (catalogRow) {
       const { error } = await supabase.from("account_models").insert({
         account_id: accountId,
@@ -202,13 +242,16 @@ export async function syncModelsForAccount(
       last_tested_at: new Date().toISOString(),
       last_test_error: null,
     });
-    if (linkInsErr) throw new Error(`Account link failed (${m.external_id}): ${linkInsErr.message}`);
+    if (linkInsErr)
+      throw new Error(`Account link failed (${m.external_id}): ${linkInsErr.message}`);
 
     catalogByExt.set(m.external_id, {
       id: inserted.id,
       external_id: m.external_id,
       display_name: m.display_name,
       capabilities,
+      context_window: specs.context_window,
+      quality_rating: specs.quality_rating,
     });
     stats.added.push(m.external_id);
   }

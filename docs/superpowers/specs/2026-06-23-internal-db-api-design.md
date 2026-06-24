@@ -63,67 +63,67 @@ src/lib/db/
 ### Types
 
 ```ts
-type AccountStatus = "healthy" | "degraded" | "expired"
+type AccountStatus = "healthy" | "degraded" | "expired";
 
 type AccountInfo = {
-  id: string
-  email: string | null
-  label: string | null
-  plan: string | null
-  status: AccountStatus
-  provider_slug: string
-  provider_name: string
-  auth_type: string
-  last_synced_at: string | null
-  last_health_check_at: string | null
-}
+  id: string;
+  email: string | null;
+  label: string | null;
+  plan: string | null;
+  status: AccountStatus;
+  provider_slug: string;
+  provider_name: string;
+  auth_type: string;
+  last_synced_at: string | null;
+  last_health_check_at: string | null;
+};
 
 type QuotaGroup = {
-  label: string
-  used: number
-  total: number | null
-  unit: string
-  resets_at: string | null
-}
+  label: string;
+  used: number;
+  total: number | null;
+  unit: string;
+  resets_at: string | null;
+};
 
 type AccountQuota = {
-  account_id: string
-  used: number | null
-  total: number | null
-  unit: string | null
-  groups: QuotaGroup[]
-  resets_at: string | null
-  confidence: "high" | "medium" | "low" | null
-}
+  account_id: string;
+  used: number | null;
+  total: number | null;
+  unit: string | null;
+  groups: QuotaGroup[];
+  resets_at: string | null;
+  confidence: "high" | "medium" | "low" | null;
+};
 
 type AccountModel = {
-  id: string
-  external_id: string
-  display_name: string
-  capabilities: string[]
-  enabled: boolean
-  test_status: "working" | "failed" | "untested"
-  latency_ms: number | null
-  last_tested_at: string | null
-  lifecycle: string
-}
+  id: string;
+  external_id: string;
+  display_name: string;
+  capabilities: string[];
+  enabled: boolean;
+  test_status: "working" | "failed" | "untested";
+  latency_ms: number | null;
+  last_tested_at: string | null;
+  lifecycle: string;
+};
 
 type ModelCheckResult = {
-  external_id: string
-  ok: boolean
-  latency_ms: number
-  error?: string
-}
+  external_id: string;
+  ok: boolean;
+  latency_ms: number;
+  error?: string;
+};
 
 type ProviderHealth = {
-  provider_slug: string
-  provider_name: string
-  accounts_total: number
-  accounts_healthy: number
-  accounts_degraded: number
-  accounts_expired: number
-  is_healthy: boolean  // true if at least one healthy account exists
-}
+  provider_slug: string;
+  provider_name: string;
+  accounts_total: number;
+  accounts_healthy: number;
+  accounts_degraded: number;
+  accounts_expired: number;
+  is_healthy: boolean; // true if at least one healthy account exists
+};
 ```
 
 ### Functions
@@ -260,10 +260,10 @@ getApiKey(supabase, id: string): Promise<ApiKey>
 Each domain file is imported directly:
 
 ```ts
-import { getAccountInfo } from "@/lib/db/providers.server"
-import { listVenomModels } from "@/lib/db/venom.server"
-import { getTraffic7d } from "@/lib/db/usage.server"
-import { listApiKeys } from "@/lib/db/api-keys.server"
+import { getAccountInfo } from "@/lib/db/providers.server";
+import { listVenomModels } from "@/lib/db/venom.server";
+import { getTraffic7d } from "@/lib/db/usage.server";
+import { listApiKeys } from "@/lib/db/api-keys.server";
 ```
 
 A barrel `index.ts` (without `.server` suffix) would bypass the Vite server-only boundary check — client code could accidentally import server functions without a build-time error. Direct imports keep the boundary explicit.
@@ -276,22 +276,22 @@ A barrel `index.ts` (without `.server` suffix) would bypass the Vite server-only
 
 ```ts
 // Before — inline query in integrations.functions.ts
-const { data } = await supabase.from("accounts").select("...").eq("id", id)
+const { data } = await supabase.from("accounts").select("...").eq("id", id);
 
 // After — delegate to core
-import { getAccountInfo } from "@/lib/db/providers.server"
-const account = await getAccountInfo(context.supabase, id)
+import { getAccountInfo } from "@/lib/db/providers.server";
+const account = await getAccountInfo(context.supabase, id);
 ```
 
 ### Workers / Cron
 
 ```ts
 // Before — ad-hoc query in health-check.server.ts
-const { data: accounts } = await supabase.from("accounts").select("...").neq("status", "expired")
+const { data: accounts } = await supabase.from("accounts").select("...").neq("status", "expired");
 
 // After
-import { listAccounts } from "@/lib/db/providers.server"
-const accounts = await listAccounts(supabaseAdmin, { status: ["healthy", "degraded"] })
+import { listAccounts } from "@/lib/db/providers.server";
+const accounts = await listAccounts(supabaseAdmin, { status: ["healthy", "degraded"] });
 ```
 
 ### New code (background jobs, cron, future workers)

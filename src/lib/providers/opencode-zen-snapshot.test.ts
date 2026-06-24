@@ -7,10 +7,21 @@ import {
 } from "./opencode-zen-snapshot";
 
 const catalog: Record<string, OpenCodeZenCatalogEntry> = {
-  "big-pickle": { name: "Big Pickle", cost: { input: 0, output: 0 } },
+  "big-pickle": {
+    name: "Big Pickle",
+    cost: { input: 0, output: 0 },
+    limit: { context: 200000, output: 32000 },
+    reasoning: true,
+    tool_call: true,
+    structured_output: true,
+  },
   "deepseek-v4-flash-free": {
     name: "DeepSeek V4 Flash Free",
     cost: { input: 0, output: 0 },
+    limit: { context: 200000, output: 128000 },
+    reasoning: true,
+    tool_call: true,
+    structured_output: true,
   },
   "gpt-5.2": { name: "GPT 5.2", cost: { input: 1.75, output: 14 } },
   "claude-opus-4-8": { name: "Claude Opus 4.8", cost: { input: 5, output: 25 } },
@@ -72,13 +83,31 @@ describe("opencode-zen-snapshot", () => {
   });
 
   it("excludes deprecated free models from live Zen catalog", () => {
-    const live = [
-      "deepseek-v4-flash-free",
-      "minimax-m3-free",
-      "qwen3.6-plus-free",
-      "big-pickle",
-    ];
+    const live = ["deepseek-v4-flash-free", "minimax-m3-free", "qwen3.6-plus-free", "big-pickle"];
     const result = buildOpenCodeZenFreeCatalog(live, catalog);
     expect(result.map((m) => m.id).sort()).toEqual(["big-pickle", "deepseek-v4-flash-free"]);
+  });
+
+  it("parses limit.context as contextWindow", () => {
+    const live = ["big-pickle"];
+    const result = buildOpenCodeZenFreeCatalog(live, catalog);
+    expect(result[0].contextWindow).toBe(200000);
+  });
+
+  it("parses reasoning, tool_call, structured_output flags", () => {
+    const live = ["big-pickle"];
+    const result = buildOpenCodeZenFreeCatalog(live, catalog);
+    expect(result[0].reasoning).toBe(true);
+    expect(result[0].toolCall).toBe(true);
+    expect(result[0].structuredOutput).toBe(true);
+  });
+
+  it("omits undefined flags when catalog entry lacks them", () => {
+    const live = ["catalog-only-free"];
+    const result = buildOpenCodeZenFreeCatalog(live, catalog);
+    expect(result[0].reasoning).toBeUndefined();
+    expect(result[0].toolCall).toBeUndefined();
+    expect(result[0].structuredOutput).toBeUndefined();
+    expect(result[0].contextWindow).toBeUndefined();
   });
 });

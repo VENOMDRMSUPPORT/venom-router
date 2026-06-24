@@ -5,9 +5,7 @@ export async function runQuotaSnapshots(
   supabase: SupabaseClient,
   results: AccountHealthCheckResult[],
 ): Promise<void> {
-  const withQuota = results.filter(
-    (r) => r.quota_used !== null && r.quota_total !== null,
-  );
+  const withQuota = results.filter((r) => r.quota_used !== null && r.quota_total !== null);
 
   if (!withQuota.length) return;
 
@@ -22,9 +20,7 @@ export async function runQuotaSnapshots(
       used: r.quota_used,
       total: r.quota_total,
       remaining:
-        r.quota_total !== null && r.quota_used !== null
-          ? r.quota_total - r.quota_used
-          : null,
+        r.quota_total !== null && r.quota_used !== null ? r.quota_total - r.quota_used : null,
       quota_source: "provider_reported",
       confidence: "high",
     })),

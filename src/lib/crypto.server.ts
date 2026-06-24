@@ -4,9 +4,7 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash } from "crypt
 function getKey(): Buffer {
   const raw = process.env.VENOM_ENCRYPTION_KEY;
   if (!raw) {
-    throw new Error(
-      "VENOM_ENCRYPTION_KEY is required. Generate one with: openssl rand -hex 32",
-    );
+    throw new Error("VENOM_ENCRYPTION_KEY is required. Generate one with: openssl rand -hex 32");
   }
   // Accept hex (64 chars), base64 (>=43 chars), or raw 32-byte string.
   if (/^[0-9a-f]{64}$/i.test(raw)) return Buffer.from(raw, "hex");

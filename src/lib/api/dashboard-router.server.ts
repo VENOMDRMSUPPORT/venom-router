@@ -26,15 +26,26 @@ const updateVenomSchema = z.object({
   weight_quality: z.number().min(0).max(1).optional(),
   max_fallback_attempts: z.number().int().min(0).max(10).optional(),
   timeout_ms: z.number().int().min(1000).max(120000).optional(),
+  strategy_config: z
+    .object({
+      quota_threshold_pct: z.number().min(0).max(100),
+      premium_reserve_pct: z.number().min(0).max(100),
+      auto_escalation: z.enum(["off", "on_failure", "on_quota", "on_complexity"]),
+      account_rotation: z.enum(["off", "round_robin", "quota_weighted", "health_weighted"]),
+      health_requirement: z.enum(["healthy_only", "allow_degraded"]),
+      fallback_behavior: z.enum(["sequential", "skip_exhausted", "premium_last"]),
+    })
+    .partial()
+    .optional(),
 });
 
-const createKeySchema = z.object({
-  name: z.string().trim().min(1).max(80),
-  allowed_models: z.array(z.enum(["lite", "pro", "max"])).min(1),
-  rpm_limit: z.number().int().positive().nullable(),
-  tpd_limit: z.number().int().positive().nullable(),
-  monthly_cap_usd: z.number().positive().nullable(),
-});
+const routingConditionSchema = z
+  .object({
+    requires: z.array(z.string()).optional(),
+    min_context_tokens: z.number().int().min(0).optional(),
+    quota_risk: z.enum(["low", "medium", "high"]).optional(),
+  })
+  .optional();
 
 const createRuleSchema = z.object({
   venom_slug: z.enum(["lite", "pro", "max"]),
@@ -43,9 +54,27 @@ const createRuleSchema = z.object({
   priority: z.number().int().min(0).max(9999),
   role: z.enum(["primary", "fallback"]).default("primary"),
   active: z.boolean().default(true),
+  condition: routingConditionSchema,
 });
 
+const updateRuleSchema = z
+  .object({
+    priority: z.number().int().min(0).max(9999).optional(),
+    role: z.enum(["primary", "fallback"]).optional(),
+    active: z.boolean().optional(),
+    condition: routingConditionSchema,
+  })
+  .refine((body) => Object.keys(body).length > 0, { message: "No fields to update" });
+
 const toggleRuleSchema = z.object({ active: z.boolean() });
+
+const createKeySchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  allowed_models: z.array(z.enum(["lite", "pro", "max"])).min(1),
+  rpm_limit: z.number().int().positive().nullable(),
+  tpd_limit: z.number().int().positive().nullable(),
+  monthly_cap_usd: z.number().positive().nullable(),
+});
 
 const quotaSchema = z.object({
   account_id: z.string().uuid(),
@@ -56,6 +85,22 @@ const quotaSchema = z.object({
   source: z.string().min(1).max(64),
   resets_at: z.string().nullable(),
 });
+
+const playgroundChatSchema = z.object({
+  venom_slug: z.enum(["lite", "pro", "max"]),
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant", "system"]),
+        content: z.string().min(1),
+      }),
+    )
+    .min(1),
+  max_tokens: z.number().int().positive().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+});
+
+const usagePeriodSchema = z.enum(["7d", "30d"]);
 
 // ── integrations schemas ──────────────────────────────────────────────────────
 
@@ -125,7 +170,7 @@ function buildTraffic7d(records: { created_at: string }[]): { day: string; reque
 async function handleGetMetrics(supabase: SupabaseClient): Promise<unknown> {
   const { ACCOUNT_MODELS_SELECT, mapJoinToCatalogRow } =
     await import("@/lib/providers/catalog-queries.server");
-  const { aggregateCatalogModels } = await import("@/lib/providers/integrations.functions");
+  const { aggregateCatalogModels } = await import("@/lib/providers/integrations.service");
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
 
@@ -401,7 +446,7 @@ async function handleCompleteOAuthFlow(
   await supabase.from("oauth_flows").delete().eq("id", flow.id);
 
   const { syncAccountInternal, toSyncAccountWireResponse } =
-    await import("@/lib/providers/integrations.functions");
+    await import("@/lib/providers/integrations.service");
 
   let health: { ok: boolean; error?: string } = { ok: true };
   try {
@@ -460,7 +505,7 @@ async function handleConnectCredential(
     .single();
   if (aErr) throw new Error(aErr.message);
 
-  const { syncAccountInternal } = await import("@/lib/providers/integrations.functions");
+  const { syncAccountInternal } = await import("@/lib/providers/integrations.service");
 
   let health: { ok: boolean; error?: string } = { ok: true };
   try {
@@ -481,7 +526,7 @@ async function handleConnectCredential(
 
 async function handleFetchModels(supabase: SupabaseClient, accountId: string) {
   const { unpackCredentials } = await import("@/lib/credentials.server");
-  const { runProviderModelSync } = await import("@/lib/providers/integrations.functions");
+  const { runProviderModelSync } = await import("@/lib/providers/integrations.service");
   const { data: acct, error } = await supabase
     .from("accounts")
     .select("id,provider_id,credentials_enc,credentials_iv,credentials_tag,providers(slug)")
@@ -493,7 +538,7 @@ async function handleFetchModels(supabase: SupabaseClient, accountId: string) {
 
   if (slug === "antigravity") {
     const { runAntigravityLiveSnapshotFetch } =
-      await import("@/lib/providers/integrations.functions");
+      await import("@/lib/providers/integrations.service");
     const snapshot = await runAntigravityLiveSnapshotFetch(supabase, accountId);
     return {
       slug: "antigravity",
@@ -517,7 +562,13 @@ async function handleFetchModels(supabase: SupabaseClient, accountId: string) {
     credentials_tag: acct.credentials_tag,
   });
 
-  let liveModels: { external_id: string; display_name: string; capabilities: string[] }[] = [];
+  let liveModels: {
+    external_id: string;
+    display_name: string;
+    capabilities: string[];
+    context_window?: number;
+    quality_rating?: number;
+  }[] = [];
   if (slug === "claude-code") {
     const a = await import("@/lib/providers/adapters/claude-code.server");
     creds = (await a.fetchIdentity(creds)).creds;
@@ -553,7 +604,7 @@ async function handleLoadAntigravityStoredSnapshot(supabase: SupabaseClient, acc
     await import("@/lib/providers/catalog-queries.server");
   const { buildAntigravitySnapshotFromDbRows } =
     await import("@/lib/providers/antigravity-live-snapshot");
-  const { extractCapabilityList } = await import("@/lib/providers/integrations.functions");
+  const { extractCapabilityList } = await import("@/lib/providers/integrations.service");
 
   const { data: acct, error: acctErr } = await supabase
     .from("accounts")
@@ -623,7 +674,7 @@ async function handleDiagnoseAntigravityFetch(supabase: SupabaseClient, accountI
 async function handleListCatalogModels(supabase: SupabaseClient) {
   const { ACCOUNT_MODELS_SELECT, mapJoinToCatalogRow } =
     await import("@/lib/providers/catalog-queries.server");
-  const { aggregateCatalogModels } = await import("@/lib/providers/integrations.functions");
+  const { aggregateCatalogModels } = await import("@/lib/providers/integrations.service");
 
   const { data: rows, error } = await supabase
     .from("account_models")
@@ -636,7 +687,7 @@ async function handleListCatalogModels(supabase: SupabaseClient) {
 async function handleListAccountModels(supabase: SupabaseClient, accountId: string) {
   const { ACCOUNT_MODELS_SELECT, mapJoinToAccountModelView } =
     await import("@/lib/providers/catalog-queries.server");
-  const { extractCapabilityList } = await import("@/lib/providers/integrations.functions");
+  const { extractCapabilityList } = await import("@/lib/providers/integrations.service");
 
   const { data: rows, error } = await supabase
     .from("account_models")
@@ -727,6 +778,65 @@ async function handleToggleAccount(
     .eq("id", body.account_id);
   if (error) throw new Error(error.message);
   return { ok: true };
+}
+
+async function handlePlaygroundChat(body: z.infer<typeof playgroundChatSchema>) {
+  const { routeRequest } = await import("@/lib/routing/engine.server");
+  const { routingErrorMessage } = await import("@/components/routing/routing-constants");
+  const t0 = Date.now();
+
+  const result = await routeRequest({
+    venomSlug: body.venom_slug,
+    messages: body.messages as import("@/lib/providers/adapters/types").ChatMessage[],
+    maxTokens: body.max_tokens,
+    temperature: body.temperature,
+    includeTrace: true,
+  });
+
+  const wireRequest = {
+    venom_slug: body.venom_slug,
+    messages: body.messages,
+    ...(body.max_tokens != null ? { max_tokens: body.max_tokens } : {}),
+    ...(body.temperature != null ? { temperature: body.temperature } : {}),
+  };
+
+  if (!result.success) {
+    const errorCode = result.errorCode ?? "Routing failed";
+    const errorMessage = routingErrorMessage(errorCode, body.venom_slug);
+    throw Object.assign(new Error(errorMessage), {
+      status: 422,
+      payload: {
+        error: errorCode,
+        error_code: result.errorCode,
+        error_message: errorMessage,
+        trace: result.trace ?? null,
+        request: wireRequest,
+      },
+    });
+  }
+
+  return {
+    content: result.content ?? "",
+    input_tokens: result.inputTokens,
+    output_tokens: result.outputTokens,
+    latency_ms: Date.now() - t0,
+    provider_adapter: result.providerAdapter ?? null,
+    fallback_used: result.fallbackUsed,
+    fallback_count: result.fallbackCount,
+    cost_usd: result.costUsd ?? 0,
+    modality: result.modality,
+    trace: result.trace ?? null,
+    request: wireRequest,
+  };
+}
+
+async function handleGetUsageAnalytics(
+  supabase: SupabaseClient,
+  period: z.infer<typeof usagePeriodSchema>,
+) {
+  const { getUsageAnalytics } = await import("@/lib/db/usage.server");
+  const days = period === "30d" ? 30 : 7;
+  return getUsageAnalytics(supabase, { days });
 }
 
 // ── main handler ──────────────────────────────────────────────────────────────
@@ -874,20 +984,35 @@ export async function handleDashboardAPI(request: Request): Promise<Response | n
         }
         if (method === "POST") {
           const body = createRuleSchema.parse(await parseBody(request));
-          const { error } = await supabase.from("routing_rules").insert({
+          const insert: Record<string, unknown> = {
             venom_slug: body.venom_slug,
             model_id: body.model_id,
             account_id: body.account_id,
             priority: body.priority,
             role: body.role,
             active: body.active,
-          });
+          };
+          if (body.condition) insert.condition = body.condition;
+          const { error } = await supabase.from("routing_rules").insert(insert);
           if (error) throw new Error(error.message);
           return ok({ ok: true }, 201);
         }
       } else {
         if (method === "PATCH") {
-          const { active } = toggleRuleSchema.parse(await parseBody(request));
+          const raw = await parseBody(request);
+          const parsed = updateRuleSchema.safeParse(raw);
+          if (parsed.success) {
+            const body = parsed.data;
+            const patch: Record<string, unknown> = {};
+            if (body.priority !== undefined) patch.priority = body.priority;
+            if (body.role !== undefined) patch.role = body.role;
+            if (body.active !== undefined) patch.active = body.active;
+            if (body.condition !== undefined) patch.condition = body.condition;
+            const { error } = await supabase.from("routing_rules").update(patch).eq("id", id);
+            if (error) throw new Error(error.message);
+            return ok({ ok: true });
+          }
+          const { active } = toggleRuleSchema.parse(raw);
           const { error } = await supabase.from("routing_rules").update({ active }).eq("id", id);
           if (error) throw new Error(error.message);
           return ok({ ok: true });
@@ -935,7 +1060,7 @@ export async function handleDashboardAPI(request: Request): Promise<Response | n
       // ── POST /api/dashboard/accounts/:id/sync
       if (sub === "sync" && method === "POST") {
         const { syncAccountInternal, toSyncAccountWireResponse } =
-          await import("@/lib/providers/integrations.functions");
+          await import("@/lib/providers/integrations.service");
         const result = await syncAccountInternal(supabase, id);
         return ok(toSyncAccountWireResponse(result));
       }
@@ -948,7 +1073,7 @@ export async function handleDashboardAPI(request: Request): Promise<Response | n
       // ── POST /api/dashboard/accounts/:id/antigravity/live-snapshot
       if (sub === "antigravity" && subId === "live-snapshot" && method === "POST") {
         const { runAntigravityLiveSnapshotFetch } =
-          await import("@/lib/providers/integrations.functions");
+          await import("@/lib/providers/integrations.service");
         return ok(await runAntigravityLiveSnapshotFetch(supabase, id));
       }
 
@@ -991,6 +1116,18 @@ export async function handleDashboardAPI(request: Request): Promise<Response | n
       }
     }
 
+    // ── GET /api/dashboard/usage?period=7d|30d ────────────────────────────────
+    if (resource === "usage" && !id && method === "GET") {
+      const period = usagePeriodSchema.parse(url.searchParams.get("period") ?? "7d");
+      return ok(await handleGetUsageAnalytics(supabase, period));
+    }
+
+    // ── POST /api/dashboard/playground/chat ───────────────────────────────────
+    if (resource === "playground" && id === "chat" && method === "POST") {
+      const body = playgroundChatSchema.parse(await parseBody(request));
+      return ok(await handlePlaygroundChat(body));
+    }
+
     // ── quotas ────────────────────────────────────────────────────────────────
     if (resource === "quotas") {
       if (!id && method === "GET") {
@@ -1022,6 +1159,9 @@ export async function handleDashboardAPI(request: Request): Promise<Response | n
   } catch (e: any) {
     if (e instanceof z.ZodError) {
       return err(`Validation error: ${e.errors[0]?.message ?? "invalid input"}`, 400);
+    }
+    if (e.payload && typeof e.status === "number") {
+      return Response.json(e.payload, { status: e.status });
     }
     const status = typeof e.status === "number" ? e.status : 500;
     if (status < 500) return err(e.message, status);

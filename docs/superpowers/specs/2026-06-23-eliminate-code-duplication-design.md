@@ -1,7 +1,7 @@
 # Eliminate Code Duplication in venom-router-react
 
 **Date:** 2026-06-23
-**Status:** Approved — pending implementation
+**Status:** ✅ COMPLETE — implemented 2026-06-23
 **Approach:** Option A — Delete the dead `createServerFn` files, keep the live HTTP dispatcher
 
 ## Context
@@ -19,11 +19,11 @@ The "duplication" the owner perceived is actually duplication with dead code. Th
 
 ### Files to delete (full file removal)
 
-| File | Lines | Reason |
-|------|------:|--------|
-| `src/lib/venom.functions.ts` | 450 | All 17 `createServerFn` wrappers are unused |
-| `src/integrations/supabase/auth-middleware.ts` | 73 | Auto-generated; serves `createServerFn` only |
-| `src/integrations/supabase/auth-attacher.ts` | 15 | Auto-generated client middleware; serves `createServerFn` only |
+| File                                           | Lines | Reason                                                         |
+| ---------------------------------------------- | ----: | -------------------------------------------------------------- |
+| `src/lib/venom.functions.ts`                   |   450 | All 17 `createServerFn` wrappers are unused                    |
+| `src/integrations/supabase/auth-middleware.ts` |    73 | Auto-generated; serves `createServerFn` only                   |
+| `src/integrations/supabase/auth-attacher.ts`   |    15 | Auto-generated client middleware; serves `createServerFn` only |
 
 **Total deleted:** 538 lines
 
@@ -52,17 +52,17 @@ The "duplication" the owner perceived is actually duplication with dead code. Th
 
 ### Files to keep unchanged
 
-| File | Why |
-|------|-----|
-| `src/lib/api/dashboard-router.server.ts` | **The single source of truth for the live API** |
-| `src/lib/dashboard-auth.server.ts` | Live owner-JWT auth; not auto-generated |
-| `src/integrations/supabase/client.server.ts` | Supabase admin client; still used by `dashboard-auth.server.ts` |
-| `src/lib/api-client.ts` | Browser fetch wrapper |
-| `src/lib/credentials.server.ts` | Crypto helpers (encrypt/decrypt credentials blob) |
-| `src/lib/api-key-auth.server.ts` | Public OpenAI-compat auth (different flow, not duplicated) |
-| `src/lib/crypto.server.ts` | API-key crypto |
-| `src/lib/db/*.server.ts` | Pure data-access functions |
-| All existing tests under `src/lib/**/*.test.ts` | Continue to cover the data layer |
+| File                                            | Why                                                             |
+| ----------------------------------------------- | --------------------------------------------------------------- |
+| `src/lib/api/dashboard-router.server.ts`        | **The single source of truth for the live API**                 |
+| `src/lib/dashboard-auth.server.ts`              | Live owner-JWT auth; not auto-generated                         |
+| `src/integrations/supabase/client.server.ts`    | Supabase admin client; still used by `dashboard-auth.server.ts` |
+| `src/lib/api-client.ts`                         | Browser fetch wrapper                                           |
+| `src/lib/credentials.server.ts`                 | Crypto helpers (encrypt/decrypt credentials blob)               |
+| `src/lib/api-key-auth.server.ts`                | Public OpenAI-compat auth (different flow, not duplicated)      |
+| `src/lib/crypto.server.ts`                      | API-key crypto                                                  |
+| `src/lib/db/*.server.ts`                        | Pure data-access functions                                      |
+| All existing tests under `src/lib/**/*.test.ts` | Continue to cover the data layer                                |
 
 ## Architecture after refactor
 
@@ -84,14 +84,14 @@ Browser
 
 ## Duplication removed
 
-| Category | Count | Notes |
-|----------|------:|-------|
-| Function pairs (handler vs serverFn wrapper) | 30 | 29 are byte-for-byte identical; 1 has a typed-cast micro-diff |
-| Zod validation schemas | 13 | All byte-for-byte identical |
-| `buildTraffic7d` + `DAY_LABELS` clones | 3 | All identical |
-| Owner-Bearer-JWT auth implementations | 2 | Reduced to 1 (`dashboard-auth.server.ts`) |
-| Supabase admin client construction sites | 2 | Reduced to 1 (`client.server.ts`) |
-| Sync health-tracking try/catch blocks | 4 | Reduced to 1 (in `integrations.service.ts`) |
+| Category                                     | Count | Notes                                                         |
+| -------------------------------------------- | ----: | ------------------------------------------------------------- |
+| Function pairs (handler vs serverFn wrapper) |    30 | 29 are byte-for-byte identical; 1 has a typed-cast micro-diff |
+| Zod validation schemas                       |    13 | All byte-for-byte identical                                   |
+| `buildTraffic7d` + `DAY_LABELS` clones       |     3 | All identical                                                 |
+| Owner-Bearer-JWT auth implementations        |     2 | Reduced to 1 (`dashboard-auth.server.ts`)                     |
+| Supabase admin client construction sites     |     2 | Reduced to 1 (`client.server.ts`)                             |
+| Sync health-tracking try/catch blocks        |     4 | Reduced to 1 (in `integrations.service.ts`)                   |
 
 **Total:** ~1900 lines of duplicated logic eliminated (per the explore report — same business logic written twice). The dashboard router's handlers and the (now deleted) server functions were character-for-character the same. The 1900 figure is the duplicated logic, not the file deletion count: the file-level deletion is 538 + ~900 dead-wrapper lines = ~1438 lines removed; the remaining ~500 lines disappear naturally because only one copy of each handler remains (in `dashboard-router.server.ts`).
 
@@ -112,15 +112,15 @@ Add a new integration test file at `src/lib/api/dashboard-router.test.ts` that:
 
 **Minimum test cases** (covers the critical paths without inflating scope):
 
-| Test | Endpoint | Expected |
-|------|----------|----------|
-| Owner auth — missing header | any | 401 |
-| Owner auth — non-owner JWT | any | 401 |
-| `GET /api/dashboard/metrics` | metrics | 200 + correct shape |
-| `POST /api/dashboard/oauth/start` | oauth flow start | 200 + `{flow_id, authorize_url}` |
-| `POST /api/dashboard/api-keys` | key creation | 200 + `{id, raw, prefix}` |
-| `DELETE /api/dashboard/accounts/:id` | disconnect | 200 |
-| Zod validation failure | any POST | 400 + error message |
+| Test                                 | Endpoint         | Expected                         |
+| ------------------------------------ | ---------------- | -------------------------------- |
+| Owner auth — missing header          | any              | 401                              |
+| Owner auth — non-owner JWT           | any              | 401                              |
+| `GET /api/dashboard/metrics`         | metrics          | 200 + correct shape              |
+| `POST /api/dashboard/oauth/start`    | oauth flow start | 200 + `{flow_id, authorize_url}` |
+| `POST /api/dashboard/api-keys`       | key creation     | 200 + `{id, raw, prefix}`        |
+| `DELETE /api/dashboard/accounts/:id` | disconnect       | 200                              |
+| Zod validation failure               | any POST         | 400 + error message              |
 
 Existing tests (10 files under `src/lib/db/*.test.ts` and `src/lib/providers/*.test.ts`) must continue to pass unchanged.
 
@@ -136,12 +136,12 @@ After implementation:
 
 ## Risks
 
-| Risk | Likelihood | Mitigation |
-|------|-----------|------------|
-| `start.ts` SSR code depends on `attachSupabaseAuth` | Low | Search the project for any reference to `attachSupabaseAuth` before deletion; remove the `functionMiddleware` line only after confirming zero references |
-| `client.server.ts` marked "auto-generated" may be regenerated by some external process | Low | Owner confirmed Lovable is no longer used; even if a future process regenerates it, the new content must produce the same supabase admin client interface we depend on |
-| Some hidden dynamic import targets the deleted files | Low | The explore pass found zero imports of the deleted `createServerFn` exports project-wide; the only `import`s into `integrations.functions.ts` are for the internal helpers we are keeping (under the new name) |
-| `requireDashboardAuth` change of return shape | None | We are not modifying `dashboard-auth.server.ts` |
+| Risk                                                                                   | Likelihood | Mitigation                                                                                                                                                                                                     |
+| -------------------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start.ts` SSR code depends on `attachSupabaseAuth`                                    | Low        | Search the project for any reference to `attachSupabaseAuth` before deletion; remove the `functionMiddleware` line only after confirming zero references                                                       |
+| `client.server.ts` marked "auto-generated" may be regenerated by some external process | Low        | Owner confirmed Lovable is no longer used; even if a future process regenerates it, the new content must produce the same supabase admin client interface we depend on                                         |
+| Some hidden dynamic import targets the deleted files                                   | Low        | The explore pass found zero imports of the deleted `createServerFn` exports project-wide; the only `import`s into `integrations.functions.ts` are for the internal helpers we are keeping (under the new name) |
+| `requireDashboardAuth` change of return shape                                          | None       | We are not modifying `dashboard-auth.server.ts`                                                                                                                                                                |
 
 ## Out of scope (intentional)
 

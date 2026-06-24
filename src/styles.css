@@ -230,3 +230,248 @@
     background-color: oklch(1 0 0 / 20%);
   }
 }
+
+@utility scrollbar-app {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent) transparent;
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent);
+    border-radius: 9999px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in oklch, var(--muted-foreground) 55%, transparent);
+  }
+  &::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+/* ── Venom toast system — glass HUD, status rail ── */
+[data-sonner-toaster].venom-toaster {
+  --venom-toast-width: 22rem;
+  font-family: var(--font-sans);
+}
+
+[data-sonner-toaster].venom-toaster [data-sonner-toast].venom-toast {
+  position: relative;
+  display: flex !important;
+  align-items: stretch !important;
+  width: var(--venom-toast-width);
+  min-height: 3.75rem;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden;
+  border-radius: 0.875rem;
+  border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+  background: color-mix(in oklch, var(--popover) 94%, transparent) !important;
+  backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow:
+    0 20px 48px -16px oklch(0 0 0 / 45%),
+    0 0 0 1px color-mix(in oklch, var(--foreground) 6%, transparent) inset;
+  color: var(--foreground);
+  animation: venom-toast-in 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-sonner-toaster].venom-toaster [data-sonner-toast].venom-toast {
+    animation: none;
+  }
+}
+
+@keyframes venom-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+[data-sonner-toaster].venom-toaster [data-sonner-toast] .venom-toast__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.25rem;
+  flex-shrink: 0;
+  margin: 0 !important;
+  color: var(--toast-rail-fg, var(--primary-foreground));
+  background: var(--toast-rail-bg, var(--primary));
+  box-shadow: inset -1px 0 0 oklch(1 0 0 / 12%);
+}
+
+[data-sonner-toaster].venom-toaster [data-sonner-toast] .venom-toast__icon svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+[data-sonner-toaster].venom-toaster [data-sonner-toast] .venom-toast__content {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.125rem;
+  min-width: 0;
+  flex: 1;
+  padding: 0.75rem 2.5rem 0.75rem 0.875rem;
+}
+
+[data-sonner-toaster].venom-toaster [data-sonner-toast] .venom-toast__content::before {
+  content: var(--toast-label, "NOTICE");
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  color: var(--toast-accent, var(--primary));
+}
+
+[data-sonner-toaster].venom-toaster [data-sonner-toast] .venom-toast__title {
+  font-family: var(--font-display);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
+}
+
+[data-sonner-toaster].venom-toaster [data-sonner-toast] .venom-toast__description {
+  font-size: 0.6875rem;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+
+[data-sonner-toaster].venom-toaster [data-sonner-toast] .venom-toast__close {
+  position: absolute !important;
+  top: 0.5rem !important;
+  right: 0.5rem !important;
+  left: auto !important;
+  transform: none !important;
+  width: 1.5rem !important;
+  height: 1.5rem !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border: none !important;
+  border-radius: 0.375rem !important;
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+  opacity: 0.55;
+  transition:
+    opacity 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+[data-sonner-toaster].venom-toaster [data-sonner-toast] .venom-toast__close:hover {
+  opacity: 1;
+  background: color-mix(in oklch, var(--foreground) 8%, transparent) !important;
+  color: var(--foreground) !important;
+}
+
+[data-sonner-toaster].venom-toaster [data-sonner-toast] .venom-toast__close svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+/* Success */
+[data-sonner-toaster].venom-toaster [data-sonner-toast].venom-toast--success {
+  --toast-accent: var(--success);
+  --toast-label: "SUCCESS";
+  --toast-rail-bg: linear-gradient(
+    165deg,
+    color-mix(in oklch, var(--success) 88%, white),
+    var(--success)
+  );
+  --toast-rail-fg: var(--success-foreground);
+  border-color: color-mix(in oklch, var(--success) 35%, var(--border));
+  box-shadow:
+    0 20px 48px -16px color-mix(in oklch, var(--success) 35%, transparent),
+    0 0 0 1px color-mix(in oklch, var(--success) 18%, transparent) inset;
+}
+
+/* Error */
+[data-sonner-toaster].venom-toaster [data-sonner-toast].venom-toast--error {
+  --toast-accent: var(--destructive);
+  --toast-label: "ERROR";
+  --toast-rail-bg: linear-gradient(
+    165deg,
+    color-mix(in oklch, var(--destructive) 88%, white),
+    var(--destructive)
+  );
+  --toast-rail-fg: var(--destructive-foreground);
+  border-color: color-mix(in oklch, var(--destructive) 35%, var(--border));
+  box-shadow:
+    0 20px 48px -16px color-mix(in oklch, var(--destructive) 35%, transparent),
+    0 0 0 1px color-mix(in oklch, var(--destructive) 18%, transparent) inset;
+}
+
+/* Warning */
+[data-sonner-toaster].venom-toaster [data-sonner-toast].venom-toast--warning {
+  --toast-accent: var(--warning);
+  --toast-label: "WARNING";
+  --toast-rail-bg: linear-gradient(
+    165deg,
+    color-mix(in oklch, var(--warning) 90%, white),
+    var(--warning)
+  );
+  --toast-rail-fg: var(--warning-foreground);
+  border-color: color-mix(in oklch, var(--warning) 38%, var(--border));
+  box-shadow:
+    0 20px 48px -16px color-mix(in oklch, var(--warning) 32%, transparent),
+    0 0 0 1px color-mix(in oklch, var(--warning) 16%, transparent) inset;
+}
+
+/* Info */
+[data-sonner-toaster].venom-toaster [data-sonner-toast].venom-toast--info {
+  --toast-accent: var(--primary);
+  --toast-label: "INFO";
+  --toast-rail-bg: var(--gradient-brand);
+  --toast-rail-fg: var(--primary-foreground);
+  border-color: color-mix(in oklch, var(--primary) 35%, var(--border));
+  box-shadow:
+    0 20px 48px -16px color-mix(in oklch, var(--primary) 35%, transparent),
+    0 0 0 1px color-mix(in oklch, var(--primary) 18%, transparent) inset;
+}
+
+/* Default / message */
+[data-sonner-toaster].venom-toaster
+  [data-sonner-toast].venom-toast:not(.venom-toast--success):not(.venom-toast--error):not(
+    .venom-toast--warning
+  ):not(.venom-toast--info) {
+  --toast-accent: var(--muted-foreground);
+  --toast-label: "NOTICE";
+  --toast-rail-bg: linear-gradient(
+    165deg,
+    color-mix(in oklch, var(--muted-foreground) 55%, var(--card)),
+    color-mix(in oklch, var(--muted-foreground) 75%, var(--card))
+  );
+  --toast-rail-fg: var(--foreground);
+}
+
+[data-sonner-toaster].venom-toaster [data-sonner-toast] .venom-toast__action,
+[data-sonner-toaster].venom-toaster [data-sonner-toast] .venom-toast__cancel {
+  margin-left: 0.875rem;
+  margin-bottom: 0.75rem;
+  border-radius: 0.375rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.25rem 0.625rem;
+}
+
+[data-sonner-toaster].venom-toaster [data-sonner-toast] .venom-toast__action {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+[data-sonner-toaster].venom-toaster [data-sonner-toast] .venom-toast__cancel {
+  background: var(--muted);
+  color: var(--muted-foreground);
+}

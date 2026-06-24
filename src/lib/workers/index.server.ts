@@ -9,9 +9,7 @@ export async function runScheduled(_cron: string): Promise<void> {
   try {
     const results = await runHealthChecks(supabaseAdmin);
     const healthy = results.filter((r) => r.ok).length;
-    console.log(
-      `[workers] health checks: ${results.length} accounts, ${healthy} healthy`,
-    );
+    console.log(`[workers] health checks: ${results.length} accounts, ${healthy} healthy`);
 
     await runQuotaSnapshots(supabaseAdmin, results);
     console.log("[workers] quota snapshots done");

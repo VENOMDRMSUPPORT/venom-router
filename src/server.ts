@@ -52,8 +52,17 @@ export default {
         }
         if (request.method !== "POST") {
           return new Response(
-            JSON.stringify({ error: { message: "Method not allowed", type: "invalid_request_error", code: "method_not_allowed" } }),
-            { status: 405, headers: { "Content-Type": "application/json", Allow: "POST, OPTIONS" } },
+            JSON.stringify({
+              error: {
+                message: "Method not allowed",
+                type: "invalid_request_error",
+                code: "method_not_allowed",
+              },
+            }),
+            {
+              status: 405,
+              headers: { "Content-Type": "application/json", Allow: "POST, OPTIONS" },
+            },
           );
         }
         try {
@@ -61,7 +70,13 @@ export default {
         } catch (apiErr) {
           console.error("[venom/api] unhandled error in chat/completions:", apiErr);
           return new Response(
-            JSON.stringify({ error: { message: "Internal server error.", type: "server_error", code: "internal_error" } }),
+            JSON.stringify({
+              error: {
+                message: "Internal server error.",
+                type: "server_error",
+                code: "internal_error",
+              },
+            }),
             { status: 500, headers: { "Content-Type": "application/json" } },
           );
         }
@@ -130,9 +145,7 @@ export default {
     ctx: { waitUntil: (p: Promise<unknown>) => void },
   ) {
     ctx.waitUntil(
-      import("./lib/workers/index.server").then(({ runScheduled }) =>
-        runScheduled(event.cron),
-      ),
+      import("./lib/workers/index.server").then(({ runScheduled }) => runScheduled(event.cron)),
     );
   },
 };

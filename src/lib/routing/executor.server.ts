@@ -98,8 +98,7 @@ export async function executeWithFallback(
         error: result.error ?? "EMPTY_RESPONSE",
       });
     } catch (e: unknown) {
-      const message =
-        e instanceof Error ? e.message : String(e);
+      const message = e instanceof Error ? e.message : String(e);
       attemptLog.push({
         ruleId: candidate.ruleId,
         error: message.slice(0, 200),
@@ -114,8 +113,7 @@ export async function executeWithFallback(
     latencyMs: Date.now() - startedAt,
     fallbackUsed: fallbackCount > 0,
     fallbackCount,
-    errorCode:
-      scored.length === 0 ? "NO_ELIGIBLE_CANDIDATES" : "ALL_CANDIDATES_FAILED",
+    errorCode: scored.length === 0 ? "NO_ELIGIBLE_CANDIDATES" : "ALL_CANDIDATES_FAILED",
     attemptLog,
   };
 }

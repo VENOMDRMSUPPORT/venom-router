@@ -7,11 +7,7 @@ import {
 
 type Row = Record<string, unknown>;
 
-function createMockSupabase(seed: {
-  models?: Row[];
-  account_models?: Row[];
-  providers?: Row[];
-}) {
+function createMockSupabase(seed: { models?: Row[]; account_models?: Row[]; providers?: Row[] }) {
   const models = [...(seed.models ?? [])];
   const accountModels = [...(seed.account_models ?? [])];
 
@@ -80,7 +76,11 @@ function createMockSupabase(seed: {
       then(resolve: (v: unknown) => void) {
         const list = table === "models" ? models : accountModels;
         let filtered = list.filter((row) => api._filters.every((f) => f(row)));
-        if (table === "account_models" && typeof api._select === "string" && api._select.includes("models")) {
+        if (
+          table === "account_models" &&
+          typeof api._select === "string" &&
+          api._select.includes("models")
+        ) {
           filtered = filtered.map((row) => ({
             ...row,
             models: models.find((m) => m.id === row.model_id) ?? null,

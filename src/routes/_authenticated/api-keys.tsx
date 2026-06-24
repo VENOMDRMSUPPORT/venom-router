@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSuspenseQuery, queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Suspense, useState } from "react";
+import { Suspense, useState, createContext, useContext, useMemo } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,13 @@ import { Key, KeyRound, Plus, Copy, Check, Ban, Trash2, AlertTriangle } from "lu
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
 import type { ApiKey } from "@/lib/db/api-keys.server";
+import { PageControls, type DebugEntry } from "@/components/layout/page-controls";
+
+const DebugContext = createContext<{
+  start: (op: string, req: unknown, label: string) => string;
+  resolve: (id: string, res: unknown, ms: number) => void;
+  reject: (id: string, err: string, ms: number) => void;
+} | null>(null);
 
 export const Route = createFileRoute("/_authenticated/api-keys")({
   head: () => ({ meta: [{ title: "API Keys — Venom Router" }] }),
@@ -42,6 +49,52 @@ export const Route = createFileRoute("/_authenticated/api-keys")({
 type VenomSlug = "lite" | "pro" | "max";
 
 function ApiKeysPage() {
+  const [debugLog, setDebugLog] = useState<DebugEntry[]>([]);
+
+  function startDebug(op: string, req: unknown, label: string): string {
+    const entry: DebugEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      ts: Date.now(),
+      op,
+      label,
+      req,
+      status: "pending",
+    };
+    setDebugLog((prev) => [entry, ...prev.slice(0, 49)]);
+    return entry.id;
+  }
+
+  function resolveDebug(entryId: string, res: unknown, ms: number) {
+    setDebugLog((prev) =>
+      prev.map((e) => (e.id === entryId ? { ...e, res, ms, status: "success" } : e)),
+    );
+  }
+
+  function rejectDebug(entryId: string, err: string, ms: number) {
+    setDebugLog((prev) =>
+      prev.map((e) => (e.id === entryId ? { ...e, err, ms, status: "error" } : e)),
+    );
+  }
+
+  const debugController = useMemo(
+    () => ({ start: startDebug, resolve: resolveDebug, reject: rejectDebug }),
+    [],
+  );
+
+  return (
+    <DebugContext.Provider value={debugController}>
+      <ApiKeysPageInner debugLog={debugLog} onClearDebug={() => setDebugLog([])} />
+    </DebugContext.Provider>
+  );
+}
+
+function ApiKeysPageInner({
+  debugLog,
+  onClearDebug,
+}: {
+  debugLog: DebugEntry[];
+  onClearDebug: () => void;
+}) {
   return (
     <>
       <Header
@@ -52,61 +105,131 @@ function ApiKeysPage() {
       />
       <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6">
         <Suspense fallback={<Skeleton className="h-48 rounded-2xl" />}>
-          <ApiKeysList />
+          <ApiKeysListWithControls debugLog={debugLog} onClearDebug={onClearDebug} />
         </Suspense>
       </div>
     </>
   );
 }
 
-function ApiKeysList() {
+type KeyRowData = ApiKey;
+
+function ApiKeysListWithControls({
+  debugLog,
+  onClearDebug,
+}: {
+  debugLog: DebugEntry[];
+  onClearDebug: () => void;
+}) {
   const { data } = useSuspenseQuery(
     queryOptions({
       queryKey: ["api-keys"],
       queryFn: () => api.get<KeyRowData[]>("/api/dashboard/api-keys"),
     }),
   );
-  if (data.length === 0) {
-    return (
-      <Card className="border-border/60">
-        <CardContent className="p-12 text-center space-y-3">
-          <KeyRound className="size-10 mx-auto text-muted-foreground" />
-          <p className="font-medium">No keys yet</p>
-          <p className="text-sm text-muted-foreground">
-            Create your first Venom API key to wire up external projects.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
+
+  const [activeTab, setActiveTab] = useState("active");
+
+  const activeKeysCount = data.filter((k) => !k.revoked_at).length;
+  const allKeysCount = data.length;
+
+  const tabs = [
+    {
+      id: "active",
+      label: "Active Keys",
+      count: activeKeysCount,
+      icon: <Key className="h-3.5 w-3.5" />,
+    },
+    {
+      id: "all",
+      label: "All Keys",
+      count: allKeysCount,
+      icon: <KeyRound className="h-3.5 w-3.5" />,
+    },
+  ];
+
+  const filteredData = activeTab === "active" ? data.filter((k) => !k.revoked_at) : data;
+
   return (
-    <div className="space-y-2">
-      {data.map((k) => (
-        <KeyRow key={k.id} k={k} />
-      ))}
+    <div className="space-y-6">
+      <PageControls
+        breadcrumbs={["Dashboard", "Manage", "API Keys"]}
+        debugLog={debugLog}
+        onClearDebug={onClearDebug}
+        tabs={tabs}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+      />
+
+      {filteredData.length === 0 ? (
+        <Card className="border-border/60">
+          <CardContent className="p-12 text-center space-y-3">
+            <KeyRound className="size-10 mx-auto text-muted-foreground" />
+            <p className="font-medium">No keys found</p>
+            <p className="text-sm text-muted-foreground">
+              {activeTab === "active"
+                ? "No active keys found. Create a key or switch to All Keys."
+                : "Create your first Venom API key to wire up external projects."}
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-2">
+          {filteredData.map((k) => (
+            <KeyRow key={k.id} k={k} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-type KeyRowData = ApiKey;
-
 function KeyRow({ k }: { k: KeyRowData }) {
   const qc = useQueryClient();
+  const debug = useContext(DebugContext);
+
   const revoke = useMutation({
     mutationFn: () => api.patch<{ ok: true }>(`/api/dashboard/api-keys/${k.id}`),
-    onSuccess: () => {
+    onMutate: () => {
+      const t0 = Date.now();
+      const dbId = debug?.start("revoke", { id: k.id }, k.name) ?? "";
+      return { t0, dbId };
+    },
+    onSuccess: (res, _, context) => {
       toast.success("Key revoked");
       qc.invalidateQueries({ queryKey: ["api-keys"] });
+      if (context?.dbId) {
+        debug?.resolve(context.dbId, res, Date.now() - context.t0);
+      }
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error, _, context) => {
+      toast.error(e.message);
+      if (context?.dbId) {
+        debug?.reject(context.dbId, e.message, Date.now() - context.t0);
+      }
+    },
   });
+
   const del = useMutation({
     mutationFn: () => api.delete<{ ok: true }>(`/api/dashboard/api-keys/${k.id}`),
-    onSuccess: () => {
+    onMutate: () => {
+      const t0 = Date.now();
+      const dbId = debug?.start("delete", { id: k.id }, k.name) ?? "";
+      return { t0, dbId };
+    },
+    onSuccess: (res, _, context) => {
       toast.success("Key deleted");
       qc.invalidateQueries({ queryKey: ["api-keys"] });
+      if (context?.dbId) {
+        debug?.resolve(context.dbId, res, Date.now() - context.t0);
+      }
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error, _, context) => {
+      toast.error(e.message);
+      if (context?.dbId) {
+        debug?.reject(context.dbId, e.message, Date.now() - context.t0);
+      }
+    },
   });
 
   return (
@@ -194,6 +317,8 @@ const ALL_MODELS: VenomSlug[] = ["lite", "pro", "max"];
 
 function CreateKeyButton() {
   const qc = useQueryClient();
+  const debug = useContext(DebugContext);
+
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [allowed, setAllowed] = useState<VenomSlug[]>(["lite", "pro", "max"]);
@@ -212,11 +337,25 @@ function CreateKeyButton() {
         tpd_limit: tpd ? +tpd : null,
         monthly_cap_usd: cap ? +cap : null,
       }),
-    onSuccess: (res) => {
+    onMutate: () => {
+      const t0 = Date.now();
+      const dbId =
+        debug?.start("create", { name: name.trim(), allowed_models: allowed }, name.trim()) ?? "";
+      return { t0, dbId };
+    },
+    onSuccess: (res, _, context) => {
       setRevealed(res.raw);
       qc.invalidateQueries({ queryKey: ["api-keys"] });
+      if (context?.dbId) {
+        debug?.resolve(context.dbId, { id: res.id, prefix: res.prefix }, Date.now() - context.t0);
+      }
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error, _, context) => {
+      toast.error(e.message);
+      if (context?.dbId) {
+        debug?.reject(context.dbId, e.message, Date.now() - context.t0);
+      }
+    },
   });
 
   function reset() {

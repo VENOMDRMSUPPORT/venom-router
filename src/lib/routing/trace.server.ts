@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import type { RoutingTraceCandidate } from "@/lib/routing/types";
 
 export interface PersistOpts {
   venomSlug: string;
@@ -18,14 +19,18 @@ export interface PersistOpts {
   selectedRuleId: string | null;
   decisionReason: string;
   modality: string;
+  requestId?: string;
+  candidates?: RoutingTraceCandidate[];
+  fallbackChain?: string[];
 }
 
 export async function persistUsageAndTrace(opts: PersistOpts): Promise<void> {
-  // 1. Insert usage record
+  const requestId = opts.requestId ?? crypto.randomUUID();
+
   const { data: usageRecord } = await supabaseAdmin
     .from("usage_records")
     .insert({
-      request_id: crypto.randomUUID(),
+      request_id: requestId,
       venom_slug: opts.venomSlug,
       rule_id: opts.ruleId,
       account_id: opts.accountId,
@@ -41,8 +46,13 @@ export async function persistUsageAndTrace(opts: PersistOpts): Promise<void> {
     .select("id")
     .single();
 
-  // 2. Insert routing trace (rule IDs + reasons ONLY — no secrets)
   await supabaseAdmin.from("routing_traces").insert({
+    request_id: requestId,
+    venom_slug: opts.venomSlug,
+    success: opts.success,
+    reason: opts.decisionReason,
+    candidates: opts.candidates ?? [],
+    fallback_chain: opts.fallbackChain ?? [],
     usage_record_id: usageRecord?.id ?? null,
     candidates_evaluated: opts.candidatesEvaluated,
     candidates_filtered: opts.candidatesFiltered,

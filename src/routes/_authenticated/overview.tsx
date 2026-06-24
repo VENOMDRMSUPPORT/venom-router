@@ -60,8 +60,11 @@ function OverviewSkeleton() {
 function Overview() {
   const { onOpenSidebar } = useDashboardChrome();
   const { data: metrics } = useSuspenseQuery(
-    queryOptions({ queryKey: ["dashboard-metrics"], queryFn: () => api.get("/api/dashboard/metrics") }),
-  )  as { data: any };
+    queryOptions({
+      queryKey: ["dashboard-metrics"],
+      queryFn: () => api.get("/api/dashboard/metrics"),
+    }),
+  ) as { data: any };
 
   const checklistDone = [
     metrics.checklist.owner_created,

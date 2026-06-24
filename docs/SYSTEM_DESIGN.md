@@ -54,9 +54,9 @@
 
 Two active OAuth providers:
 
-| Provider | Slug | Auth | Base URL |
-|---|---|---|---|
-| Claude Code | `claude-code` | OAuth2 PKCE | `https://api.anthropic.com` |
+| Provider                               | Slug          | Auth                 | Base URL                              |
+| -------------------------------------- | ------------- | -------------------- | ------------------------------------- |
+| Claude Code                            | `claude-code` | OAuth2 PKCE          | `https://api.anthropic.com`           |
 | Antigravity (Google Cloud Code Assist) | `antigravity` | OAuth2 PKCE + Google | `https://cloudcode-pa.googleapis.com` |
 
 A single user can connect **multiple accounts** per provider. Each account row in `accounts` table holds encrypted credentials and links to one provider via `provider_id`.
@@ -176,6 +176,7 @@ Server fn: listAccountModels
 ```
 
 Displayed fields used in UI:
+
 - Provider name (via `providers.name`)
 - Account email / label (via `accounts.email`, `accounts.label`)
 - Model display name (`models.display_name`)
@@ -211,6 +212,7 @@ A real inference call — not just a status-200 check. Must get an actual respon
 Both adapters send a **real inference request** with a short prompt and `max_tokens: 8`:
 
 #### Claude Code (`testModel`)
+
 ```
 POST https://api.anthropic.com/v1/messages
 Body: { model: external_id, max_tokens: 8, messages: [{ role: "user", content: "ping" }] }
@@ -218,6 +220,7 @@ Result: ok = r.ok (HTTP 2xx)
 ```
 
 #### Antigravity (`testModel`)
+
 ```
 POST /v1internal:streamGenerateContent?alt=sse
 Body: { project, model, request: { contents: [{ role:"user", parts:[{text:"ping"}] }], maxOutputTokens: 8 } }
@@ -299,18 +302,18 @@ disconnectAccount(account_id):
 
 ## 7. Current Implementation vs. Desired Behaviour (Gap Analysis)
 
-| Scenario | Desired | Current Status |
-|---|---|---|
-| **Claude Code model list** | Dynamic from Anthropic API | ❌ Hardcoded (`CLAUDE_CURATED_MODELS`, 7 entries) |
-| **Antigravity model list** | Dynamic from provider API | ✅ Calls `/v1internal:fetchAvailableModels` live |
-| **No hardcoded fallback** | Zero hardcoded models | ❌ Claude Code uses hardcoded list |
-| **New model → test before insert** | Test first, then insert | ❌ Antigravity inserts first (lifecycle=discovered), tests after. Claude Code never tests during fetch. |
-| **Existing model → skip** | Skip write + test | ✅ `unchangedCount` logic in upsertAntigravityIdeVisibleModelsSupabase |
-| **Removed model → smart delete** | Delete only if unshared | ❌ Antigravity marks `stale=true` (soft delete). Account deletion has no shared-model logic. |
-| **Model test = real inference** | Verify actual content | ⚠️ Real call is made but only HTTP 2xx is checked, content not verified |
-| **Display from DB only** | DB as source of truth | ✅ Both listAccountModels and listCatalogModels read from DB |
-| **Display uses provider+account info** | Show provider slug, account email, model name | ✅ Implemented in aggregateCatalogModels |
-| **Fetch diff report** | added / removed / unchanged | ✅ Returned in sync response for antigravity; partial for claude-code |
+| Scenario                               | Desired                                       | Current Status                                                                                          |
+| -------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| **Claude Code model list**             | Dynamic from Anthropic API                    | ❌ Hardcoded (`CLAUDE_CURATED_MODELS`, 7 entries)                                                       |
+| **Antigravity model list**             | Dynamic from provider API                     | ✅ Calls `/v1internal:fetchAvailableModels` live                                                        |
+| **No hardcoded fallback**              | Zero hardcoded models                         | ❌ Claude Code uses hardcoded list                                                                      |
+| **New model → test before insert**     | Test first, then insert                       | ❌ Antigravity inserts first (lifecycle=discovered), tests after. Claude Code never tests during fetch. |
+| **Existing model → skip**              | Skip write + test                             | ✅ `unchangedCount` logic in upsertAntigravityIdeVisibleModelsSupabase                                  |
+| **Removed model → smart delete**       | Delete only if unshared                       | ❌ Antigravity marks `stale=true` (soft delete). Account deletion has no shared-model logic.            |
+| **Model test = real inference**        | Verify actual content                         | ⚠️ Real call is made but only HTTP 2xx is checked, content not verified                                 |
+| **Display from DB only**               | DB as source of truth                         | ✅ Both listAccountModels and listCatalogModels read from DB                                            |
+| **Display uses provider+account info** | Show provider slug, account email, model name | ✅ Implemented in aggregateCatalogModels                                                                |
+| **Fetch diff report**                  | added / removed / unchanged                   | ✅ Returned in sync response for antigravity; partial for claude-code                                   |
 
 ---
 
@@ -457,6 +460,7 @@ For new models (not in DB), call `testModel()` before inserting. Only insert if 
 **File:** `src/lib/providers/antigravity-persistence.ts` → `markStaleModelsSupabase()`
 
 Instead of marking `stale=true`, implement shared-model logic:
+
 - Check if another account (same provider) also has this model
 - If yes: only remove the current account's row
 - If no: hard-delete the model row

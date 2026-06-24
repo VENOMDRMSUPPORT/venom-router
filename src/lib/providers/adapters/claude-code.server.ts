@@ -1,5 +1,12 @@
 /* Claude Code OAuth adapter (PKCE, JSON token exchange). Server-only. */
-import type { StoredCredentials, AccountIdentity, DiscoveredModel, ModelTestResult, ChatRequest, ChatResult } from "./types";
+import type {
+  StoredCredentials,
+  AccountIdentity,
+  DiscoveredModel,
+  ModelTestResult,
+  ChatRequest,
+  ChatResult,
+} from "./types";
 import { CLAUDE_OAUTH } from "./_shared/oauth-clients.server";
 import {
   MODEL_TEST_PROMPT,
@@ -71,9 +78,7 @@ export async function completeFlow(input: {
   state: string;
   redirect_uri: string;
 }): Promise<StoredCredentials> {
-  const [authCode, codeState] = input.code.includes("#")
-    ? input.code.split("#")
-    : [input.code, ""];
+  const [authCode, codeState] = input.code.includes("#") ? input.code.split("#") : [input.code, ""];
   const tokenBody = {
     code: authCode,
     state: codeState || input.state,
@@ -238,9 +243,7 @@ async function resolveProfile(token: string): Promise<ClaudeProfile> {
   };
 }
 
-export async function fetchIdentity(
-  credsIn: StoredCredentials,
-): Promise<{
+export async function fetchIdentity(credsIn: StoredCredentials): Promise<{
   creds: StoredCredentials;
   identity: AccountIdentity;
   health: { ok: boolean; error?: string };

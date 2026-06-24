@@ -1,11 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { buildIdeVisibleUpsertInput } from "./antigravity-persistence";
 
-const RECOMMENDED_IDS = [
-  "gemini-pro-agent",
-  "claude-sonnet-4-6",
-  "claude-opus-4-6-thinking",
-];
+const RECOMMENDED_IDS = ["gemini-pro-agent", "claude-sonnet-4-6", "claude-opus-4-6-thinking"];
 
 function rawResponse(recommendedIds: string[]) {
   const models = Object.fromEntries(

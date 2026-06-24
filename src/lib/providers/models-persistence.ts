@@ -38,7 +38,10 @@ export function createModelStore(providerUnique = true) {
     providerExt: string,
   ): ModelRow | undefined {
     for (const row of rows.values()) {
-      if (row.account_id === accountId && providerExternalId(row.external_id, row.capabilities) === providerExt) {
+      if (
+        row.account_id === accountId &&
+        providerExternalId(row.external_id, row.capabilities) === providerExt
+      ) {
         return row;
       }
     }

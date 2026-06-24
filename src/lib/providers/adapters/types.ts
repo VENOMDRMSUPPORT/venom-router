@@ -21,6 +21,8 @@ export interface DiscoveredModel {
   external_id: string;
   display_name: string;
   capabilities: string[];
+  context_window?: number;
+  quality_rating?: number;
 }
 
 export interface ModelTestResult {

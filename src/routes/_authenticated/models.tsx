@@ -33,10 +33,11 @@ import {
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
-import { type CatalogModel } from "@/lib/providers/integrations.functions";
+import { type CatalogModel } from "@/lib/providers/integrations.service";
 import { invalidateModelViews } from "@/lib/providers/sync-cache";
 import { ProviderIcon } from "@/components/providers/provider-icon";
 import { ModelCapabilityIcons } from "@/components/providers/model-capability-icons";
+import { PageControls, type DebugEntry } from "@/components/layout/page-controls";
 
 function qualityBadgeClass(rating: number): string {
   if (rating >= 85) return "bg-emerald-500/10 text-emerald-600 border-emerald-500/20";
@@ -128,6 +129,32 @@ function ModelsBody() {
   const [lifecycleFilter, setLifecycleFilter] = useState("all");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [debugLog, setDebugLog] = useState<DebugEntry[]>([]);
+
+  function startDebug(op: string, req: unknown): string {
+    const entry: DebugEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      ts: Date.now(),
+      op,
+      label: "Catalog",
+      req,
+      status: "pending",
+    };
+    setDebugLog((prev) => [entry, ...prev.slice(0, 49)]);
+    return entry.id;
+  }
+
+  function resolveDebug(entryId: string, res: unknown, ms: number) {
+    setDebugLog((prev) =>
+      prev.map((e) => (e.id === entryId ? { ...e, res, ms, status: "success" } : e)),
+    );
+  }
+
+  function rejectDebug(entryId: string, err: string, ms: number) {
+    setDebugLog((prev) =>
+      prev.map((e) => (e.id === entryId ? { ...e, err, ms, status: "error" } : e)),
+    );
+  }
 
   const providers = useMemo(() => {
     const set = new Set(data.map((m) => m.provider_slug));
@@ -159,15 +186,18 @@ function ModelsBody() {
     const first = model.accounts[0];
     if (!first) return;
     setBusyKey(model.key);
+    const t0 = Date.now();
+    const req = { account_id: first.id, external_ids: [model.external_id] };
+    const dbId = startDebug("testModel", req);
     try {
-      await api.post(`/api/dashboard/accounts/${first.id}/models/test`, {
-        account_id: first.id,
-        external_ids: [model.external_id],
-      });
+      const res = await api.post(`/api/dashboard/accounts/${first.id}/models/test`, req);
+      resolveDebug(dbId, res, Date.now() - t0);
       await invalidateModelViews(qc);
       toast.success(`Tested ${model.display_name}`);
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Test failed");
+      const msg = e instanceof Error ? e.message : "Test failed";
+      rejectDebug(dbId, msg, Date.now() - t0);
+      toast.error(msg);
     } finally {
       setBusyKey(null);
     }
@@ -175,22 +205,42 @@ function ModelsBody() {
 
   async function toggleEnabled(model: CatalogModel, enabled: boolean) {
     setBusyKey(model.key);
+    const t0 = Date.now();
+    const reqs = model.account_rows.map((row) => ({
+      account_id: row.account_id,
+      enabled: { [row.id]: enabled },
+    }));
+    const dbId = startDebug(enabled ? "enableModel" : "disableModel", reqs);
     try {
+      let lastRes: unknown = null;
       for (const row of model.account_rows) {
         if (!row.account_id) continue;
-        await api.post(`/api/dashboard/accounts/${row.account_id}/models/enabled`, {
+        lastRes = await api.post(`/api/dashboard/accounts/${row.account_id}/models/enabled`, {
           account_id: row.account_id,
           enabled: { [row.id]: enabled },
         });
       }
+      resolveDebug(dbId, lastRes, Date.now() - t0);
       await invalidateModelViews(qc);
       toast.success(enabled ? "Model enabled" : "Model disabled");
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Update failed");
+      const msg = e instanceof Error ? e.message : "Update failed";
+      rejectDebug(dbId, msg, Date.now() - t0);
+      toast.error(msg);
     } finally {
       setBusyKey(null);
     }
   }
+
+  const tabs = [
+    { id: "all", label: "All Models", count: data.length, icon: <Boxes className="h-3.5 w-3.5" /> },
+    {
+      id: "working",
+      label: "Working",
+      count: working,
+      icon: <CheckCircle2 className="h-3.5 w-3.5" />,
+    },
+  ];
 
   if (data.length === 0) {
     return (
@@ -206,6 +256,14 @@ function ModelsBody() {
 
   return (
     <div className="space-y-6">
+      <PageControls
+        breadcrumbs={["Dashboard", "Models", "Catalog"]}
+        debugLog={debugLog}
+        onClearDebug={() => setDebugLog([])}
+        tabs={tabs}
+        activeTab={testFilter === "working" ? "working" : testFilter === "all" ? "all" : undefined}
+        onTabChange={(id) => setTestFilter(id === "working" ? "working" : "all")}
+      />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiMini icon={Boxes} label="Unique models" value={String(data.length)} />
         <KpiMini icon={CheckCircle2} label="Working" value={String(working)} accent="success" />

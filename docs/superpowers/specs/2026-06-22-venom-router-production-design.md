@@ -24,28 +24,28 @@ Venom Router is a **private single-owner AI gateway** that:
 
 ## 2. Stack (Final — No Changes)
 
-| Layer | Technology |
-|-------|-----------|
-| Framework | TanStack Start (SSR React) + Vite |
-| Auth | Supabase Auth (owner-only) |
-| Database | Supabase (PostgreSQL) |
-| Server Layer | `createServerFn` from TanStack Start |
-| UI | shadcn/ui (Radix + Tailwind) |
-| Charts | Recharts |
-| Package Manager | Bun |
+| Layer              | Technology                                   |
+| ------------------ | -------------------------------------------- |
+| Framework          | TanStack Start (SSR React) + Vite            |
+| Auth               | Supabase Auth (owner-only)                   |
+| Database           | Supabase (PostgreSQL)                        |
+| Server Layer       | `createServerFn` from TanStack Start         |
+| UI                 | shadcn/ui (Radix + Tailwind)                 |
+| Charts             | Recharts                                     |
+| Package Manager    | Bun                                          |
 | Background Workers | Supabase pg_cron or GitHub Actions scheduled |
 
 ---
 
 ## 3. Architecture Decisions
 
-| Decision | Choice | Reason |
-|----------|--------|--------|
-| Auth | Supabase Auth | Already implemented, no migration needed |
-| Database | Supabase (PostgreSQL) | All adapters and server functions already wired |
-| `/v1` API | TanStack Start server route | Shares runtime with routing engine |
-| Background workers | Supabase Cron or GitHub Actions | Simple, no extra infrastructure |
-| API compatibility | Two separate endpoints | Clearest UX, matches industry (Z.AI pattern) |
+| Decision           | Choice                          | Reason                                          |
+| ------------------ | ------------------------------- | ----------------------------------------------- |
+| Auth               | Supabase Auth                   | Already implemented, no migration needed        |
+| Database           | Supabase (PostgreSQL)           | All adapters and server functions already wired |
+| `/v1` API          | TanStack Start server route     | Shares runtime with routing engine              |
+| Background workers | Supabase Cron or GitHub Actions | Simple, no extra infrastructure                 |
+| API compatibility  | Two separate endpoints          | Clearest UX, matches industry (Z.AI pattern)    |
 
 ---
 
@@ -53,22 +53,22 @@ Venom Router is a **private single-owner AI gateway** that:
 
 ### Definitions
 
-| Tier | Optimized for | Default Weights |
-|------|--------------|-----------------|
-| `venom/lite` | Cost | cost=0.7, speed=0.2, quality=0.1 |
-| `venom/pro` | Balance | cost=0.3, speed=0.3, quality=0.4 |
-| `venom/max` | Quality | cost=0.1, speed=0.1, quality=0.8 |
+| Tier         | Optimized for | Default Weights                  |
+| ------------ | ------------- | -------------------------------- |
+| `venom/lite` | Cost          | cost=0.7, speed=0.2, quality=0.1 |
+| `venom/pro`  | Balance       | cost=0.3, speed=0.3, quality=0.4 |
+| `venom/max`  | Quality       | cost=0.1, speed=0.1, quality=0.8 |
 
 ### Multimodal Support
 
 All three tiers accept any modality. The routing engine selects providers that support the requested modality:
 
-| Modality | Trigger | Required capability |
-|----------|---------|-------------------|
-| Text only | messages with text only | any |
-| Vision | messages contain `image_url` or base64 image | `vision` |
-| Audio | messages contain audio content | `audio` |
-| Documents | messages contain file/PDF content | `documents` |
+| Modality  | Trigger                                      | Required capability |
+| --------- | -------------------------------------------- | ------------------- |
+| Text only | messages with text only                      | any                 |
+| Vision    | messages contain `image_url` or base64 image | `vision`            |
+| Audio     | messages contain audio content               | `audio`             |
+| Documents | messages contain file/PDF content            | `documents`         |
 
 The **scoring algorithm runs after modality filtering** — no other changes to the engine.
 
@@ -139,6 +139,7 @@ src/lib/routing/
 **Authentication:** `Authorization: Bearer vk_live_*`
 
 **Key validation (in order):**
+
 1. Format: must start with `vk_live_`
 2. bcrypt compare with stored hash
 3. `revoked_at` is null
@@ -148,6 +149,7 @@ src/lib/routing/
 7. Fire-and-forget: update `last_used_at`
 
 **Response headers (always):**
+
 ```
 x-venom-model: venom/lite
 x-venom-provider: antigravity
@@ -157,6 +159,7 @@ x-venom-fallback-count: 0
 ```
 
 **Error format (OpenAI-style for both):**
+
 ```json
 {
   "error": {
@@ -172,6 +175,7 @@ x-venom-fallback-count: 0
 ### 6.1 — POST /v1/chat/completions (OpenAI Compatible)
 
 **Request:**
+
 ```json
 {
   "model": "venom/lite" | "venom/pro" | "venom/max",
@@ -189,17 +193,20 @@ x-venom-fallback-count: 0
 ```
 
 **Response:**
+
 ```json
 {
   "id": "venom-ch-abc123",
   "object": "chat.completion",
   "created": 1749600000,
   "model": "venom/lite",
-  "choices": [{
-    "index": 0,
-    "message": { "role": "assistant", "content": "..." },
-    "finish_reason": "stop"
-  }],
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "..." },
+      "finish_reason": "stop"
+    }
+  ],
   "usage": {
     "prompt_tokens": 10,
     "completion_tokens": 50,
@@ -213,6 +220,7 @@ x-venom-fallback-count: 0
 ### 6.2 — POST /v1/messages (Anthropic Compatible)
 
 **Request:**
+
 ```json
 {
   "model": "venom/lite" | "venom/pro" | "venom/max",
@@ -235,6 +243,7 @@ x-venom-fallback-count: 0
 ```
 
 **Response:**
+
 ```json
 {
   "id": "venom-msg-abc123",
@@ -359,23 +368,25 @@ ON CONFLICT (slug) DO UPDATE SET
 
 ### 8.1 — Completed Pages (no changes needed)
 
-| Page | Route |
-|------|-------|
-| Overview | `/overview` |
+| Page            | Route              |
+| --------------- | ------------------ |
+| Overview        | `/overview`        |
 | OAuth Providers | `/providers/oauth` |
-| Free Providers | `/providers/free` |
-| Models | `/models` |
-| API Keys | `/api-keys` |
+| Free Providers  | `/providers/free`  |
+| Models          | `/models`          |
+| API Keys        | `/api-keys`        |
 
 ### 8.2 — Pages to Build
 
 **Venom Models** `/venom-models`
+
 - Cards for lite/pro/max with current weights
 - Weight sliders (cost + speed + quality, locked to sum=1.0)
 - Per-tier routing rule count + quick add button
 - Supported modalities display
 
 **Routing Rules** `/routing`
+
 - Table: priority, role, venom tier, provider model, account, condition
 - Add/edit/delete rules
 - Fallback chain builder (primary + up to 3 fallbacks)
@@ -386,7 +397,8 @@ ON CONFLICT (slug) DO UPDATE SET
   - Quota risk level
 
 **Playground** `/playground`  
-*(enhance existing stub into full API Console — route stays as-is)*
+_(enhance existing stub into full API Console — route stays as-is)_
+
 - Left panel: endpoint selector (OpenAI/Anthropic), model selector, message builder, params
 - Right top: full request (headers + body)
 - Right bottom: full response + latency
@@ -395,11 +407,13 @@ ON CONFLICT (slug) DO UPDATE SET
 - Request history (last 20 calls)
 
 **Usage & Analytics** `/usage`
+
 - Charts (7d/30d/90d — actually wired): requests, tokens, estimated cost
 - Breakdown by: venom tier / provider / modality
 - Latency distribution
 
 **Quota & Limits** `/quota`
+
 - Per-account quota with confidence indicator
 - `provider_reported` → show boldly
 - `locally_estimated` → show with `≈` prefix
@@ -408,12 +422,14 @@ ON CONFLICT (slug) DO UPDATE SET
 - Warning at 15% / critical at 5%
 
 **Diagnostics** `/diagnostics`
+
 - Blocked models (with reason)
 - Degraded accounts (with error from last health check)
 - Recent routing failures
 - Quota alerts (accounts < threshold)
 
-**Settings** `/settings` *(extend existing skeleton)*
+**Settings** `/settings` _(extend existing skeleton)_
+
 - General: system name
 - Routing: request timeout, max fallback attempts, trace retention
 - Health: check interval, quota warning/critical %
@@ -471,6 +487,7 @@ Inspired by Z.AI docs. Owner-only. Static content rendered from MDX or inline co
 **Two recurring workers, every 5 minutes:**
 
 ### Health Check Worker
+
 ```
 For each active account:
   1. Decrypt credentials
@@ -480,6 +497,7 @@ For each active account:
 ```
 
 ### Quota Snapshot Worker
+
 ```
 For each active account:
   1. Call provider quota API (or estimate from usage_records)
@@ -507,17 +525,17 @@ For each active account:
 
 ## 12. Implementation Phases
 
-| Phase | Scope | Est. Time |
-|-------|-------|-----------|
-| 0 | Security fixes (encryption key + OAuth CSRF) | 1 day |
-| 1 | Bug fixes (quota color, buttons, dedup, concurrency) | 1 day |
-| 2 | Database schema additions | 2 days |
-| 3 | Routing engine + multimodal filtering | 7 days |
-| 4 | `/v1/chat/completions` + `/v1/messages` | 5 days |
-| 5 | Dashboard pages (venom-models, routing, usage, quota, diagnostics, settings) | 8 days |
-| 6 | Background workers (health check + quota snapshot) | 3 days |
-| 7 | API Console (`/console`) + Docs (`/docs`) | 7 days |
-| | **Total** | **~34 days** |
+| Phase | Scope                                                                        | Est. Time    |
+| ----- | ---------------------------------------------------------------------------- | ------------ |
+| 0     | Security fixes (encryption key + OAuth CSRF)                                 | 1 day        |
+| 1     | Bug fixes (quota color, buttons, dedup, concurrency)                         | 1 day        |
+| 2     | Database schema additions                                                    | 2 days       |
+| 3     | Routing engine + multimodal filtering                                        | 7 days       |
+| 4     | `/v1/chat/completions` + `/v1/messages`                                      | 5 days       |
+| 5     | Dashboard pages (venom-models, routing, usage, quota, diagnostics, settings) | 8 days       |
+| 6     | Background workers (health check + quota snapshot)                           | 3 days       |
+| 7     | API Console (`/console`) + Docs (`/docs`)                                    | 7 days       |
+|       | **Total**                                                                    | **~34 days** |
 
 ---
 
@@ -540,14 +558,14 @@ After all phases complete, the project is production-ready when:
 
 ## 14. Open Questions (Resolved)
 
-| Question | Answer |
-|----------|--------|
-| Auth system | Supabase Auth |
-| Database | Supabase |
-| API location | TanStack Start server route |
-| Workers location | Supabase pg_cron or GitHub Actions |
-| API compatibility | Two separate endpoints (OpenAI + Anthropic) |
-| Multimodal scope | All modalities (text, images, audio, documents) via capability filtering |
-| Docs audience | Owner only (not public) |
-| Console type | Advanced playground with full request/response + copy-as-code |
-| Streaming | Not in v1 — future roadmap |
+| Question          | Answer                                                                   |
+| ----------------- | ------------------------------------------------------------------------ |
+| Auth system       | Supabase Auth                                                            |
+| Database          | Supabase                                                                 |
+| API location      | TanStack Start server route                                              |
+| Workers location  | Supabase pg_cron or GitHub Actions                                       |
+| API compatibility | Two separate endpoints (OpenAI + Anthropic)                              |
+| Multimodal scope  | All modalities (text, images, audio, documents) via capability filtering |
+| Docs audience     | Owner only (not public)                                                  |
+| Console type      | Advanced playground with full request/response + copy-as-code            |
+| Streaming         | Not in v1 — future roadmap                                               |

@@ -20,6 +20,9 @@ function inferQualityRating(externalId: string): number {
   if (/sonnet|gpt-4o|gpt-4\.1|gemini-2\.5/.test(id)) return 82;
   if (/haiku|flash|mini|lite|gemini-flash/.test(id)) return 68;
   if (/pro|gpt-4/.test(id)) return 88;
+  // OpenCode Zen free-tier models
+  if (/ultra/.test(id)) return 80;
+  if (/pickle|mimo|deepseek|nemotron|north/.test(id)) return 65;
   return 50;
 }
 

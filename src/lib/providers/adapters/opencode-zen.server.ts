@@ -1,3 +1,4 @@
+import { extractOpenAiMessageText, MODEL_TEST_MAX_TOKENS } from "./_shared/openai-chat.server";
 import {
   MODEL_TEST_PROMPT,
   validateModelTestResponse,
@@ -134,7 +135,13 @@ export async function syncOpenCodeZenAccount(
   const models: DiscoveredModel[] = free.map((m) => ({
     external_id: m.id,
     display_name: m.displayName,
-    capabilities: ["chat"],
+    capabilities: [
+      "chat",
+      "tools",
+      ...(m.reasoning ? ["reasoning"] : []),
+      ...(m.inputModalities?.includes("image") ? ["vision"] : []),
+    ],
+    context_window: m.contextWindow,
   }));
 
   const identity: AccountIdentity = {
@@ -170,9 +177,7 @@ export function buildCredentials(api_key: string, label?: string): StoredCredent
   };
 }
 
-export async function fetchIdentity(
-  creds: StoredCredentials,
-): Promise<{
+export async function fetchIdentity(creds: StoredCredentials): Promise<{
   creds: StoredCredentials;
   identity: AccountIdentity;
   health: { ok: boolean; error?: string };
@@ -204,7 +209,7 @@ export async function testModel(
       },
       body: JSON.stringify({
         model: external_id,
-        max_tokens: 8,
+        max_tokens: MODEL_TEST_MAX_TOKENS,
         messages: [{ role: "user", content: MODEL_TEST_PROMPT }],
       }),
       signal: AbortSignal.timeout(30_000),
@@ -216,9 +221,11 @@ export async function testModel(
     let content = "";
     try {
       const j = JSON.parse(text) as {
-        choices?: Array<{ message?: { content?: string } }>;
+        choices?: Array<{ message?: Parameters<typeof extractOpenAiMessageText>[0] }>;
       };
-      content = j.choices?.[0]?.message?.content ?? "";
+      content = extractOpenAiMessageText(j.choices?.[0]?.message, {
+        includeReasoningFallback: true,
+      });
     } catch {
       content = text;
     }
@@ -268,10 +275,10 @@ export async function chat(
       return { ok: false, inputTokens: 0, outputTokens: 0, error: text.slice(0, 300) };
     }
     const j = (await r.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{ message?: Parameters<typeof extractOpenAiMessageText>[0] }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
-    const content = j?.choices?.[0]?.message?.content ?? "";
+    const content = extractOpenAiMessageText(j?.choices?.[0]?.message);
     const inputTokens = j?.usage?.prompt_tokens ?? 0;
     const outputTokens = j?.usage?.completion_tokens ?? 0;
     return { ok: true, content, inputTokens, outputTokens };

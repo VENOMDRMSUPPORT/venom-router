@@ -21,6 +21,21 @@ import { resolveAntigravityDisplayQuotaGroups } from "@/lib/providers/antigravit
 
 import type { QuotaGroup } from "@/lib/providers/adapters/_shared/quota-types";
 
+interface QuotaExtra {
+  groups?: QuotaGroup[];
+  fiveHour?: {
+    total: number;
+    used: number;
+    resetAt?: string;
+  };
+  sevenDay?: {
+    total: number;
+    used: number;
+    resetAt?: string;
+  };
+  [key: string]: unknown;
+}
+
 export interface ProviderRow {
   id: string;
   slug: string;
@@ -323,8 +338,8 @@ function AccountLine({
   const healthy = account.status === "healthy";
   const isActive = account.status !== "degraded";
   const isUnreachable = account.status === "expired";
-  const extra = account.quota_extra as Record<string, unknown> | null | undefined;
-  const groups = (extra?.groups as QuotaGroup[] | undefined) ?? [];
+  const extra = account.quota_extra as QuotaExtra | null | undefined;
+  const groups = extra?.groups ?? [];
   const isAntigravity = providerSlug === "antigravity";
   const antigravityQuotaGroups = isAntigravity ? resolveAntigravityDisplayQuotaGroups(extra) : [];
   const isClaude = providerSlug === "claude-code";
@@ -484,7 +499,9 @@ function AccountLine({
                     {extra?.fiveHour && (
                       <QuotaBar
                         shortLabel="5H"
-                        used={Math.round((extra.fiveHour.used / extra.fiveHour.total) * 100)}
+                        used={Math.round(
+                          ((extra.fiveHour.used ?? 0) / (extra.fiveHour.total ?? 1)) * 100,
+                        )}
                         resetsAt={extra.fiveHour.resetAt}
                         isOld={isQuotaOld}
                       />
@@ -492,7 +509,9 @@ function AccountLine({
                     {extra?.sevenDay && (
                       <QuotaBar
                         shortLabel="7D"
-                        used={Math.round((extra.sevenDay.used / extra.sevenDay.total) * 100)}
+                        used={Math.round(
+                          ((extra.sevenDay.used ?? 0) / (extra.sevenDay.total ?? 1)) * 100,
+                        )}
                         resetsAt={extra.sevenDay.resetAt}
                         isOld={isQuotaOld}
                       />

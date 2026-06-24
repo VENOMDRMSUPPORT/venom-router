@@ -652,6 +652,7 @@ export type Database = {
           display_name: string;
           max_fallback_attempts: number;
           slug: Database["public"]["Enums"]["venom_slug"];
+          strategy_config: Json;
           timeout_ms: number;
           updated_at: string;
           weight_cost: number;
@@ -663,6 +664,7 @@ export type Database = {
           display_name: string;
           max_fallback_attempts?: number;
           slug: Database["public"]["Enums"]["venom_slug"];
+          strategy_config?: Json;
           timeout_ms?: number;
           updated_at?: string;
           weight_cost?: number;
@@ -674,6 +676,7 @@ export type Database = {
           display_name?: string;
           max_fallback_attempts?: number;
           slug?: Database["public"]["Enums"]["venom_slug"];
+          strategy_config?: Json;
           timeout_ms?: number;
           updated_at?: string;
           weight_cost?: number;

@@ -1,95 +1,95 @@
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type AccountStatus = "healthy" | "degraded" | "expired"
+export type AccountStatus = "healthy" | "degraded" | "expired";
 
 export type AccountInfo = {
-  id: string
-  email: string | null
-  label: string | null
-  plan: string | null
-  status: AccountStatus
-  provider_slug: string
-  provider_name: string
-  auth_type: string
-  last_synced_at: string | null
-  last_health_check_at: string | null
-}
+  id: string;
+  email: string | null;
+  label: string | null;
+  plan: string | null;
+  status: AccountStatus;
+  provider_slug: string;
+  provider_name: string;
+  auth_type: string;
+  last_synced_at: string | null;
+  last_health_check_at: string | null;
+};
 
 export type QuotaGroup = {
-  name: string
-  short_label: string
-  model_count: number
+  name: string;
+  short_label: string;
+  model_count: number;
   five_hour?: {
-    remaining_pct: number
-    reset_at: string
-    exhausted: boolean
-  }
-}
+    remaining_pct: number;
+    reset_at: string;
+    exhausted: boolean;
+  };
+};
 
 export type AccountQuota = {
-  account_id: string
-  used: number | null
-  total: number | null
-  unit: string | null
-  groups: QuotaGroup[]
-  resets_at: string | null
-  confidence: "high" | "medium" | "low" | null
-}
+  account_id: string;
+  used: number | null;
+  total: number | null;
+  unit: string | null;
+  groups: QuotaGroup[];
+  resets_at: string | null;
+  confidence: "high" | "medium" | "low" | null;
+};
 
 export type AccountModel = {
-  id: string
-  external_id: string
-  display_name: string
-  capabilities: string[]
-  enabled: boolean
-  test_status: "working" | "failed" | "untested"
-  latency_ms: number | null
-  last_tested_at: string | null
-  lifecycle: string
-}
+  id: string;
+  external_id: string;
+  display_name: string;
+  capabilities: string[];
+  enabled: boolean;
+  test_status: "working" | "failed" | "untested";
+  latency_ms: number | null;
+  last_tested_at: string | null;
+  lifecycle: string;
+};
 
 export type ModelCheckResult = {
-  external_id: string
-  ok: boolean
-  latency_ms: number
-  error?: string
-}
+  external_id: string;
+  ok: boolean;
+  latency_ms: number;
+  error?: string;
+};
 
 export type ProviderHealth = {
-  provider_slug: string
-  provider_name: string
-  accounts_total: number
-  accounts_healthy: number
-  accounts_degraded: number
-  accounts_expired: number
-  is_healthy: boolean
-}
+  provider_slug: string;
+  provider_name: string;
+  accounts_total: number;
+  accounts_healthy: number;
+  accounts_degraded: number;
+  accounts_expired: number;
+  is_healthy: boolean;
+};
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
 const QUOTA_SHORT_LABELS: Record<string, string> = {
   "Gemini Models": "GEM",
   "Claude and GPT Models": "OPT",
-}
+};
 
 function extractQuotaGroups(extra: Record<string, unknown> | null): QuotaGroup[] {
   const raw =
     (extra?.groups as
       | Array<{
-          name: string
-          modelIds?: string[]
+          name: string;
+          modelIds?: string[];
           fiveHourQuota?: {
-            remainingFraction?: number
-            resetTime?: string
-            isExhausted?: boolean
-          }
+            remainingFraction?: number;
+            resetTime?: string;
+            isExhausted?: boolean;
+          };
         }>
-      | undefined) ?? []
+      | undefined) ?? [];
   return raw.map((g) => ({
     name: g.name,
-    short_label: QUOTA_SHORT_LABELS[g.name] ?? (g.name.split(" ")[0] ?? g.name),
+    short_label: QUOTA_SHORT_LABELS[g.name] ?? g.name.split(" ")[0] ?? g.name,
     model_count: g.modelIds?.length ?? 0,
     five_hour: g.fiveHourQuota?.resetTime
       ? {
@@ -98,16 +98,16 @@ function extractQuotaGroups(extra: Record<string, unknown> | null): QuotaGroup[]
           exhausted: Boolean(g.fiveHourQuota.isExhausted),
         }
       : undefined,
-  }))
+  }));
 }
 
 function extractCapabilities(caps: Record<string, unknown> | null): string[] {
-  if (!caps) return []
-  if (Array.isArray(caps.list)) return caps.list as string[]
+  if (!caps) return [];
+  if (Array.isArray(caps.list)) return caps.list as string[];
   return Object.entries(caps)
     .filter(([k]) => /^\d+$/.test(k))
     .sort(([a], [b]) => Number(a) - Number(b))
-    .map(([, v]) => String(v))
+    .map(([, v]) => String(v));
 }
 
 // ── Exported functions ─────────────────────────────────────────────────────────
@@ -120,9 +120,9 @@ export async function getAccountStatus(
     .from("accounts")
     .select("status")
     .eq("id", accountId)
-    .single()
-  if (error || !data) throw new Error(`getAccountStatus: ${error?.message ?? "not found"}`)
-  return (data as any).status as AccountStatus
+    .single();
+  if (error || !data) throw new Error(`getAccountStatus: ${error?.message ?? "not found"}`);
+  return (data as any).status as AccountStatus;
 }
 
 export async function getAccountInfo(
@@ -135,10 +135,10 @@ export async function getAccountInfo(
       "id,email,label,plan,status,auth_type,last_synced_at,last_health_check_at,providers(slug,name)",
     )
     .eq("id", accountId)
-    .single()
-  if (error || !data) throw new Error(`getAccountInfo: ${error?.message ?? "not found"}`)
-  const row = data as any
-  const p = row.providers as { slug: string; name: string } | null
+    .single();
+  if (error || !data) throw new Error(`getAccountInfo: ${error?.message ?? "not found"}`);
+  const row = data as any;
+  const p = row.providers as { slug: string; name: string } | null;
   return {
     id: row.id,
     email: row.email,
@@ -150,7 +150,7 @@ export async function getAccountInfo(
     auth_type: row.auth_type,
     last_synced_at: row.last_synced_at,
     last_health_check_at: row.last_health_check_at,
-  }
+  };
 }
 
 export async function getAccountQuota(
@@ -161,16 +161,16 @@ export async function getAccountQuota(
     .from("accounts")
     .select("id,quota_used,quota_total,quota_unit,quota_extra")
     .eq("id", accountId)
-    .single()
-  if (acctErr || !acct) throw new Error(`getAccountQuota: ${acctErr?.message ?? "not found"}`)
+    .single();
+  if (acctErr || !acct) throw new Error(`getAccountQuota: ${acctErr?.message ?? "not found"}`);
 
   const { data: quotaRow } = await supabase
     .from("quotas")
     .select("confidence,resets_at")
     .eq("account_id", accountId)
-    .maybeSingle()
+    .maybeSingle();
 
-  const extra = ((acct as any).quota_extra ?? null) as Record<string, unknown> | null
+  const extra = ((acct as any).quota_extra ?? null) as Record<string, unknown> | null;
   return {
     account_id: accountId,
     used: (acct as any).quota_used ?? null,
@@ -179,7 +179,7 @@ export async function getAccountQuota(
     groups: extractQuotaGroups(extra),
     resets_at: (quotaRow as any)?.resets_at ?? null,
     confidence: ((quotaRow as any)?.confidence ?? null) as "high" | "medium" | "low" | null,
-  }
+  };
 }
 
 export async function getAccountModels(
@@ -192,15 +192,15 @@ export async function getAccountModels(
     .select(
       "id,enabled,test_status,lifecycle,latency_ms,last_tested_at,models!inner(external_id,display_name,capabilities)",
     )
-    .eq("account_id", accountId)
-  if (opts?.enabledOnly) q = (q as any).eq("enabled", true)
-  if (opts?.lifecycle) q = (q as any).eq("lifecycle", opts.lifecycle)
+    .eq("account_id", accountId);
+  if (opts?.enabledOnly) q = (q as any).eq("enabled", true);
+  if (opts?.lifecycle) q = (q as any).eq("lifecycle", opts.lifecycle);
 
-  const { data, error } = await q
-  if (error) throw new Error(`getAccountModels: ${error.message}`)
+  const { data, error } = await q;
+  if (error) throw new Error(`getAccountModels: ${error.message}`);
 
   return ((data ?? []) as any[]).map((row) => {
-    const model = row.models
+    const model = row.models;
     return {
       id: row.id,
       external_id: model?.external_id ?? "",
@@ -211,8 +211,8 @@ export async function getAccountModels(
       latency_ms: row.latency_ms ?? null,
       last_tested_at: row.last_tested_at ?? null,
       lifecycle: row.lifecycle,
-    }
-  })
+    };
+  });
 }
 
 // Note: checkAccountModels performs live provider API calls (not unit tested — integration concern)
@@ -225,21 +225,21 @@ export async function checkAccountModels(
     .from("accounts")
     .select("credentials_enc,credentials_iv,credentials_tag,providers(slug)")
     .eq("id", accountId)
-    .single()
-  if (error || !acct) throw new Error(`checkAccountModels: ${error?.message ?? "not found"}`)
+    .single();
+  if (error || !acct) throw new Error(`checkAccountModels: ${error?.message ?? "not found"}`);
 
-  const slug = ((acct as any).providers as { slug?: string } | null)?.slug ?? ""
-  const { unpackCredentials } = await import("@/lib/credentials.server")
-  const creds = unpackCredentials(acct as any)
+  const slug = ((acct as any).providers as { slug?: string } | null)?.slug ?? "";
+  const { unpackCredentials } = await import("@/lib/credentials.server");
+  const creds = unpackCredentials(acct as any);
 
-  let targets = externalIds
+  let targets = externalIds;
   if (!targets) {
-    const models = await getAccountModels(supabase, accountId, { enabledOnly: true })
-    targets = models.map((m) => m.external_id)
+    const models = await getAccountModels(supabase, accountId, { enabledOnly: true });
+    targets = models.map((m) => m.external_id);
   }
 
   if (!["claude-code", "antigravity", "opencode-zen"].includes(slug)) {
-    throw new Error(`checkAccountModels: unknown provider slug "${slug}"`)
+    throw new Error(`checkAccountModels: unknown provider slug "${slug}"`);
   }
 
   const adapter =
@@ -247,31 +247,31 @@ export async function checkAccountModels(
       ? await import("@/lib/providers/adapters/claude-code.server")
       : slug === "antigravity"
         ? await import("@/lib/providers/adapters/antigravity.server")
-        : await import("@/lib/providers/adapters/opencode-zen.server")
+        : await import("@/lib/providers/adapters/opencode-zen.server");
 
   return Promise.all(
     targets.map(async (ext) => {
-      const r = await adapter.testModel(creds, ext)
-      return { external_id: ext, ok: r.ok, latency_ms: r.latency_ms ?? 0, error: r.error }
+      const r = await adapter.testModel(creds, ext);
+      return { external_id: ext, ok: r.ok, latency_ms: r.latency_ms ?? 0, error: r.error };
     }),
-  )
+  );
 }
 
 export async function getProviderHealth(
   supabase: SupabaseClient,
   opts?: { providerSlug?: string },
 ): Promise<ProviderHealth[]> {
-  let q = supabase.from("providers").select("slug,name,accounts(status)")
-  if (opts?.providerSlug) q = (q as any).eq("slug", opts.providerSlug)
+  let q = supabase.from("providers").select("slug,name,accounts(status)");
+  if (opts?.providerSlug) q = (q as any).eq("slug", opts.providerSlug);
 
-  const { data, error } = await q
-  if (error) throw new Error(`getProviderHealth: ${error.message}`)
+  const { data, error } = await q;
+  if (error) throw new Error(`getProviderHealth: ${error.message}`);
 
   return ((data ?? []) as any[]).map((p) => {
-    const accounts = (p.accounts ?? []) as Array<{ status: string }>
-    const healthy = accounts.filter((a) => a.status === "healthy").length
-    const degraded = accounts.filter((a) => a.status === "degraded").length
-    const expired = accounts.filter((a) => a.status === "expired").length
+    const accounts = (p.accounts ?? []) as Array<{ status: string }>;
+    const healthy = accounts.filter((a) => a.status === "healthy").length;
+    const degraded = accounts.filter((a) => a.status === "degraded").length;
+    const expired = accounts.filter((a) => a.status === "expired").length;
     return {
       provider_slug: p.slug,
       provider_name: p.name,
@@ -280,8 +280,8 @@ export async function getProviderHealth(
       accounts_degraded: degraded,
       accounts_expired: expired,
       is_healthy: healthy > 0,
-    }
-  })
+    };
+  });
 }
 
 export async function listAccounts(
@@ -293,21 +293,21 @@ export async function listAccounts(
     .select(
       "id,email,label,plan,status,auth_type,last_synced_at,last_health_check_at,providers(slug,name)",
     )
-    .order("created_at", { ascending: false })
+    .order("created_at", { ascending: false });
 
   if (opts?.status) {
-    const statuses = Array.isArray(opts.status) ? opts.status : [opts.status]
+    const statuses = Array.isArray(opts.status) ? opts.status : [opts.status];
     q =
       statuses.length === 1
         ? (q as any).eq("status", statuses[0])
-        : (q as any).in("status", statuses)
+        : (q as any).in("status", statuses);
   }
 
-  const { data, error } = await q
-  if (error) throw new Error(`listAccounts: ${error.message}`)
+  const { data, error } = await q;
+  if (error) throw new Error(`listAccounts: ${error.message}`);
 
   return ((data ?? []) as any[]).map((row) => {
-    const p = row.providers as { slug: string; name: string } | null
+    const p = row.providers as { slug: string; name: string } | null;
     return {
       id: row.id,
       email: row.email,
@@ -319,6 +319,6 @@ export async function listAccounts(
       auth_type: row.auth_type,
       last_synced_at: row.last_synced_at,
       last_health_check_at: row.last_health_check_at,
-    }
-  })
+    };
+  });
 }

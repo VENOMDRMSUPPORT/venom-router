@@ -35,7 +35,10 @@ export async function runHealthChecks(
   const { data: credRows, error: credErr } = await supabase
     .from("accounts")
     .select("id,credentials_enc,credentials_iv,credentials_tag,quota_extra")
-    .in("id", accounts.map((a) => a.id));
+    .in(
+      "id",
+      accounts.map((a) => a.id),
+    );
 
   if (credErr) throw new Error(`Health check: failed to fetch credentials: ${credErr.message}`);
 
@@ -46,9 +49,7 @@ export async function runHealthChecks(
     credentials_tag: unknown;
     quota_extra: Record<string, unknown> | null;
   };
-  const credMap = new Map<string, CredRow>(
-    ((credRows ?? []) as CredRow[]).map((r) => [r.id, r]),
-  );
+  const credMap = new Map<string, CredRow>(((credRows ?? []) as CredRow[]).map((r) => [r.id, r]));
 
   const results: AccountHealthCheckResult[] = [];
   const checkedAt = new Date().toISOString();

@@ -58,11 +58,7 @@ export async function handleChatCompletions(request: Request): Promise<Response>
   // 3. Validate messages
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     return json(
-      errorBody(
-        "messages must be a non-empty array.",
-        "invalid_request_error",
-        "invalid_messages",
-      ),
+      errorBody("messages must be a non-empty array.", "invalid_request_error", "invalid_messages"),
       400,
     );
   }

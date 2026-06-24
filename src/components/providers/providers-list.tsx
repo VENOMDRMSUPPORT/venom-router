@@ -32,7 +32,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
-import { type CatalogModel } from "@/lib/providers/integrations.functions";
+import { type CatalogModel } from "@/lib/providers/integrations.service";
 import {
   formatSyncToast,
   parseSyncResponse,
@@ -45,7 +45,6 @@ import { IntegrationCard } from "@/components/providers/integration-card";
 import { ConnectCredentialDialog } from "@/components/providers/connect-credential-dialog";
 import { OAuthConnectModal } from "@/components/providers/oauth-connect-modal";
 import { ModelTestReportDialog } from "@/components/providers/model-test-report-dialog";
-import { AntigravityLiveModelDialog } from "@/components/providers/antigravity-live-model-dialog";
 import { formatAntigravityFetchToast } from "@/lib/providers/antigravity-live-snapshot";
 
 type DebugEntry = {
@@ -423,17 +422,28 @@ function Body({ category }: { category: "oauth" | "free" }) {
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {data.map((p) => (
-            <IntegrationCard
-              key={p.id}
-              slug={p.slug}
-              name={p.name}
-              homepage={p.homepage}
-              description={p.description}
-              authType={p.auth_type}
-              onConnect={() => startConnect(p)}
-            />
-          ))}
+          {[...data]
+            .sort((a, b) => {
+              const aConnected = a.accounts.length > 0 ? 1 : 0;
+              const bConnected = b.accounts.length > 0 ? 1 : 0;
+              return aConnected - bConnected;
+            })
+            .map((p) => {
+              const isConnected = p.accounts.length > 0;
+              return (
+                <IntegrationCard
+                  key={p.id}
+                  slug={p.slug}
+                  name={p.name}
+                  homepage={p.homepage}
+                  description={p.description}
+                  authType={p.auth_type}
+                  connected={isConnected}
+                  accountCount={p.accounts.length}
+                  onConnect={() => startConnect(p)}
+                />
+              );
+            })}
         </div>
       )}
 
@@ -492,24 +502,14 @@ function Body({ category }: { category: "oauth" | "free" }) {
           providerName={connectFor.name}
         />
       )}
-      {testFor?.slug === "antigravity" ? (
-        <AntigravityLiveModelDialog
-          open={!!testFor}
-          onOpenChange={(o) => {
-            if (!o) setTestFor(null);
-          }}
-          accountId={testFor?.id ?? null}
-        />
-      ) : (
-        <ModelTestReportDialog
-          open={!!testFor}
-          onOpenChange={(o) => {
-            if (!o) setTestFor(null);
-          }}
-          accountId={testFor?.id ?? null}
-          providerName={testFor?.name ?? ""}
-        />
-      )}
+      <ModelTestReportDialog
+        open={!!testFor}
+        onOpenChange={(o) => {
+          if (!o) setTestFor(null);
+        }}
+        accountId={testFor?.id ?? null}
+        providerName={testFor?.name ?? ""}
+      />
 
       <Sheet open={debugOpen} onOpenChange={setDebugOpen}>
         <SheetContent className="w-full sm:max-w-[600px] flex flex-col p-0 gap-0">

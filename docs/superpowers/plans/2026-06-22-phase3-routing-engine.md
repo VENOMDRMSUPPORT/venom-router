@@ -25,10 +25,12 @@
 ### Task 1: Routing Types + Extend Adapter Interface
 
 **Files:**
+
 - Modify: `src/lib/providers/adapters/types.ts`
 - Create: `src/lib/routing/types.ts`
 
 **Interfaces:**
+
 - Produces: `ChatMessage`, `ChatRequest`, `ChatResult` in `@/lib/providers/adapters/types` (consumed by Tasks 3–5)
 - Produces: `RoutingRequest`, `RoutingResult`, `RoutingCandidate`, `ScoredCandidate`, `VenomWeights`, `RoutingCondition`, `Modality` in `@/lib/routing/types` (consumed by Tasks 2, 6, 7, 8)
 
@@ -151,10 +153,12 @@ git commit -m "feat(routing): add chat types and routing type definitions"
 ### Task 2: Scorer + Filter + Modality Detection
 
 **Files:**
+
 - Create: `src/lib/routing/scorer.server.ts`
 - Create: `src/lib/routing/filter.server.ts`
 
 **Interfaces:**
+
 - Consumes: `RoutingCandidate`, `ScoredCandidate`, `VenomWeights`, `RoutingCondition`, `Modality` from `@/lib/routing/types`
 - Produces:
   - `scoreCandidate(candidate: RoutingCandidate, weights: VenomWeights): number`
@@ -178,10 +182,7 @@ import type { RoutingCandidate, VenomWeights } from "@/lib/routing/types";
  * speedScore    = 1000 / latencyMs  (default 0.5 if no data)
  * priorityScore = 1 / (priority + 1)
  */
-export function scoreCandidate(
-  candidate: RoutingCandidate,
-  weights: VenomWeights,
-): number {
+export function scoreCandidate(candidate: RoutingCandidate, weights: VenomWeights): number {
   const roleBonus = candidate.role === "primary" ? 1 : 0;
   const priorityScore = 1 / (candidate.priority + 1);
 
@@ -191,8 +192,7 @@ export function scoreCandidate(
   const costScore = avgCost > 0 ? 1 / (avgCost * 1000 + 1) : 0.5;
 
   const latency = candidate.model.latencyMs;
-  const speedScore =
-    typeof latency === "number" && latency > 0 ? 1000 / latency : 0.5;
+  const speedScore = typeof latency === "number" && latency > 0 ? 1000 / latency : 0.5;
 
   return (
     roleBonus * 10 +
@@ -304,9 +304,11 @@ git commit -m "feat(routing): add scorer, modality detection, and candidate filt
 ### Task 3: OpenCode Zen `chat()` Method
 
 **Files:**
+
 - Modify: `src/lib/providers/adapters/opencode-zen.server.ts`
 
 **Interfaces:**
+
 - Consumes: `StoredCredentials`, `ChatRequest`, `ChatResult` from `@/lib/providers/adapters/types`
 - Produces: `export async function chat(creds: StoredCredentials, externalId: string, req: ChatRequest): Promise<ChatResult>`
 
@@ -319,7 +321,14 @@ Read `src/lib/providers/adapters/opencode-zen.server.ts` to see the current stru
 In `src/lib/providers/adapters/opencode-zen.server.ts`, add the import at the top:
 
 ```ts
-import type { StoredCredentials, AccountIdentity, DiscoveredModel, ModelTestResult, ChatRequest, ChatResult } from "./types";
+import type {
+  StoredCredentials,
+  AccountIdentity,
+  DiscoveredModel,
+  ModelTestResult,
+  ChatRequest,
+  ChatResult,
+} from "./types";
 ```
 
 (Replace the existing import line which imports the same types without `ChatRequest` and `ChatResult`.)
@@ -388,9 +397,11 @@ git commit -m "feat(routing): add chat() to OpenCode Zen adapter"
 ### Task 4: Claude Code `chat()` Method
 
 **Files:**
+
 - Modify: `src/lib/providers/adapters/claude-code.server.ts`
 
 **Interfaces:**
+
 - Consumes: `StoredCredentials`, `ChatRequest`, `ChatResult` from `@/lib/providers/adapters/types`
 - Produces: `export async function chat(creds: StoredCredentials, externalId: string, req: ChatRequest): Promise<ChatResult>`
 
@@ -493,9 +504,11 @@ git commit -m "feat(routing): add chat() to Claude Code adapter"
 ### Task 5: Antigravity `chat()` Method
 
 **Files:**
+
 - Modify: `src/lib/providers/adapters/antigravity.server.ts`
 
 **Interfaces:**
+
 - Consumes: `StoredCredentials`, `ChatRequest`, `ChatResult` from `@/lib/providers/adapters/types`
 - Produces: `export async function chat(creds: StoredCredentials, externalId: string, req: ChatRequest): Promise<ChatResult>`
 
@@ -506,6 +519,7 @@ Message format conversion: `role: "system"` → extracted into `systemInstructio
 - [ ] **Step 1: Read the file**
 
 Read `src/lib/providers/adapters/antigravity.server.ts`. Note:
+
 - `GENERATE` constant = `${BASE}/v1internal:streamGenerateContent?alt=sse`
 - `bearerHeaders(token)` helper
 - `COMMON_HEADERS` object
@@ -631,15 +645,18 @@ git commit -m "feat(routing): add chat() to Antigravity adapter (SSE stream coll
 ### Task 6: Executor (callProvider + Fallback Loop)
 
 **Files:**
+
 - Create: `src/lib/routing/executor.server.ts`
 
 **Interfaces:**
+
 - Consumes:
   - `ScoredCandidate` from `@/lib/routing/types`
   - `ChatRequest`, `ChatResult`, `StoredCredentials` from `@/lib/providers/adapters/types`
   - `unpackCredentials()` from `@/lib/credentials.server`
   - `chat()` from each adapter: `@/lib/providers/adapters/opencode-zen.server`, `@/lib/providers/adapters/claude-code.server`, `@/lib/providers/adapters/antigravity.server`
 - Produces:
+
   ```ts
   interface ExecutionResult {
     ok: boolean;
@@ -654,12 +671,12 @@ git commit -m "feat(routing): add chat() to Antigravity adapter (SSE stream coll
     providerAdapter?: string;
     attemptLog: Array<{ ruleId: string; error: string }>;
   }
-  
+
   export async function executeWithFallback(
     scored: ScoredCandidate[],
     req: ChatRequest,
     maxAttempts: number,
-  ): Promise<ExecutionResult>
+  ): Promise<ExecutionResult>;
   ```
 
 - [ ] **Step 1: Create executor**
@@ -796,9 +813,11 @@ git commit -m "feat(routing): add executor with fallback loop and adapter dispat
 ### Task 7: Trace Persistence
 
 **Files:**
+
 - Create: `src/lib/routing/trace.server.ts`
 
 **Interfaces:**
+
 - Consumes: Supabase server client from `@/integrations/supabase/client.server`
 - Produces:
   ```ts
@@ -820,7 +839,7 @@ git commit -m "feat(routing): add executor with fallback loop and adapter dispat
     selectedRuleId: string | null;
     decisionReason: string;
     modality: string;
-  }): Promise<void>
+  }): Promise<void>;
   ```
 
 **Security:** Never store provider names, URLs, or credentials in the trace. Only rule IDs and decision reasons.
@@ -908,9 +927,11 @@ git commit -m "feat(routing): add usage + trace persistence (rule IDs only)"
 ### Task 8: Main Engine `routeRequest()`
 
 **Files:**
+
 - Create: `src/lib/routing/engine.server.ts`
 
 **Interfaces:**
+
 - Consumes:
   - `RoutingRequest`, `RoutingResult`, `RoutingCandidate`, `VenomWeights` from `@/lib/routing/types`
   - `detectModality()`, `filterCandidates()` from `@/lib/routing/filter.server`
@@ -920,10 +941,11 @@ git commit -m "feat(routing): add usage + trace persistence (rule IDs only)"
   - Supabase server client from `@/integrations/supabase/client.server`
 - Produces:
   ```ts
-  export async function routeRequest(req: RoutingRequest): Promise<RoutingResult>
+  export async function routeRequest(req: RoutingRequest): Promise<RoutingResult>;
   ```
 
 **DB query structure:**
+
 - Load `venom_models` → get `cost_weight`, `speed_weight`, `quality_weight`, `max_fallback_attempts`
 - Load `routing_rules` joined with `models` (+ `providers`) and `accounts` (+ `quotas`)
 - All joins use Supabase PostgREST syntax
@@ -982,7 +1004,8 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
   // 3. Load routing rules with model + account data
   const { data: rawRules } = await supabase
     .from("routing_rules")
-    .select(`
+    .select(
+      `
       id,
       priority,
       role,
@@ -1014,7 +1037,8 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
           confidence
         )
       )
-    `)
+    `,
+    )
     .eq("venom_slug", req.venomSlug)
     .eq("active", true);
 
@@ -1050,8 +1074,10 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
           externalId: model.external_id,
           lifecycle: model.lifecycle,
           enabled: model.enabled,
-          inputCostPerMtok: model.input_cost_per_mtok !== null ? Number(model.input_cost_per_mtok) : null,
-          outputCostPerMtok: model.output_cost_per_mtok !== null ? Number(model.output_cost_per_mtok) : null,
+          inputCostPerMtok:
+            model.input_cost_per_mtok !== null ? Number(model.input_cost_per_mtok) : null,
+          outputCostPerMtok:
+            model.output_cost_per_mtok !== null ? Number(model.output_cost_per_mtok) : null,
           capabilities: Array.isArray(model.capabilities) ? model.capabilities : [],
           latencyMs: model.latency_ms ?? null,
           provider: {
@@ -1207,6 +1233,7 @@ git commit -m "feat(routing): implement routeRequest() — score, filter, execut
 ## Self-Review
 
 **Spec coverage check:**
+
 - ✅ Scoring algorithm (roleBonus×10 + costWeight×costScore + speedWeight×speedScore + qualityWeight×priorityScore): Task 2
 - ✅ Candidate filter rules (lifecycle=approved, enabled, healthy, quota, modality, condition): Task 2
 - ✅ Modality detection from message content: Task 2
@@ -1222,6 +1249,7 @@ git commit -m "feat(routing): implement routeRequest() — score, filter, execut
 **Placeholder scan:** No TBD, TODO, or vague steps. All code blocks are complete.
 
 **Type consistency:**
+
 - `RoutingCandidate.ruleId` used consistently across Tasks 2, 6, 7, 8
 - `ChatResult.ok` / `ChatResult.content` / `ChatResult.inputTokens` / `ChatResult.outputTokens` defined in Task 1, used in Tasks 3–6
 - `executeWithFallback(scored, req, maxAttempts)` defined in Task 6, called in Task 8
