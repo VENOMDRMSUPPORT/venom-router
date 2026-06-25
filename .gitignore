@@ -47,6 +47,7 @@ output
 .claude/
 .zcode/
 .superpowers/
+.lovable/
 
 # Development documentation (not needed for production)
 docs/
