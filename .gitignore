@@ -7,12 +7,14 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+
+# Build output
 dist
 dist-ssr
-.output
+output
 .vinxi
-.tanstack/**
 .nitro
 *.local
 
@@ -38,14 +40,23 @@ dist-ssr
 
 # Dev server manager runtime files
 .dev/
-scripts/dev-gui.ps1
-Dev Server.vbs
 
 # AI/agent tooling working dirs (not part of the product)
 .opencode/
 .kilo/
 .claude/
 .zcode/
+.superpowers/
+
+# Development documentation (not needed for production)
+docs/
+ROADMAP.md
+
+# Development scripts (local use only)
+scripts/
+
+# Windows VBScript launchers
+*.vbs
 
 # graphify: keep graph.json + report, ignore regeneratable files
 graphify-out/graph.html
@@ -53,7 +64,6 @@ graphify-out/cache/
 graphify-out/.graphify_*
 graphify-out/cost.json
 graphify-out/.vocab.txt
-"Startup Services.vbs"
 
 # Only Bun lockfile is canonical for this project
 package-lock.json
