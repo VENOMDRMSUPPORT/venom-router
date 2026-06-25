@@ -40,3 +40,22 @@ dist-ssr
 .dev/
 scripts/dev-gui.ps1
 Dev Server.vbs
+
+# AI/agent tooling working dirs (not part of the product)
+.opencode/
+.kilo/
+.claude/
+.zcode/
+
+# graphify: keep graph.json + report, ignore regeneratable files
+graphify-out/graph.html
+graphify-out/cache/
+graphify-out/.graphify_*
+graphify-out/cost.json
+graphify-out/.vocab.txt
+"Startup Services.vbs"
+
+# Only Bun lockfile is canonical for this project
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
