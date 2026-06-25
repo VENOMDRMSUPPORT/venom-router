@@ -107,11 +107,12 @@ export async function getTraffic7d(
   if (error) throw new Error(`getTraffic7d: ${error.message}`);
 
   const buckets = new Map<string, number>();
+  // Bucket by UTC calendar day to match how created_at (stored as UTC) is keyed below.
+  // Using local setHours() here would shift days under non-UTC system timezones and
+  // drop records whose local-midnight lands on the previous UTC day.
   const now = new Date();
   for (let i = 6; i >= 0; i--) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    d.setHours(0, 0, 0, 0);
+    const d = new Date(now.getTime() - i * 86400000);
     buckets.set(d.toISOString().slice(0, 10), 0);
   }
   for (const r of (data ?? []) as Array<{ created_at: string }>) {
@@ -152,11 +153,11 @@ export async function getUsageAnalytics(
   };
 
   const buckets = new Map<string, { requests: number; tokens: number; cost_usd: number }>();
+  // Bucket by UTC calendar day to match created_at (stored as UTC). Using local
+  // setHours() here would shift days under non-UTC system timezones and drop records.
   const now = new Date();
   for (let i = opts.days - 1; i >= 0; i--) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    d.setHours(0, 0, 0, 0);
+    const d = new Date(now.getTime() - i * 86400000);
     buckets.set(d.toISOString().slice(0, 10), { requests: 0, tokens: 0, cost_usd: 0 });
   }
   for (const r of records) {

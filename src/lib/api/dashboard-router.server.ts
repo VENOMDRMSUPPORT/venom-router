@@ -1,6 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireDashboardAuth } from "@/lib/dashboard-auth.server";
+import { createLogger } from "@/lib/logger";
 import { z } from "zod";
+
+const log = createLogger("dashboard-api");
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -839,6 +842,81 @@ async function handleGetUsageAnalytics(
   return getUsageAnalytics(supabase, { days });
 }
 
+/**
+ * Aggregate diagnostic signals: degraded/unreachable accounts, recent failed
+ * routing traces, and health-check run stats. All queries run concurrently and
+ * are read-only — diagnostics is a pure status view.
+ */
+async function handleGetDiagnostics(supabase: SupabaseClient) {
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 86400000).toISOString();
+
+  const [degradedAccounts, failedTraces, healthStats, recentHealthChecks] = await Promise.all([
+    supabase
+      .from("accounts")
+      .select("id,label,email,status,last_health_check_at,quota_extra,providers(slug,name)")
+      .in("status", ["degraded", "expired", "unreachable"])
+      .order("last_health_check_at", { ascending: false, nullsFirst: false })
+      .limit(50),
+    supabase
+      .from("routing_traces")
+      .select(
+        "id,request_id,venom_slug,reason,decision_reason,candidates_evaluated,candidates_filtered,fallback_attempts,created_at",
+      )
+      .eq("success", false)
+      .gte("created_at", twentyFourHoursAgo)
+      .order("created_at", { ascending: false })
+      .limit(50),
+    supabase
+      .from("account_health_checks")
+      .select("status", { count: "exact", head: true })
+      .gte("checked_at", twentyFourHoursAgo),
+    supabase.from("account_health_checks").select("status").gte("checked_at", twentyFourHoursAgo),
+  ]);
+
+  const recentRows = (recentHealthChecks.data ?? []) as Array<{ status: string }>;
+  const counts = recentRows.reduce<Record<string, number>>(
+    (acc, r) => {
+      acc[r.status] = (acc[r.status] ?? 0) + 1;
+      return acc;
+    },
+    { healthy: 0, degraded: 0, unreachable: 0 },
+  );
+
+  const degraded = ((degradedAccounts.data ?? []) as Array<any>).map((a) => ({
+    id: a.id as string,
+    label: (a.label as string | null) ?? null,
+    email: (a.email as string | null) ?? null,
+    status: a.status as string,
+    provider_slug: ((a.providers as { slug?: string } | null)?.slug ?? "") as string,
+    provider_name: ((a.providers as { name?: string } | null)?.name ?? "") as string,
+    last_health_check_at: (a.last_health_check_at as string | null) ?? null,
+    quota_extra: (a.quota_extra as Record<string, unknown> | null) ?? null,
+  }));
+
+  const traces = ((failedTraces.data ?? []) as Array<any>).map((t) => ({
+    id: t.id as string,
+    request_id: (t.request_id as string | null) ?? null,
+    venom_slug: t.venom_slug as string,
+    reason: (t.reason as string) ?? "",
+    decision_reason: (t.decision_reason as string | null) ?? null,
+    candidates_evaluated: (t.candidates_evaluated as number) ?? 0,
+    candidates_filtered: (t.candidates_filtered as number) ?? 0,
+    fallback_attempts: (t.fallback_attempts as number) ?? 0,
+    created_at: t.created_at as string,
+  }));
+
+  return {
+    degraded_accounts: degraded,
+    failed_traces: traces,
+    health_check_runs: {
+      total: healthStats.count ?? counts.healthy + counts.degraded + counts.unreachable,
+      healthy: counts.healthy,
+      degraded: counts.degraded,
+      unreachable: counts.unreachable,
+    },
+  };
+}
+
 // ── main handler ──────────────────────────────────────────────────────────────
 
 export async function handleDashboardAPI(request: Request): Promise<Response | null> {
@@ -1122,6 +1200,11 @@ export async function handleDashboardAPI(request: Request): Promise<Response | n
       return ok(await handleGetUsageAnalytics(supabase, period));
     }
 
+    // ── GET /api/dashboard/diagnostics ────────────────────────────────────────
+    if (resource === "diagnostics" && !id && method === "GET") {
+      return ok(await handleGetDiagnostics(supabase));
+    }
+
     // ── POST /api/dashboard/playground/chat ───────────────────────────────────
     if (resource === "playground" && id === "chat" && method === "POST") {
       const body = playgroundChatSchema.parse(await parseBody(request));
@@ -1165,7 +1248,10 @@ export async function handleDashboardAPI(request: Request): Promise<Response | n
     }
     const status = typeof e.status === "number" ? e.status : 500;
     if (status < 500) return err(e.message, status);
-    console.error("[dashboard-api]", path, e);
+    log.error("unhandled dashboard error", {
+      path,
+      error: e instanceof Error ? e.message : String(e),
+    });
     return err(e.message ?? "Internal error");
   }
 }

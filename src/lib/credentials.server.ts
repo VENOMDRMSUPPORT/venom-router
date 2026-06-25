@@ -48,5 +48,10 @@ function toBuf(
     if (b64.length > 0) return b64;
     throw new Error(`Unrecognized ${field} encoding`);
   }
-  return Buffer.from(v);
+  if (Buffer.isBuffer(v)) return v;
+  if (typeof v === "object" && "type" in v && v.type === "Buffer" && Array.isArray(v.data)) {
+    return Buffer.from(v.data);
+  }
+  // Uint8Array or similar ArrayLike<number>
+  return Buffer.from(v as Uint8Array);
 }

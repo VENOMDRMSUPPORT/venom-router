@@ -73,7 +73,9 @@ export async function unlinkAccountModels(supabase: any, accountId: string): Pro
     .eq("account_id", accountId);
   if (error) throw new Error(error.message);
 
-  const modelIds = [...new Set((links ?? []).map((l: { model_id: string }) => l.model_id))];
+  const modelIds: string[] = [
+    ...new Set((links ?? []).map((l: { model_id: string }) => l.model_id)),
+  ] as string[];
 
   const { error: delLinksErr } = await supabase
     .from("account_models")

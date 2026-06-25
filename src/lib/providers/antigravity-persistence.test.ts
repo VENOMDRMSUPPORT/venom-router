@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { buildIdeVisibleUpsertInput } from "./antigravity-persistence";
 
 const RECOMMENDED_IDS = ["gemini-pro-agent", "claude-sonnet-4-6", "claude-opus-4-6-thinking"];

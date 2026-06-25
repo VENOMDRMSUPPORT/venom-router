@@ -73,9 +73,7 @@ export function applyAccountRotation(
         accountBestScore.set(id, Math.max(existing, healthScore(sc) * 10 + sc.score));
       }
       return interleaveByAccount(scored, (ids) =>
-        [...ids].sort(
-          (a, b) => (accountBestScore.get(b) ?? 0) - (accountBestScore.get(a) ?? 0),
-        ),
+        [...ids].sort((a, b) => (accountBestScore.get(b) ?? 0) - (accountBestScore.get(a) ?? 0)),
       );
     }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { applyAccountRotation } from "./rotation.server";
 import type { ScoredCandidate } from "@/lib/routing/types";
 
@@ -72,7 +72,10 @@ describe("applyAccountRotation", () => {
   it("health_weighted: healthy accounts preferred", () => {
     const healthy = makeScoredCandidate("a1", 0.5);
     const degraded = { ...makeScoredCandidate("a2", 0.9), score: 0.9 };
-    degraded.candidate = { ...degraded.candidate, account: { ...degraded.candidate.account, status: "degraded" } };
+    degraded.candidate = {
+      ...degraded.candidate,
+      account: { ...degraded.candidate.account, status: "degraded" },
+    };
     const result = applyAccountRotation([degraded, healthy], "health_weighted");
     expect(result[0].candidate.account.id).toBe("a1");
   });

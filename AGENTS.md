@@ -26,16 +26,16 @@ graphify .   # full build (~30s)
 
 ## Stack
 
-| Layer     | Technology                                              |
-| --------- | ------------------------------------------------------- |
-| Framework | TanStack Start (SSR React 19) + Vite                    |
-| Auth      | Supabase Auth (owner-only; first signup becomes owner)  |
-| Database  | Supabase (PostgreSQL) — migrations under `supabase/migrations/` |
-| API       | Plain REST under `/api/*`, dispatched from `src/server.ts` |
-| UI        | shadcn/ui (Radix + Tailwind v4)                         |
-| Charts    | Recharts                                                |
-| Tests     | Vitest (`node` env, `src/**/*.test.ts`)                 |
-| Package manager | Bun (`bun.lock` is canonical)                    |
+| Layer           | Technology                                                      |
+| --------------- | --------------------------------------------------------------- |
+| Framework       | TanStack Start (SSR React 19) + Vite                            |
+| Auth            | Supabase Auth (owner-only; first signup becomes owner)          |
+| Database        | Supabase (PostgreSQL) — migrations under `supabase/migrations/` |
+| API             | Plain REST under `/api/*`, dispatched from `src/server.ts`      |
+| UI              | shadcn/ui (Radix + Tailwind v4)                                 |
+| Charts          | Recharts                                                        |
+| Tests           | Vitest (`node` env, `src/**/*.test.ts`)                         |
+| Package manager | Bun (`bun.lock` is canonical)                                   |
 
 ## Commands
 
@@ -145,7 +145,7 @@ Cloudflare cron in `wrangler.toml` (`*/5 * * * *`) → `/api/internal/run-worker
    There is no insecure fallback.
 2. **Never log secrets.** Use `src/lib/logger.ts` (`createLogger`) instead of
    `console.*` — it redacts keys matching `secret|password|token|api_key|
-   credentials|authorization`. Do not stringify request/response bodies that
+credentials|authorization`. Do not stringify request/response bodies that
    may contain tokens.
 3. **Routing traces store only rule IDs + decision reasons** — never provider
    names, URLs, or tokens.
@@ -153,11 +153,11 @@ Cloudflare cron in `wrangler.toml` (`*/5 * * * *`) → `/api/internal/run-worker
    hash is stored. Revocation sets `revoked_at`.
 5. **API key limits** — RPM enforced in-memory; TPD and monthly USD caps
    enforced via single-query atomic upsert in `checkKeyLimits` (no race window).
-5. **RLS** is enabled on every owner-facing table, scoped to `is_owner()`
+6. **RLS** is enabled on every owner-facing table, scoped to `is_owner()`
    (first signup is auto-granted the `owner` role).
-6. **No off-process telemetry.** Errors are logged locally only — never forward
+7. **No off-process telemetry.** Errors are logged locally only — never forward
    to an external SaaS. (Sentry/self-hosted can be added later behind the logger.)
-7. The service-role key bypasses RLS — keep it server-side only; `client.server.ts`
+8. The service-role key bypasses RLS — keep it server-side only; `client.server.ts`
    is a lazy proxy that never ships to the browser bundle.
 
 ## Environment
@@ -244,11 +244,11 @@ graphify .             # full rebuild (slower, more thorough)
 
 ### Key commands
 
-| Command | What it does |
-|---------|-------------|
-| `graphify query "question"` | BFS traversal — broad context |
-| `graphify query "question" --dfs` | DFS — trace a specific path |
-| `graphify explain "NodeName"` | Explain a single concept |
-| `graphify path "A" "B"` | Shortest path between concepts |
-| `graphify --update .` | Incremental update (changed files only) |
-| `graphify .` | Full rebuild |
+| Command                           | What it does                            |
+| --------------------------------- | --------------------------------------- |
+| `graphify query "question"`       | BFS traversal — broad context           |
+| `graphify query "question" --dfs` | DFS — trace a specific path             |
+| `graphify explain "NodeName"`     | Explain a single concept                |
+| `graphify path "A" "B"`           | Shortest path between concepts          |
+| `graphify --update .`             | Incremental update (changed files only) |
+| `graphify .`                      | Full rebuild                            |

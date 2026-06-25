@@ -36,7 +36,27 @@ function unwrap<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? (value[0] ?? null) : value;
 }
 
-export function mapJoinToCatalogRow(row: AccountModelJoinRow) {
+export type CatalogRow = {
+  id: string;
+  model_id: string;
+  account_id: string;
+  external_id: string;
+  display_name: string;
+  capabilities: Record<string, unknown> | null;
+  quality_rating: number | null;
+  context_window: number | null;
+  input_cost_per_mtok: number | null;
+  output_cost_per_mtok: number | null;
+  test_status: string | null;
+  latency_ms: number | null;
+  last_tested_at: string | null;
+  lifecycle: string;
+  enabled: boolean;
+  accounts: AccountModelJoinRow["accounts"];
+  providers: { slug: string; name: string } | null;
+};
+
+export function mapJoinToCatalogRow(row: AccountModelJoinRow): CatalogRow {
   const model = unwrap(row.models);
   const account = unwrap(row.accounts);
   const provider = unwrap(model?.providers ?? null);

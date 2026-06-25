@@ -687,7 +687,7 @@ export async function diagnoseAntigravityFetch(
   const modelsObj = primary.fetch.models;
   let withDn = 0;
   let withoutDn = 0;
-  for (const entry of Object.values(modelsObj)) {
+  for (const entry of Object.values(modelsObj) as Array<{ displayName?: unknown }>) {
     if (typeof entry.displayName === "string" && entry.displayName.trim()) withDn++;
     else withoutDn++;
   }

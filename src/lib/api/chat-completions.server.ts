@@ -1,5 +1,5 @@
 import { randomBytes } from "crypto";
-import { validateApiKey } from "@/lib/api-key-auth.server";
+import { validateApiKey, checkKeyLimits } from "@/lib/api-key-auth.server";
 import { routeRequest } from "@/lib/routing/engine.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { ChatMessage } from "@/lib/providers/adapters/types";
@@ -107,6 +107,16 @@ export async function handleChatCompletions(request: Request): Promise<Response>
         429,
       );
     }
+  }
+
+  // 6b. Usage-cap check — tokens-per-day and monthly spend (enforced before routing).
+  const limit = await checkKeyLimits(key);
+  if (!limit.ok) {
+    const message =
+      limit.errorCode === "TPD_EXCEEDED"
+        ? `Daily token limit reached: ${limit.limit} tokens per day.`
+        : `Monthly spend cap reached: $${limit.limit}.`;
+    return json(errorBody(message, "requests", limit.errorCode.toLowerCase()), 429);
   }
 
   // 7. Route the request

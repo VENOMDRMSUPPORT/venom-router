@@ -3,6 +3,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { unpackCredentials, packCredentials } from "@/lib/credentials.server";
 import type { StoredCredentials } from "@/lib/providers/adapters/types";
 import { listAccounts } from "@/lib/db/providers.server";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("health-check");
 
 export interface AccountHealthCheckResult {
   account_id: string;
@@ -57,7 +60,7 @@ export async function runHealthChecks(
   for (const acct of accounts) {
     const credRow = credMap.get(acct.id);
     if (!credRow) {
-      console.warn(`[health-check] no credentials row for account ${acct.id}, skipping`);
+      log.warn("no credentials row for account, skipping", { accountId: acct.id });
       continue;
     }
     const slug = acct.provider_slug;
@@ -77,9 +80,15 @@ export async function runHealthChecks(
 
     try {
       const credsIn = unpackCredentials({
-        credentials_enc: credRow.credentials_enc,
-        credentials_iv: credRow.credentials_iv,
-        credentials_tag: credRow.credentials_tag,
+        credentials_enc: credRow.credentials_enc as Parameters<
+          typeof unpackCredentials
+        >[0]["credentials_enc"],
+        credentials_iv: credRow.credentials_iv as Parameters<
+          typeof unpackCredentials
+        >[0]["credentials_iv"],
+        credentials_tag: credRow.credentials_tag as Parameters<
+          typeof unpackCredentials
+        >[0]["credentials_tag"],
       });
       const t0 = Date.now();
 
@@ -149,7 +158,7 @@ export async function runHealthChecks(
 
     const { error: updateErr } = await supabase.from("accounts").update(patch).eq("id", acct.id);
     if (updateErr) {
-      console.error(`[health-check] failed to update account ${acct.id}:`, updateErr.message);
+      log.error("failed to update account", { accountId: acct.id, error: updateErr.message });
     }
 
     await supabase.from("account_health_checks").insert({
@@ -162,9 +171,13 @@ export async function runHealthChecks(
     });
 
     results.push(result);
-    console.log(
-      `[health-check] ${slug}/${acct.id} → ${result.new_status} (${result.latency_ms}ms)${result.error ? ` err=${result.error.slice(0, 80)}` : ""}`,
-    );
+    log.info("account checked", {
+      provider: slug,
+      accountId: acct.id,
+      status: result.new_status,
+      latencyMs: result.latency_ms,
+      ...(result.error ? { error: result.error.slice(0, 80) } : {}),
+    });
   }
 
   return results;

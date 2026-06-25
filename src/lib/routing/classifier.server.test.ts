@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { classifyTask } from "./classifier.server";
 import type { ChatMessage } from "@/lib/providers/adapters/types";
 
@@ -22,15 +22,21 @@ describe("classifyTask", () => {
   });
 
   it("classifies coding keywords as coding", () => {
-    expect(classifyTask([textMsg("Fix this TypeScript function: function foo() { return 1; }")])).toBe("coding");
+    expect(
+      classifyTask([textMsg("Fix this TypeScript function: function foo() { return 1; }")]),
+    ).toBe("coding");
   });
 
   it("classifies code block as coding", () => {
-    expect(classifyTask([textMsg("Review this code:\n```python\ndef main(): pass\n```")])).toBe("coding");
+    expect(classifyTask([textMsg("Review this code:\n```python\ndef main(): pass\n```")])).toBe(
+      "coding",
+    );
   });
 
   it("classifies tool_calls mention as tool_calling", () => {
-    expect(classifyTask([textMsg("Use the search tool to find relevant docs")])).toBe("tool_calling");
+    expect(classifyTask([textMsg("Use the search tool to find relevant docs")])).toBe(
+      "tool_calling",
+    );
   });
 
   it("classifies long messages as long_context", () => {
@@ -39,7 +45,11 @@ describe("classifyTask", () => {
   });
 
   it("classifies agent/step keywords as agentic_task", () => {
-    expect(classifyTask([textMsg("Complete this multi-step task: first search, then summarize, then write")])).toBe("agentic_task");
+    expect(
+      classifyTask([
+        textMsg("Complete this multi-step task: first search, then summarize, then write"),
+      ]),
+    ).toBe("agentic_task");
   });
 
   it("classifies short generic messages as simple_chat", () => {
@@ -47,11 +57,15 @@ describe("classifyTask", () => {
   });
 
   it("classifies 'why' / 'explain' / 'reason' as reasoning_heavy", () => {
-    expect(classifyTask([textMsg("Explain in depth why functional programming is better")])).toBe("reasoning_heavy");
+    expect(classifyTask([textMsg("Explain in depth why functional programming is better")])).toBe(
+      "reasoning_heavy",
+    );
   });
 
   it("classifies critical/urgent keywords as critical_task", () => {
-    expect(classifyTask([textMsg("This is a critical production issue causing data loss")])).toBe("critical_task");
+    expect(classifyTask([textMsg("This is a critical production issue causing data loss")])).toBe(
+      "critical_task",
+    );
   });
 
   it("prioritizes vision over coding", () => {

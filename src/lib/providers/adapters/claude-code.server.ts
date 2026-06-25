@@ -8,6 +8,9 @@ import type {
   ChatResult,
 } from "./types";
 import { CLAUDE_OAUTH } from "./_shared/oauth-clients.server";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("claude-oauth");
 import {
   MODEL_TEST_PROMPT,
   validateModelTestResponse,
@@ -87,7 +90,7 @@ export async function completeFlow(input: {
     redirect_uri: input.redirect_uri,
     code_verifier: input.code_verifier,
   };
-  console.log("[claude-oauth] token exchange →", JSON.stringify(tokenBody));
+  log.debug("token exchange request sent");
   const res = await fetch(CLAUDE_OAUTH.tokenUrl, {
     method: "POST",
     headers: {
@@ -98,7 +101,8 @@ export async function completeFlow(input: {
   });
   if (!res.ok) {
     const text = await res.text();
-    console.log("[claude-oauth] token exchange ←", res.status, text.slice(0, 300));
+    // Do not log the response body verbatim — error payloads can echo credentials.
+    log.warn("token exchange failed", { status: res.status });
     throw new Error(`Claude token exchange failed (${res.status}): ${text.slice(0, 300)}`);
   }
   const j: any = await res.json();
@@ -129,7 +133,7 @@ async function refreshIfNeeded(creds: StoredCredentials): Promise<StoredCredenti
   });
   if (!res.ok) {
     const text = await res.text();
-    console.log("[claude-oauth] token refresh ←", res.status, text.slice(0, 300));
+    log.warn("token refresh failed", { status: res.status });
     if (isUnrecoverableRefreshError(text)) {
       throw new ClaudeAuthError(`Claude token expired — re-login required (${res.status})`);
     }

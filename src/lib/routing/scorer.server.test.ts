@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { scoreCandidate } from "./scorer.server";
 import type { RoutingCandidate } from "@/lib/routing/types";
 
@@ -50,7 +50,11 @@ describe("scoreCandidate", () => {
 
   it("lite scores free model higher than premium model", () => {
     const free = makeCandidate({ costType: "free", inputCostPerMtok: 0 });
-    const premium = makeCandidate({ costType: "premium", inputCostPerMtok: 15, outputCostPerMtok: 60 });
+    const premium = makeCandidate({
+      costType: "premium",
+      inputCostPerMtok: 15,
+      outputCostPerMtok: 60,
+    });
     const all = [free, premium];
     expect(scoreCandidate(free, "lite", "simple_chat", all)).toBeGreaterThan(
       scoreCandidate(premium, "lite", "simple_chat", all),
@@ -58,7 +62,12 @@ describe("scoreCandidate", () => {
   });
 
   it("max scores high-quality model higher than low-quality for complex task", () => {
-    const highQ = makeCandidate({ priority: 1, qualityScore: 0.9, costType: "premium", inputCostPerMtok: 15 });
+    const highQ = makeCandidate({
+      priority: 1,
+      qualityScore: 0.9,
+      costType: "premium",
+      inputCostPerMtok: 15,
+    });
     const lowQ = makeCandidate({ priority: 10, qualityScore: 0.1, costType: "free" });
     const all = [highQ, lowQ];
     expect(scoreCandidate(highQ, "max", "reasoning_heavy", all)).toBeGreaterThan(
@@ -67,7 +76,12 @@ describe("scoreCandidate", () => {
   });
 
   it("premium model is penalized more for lite than max", () => {
-    const premium = makeCandidate({ costType: "premium", inputCostPerMtok: 15, outputCostPerMtok: 60, qualityScore: 0.9 });
+    const premium = makeCandidate({
+      costType: "premium",
+      inputCostPerMtok: 15,
+      outputCostPerMtok: 60,
+      qualityScore: 0.9,
+    });
     const litePenalty = scoreCandidate(premium, "lite", "simple_chat", [premium]);
     const maxPenalty = scoreCandidate(premium, "max", "simple_chat", [premium]);
     expect(maxPenalty).toBeGreaterThan(litePenalty);

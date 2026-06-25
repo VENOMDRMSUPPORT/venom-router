@@ -1,9 +1,13 @@
-import { describe, it, expect, mock } from "bun:test";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const usageInsert = mock(() => Promise.resolve({ data: { id: "usage-1" }, error: null }));
-const traceInsert = mock(() => Promise.resolve({ data: null, error: null }));
+const usageInsert = vi.fn<(row: unknown) => Promise<{ data: { id: string }; error: null }>>((row) =>
+  Promise.resolve({ data: { id: "usage-1" }, error: null }),
+);
+const traceInsert = vi.fn<
+  (payload: Record<string, unknown>) => Promise<{ data: null; error: null }>
+>((payload) => Promise.resolve({ data: null, error: null }));
 
-mock.module("@/integrations/supabase/client.server", () => ({
+vi.mock("@/integrations/supabase/client.server", () => ({
   supabaseAdmin: {
     from(table: string) {
       if (table === "usage_records") {
@@ -28,10 +32,12 @@ mock.module("@/integrations/supabase/client.server", () => ({
 const { persistUsageAndTrace } = await import("./trace.server");
 
 describe("persistUsageAndTrace", () => {
-  it("inserts usage and trace with required NOT NULL fields", async () => {
+  beforeEach(() => {
     usageInsert.mockClear();
     traceInsert.mockClear();
+  });
 
+  it("inserts usage and trace with required NOT NULL fields", async () => {
     await persistUsageAndTrace({
       venomSlug: "pro",
       ruleId: "rule-1",
@@ -68,7 +74,7 @@ describe("persistUsageAndTrace", () => {
     expect(usageInsert).toHaveBeenCalled();
     expect(traceInsert).toHaveBeenCalled();
 
-    const tracePayload = traceInsert.mock.calls[0]![0] as Record<string, unknown>;
+    const tracePayload = traceInsert.mock.calls[0]![0];
     expect(tracePayload.request_id).toBe("req-uuid-123");
     expect(tracePayload.venom_slug).toBe("pro");
     expect(tracePayload.success).toBe(true);

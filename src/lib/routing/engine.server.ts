@@ -110,7 +110,9 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
   const tier = req.venomSlug as VenomTier;
   const strategy = mergeStrategyConfig(
     tier,
-    venomModel.strategy_config as Partial<import("@/lib/routing/strategy.types").TierStrategyConfig> | null,
+    venomModel.strategy_config as Partial<
+      import("@/lib/routing/strategy.types").TierStrategyConfig
+    > | null,
   );
 
   const { data: rawRules } = await supabaseAdmin
@@ -164,8 +166,12 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
     };
   }
 
-  const modelIds = [...new Set(rawRules.map((r: { model_id: string }) => r.model_id))];
-  const accountIds = [...new Set(rawRules.map((r: { account_id: string }) => r.account_id))];
+  // Supabase's generated types don't yet include the `condition` column on routing_rules,
+  // which makes the query type resolve to a SelectQueryError. Treat rows as loose here —
+  // every field is validated when building RoutingCandidate below.
+  const rules: any[] = rawRules ?? [];
+  const modelIds = [...new Set(rules.map((r) => r.model_id as string))];
+  const accountIds = [...new Set(rules.map((r) => r.account_id as string))];
   const { data: accountModelRows } = await supabaseAdmin
     .from("account_models")
     .select("account_id, model_id, enabled, lifecycle, latency_ms, test_status")
@@ -302,8 +308,7 @@ export async function routeRequest(req: RoutingRequest): Promise<RoutingResult> 
   const inputTokens = finalResult?.inputTokens ?? 0;
   const outputTokens = finalResult?.outputTokens ?? 0;
   const costUsd =
-    (inputTokens * inputCostPerMtok) / 1_000_000 +
-    (outputTokens * outputCostPerMtok) / 1_000_000;
+    (inputTokens * inputCostPerMtok) / 1_000_000 + (outputTokens * outputCostPerMtok) / 1_000_000;
 
   const ok = finalResult?.ok ?? false;
   const decisionReason = ok

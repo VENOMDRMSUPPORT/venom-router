@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import {
   deleteModelIfOrphaned,
   syncModelsForAccount,
@@ -24,11 +24,11 @@ function createMockSupabase(seed: { models?: Row[]; account_models?: Row[]; prov
         return api;
       },
       eq(col: string, val: unknown) {
-        api._filters.push((row) => row[col] === val);
+        api._filters.push((row: Row) => row[col] === val);
         return api;
       },
       in(col: string, vals: unknown[]) {
-        api._filters.push((row) => vals.includes(row[col]));
+        api._filters.push((row: Row) => vals.includes(row[col]));
         return api;
       },
       order() {
@@ -57,15 +57,34 @@ function createMockSupabase(seed: { models?: Row[]; account_models?: Row[]; prov
         }
         return { data: null, error: null };
       },
+      update(patch: Row) {
+        const chain: any = {
+          eq(col: string, val: unknown) {
+            api._filters.push((row: Row) => row[col] === val);
+            return chain;
+          },
+          async then(resolve: (v: unknown) => void) {
+            const list = table === "models" ? models : accountModels;
+            const matched = list.filter((row) =>
+              api._filters.every((f: (row: Row) => boolean) => f(row)),
+            );
+            for (const row of matched) Object.assign(row, patch);
+            resolve({ data: matched[0] ?? null, error: null });
+          },
+        };
+        return chain;
+      },
       delete() {
         const chain: any = {
           eq(col: string, val: unknown) {
-            api._filters.push((row) => row[col] === val);
+            api._filters.push((row: Row) => row[col] === val);
             return chain;
           },
           then(resolve: (v: unknown) => void) {
             const list = table === "models" ? models : accountModels;
-            const kept = list.filter((row) => !api._filters.every((f) => f(row)));
+            const kept = list.filter(
+              (row) => !api._filters.every((f: (row: Row) => boolean) => f(row)),
+            );
             if (table === "models") models.splice(0, models.length, ...kept);
             if (table === "account_models") accountModels.splice(0, accountModels.length, ...kept);
             resolve({ error: null });
@@ -75,7 +94,9 @@ function createMockSupabase(seed: { models?: Row[]; account_models?: Row[]; prov
       },
       then(resolve: (v: unknown) => void) {
         const list = table === "models" ? models : accountModels;
-        let filtered = list.filter((row) => api._filters.every((f) => f(row)));
+        let filtered = list.filter((row) =>
+          api._filters.every((f: (row: Row) => boolean) => f(row)),
+        );
         if (
           table === "account_models" &&
           typeof api._select === "string" &&

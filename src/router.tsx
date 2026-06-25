@@ -10,8 +10,6 @@ export const getRouter = () => {
     context: { queryClient },
     scrollRestoration: true,
     defaultPreloadStaleTime: 0,
-    // Auth routes rely on browser localStorage; keep SSR off to avoid hydration match errors.
-    defaultSsr: false,
   });
 
   return router;

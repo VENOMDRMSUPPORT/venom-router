@@ -37,7 +37,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     applyTheme(t);
     try {
       localStorage.setItem(STORAGE_KEY, t);
-    } catch {}
+    } catch {
+      // localStorage may be unavailable (private mode / disabled); theme still applies in-memory.
+    }
   }, []);
 
   const toggle = useCallback(() => {

@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Required for Supabase client initialization during build
+  SUPABASE_URL: "https://placeholder.supabase.co"
+  SUPABASE_PUBLISHABLE_KEY: "placeholder-key"
+  VITE_SUPABASE_URL: "https://placeholder.supabase.co"
+  VITE_SUPABASE_PUBLISHABLE_KEY: "placeholder-key"
+  VENOM_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef"
+  DEV_WORKER_SECRET: "test-secret"
+  LOG_LEVEL: "warn"
+
+jobs:
+  verify:
+    name: Verify (tsc → lint → test → build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: ESLint
+        run: bun lint
+
+      - name: Vitest
+        run: bun test
+
+      - name: Production build
+        run: bun run build

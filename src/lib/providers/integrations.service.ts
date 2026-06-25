@@ -15,6 +15,7 @@ import {
   mapJoinToAccountModelView,
   mapJoinToCatalogRow,
   type AccountModelJoinRow,
+  type CatalogRow,
 } from "./catalog-queries.server";
 import {
   buildAntigravityLiveFetchSnapshot,
@@ -349,8 +350,10 @@ async function testAntigravityModelsConcurrent(
     .from("models")
     .select("id, external_id")
     .in("external_id", externalIds);
-  const modelIdByExt = new Map(
-    (catalogRows ?? []).map((r: { id: string; external_id: string }) => [r.external_id, r.id]),
+  const modelIdByExt = new Map<string, string>(
+    (catalogRows ?? []).map(
+      (r: { id: string; external_id: string }) => [r.external_id, r.id] as [string, string],
+    ),
   );
 
   async function worker() {
@@ -362,9 +365,15 @@ async function testAntigravityModelsConcurrent(
       const eligible = r.ok && !exhausted;
       const modelId = modelIdByExt.get(ext);
       if (modelId) {
-        await updateAccountModelTestResult(supabase, accountId, modelId, r, {
-          enabled: eligible,
-        });
+        await updateAccountModelTestResult(
+          supabase,
+          accountId,
+          modelId,
+          r as import("./adapters/types").ModelTestResult,
+          {
+            enabled: eligible,
+          },
+        );
       }
       results.push({ external_id: ext, ok: r.ok, latency_ms: r.latency_ms, error: r.error });
     }
@@ -526,8 +535,8 @@ export async function runAntigravityLiveSnapshotFetch(
 
   const overlayRows = (dbRows ?? [])
     .map((row: AccountModelJoinRow) => mapJoinToCatalogRow(row))
-    .filter((row) => snapshotIds.has(row.external_id))
-    .map((row) => ({
+    .filter((row: CatalogRow) => snapshotIds.has(row.external_id))
+    .map((row: CatalogRow) => ({
       id: row.id,
       external_id: row.external_id,
       display_name: row.display_name,

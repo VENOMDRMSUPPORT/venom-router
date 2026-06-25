@@ -41,22 +41,34 @@ export function classifyTask(messages: ChatMessage[]): TaskClass {
   }
 
   // Agentic: multi-step workflows
-  if (/\b(step[- ]by[- ]step|multi[- ]step|first .+ then .+|agent|complete this task)\b/i.test(text)) {
+  if (
+    /\b(step[- ]by[- ]step|multi[- ]step|first .+ then .+|agent|complete this task)\b/i.test(text)
+  ) {
     return "agentic_task";
   }
 
   // Critical: high-stakes situations requiring the best model
-  if (/\b(critical|production|urgent|security vulnerability|data loss|breaking change|final decision)\b/i.test(text)) {
+  if (
+    /\b(critical|production|urgent|security vulnerability|data loss|breaking change|final decision)\b/i.test(
+      text,
+    )
+  ) {
     return "critical_task";
   }
 
   // Coding: code blocks or programming keywords
-  if (/```|\bfunction\b|\bclass\b|\bconst\b|\bdef\b|\bimport\b|\bfix (this|the) (code|bug|error)\b/i.test(text)) {
+  if (
+    /```|\bfunction\b|\bclass\b|\bconst\b|\bdef\b|\bimport\b|\bfix (this|the) (code|bug|error)\b/i.test(
+      text,
+    )
+  ) {
     return "coding";
   }
 
   // Reasoning: deep explanation requests
-  if (/\b(explain in depth|why is|reason(ing)?|analyze|compare|evaluate|pros and cons)\b/i.test(text)) {
+  if (
+    /\b(explain in depth|why is|reason(ing)?|analyze|compare|evaluate|pros and cons)\b/i.test(text)
+  ) {
     return "reasoning_heavy";
   }
 

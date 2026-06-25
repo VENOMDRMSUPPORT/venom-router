@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { getVenomModel, listVenomModels, listRoutingRules } from "./venom.server";
 
 function makeSupabaseMock(

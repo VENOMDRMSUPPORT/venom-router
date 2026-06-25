@@ -1,5 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AccountHealthCheckResult } from "./health-check.server";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("quota-snapshot");
 
 export async function runQuotaSnapshots(
   supabase: SupabaseClient,
@@ -27,8 +30,8 @@ export async function runQuotaSnapshots(
   );
 
   if (error) {
-    console.error("[quota-snapshot] insert failed:", error.message);
+    log.error("insert failed", { error: error.message });
   } else {
-    console.log(`[quota-snapshot] inserted ${withQuota.length} snapshot(s)`);
+    log.info("snapshots inserted", { count: withQuota.length });
   }
 }

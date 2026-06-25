@@ -1,21 +1,24 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { runHealthChecks } from "./health-check.server";
 import { runQuotaSnapshots } from "./quota-snapshot.server";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("workers");
 
 export async function runScheduled(_cron: string): Promise<void> {
   const t0 = Date.now();
-  console.log("[workers] scheduled run starting");
+  log.info("scheduled run starting");
 
   try {
     const results = await runHealthChecks(supabaseAdmin);
     const healthy = results.filter((r) => r.ok).length;
-    console.log(`[workers] health checks: ${results.length} accounts, ${healthy} healthy`);
+    log.info("health checks complete", { accounts: results.length, healthy });
 
     await runQuotaSnapshots(supabaseAdmin, results);
-    console.log("[workers] quota snapshots done");
+    log.info("quota snapshots done");
   } catch (e) {
-    console.error("[workers] scheduled run failed:", e);
+    log.error("scheduled run failed", { error: e instanceof Error ? e.message : String(e) });
   }
 
-  console.log(`[workers] complete in ${Date.now() - t0}ms`);
+  log.info("scheduled run complete", { durationMs: Date.now() - t0 });
 }

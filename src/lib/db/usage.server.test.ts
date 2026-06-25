@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { listUsageRecords, getMetricsSummary, getTraffic7d } from "./usage.server";
 
 function makeSupabaseMock(

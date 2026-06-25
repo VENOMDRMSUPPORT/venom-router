@@ -72,7 +72,11 @@ function SettingsPage() {
               <dt className="text-muted-foreground">Environment</dt>
               <dd className="col-span-2 font-mono">production</dd>
               <dt className="text-muted-foreground">Database</dt>
-              <dd className="col-span-2 font-mono text-[10px] truncate">SQLite (Local)</dd>
+              <dd className="col-span-2 font-mono text-[10px] truncate">Supabase (PostgreSQL)</dd>
+              <dt className="text-muted-foreground">Auth provider</dt>
+              <dd className="col-span-2 font-mono text-[10px] truncate">Supabase Auth</dd>
+              <dt className="text-muted-foreground">Runtime</dt>
+              <dd className="col-span-2 font-mono text-[10px] truncate">TanStack Start (SSR)</dd>
             </dl>
           </div>
         )}

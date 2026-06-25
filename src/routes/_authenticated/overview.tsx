@@ -31,6 +31,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useDashboardChrome } from "@/lib/use-dashboard-chrome";
 import { api } from "@/lib/api-client";
+import type { DashboardMetrics } from "@/lib/dashboard-types";
 import { cn, formatRelativeTime } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/overview")({
@@ -62,9 +63,9 @@ function Overview() {
   const { data: metrics } = useSuspenseQuery(
     queryOptions({
       queryKey: ["dashboard-metrics"],
-      queryFn: () => api.get("/api/dashboard/metrics"),
+      queryFn: () => api.get<DashboardMetrics>("/api/dashboard/metrics"),
     }),
-  ) as { data: any };
+  );
 
   const checklistDone = [
     metrics.checklist.owner_created,
@@ -77,7 +78,10 @@ function Overview() {
   const allHealthy =
     metrics.accounts_total > 0 && metrics.accounts_healthy === metrics.accounts_total;
   const usageData = metrics.traffic_7d;
-  const distributionData = metrics.distribution.map((d) => ({ name: d.slug, v: d.requests }));
+  const distributionData = metrics.distribution.map((d) => ({
+    name: d.slug,
+    v: d.requests,
+  }));
 
   return (
     <>
@@ -351,29 +355,39 @@ function Overview() {
                 </div>
               ) : (
                 <ul className="space-y-2">
-                  {metrics.recent_activity.map((item) => (
-                    <li
-                      key={item.id}
-                      className="flex items-start gap-3 rounded-lg p-2.5 hover:bg-muted/50 transition-colors"
-                    >
-                      {item.status === "success" ? (
-                        <CheckCircle2 className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
-                      ) : item.status === "failure" ? (
-                        <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
-                      ) : (
-                        <Clock className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium truncate">{item.title}</div>
-                        {item.detail && (
-                          <div className="text-xs text-muted-foreground mt-0.5">{item.detail}</div>
+                  {metrics.recent_activity.map(
+                    (item: {
+                      id: string;
+                      title: string;
+                      detail?: string | null;
+                      status: string;
+                      created_at: string;
+                    }) => (
+                      <li
+                        key={item.id}
+                        className="flex items-start gap-3 rounded-lg p-2.5 hover:bg-muted/50 transition-colors"
+                      >
+                        {item.status === "success" ? (
+                          <CheckCircle2 className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
+                        ) : item.status === "failure" ? (
+                          <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+                        ) : (
+                          <Clock className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
                         )}
-                      </div>
-                      <span className="text-[10px] text-muted-foreground shrink-0">
-                        {formatRelativeTime(item.created_at)}
-                      </span>
-                    </li>
-                  ))}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium truncate">{item.title}</div>
+                          {item.detail && (
+                            <div className="text-xs text-muted-foreground mt-0.5">
+                              {item.detail}
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-muted-foreground shrink-0">
+                          {formatRelativeTime(item.created_at)}
+                        </span>
+                      </li>
+                    ),
+                  )}
                 </ul>
               )}
             </div>
@@ -397,38 +411,57 @@ function Overview() {
                 </div>
               ) : (
                 <ul className="space-y-2">
-                  {metrics.provider_health.map((h) => (
-                    <li
-                      key={h.account_id}
-                      className="flex items-center gap-3 rounded-lg p-2.5 hover:bg-muted/50 transition-colors"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium truncate">
-                          {h.provider_name}
-                          {h.email ? (
-                            <span className="text-muted-foreground font-normal"> · {h.email}</span>
-                          ) : h.label ? (
-                            <span className="text-muted-foreground font-normal"> · {h.label}</span>
-                          ) : null}
-                        </div>
-                        <div className="text-[11px] text-muted-foreground mt-0.5">
-                          {h.models_enabled} models enabled · synced{" "}
-                          {formatRelativeTime(h.last_synced_at)}
-                        </div>
-                      </div>
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          "text-[10px] shrink-0",
-                          h.status === "healthy"
-                            ? "border-emerald-500/30 text-emerald-600"
-                            : "border-amber-500/30 text-amber-600",
-                        )}
+                  {metrics.provider_health.map(
+                    (h: {
+                      account_id: string;
+                      provider_name: string;
+                      provider_slug: string;
+                      email?: string | null;
+                      label?: string | null;
+                      status: string;
+                      last_synced_at?: string | null;
+                      models_enabled: number;
+                      quota_used?: number | null;
+                      quota_unit?: string | null;
+                    }) => (
+                      <li
+                        key={h.account_id}
+                        className="flex items-center gap-3 rounded-lg p-2.5 hover:bg-muted/50 transition-colors"
                       >
-                        {h.status}
-                      </Badge>
-                    </li>
-                  ))}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium truncate">
+                            {h.provider_name}
+                            {h.email ? (
+                              <span className="text-muted-foreground font-normal">
+                                {" "}
+                                · {h.email}
+                              </span>
+                            ) : h.label ? (
+                              <span className="text-muted-foreground font-normal">
+                                {" "}
+                                · {h.label}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground mt-0.5">
+                            {h.models_enabled} models enabled · synced{" "}
+                            {formatRelativeTime(h.last_synced_at ?? null)}
+                          </div>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "text-[10px] shrink-0",
+                            h.status === "healthy"
+                              ? "border-emerald-500/30 text-emerald-600"
+                              : "border-amber-500/30 text-amber-600",
+                          )}
+                        >
+                          {h.status}
+                        </Badge>
+                      </li>
+                    ),
+                  )}
                 </ul>
               )}
             </div>
