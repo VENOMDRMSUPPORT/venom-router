@@ -10,6 +10,7 @@ import (
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/httpapi"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
@@ -22,10 +23,10 @@ type StartupStage string
 const (
 	StageValidateEmbeddedAssets StartupStage = "validate_embedded_assets"
 	StageAcquireLock            StartupStage = "acquire_lock"
-	StageLoadKeyring            StartupStage = "load_keyring" // stub until P1
+	StageLoadKeyring            StartupStage = "load_keyring"
 	StageOpenDatabase           StartupStage = "open_database"
 	StageMigrateDatabase        StartupStage = "migrate_database"
-	StageReconcileKeyring       StartupStage = "reconcile_keyring"       // stub until P1
+	StageReconcileKeyring       StartupStage = "reconcile_keyring"
 	StageBuildRepositories      StartupStage = "build_repositories"      // stub until P2b+
 	StageBuildProviderRegistry  StartupStage = "build_provider_registry" // stub until P2b+
 	StageBuildServices          StartupStage = "build_services"          // stub until P2b+
@@ -40,6 +41,14 @@ type BootConfig struct {
 	// Logger receives one "startup stage" record per stage, in order. If
 	// nil, observability.Default() is used.
 	Logger *observability.Logger
+	// CiphertextStore is consulted at the reconcile_keyring stage
+	// (P1-SEC-004). If nil, an empty store is used: no stored
+	// ciphertext exists yet, since M2's credential table is P2b, so
+	// reconciliation trivially passes with zero rows to check. Exposed
+	// here (rather than hardcoded) so tests can inject a store with a
+	// deliberately mismatched key_id reference to prove the fail-closed
+	// path without needing real credential rows.
+	CiphertextStore secrets.CiphertextRefStore
 }
 
 // Server represents a successfully booted process: a mounted HTTP mux
@@ -50,10 +59,11 @@ type BootConfig struct {
 type Server struct {
 	Addr string
 
-	db   *storage.DB
-	lock *Lock
-	http *http.Server
-	ln   net.Listener
+	db      *storage.DB
+	lock    *Lock
+	http    *http.Server
+	ln      net.Listener
+	keyring *secrets.Keyring
 }
 
 // Shutdown gracefully stops the listener and releases what Boot
@@ -115,20 +125,40 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 	// failed boot leaves no half-state.
 	release := func() { _ = lock.Release() }
 
-	// 3. Load/create keyring in memory. Stub until P1-SEC-*.
-	logStage(StageLoadKeyring)
-	if err := loadKeyringStub(); err != nil {
-		release()
-		return nil, fmt.Errorf("app: load keyring: %w", err)
-	}
-
-	// 4. Open SQLite.
-	logStage(StageOpenDatabase)
+	// dataDir is resolved once, here, because load_keyring (stage 3, just
+	// below) needs it — the keyring lives at <dataDir>/secrets/keyring.json
+	// — and open_database (stage 4) reuses the same value rather than
+	// re-resolving it.
 	dataDir, err := platform.EnsureDataDir()
 	if err != nil {
 		release()
 		return nil, fmt.Errorf("app: resolve data dir: %w", err)
 	}
+
+	// 3. Load/create the master keyring in memory (P1-SEC-001), sourcing
+	// VENOM_ENCRYPTION_KEY via platform.EncryptionKeyOverride — this
+	// package never reads the environment directly (forbidigo). A
+	// missing/corrupt keyring is fail-closed: no listener may ever open
+	// without a usable master key.
+	logStage(StageLoadKeyring)
+	envValue, envPresent := platform.EncryptionKeyOverride()
+	kr, err := secrets.Load(dataDir, envValue, envPresent)
+	if err != nil {
+		release()
+		return nil, fmt.Errorf("app: load keyring: %w", err)
+	}
+	// TODO(follow-up unit, out of scope for P1-SEC-004): if
+	// kr.PendingRotation != nil here, a P1-SEC-003 rotation was
+	// interrupted before its ciphertext re-wrap completed. Wiring
+	// secrets.KeyringHolder.Resume into startup to finish it
+	// automatically is deliberately not done by this unit — it lands in
+	// a dedicated later step. In the meantime kr.Keys already holds both
+	// the old and new key material, so Reconcile below still validates
+	// whatever ciphertext already exists correctly; there is no
+	// reconciliation gap.
+
+	// 4. Open SQLite.
+	logStage(StageOpenDatabase)
 	db, err := storage.Open(dataDir)
 	if err != nil {
 		release()
@@ -147,10 +177,18 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		return nil, fmt.Errorf("app: migrate database: %w", err)
 	}
 
-	// 5. Reconcile keyring with DB + validate every stored ciphertext.
-	// Stub until P1-SEC-*.
+	// 5. Reconcile the keyring with the DB: validate every stored
+	// ciphertext's key_id against kr BEFORE any listener may open
+	// (P1-SEC-004, 01 §2/§8). No credential table exists yet (M2 is
+	// P2b), so cfg.CiphertextStore defaults to an empty store and this
+	// trivially passes with zero rows to check; tests can override it to
+	// prove the fail-closed path.
 	logStage(StageReconcileKeyring)
-	if err := reconcileKeyringStub(); err != nil {
+	ciphertextStore := cfg.CiphertextStore
+	if ciphertextStore == nil {
+		ciphertextStore = noCiphertextStore{}
+	}
+	if err := secrets.Reconcile(ctx, kr, ciphertextStore); err != nil {
 		closeDB()
 		release()
 		return nil, fmt.Errorf("app: reconcile keyring: %w", err)
@@ -188,22 +226,31 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 	}()
 
 	return &Server{
-		Addr: ln.Addr().String(),
-		db:   db,
-		lock: lock,
-		http: httpServer,
-		ln:   ln,
+		Addr:    ln.Addr().String(),
+		db:      db,
+		lock:    lock,
+		http:    httpServer,
+		ln:      ln,
+		keyring: kr,
 	}, nil
 }
 
+// noCiphertextStore is the default, empty secrets.CiphertextRefStore
+// used when BootConfig.CiphertextStore is nil: no credential table
+// exists yet (M2 is P2b), so there is nothing to enumerate and
+// secrets.Reconcile trivially passes.
+type noCiphertextStore struct{}
+
+func (noCiphertextStore) ListKeyRefs(_ context.Context) ([]secrets.CiphertextRef, error) {
+	return nil, nil
+}
+
 // The following are explicit stubs for stages this phase does not yet
-// implement: keyring/ciphertext reconcile is P1-SEC-*; repositories,
-// provider registry, and services are P2b+. Each is a clearly-marked
-// no-op — none is wired to internal/execution's dispatcher.
+// implement: repositories, provider registry, and services are P2b+.
+// Each is a clearly-marked no-op — none is wired to internal/execution's
+// dispatcher.
 
 func validateEmbeddedAssetsStub() error { return nil }
-func loadKeyringStub() error            { return nil }
-func reconcileKeyringStub() error       { return nil }
 func buildRepositoriesStub()            {}
 func buildProviderRegistryStub()        {}
 func buildServicesStub()                {}

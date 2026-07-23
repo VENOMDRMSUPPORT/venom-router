@@ -8,11 +8,14 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
@@ -134,6 +137,129 @@ func TestBoot_FailClosedOnMigrationFailure(t *testing.T) {
 	t.Logf("boot log (must stop at %q):\n%s", StageMigrateDatabase, logBuf.String())
 	if len(stages) == 0 || stages[len(stages)-1] != string(StageMigrateDatabase) {
 		t.Fatalf("last logged stage = %v, want the sequence to end at %q", stages, StageMigrateDatabase)
+	}
+	for _, s := range stages {
+		if s == string(StageMountHTTPMux) || s == string(StageListen) {
+			t.Fatalf("stage %q was logged despite the fail-closed failure — listener stages must never run", s)
+		}
+	}
+}
+
+// fixedRefStore is a secrets.CiphertextRefStore fixture that always
+// returns the same, pre-baked refs — used to force a reconcile failure
+// without needing a real credential table (M2/P2b does not exist yet).
+type fixedRefStore struct {
+	refs []secrets.CiphertextRef
+}
+
+func (s fixedRefStore) ListKeyRefs(_ context.Context) ([]secrets.CiphertextRef, error) {
+	return s.refs, nil
+}
+
+// TestBoot_FailClosedOnCorruptKeyring proves load_keyring, now wired to
+// the real secrets.Load, aborts Boot before net.Listen when the on-disk
+// keyring is corrupt — the same fail-closed shape as
+// TestBoot_FailClosedOnMigrationFailure, one stage earlier.
+func TestBoot_FailClosedOnCorruptKeyring(t *testing.T) {
+	setDataDirEnv(t)
+	ctx := context.Background()
+
+	// First boot succeeds: creates the real on-disk keyring.
+	srv1, err := Boot(ctx, BootConfig{Bind: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("first Boot() error = %v", err)
+	}
+	if err := srv1.Shutdown(ctx); err != nil {
+		t.Fatalf("first Shutdown() error = %v", err)
+	}
+
+	// Corrupt the keyring file directly, bypassing Boot/the lock,
+	// purely to make this one edit.
+	dataDir, err := platform.EnsureDataDir()
+	if err != nil {
+		t.Fatalf("platform.EnsureDataDir(): %v", err)
+	}
+	keyringPath := filepath.Join(dataDir, "secrets", "keyring.json")
+	if err := os.WriteFile(keyringPath, []byte("{ not valid json"), 0o600); err != nil {
+		t.Fatalf("corrupt keyring file: %v", err)
+	}
+
+	bind := freeLoopbackAddr(t)
+
+	var logBuf bytes.Buffer
+	logger := observability.New(slog.NewJSONHandler(&logBuf, nil))
+
+	srv2, err := Boot(ctx, BootConfig{Bind: bind, Logger: logger})
+	if err == nil {
+		_ = srv2.Shutdown(ctx)
+		t.Fatalf("second Boot() succeeded, want a corrupt-keyring failure")
+	}
+	if !errors.Is(err, secrets.ErrKeyringCorrupt) {
+		t.Fatalf("second Boot() error = %v, want it to wrap secrets.ErrKeyringCorrupt", err)
+	}
+	if srv2 != nil {
+		t.Fatalf("Boot() returned a non-nil *Server alongside an error")
+	}
+
+	conn, dialErr := net.DialTimeout("tcp", bind, 200*time.Millisecond)
+	if dialErr == nil {
+		_ = conn.Close()
+		t.Fatalf("dial to %q succeeded — a listener came up despite the fail-closed failure", bind)
+	}
+	t.Logf("dial to %q correctly refused: %v", bind, dialErr)
+
+	stages := parseStages(t, logBuf.Bytes())
+	t.Logf("boot log (must stop at %q):\n%s", StageLoadKeyring, logBuf.String())
+	if len(stages) == 0 || stages[len(stages)-1] != string(StageLoadKeyring) {
+		t.Fatalf("last logged stage = %v, want the sequence to end at %q", stages, StageLoadKeyring)
+	}
+	for _, s := range stages {
+		if s == string(StageMountHTTPMux) || s == string(StageListen) {
+			t.Fatalf("stage %q was logged despite the fail-closed failure — listener stages must never run", s)
+		}
+	}
+}
+
+// TestBoot_ReconcileFailsClosed_KeyringStoreMismatch proves
+// reconcile_keyring aborts Boot before net.Listen when a stored
+// ciphertext references a key_id the keyring does not have. No real
+// credential table exists yet (M2/P2b), so this injects a
+// fixedRefStore via BootConfig.CiphertextStore to force the mismatch.
+func TestBoot_ReconcileFailsClosed_KeyringStoreMismatch(t *testing.T) {
+	setDataDirEnv(t)
+	ctx := context.Background()
+
+	bind := freeLoopbackAddr(t)
+	var logBuf bytes.Buffer
+	logger := observability.New(slog.NewJSONHandler(&logBuf, nil))
+
+	mismatchStore := fixedRefStore{refs: []secrets.CiphertextRef{
+		{Envelope: secrets.Envelope{KeyID: "k_does_not_exist"}},
+	}}
+
+	srv, err := Boot(ctx, BootConfig{Bind: bind, Logger: logger, CiphertextStore: mismatchStore})
+	if err == nil {
+		_ = srv.Shutdown(ctx)
+		t.Fatalf("Boot() succeeded, want a reconcile failure")
+	}
+	if !errors.Is(err, secrets.ErrMissingKey) {
+		t.Fatalf("Boot() error = %v, want it to wrap secrets.ErrMissingKey", err)
+	}
+	if srv != nil {
+		t.Fatalf("Boot() returned a non-nil *Server alongside an error")
+	}
+
+	conn, dialErr := net.DialTimeout("tcp", bind, 200*time.Millisecond)
+	if dialErr == nil {
+		_ = conn.Close()
+		t.Fatalf("dial to %q succeeded — a listener came up despite the fail-closed failure", bind)
+	}
+	t.Logf("dial to %q correctly refused: %v", bind, dialErr)
+
+	stages := parseStages(t, logBuf.Bytes())
+	t.Logf("boot log (must stop at %q):\n%s", StageReconcileKeyring, logBuf.String())
+	if len(stages) == 0 || stages[len(stages)-1] != string(StageReconcileKeyring) {
+		t.Fatalf("last logged stage = %v, want the sequence to end at %q", stages, StageReconcileKeyring)
 	}
 	for _, s := range stages {
 		if s == string(StageMountHTTPMux) || s == string(StageListen) {
