@@ -1,0 +1,113 @@
+<!doctype html><html lang="en" data-theme="venom-dark" data-density="comfortable"><head><meta charset="utf-8">
+<title>Venom Design System — explorer</title>
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;padding:var(--space-6);display:flex;flex-direction:column;gap:var(--space-4)}
+  .hub-toolbar{display:flex;gap:var(--space-3);align-items:center;flex-wrap:wrap;position:sticky;top:0;background:var(--surface-canvas);padding:var(--space-2) 0;z-index:10}
+  .hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(660px,1fr));gap:var(--space-4)}
+  .hub-card{border:var(--border-hairline) solid var(--border-default);border-radius:var(--radius-lg);overflow:hidden;background:var(--surface-primary)}
+  .hub-card header{display:flex;align-items:baseline;gap:var(--space-2);padding:var(--space-2) var(--space-3);border-bottom:var(--border-hairline) solid var(--border-subtle)}
+  .hub-card iframe{width:100%;border:0;display:block;background:var(--surface-canvas)}
+  .seg{display:inline-flex;padding:2px;gap:2px;background:var(--surface-sunken);border:var(--border-hairline) solid var(--border-subtle);border-radius:var(--radius-md)}
+  .seg button{all:unset;padding:3px 12px;border-radius:var(--radius-sm);font-size:var(--font-size-xs);font-weight:500;color:var(--text-secondary);cursor:pointer}
+  .seg button[aria-pressed="true"]{background:var(--surface-raised);color:var(--text-primary)}
+  .seg button:focus-visible{outline:var(--focus-ring-width) solid var(--focus-ring);outline-offset:-2px}
+</style></head><body>
+<div>
+  <h1 class="vn-title-page" style="margin:0">Venom Design System — component explorer</h1>
+  <p class="vn-caption" style="margin:4px 0 0">Every card rendered live, switchable across the 3 themes × 2 densities. Cards are the same files the Design System tab indexes (@dsCard).</p>
+</div>
+<div class="hub-toolbar">
+  <span class="vn-label">Theme</span>
+  <span class="seg" role="group" aria-label="Theme" id="theme-seg">
+    <button aria-pressed="true" data-v="venom-dark">Dark</button>
+    <button aria-pressed="false" data-v="venom-light">Light</button>
+    <button aria-pressed="false" data-v="venom-hc">High contrast</button>
+  </span>
+  <span class="vn-label">Density</span>
+  <span class="seg" role="group" aria-label="Density" id="density-seg">
+    <button aria-pressed="true" data-v="comfortable">Comfortable</button>
+    <button aria-pressed="false" data-v="compact">Compact</button>
+  </span>
+  <span class="vn-caption" id="count"></span>
+</div>
+<div id="cards" class="hub-grid"></div>
+<script>
+const CARDS = [
+  ["Foundations", "../foundations/colors-surfaces.html", 220],
+  ["Foundations", "../foundations/colors-status.html", 200],
+  ["Foundations", "../foundations/colors-accent.html", 180],
+  ["Foundations", "../foundations/colors-tiers.html", 160],
+  ["Foundations", "../foundations/colors-viz.html", 190],
+  ["Foundations", "../foundations/type-ui.html", 300],
+  ["Foundations", "../foundations/type-mono.html", 240],
+  ["Foundations", "../foundations/type-data.html", 200],
+  ["Foundations", "../foundations/spacing.html", 180],
+  ["Foundations", "../foundations/radius-borders.html", 170],
+  ["Foundations", "../foundations/elevation.html", 190],
+  ["Foundations", "../foundations/motion.html", 180],
+  ["Foundations", "../foundations/density.html", 250],
+  ["Foundations", "../foundations/focus.html", 160],
+  ["Foundations", "../foundations/icons.html", 310],
+  ["Primitives", "../components/icons/icon.card.html", 190],
+  ["Primitives", "../components/actions/actions.card.html", 250],
+  ["Primitives", "../components/forms/forms.card.html", 430],
+  ["Primitives", "../components/display/display.card.html", 440],
+  ["Primitives", "../components/feedback/feedback.card.html", 440],
+  ["Primitives", "../components/navigation/navigation.card.html", 270],
+  ["Primitives", "../components/containers/containers.card.html", 340],
+  ["Primitives", "../components/overlay/overlay.card.html", 410],
+  ["Primitives", "../components/data/data.card.html", 370],
+  ["Domain", "../components/domain-provider/provider.card.html", 430],
+  ["Domain", "../components/domain-model/model.card.html", 440],
+  ["Domain", "../components/domain-quota/quota.card.html", 440],
+  ["Domain", "../components/domain-routing/routing.card.html", 470],
+  ["Domain", "../components/domain-security/security.card.html", 410],
+  ["Domain", "../components/domain-diagnostics/diagnostics.card.html", 440],
+  ["State matrices", "../states/account-lifecycle.html", 370],
+  ["State matrices", "../states/credential-lifecycle.html", 340],
+  ["State matrices", "../states/funding-evidence.html", 350],
+  ["State matrices", "../states/capability-truth.html", 340],
+  ["State matrices", "../states/certification.html", 440],
+  ["State matrices", "../states/quota-freshness.html", 410],
+  ["State matrices", "../states/reservation-reconciliation.html", 370],
+  ["State matrices", "../states/routing-outcomes.html", 430],
+  ["State matrices", "../states/owner-authentication.html", 350],
+  ["State matrices", "../states/async-jobs.html", 290],
+  ["Compositions", "../ui_kits/venom-console/index.html", 820],
+];
+const grid = document.getElementById("cards");
+let group = null;
+for (const [g, src, h] of CARDS) {
+  if (g !== group) {
+    group = g;
+    const hd = document.createElement("h2");
+    hd.className = "vn-title-section";
+    hd.style.cssText = "grid-column:1/-1;margin:var(--space-3) 0 0";
+    hd.textContent = g;
+    grid.appendChild(hd);
+  }
+  const card = document.createElement("div");
+  card.className = "hub-card";
+  const name = src.split("/").pop().replace(".html", "").replace(/[-_]/g, " ");
+  card.innerHTML = '<header><span class="vn-title-sub">' + name + '</span><span class="vn-caption vn-mono-xs">' + src.replace("../", "") + "</span></header>" +
+    '<iframe loading="lazy" title="' + name + '" src="' + src + '" style="height:' + h + 'px"></iframe>';
+  grid.appendChild(card);
+}
+document.getElementById("count").textContent = CARDS.length + " cards";
+function wireSeg(id, attr) {
+  const seg = document.getElementById(id);
+  seg.addEventListener("click", (e) => {
+    const btn = e.target.closest("button"); if (!btn) return;
+    seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+    const v = btn.getAttribute("data-v");
+    document.documentElement.setAttribute(attr, v);
+    document.querySelectorAll("iframe").forEach((f) => {
+      try { f.contentDocument.documentElement.setAttribute(attr, v); } catch (err) {}
+    });
+  });
+}
+wireSeg("theme-seg", "data-theme");
+wireSeg("density-seg", "data-density");
+</script>
+</body></html>

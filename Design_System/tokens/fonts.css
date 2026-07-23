@@ -1,0 +1,9 @@
+/* Venom Design System — webfonts.
+   No runtime network access: this package does not fetch IBM Plex from Google Fonts
+   (or any CDN). `font.family.ui`/`font.family.mono` (tokens/tokens.primitive.json) name
+   IBM Plex Sans/Mono first, but every declared family list ends in a real,
+   always-available system-font stack ('Segoe UI'/system-ui/sans-serif for UI,
+   'Cascadia Mono'/Consolas/monospace for mono) — so without the webfont files present,
+   the browser transparently renders the system stack. No layout or token changes needed.
+   To restore IBM Plex: vendor the licensed woff2 files into this package (e.g.
+   assets/fonts/) and add @font-face rules here — do not add a network @import. */

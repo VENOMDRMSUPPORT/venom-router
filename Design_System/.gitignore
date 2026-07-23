@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output (generated — never hand-edited, never source of truth)
+dist/
+dist-explorer/
+
+# Test runner output (transient — NOT the visual baselines, which are checked in)
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Test coverage output (transient)
+coverage/
+
+# Misc caches and temp dirs
+.cache/
+.vite/
+tmp/
+temp/
+*.log

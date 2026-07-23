@@ -1,0 +1,19 @@
+<!-- @dsCard group="Foundations" viewport="700x160" subtitle="Radius + border weights — small and disciplined" name="Radius & borders" -->
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Venom DS — Radius & borders</title><link rel="stylesheet" href="../styles.css">
+<style>body{margin:0;padding:14px;background:var(--surface-canvas)}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.b{width:56px;height:40px;background:var(--surface-raised);border:1px solid var(--border-strong);display:grid;place-items:center;font-family:var(--font-family-mono);font-size:9px;color:var(--text-muted)}</style>
+</head><body>
+<div class="row">
+  <div class="b" style="border-radius:var(--radius-xs)">xs 2</div>
+  <div class="b" style="border-radius:var(--radius-sm)">sm 4</div>
+  <div class="b" style="border-radius:var(--radius-md)">md 6</div>
+  <div class="b" style="border-radius:var(--radius-lg)">lg 8</div>
+  <div class="b" style="border-radius:var(--radius-xl)">xl 12</div>
+  <div class="b" style="border-radius:var(--radius-full);width:40px">full</div>
+  <div style="display:flex;flex-direction:column;gap:8px;margin-left:8px">
+    <span style="border-top:var(--border-hairline) solid var(--border-strong);width:90px"></span>
+    <span style="border-top:var(--border-thick) solid var(--border-strong);width:90px"></span>
+    <span style="border-top:var(--border-heavy) solid var(--border-strong);width:90px"></span>
+  </div>
+</div>
+<p class="vn-caption" style="margin:10px 0 0">Controls sm(4) · panels md(6) · cards lg(8) · dialogs xl(12) · full only for dots and count pills — no pill cards.</p>
+</body></html>

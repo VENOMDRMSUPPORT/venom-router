@@ -1,0 +1,229 @@
+{
+  "$description": "Venom Design System — Layer 1 primitive tokens (W3C Design Tokens). Raw palette + scales. Primitives encode no product meaning and are NEVER consumed by components; only semantic mappings (per theme) may reference them.",
+  "color": {
+    "$type": "color",
+    "gray": {
+      "0":   { "$value": "#FFFFFF" },
+      "25":  { "$value": "#FBFCFC" },
+      "50":  { "$value": "#F5F7F8" },
+      "100": { "$value": "#EDF0F2" },
+      "200": { "$value": "#DFE4E7" },
+      "300": { "$value": "#C6CED3" },
+      "400": { "$value": "#A3AFB6" },
+      "500": { "$value": "#7C8A92" },
+      "600": { "$value": "#5A676F" },
+      "700": { "$value": "#404C53" },
+      "750": { "$value": "#343F46" },
+      "800": { "$value": "#283137" },
+      "850": { "$value": "#1E252B" },
+      "900": { "$value": "#151B20" },
+      "925": { "$value": "#10151A" },
+      "950": { "$value": "#0C1013" },
+      "975": { "$value": "#080A0C" },
+      "1000": { "$value": "#000000" }
+    },
+    "green": {
+      "100": { "$value": "#D8F5E7" },
+      "200": { "$value": "#A9E9CC" },
+      "300": { "$value": "#6FD6A9" },
+      "400": { "$value": "#3FBE8A" },
+      "500": { "$value": "#22A371" },
+      "600": { "$value": "#15855B" },
+      "700": { "$value": "#116A49" },
+      "800": { "$value": "#0E4E37" },
+      "900": { "$value": "#0A3626" }
+    },
+    "red": {
+      "100": { "$value": "#FCE1DF" },
+      "200": { "$value": "#F7BCB8" },
+      "300": { "$value": "#F19790" },
+      "400": { "$value": "#E96A61" },
+      "500": { "$value": "#D8453B" },
+      "600": { "$value": "#B23429" },
+      "700": { "$value": "#8C2A21" },
+      "800": { "$value": "#66201A" },
+      "900": { "$value": "#471713" }
+    },
+    "amber": {
+      "100": { "$value": "#FBEBCB" },
+      "200": { "$value": "#F6D794" },
+      "300": { "$value": "#EFBE55" },
+      "400": { "$value": "#E3A322" },
+      "500": { "$value": "#C4880F" },
+      "600": { "$value": "#9C6C0D" },
+      "700": { "$value": "#7B550F" },
+      "800": { "$value": "#5A3F0E" },
+      "900": { "$value": "#402D0B" }
+    },
+    "orange": {
+      "100": { "$value": "#FDE4D4" },
+      "200": { "$value": "#F9C5A3" },
+      "300": { "$value": "#F3A16C" },
+      "400": { "$value": "#E97F3D" },
+      "500": { "$value": "#D2621C" },
+      "600": { "$value": "#A94E16" },
+      "700": { "$value": "#853E14" },
+      "800": { "$value": "#602D10" },
+      "900": { "$value": "#43200C" }
+    },
+    "blue": {
+      "100": { "$value": "#DBEAFB" },
+      "200": { "$value": "#B3D3F5" },
+      "300": { "$value": "#83B6EC" },
+      "400": { "$value": "#5495DE" },
+      "500": { "$value": "#3578C4" },
+      "600": { "$value": "#2960A2" },
+      "700": { "$value": "#224C80" },
+      "800": { "$value": "#1B395E" },
+      "900": { "$value": "#142942" }
+    },
+    "violet": {
+      "100": { "$value": "#EAE3FB" },
+      "200": { "$value": "#D2C3F6" },
+      "300": { "$value": "#B49CEE" },
+      "400": { "$value": "#9878E2" },
+      "500": { "$value": "#7D59CC" },
+      "600": { "$value": "#6546A8" },
+      "700": { "$value": "#503884" },
+      "800": { "$value": "#3B2A60" },
+      "900": { "$value": "#2A1E44" }
+    },
+    "sky": {
+      "100": { "$value": "#D6F0F7" },
+      "200": { "$value": "#A5DEED" },
+      "300": { "$value": "#6DC6DE" },
+      "400": { "$value": "#3DA8C6" },
+      "500": { "$value": "#258BA8" },
+      "600": { "$value": "#1D6F87" },
+      "700": { "$value": "#1A5869" },
+      "800": { "$value": "#15414D" },
+      "900": { "$value": "#0F2E37" }
+    },
+    "gold": {
+      "100": { "$value": "#F7ECC8" },
+      "200": { "$value": "#EDD88E" },
+      "300": { "$value": "#DFC054" },
+      "400": { "$value": "#CBA62B" },
+      "500": { "$value": "#A98814" },
+      "600": { "$value": "#876C12" },
+      "700": { "$value": "#6A5512" },
+      "800": { "$value": "#4E3E0F" },
+      "900": { "$value": "#372C0C" }
+    }
+  },
+  "space": {
+    "$type": "dimension",
+    "0":  { "$value": "0px" },
+    "1":  { "$value": "4px" },
+    "2":  { "$value": "8px" },
+    "3":  { "$value": "12px" },
+    "4":  { "$value": "16px" },
+    "5":  { "$value": "20px" },
+    "6":  { "$value": "24px" },
+    "8":  { "$value": "32px" },
+    "10": { "$value": "40px" },
+    "12": { "$value": "48px" },
+    "16": { "$value": "64px" },
+    "20": { "$value": "80px" },
+    "24": { "$value": "96px" },
+    "32": { "$value": "128px" }
+  },
+  "radius": {
+    "$type": "dimension",
+    "xs":   { "$value": "2px" },
+    "sm":   { "$value": "4px" },
+    "md":   { "$value": "6px" },
+    "lg":   { "$value": "8px" },
+    "xl":   { "$value": "12px" },
+    "2xl":  { "$value": "16px" },
+    "full": { "$value": "999px" }
+  },
+  "border": {
+    "$type": "dimension",
+    "hairline": { "$value": "1px" },
+    "thick":    { "$value": "2px" },
+    "heavy":    { "$value": "3px" }
+  },
+  "font": {
+    "family": {
+      "$type": "fontFamily",
+      "ui":   { "$value": "'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif" },
+      "mono": { "$value": "'IBM Plex Mono', 'Cascadia Mono', 'Consolas', monospace" }
+    },
+    "size": {
+      "$type": "dimension",
+      "2xs": { "$value": "11px" },
+      "xs":  { "$value": "12px" },
+      "sm":  { "$value": "13px" },
+      "md":  { "$value": "14px" },
+      "lg":  { "$value": "16px" },
+      "xl":  { "$value": "18px" },
+      "2xl": { "$value": "20px" },
+      "3xl": { "$value": "24px" },
+      "4xl": { "$value": "30px" },
+      "5xl": { "$value": "38px" },
+      "6xl": { "$value": "46px" },
+      "7xl": { "$value": "56px" }
+    },
+    "weight": {
+      "$type": "fontWeight",
+      "regular":  { "$value": "400" },
+      "medium":   { "$value": "500" },
+      "semibold": { "$value": "600" },
+      "bold":     { "$value": "700" }
+    },
+    "line-height": {
+      "$type": "number",
+      "tight":  { "$value": "1.2" },
+      "snug":   { "$value": "1.35" },
+      "normal": { "$value": "1.5" },
+      "loose":  { "$value": "1.65" }
+    },
+    "tracking": {
+      "$type": "dimension",
+      "normal": { "$value": "0" },
+      "wide":   { "$value": "0.04em" },
+      "wider":  { "$value": "0.08em" }
+    }
+  },
+  "shadow": {
+    "$type": "shadow",
+    "0": { "$value": "none" },
+    "1": { "$value": "0 1px 2px rgba(0,0,0,0.24)" },
+    "2": { "$value": "0 2px 6px rgba(0,0,0,0.28)" },
+    "3": { "$value": "0 6px 16px rgba(0,0,0,0.32)" },
+    "4": { "$value": "0 12px 32px rgba(0,0,0,0.38)" },
+    "5": { "$value": "0 20px 48px rgba(0,0,0,0.44)" }
+  },
+  "duration": {
+    "$type": "duration",
+    "instant": { "$value": "0ms" },
+    "fast":    { "$value": "100ms" },
+    "base":    { "$value": "160ms" },
+    "slow":    { "$value": "240ms" }
+  },
+  "easing": {
+    "$type": "cubicBezier",
+    "standard":   { "$value": "cubic-bezier(0.2, 0, 0, 1)" },
+    "emphasized": { "$value": "cubic-bezier(0.3, 0, 0, 1)" },
+    "exit":       { "$value": "cubic-bezier(0.4, 0, 1, 1)" }
+  },
+  "z": {
+    "$type": "number",
+    "base":     { "$value": "0" },
+    "sticky":   { "$value": "100" },
+    "dropdown": { "$value": "200" },
+    "overlay":  { "$value": "300" },
+    "modal":    { "$value": "400" },
+    "toast":    { "$value": "500" },
+    "max":      { "$value": "999" }
+  },
+  "breakpoint": {
+    "$type": "dimension",
+    "sm":  { "$value": "640px" },
+    "md":  { "$value": "900px" },
+    "lg":  { "$value": "1200px" },
+    "xl":  { "$value": "1440px" },
+    "2xl": { "$value": "1760px" }
+  }
+}

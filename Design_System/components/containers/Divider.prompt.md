@@ -1,0 +1,5 @@
+Hairline rule.
+
+```jsx
+<Divider />
+```

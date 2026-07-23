@@ -1,0 +1,87 @@
+[
+  {
+    "id": "overview",
+    "name": "Overview",
+    "file": "screens-operate.jsx"
+  },
+  {
+    "id": "providers",
+    "name": "Providers",
+    "file": "screens-operate.jsx"
+  },
+  {
+    "id": "provider-detail",
+    "name": "ProviderDetail",
+    "file": "screens-operate.jsx"
+  },
+  {
+    "id": "models",
+    "name": "Models",
+    "file": "screens-operate.jsx"
+  },
+  {
+    "id": "routing",
+    "name": "Routing",
+    "file": "screens-operate.jsx"
+  },
+  {
+    "id": "routing-rules",
+    "name": "RoutingRules",
+    "file": "screens-operate.jsx"
+  },
+  {
+    "id": "playground",
+    "name": "Playground",
+    "file": "screens-operate.jsx"
+  },
+  {
+    "id": "usage",
+    "name": "Usage",
+    "file": "screens-insights.jsx"
+  },
+  {
+    "id": "quota",
+    "name": "Quota",
+    "file": "screens-insights.jsx"
+  },
+  {
+    "id": "token-health",
+    "name": "TokenHealth",
+    "file": "screens-insights.jsx"
+  },
+  {
+    "id": "diagnostics",
+    "name": "Diagnostics",
+    "file": "screens-insights.jsx"
+  },
+  {
+    "id": "tier-status",
+    "name": "TierStatus",
+    "file": "screens-insights.jsx"
+  },
+  {
+    "id": "api-keys",
+    "name": "ApiKeys",
+    "file": "screens-manage.jsx"
+  },
+  {
+    "id": "settings",
+    "name": "Settings",
+    "file": "screens-manage.jsx"
+  },
+  {
+    "id": "login",
+    "name": "Login",
+    "file": "screens-manage.jsx"
+  },
+  {
+    "id": "first-run",
+    "name": "FirstRun",
+    "file": "screens-manage.jsx"
+  },
+  {
+    "id": "backup",
+    "name": "Backup",
+    "file": "screens-manage.jsx"
+  }
+]

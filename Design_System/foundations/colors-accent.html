@@ -1,0 +1,19 @@
+<!-- @dsCard group="Colors" viewport="700x170" subtitle="Restrained venom-green accent + focus + selection" name="Accent & focus" -->
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Venom DS — Accent & focus</title><link rel="stylesheet" href="../styles.css">
+<style>body{margin:0;padding:12px;background:var(--surface-canvas);display:flex;flex-direction:column;gap:10px}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.id{font-family:var(--font-family-mono);font-size:10px;color:var(--text-muted)}.chip{width:34px;height:22px;border-radius:4px;border:1px solid var(--border-default)}</style>
+</head><body>
+<div class="row">
+  <span class="chip" style="background:var(--accent-default)"></span><span class="id">accent.default</span>
+  <span class="chip" style="background:var(--accent-hover)"></span><span class="id">hover</span>
+  <span class="chip" style="background:var(--accent-active)"></span><span class="id">active</span>
+  <span class="chip" style="background:var(--accent-subtle-bg)"></span><span class="id">subtle-bg</span>
+  <span style="color:var(--accent-text);font-size:12px;font-weight:500">accent.text</span>
+</div>
+<div class="row">
+  <button class="vn-btn vn-btn--primary">Primary action</button>
+  <button class="vn-btn vn-btn--secondary" style="outline:var(--focus-ring-width) solid var(--focus-ring);outline-offset:var(--focus-ring-offset)">Focused (ring)</button>
+  <span style="background:var(--selection-bg);color:var(--selection-fg);font-size:12px;padding:2px 4px">selected text</span>
+  <a href="#">Text link</a>
+</div>
+<div class="id">The accent is not a status color — it never means success or danger. focus.ring is global via :focus-visible (3px in High Contrast).</div>
+</body></html>

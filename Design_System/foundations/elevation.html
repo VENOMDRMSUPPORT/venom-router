@@ -1,0 +1,18 @@
+<!-- @dsCard group="Foundations" viewport="700x180" subtitle="Surface-lightness layering (dark) vs shadow (light)" name="Elevation" -->
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Venom DS — Elevation</title><link rel="stylesheet" href="../styles.css">
+<style>body{margin:0;padding:0;background:var(--surface-canvas)}.half{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pane{background:var(--surface-canvas);padding:14px;border-radius:6px;display:flex;gap:12px;align-items:center;border:1px solid var(--border-default)}.e{width:110px;height:64px;border-radius:var(--radius-lg);display:grid;place-items:center;font-family:var(--font-family-mono);font-size:9px;color:var(--text-muted)}</style>
+</head><body>
+<div class="half">
+  <div class="pane" data-theme="venom-dark">
+    <div class="e" style="background:var(--card-surface);border:1px solid var(--card-border);box-shadow:var(--elevation-card)">card</div>
+    <div class="e" style="background:var(--menu-bg);border:1px solid var(--menu-border);box-shadow:var(--elevation-popover)">popover</div>
+    <div class="e" style="background:var(--dialog-bg);border:1px solid var(--dialog-border);box-shadow:var(--elevation-modal)">modal</div>
+  </div>
+  <div class="pane" data-theme="venom-light">
+    <div class="e" style="background:var(--card-surface);border:1px solid var(--card-border);box-shadow:var(--elevation-card)">card</div>
+    <div class="e" style="background:var(--menu-bg);border:1px solid var(--menu-border);box-shadow:var(--elevation-popover)">popover</div>
+    <div class="e" style="background:var(--dialog-bg);border:1px solid var(--dialog-border);box-shadow:var(--elevation-modal)">modal</div>
+  </div>
+</div>
+<p class="vn-caption" style="margin:8px 0 0">elevation.{card, popover, modal, toast} + z.{base, sticky, dropdown, overlay, modal, toast, max}</p>
+</body></html>

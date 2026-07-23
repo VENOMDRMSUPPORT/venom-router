@@ -1,0 +1,27 @@
+<!-- @dsCard group="Colors" viewport="700x190" subtitle="Seven status roles — unknown is dashed evidence-gap, never blank" name="Status colors" -->
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Venom DS — Status colors</title><link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;padding:12px;background:var(--surface-canvas)}
+  .grid{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .lbl{font-family:var(--font-family-mono);font-size:10px;color:var(--text-muted);margin:10px 0 6px}
+</style></head><body>
+<div class="grid">
+  <span class="vn-badge vn-badge--healthy"><span class="vn-icon vn-icon--sm vn-icon--circle-check"></span>Healthy</span>
+  <span class="vn-badge vn-badge--degraded"><span class="vn-icon vn-icon--sm vn-icon--triangle-alert"></span>Degraded</span>
+  <span class="vn-badge vn-badge--warning"><span class="vn-icon vn-icon--sm vn-icon--triangle-alert"></span>Warning</span>
+  <span class="vn-badge vn-badge--critical"><span class="vn-icon vn-icon--sm vn-icon--circle-x"></span>Critical</span>
+  <span class="vn-badge vn-badge--info"><span class="vn-icon vn-icon--sm vn-icon--info"></span>Info</span>
+  <span class="vn-badge vn-badge--unknown"><span class="vn-icon vn-icon--sm vn-icon--circle-help"></span>Unknown</span>
+  <span class="vn-badge vn-badge--inactive"><span class="vn-icon vn-icon--sm vn-icon--pause"></span>Inactive</span>
+</div>
+<div class="lbl">status.{healthy | degraded | warning | critical | info | unknown | inactive}.{fg,bg,border} — semantics differ by domain; see states/state-matrix.md</div>
+<div class="grid" data-theme="venom-light" style="background:var(--surface-canvas);padding:8px;border-radius:6px">
+  <span class="vn-badge vn-badge--healthy"><span class="vn-icon vn-icon--sm vn-icon--circle-check"></span>Healthy</span>
+  <span class="vn-badge vn-badge--degraded"><span class="vn-icon vn-icon--sm vn-icon--triangle-alert"></span>Degraded</span>
+  <span class="vn-badge vn-badge--warning"><span class="vn-icon vn-icon--sm vn-icon--triangle-alert"></span>Warning</span>
+  <span class="vn-badge vn-badge--critical"><span class="vn-icon vn-icon--sm vn-icon--circle-x"></span>Critical</span>
+  <span class="vn-badge vn-badge--info"><span class="vn-icon vn-icon--sm vn-icon--info"></span>Info</span>
+  <span class="vn-badge vn-badge--unknown"><span class="vn-icon vn-icon--sm vn-icon--circle-help"></span>Unknown</span>
+  <span class="vn-badge vn-badge--inactive"><span class="vn-icon vn-icon--sm vn-icon--pause"></span>Inactive</span>
+</div>
+</body></html>

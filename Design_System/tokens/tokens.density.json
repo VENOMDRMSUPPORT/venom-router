@@ -1,0 +1,27 @@
+{
+  "$description": "Density tokens — comfortable (default) and compact. Density changes spacing/control metrics through these tokens ONLY; layouts never fork. Compact never reduces font contrast or removes labels.",
+  "$modes": ["comfortable", "compact"],
+  "control": {
+    "height": {
+      "sm": { "comfortable": "28px", "compact": "24px" },
+      "md": { "comfortable": "32px", "compact": "28px" },
+      "lg": { "comfortable": "40px", "compact": "36px" }
+    },
+    "pad-x": { "comfortable": "12px", "compact": "10px" },
+    "gap":   { "comfortable": "8px",  "compact": "6px" }
+  },
+  "field": { "pad-y": { "comfortable": "6px", "compact": "4px" } },
+  "table": {
+    "row-height": { "comfortable": "40px", "compact": "30px" },
+    "cell-pad-x": { "comfortable": "12px", "compact": "8px" },
+    "cell-pad-y": { "comfortable": "10px", "compact": "5px" }
+  },
+  "stack": {
+    "gap-xs": { "comfortable": "4px",  "compact": "4px" },
+    "gap-sm": { "comfortable": "8px",  "compact": "6px" },
+    "gap-md": { "comfortable": "12px", "compact": "8px" },
+    "gap-lg": { "comfortable": "16px", "compact": "12px" },
+    "gap-xl": { "comfortable": "24px", "compact": "16px" }
+  },
+  "page": { "pad": { "comfortable": "24px", "compact": "16px" }, "section-gap": { "comfortable": "24px", "compact": "16px" } }
+}

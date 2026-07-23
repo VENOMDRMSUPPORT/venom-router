@@ -1,0 +1,19 @@
+<!-- @dsCard group="Foundations" viewport="700x170" subtitle="Restrained, functional motion — collapses under reduced-motion" name="Motion" -->
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Venom DS — Motion</title><link rel="stylesheet" href="../styles.css">
+<style>
+body{margin:0;padding:14px;background:var(--surface-canvas)}
+.r{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.t{font-family:var(--font-family-mono);font-size:10px;color:var(--text-muted);width:190px;flex:none}
+.dot{width:14px;height:14px;border-radius:3px;background:var(--accent-default)}
+@keyframes go{0%,15%{translate:0 0}50%,65%{translate:220px 0}100%{translate:0 0}}
+.a1{animation:go 2.4s var(--easing-standard) infinite}
+.a2{animation:go 2.4s var(--easing-emphasized) infinite}
+.a3{animation:go 2.4s var(--easing-exit) infinite}
+</style>
+</head><body>
+<div class="r"><span class="t">ease.standard · base 160ms</span><div class="dot a1"></div></div>
+<div class="r"><span class="t">ease.emphasized · slow 240ms</span><div class="dot a2"></div></div>
+<div class="r"><span class="t">ease.exit · fast 100ms</span><div class="dot a3"></div></div>
+<div class="r" style="margin-top:2px"><span class="t">loading</span><span class="vn-spinner"></span><div class="vn-progress vn-progress--indeterminate" style="width:180px"><div></div></div><span class="vn-skeleton" style="width:120px;height:14px">x</span></div>
+<p class="vn-caption" style="margin:0">duration.{instant 0 | fast 100 | base 160 | slow 240} — no bounce, no parallax, no decorative animation. prefers-reduced-motion collapses all of it to 0ms.</p>
+</body></html>

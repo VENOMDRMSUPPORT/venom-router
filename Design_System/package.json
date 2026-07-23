@@ -1,0 +1,112 @@
+{
+  "name": "@venom/design-system",
+  "version": "1.0.0",
+  "description": "Venom Design System — tokens, themes, primitives and domain components for the Venom Router owner console.",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "assets",
+    "themes",
+    "tokens/*.css",
+    "tokens/*.json",
+    "icons/icons.css",
+    "icons/icon-map.md",
+    "css",
+    "styles.css",
+    "SKILL.md",
+    "README.md"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/types/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/src/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./tokens": {
+      "types": "./dist/types/src/tokens.d.ts",
+      "import": "./dist/tokens.mjs",
+      "require": "./dist/tokens.cjs"
+    },
+    "./themes": {
+      "types": "./dist/types/src/themes.d.ts",
+      "import": "./dist/themes.mjs",
+      "require": "./dist/themes.cjs"
+    },
+    "./density": {
+      "types": "./dist/types/src/density.d.ts",
+      "import": "./dist/density.mjs",
+      "require": "./dist/density.cjs"
+    },
+    "./icons": {
+      "types": "./dist/types/src/icons.d.ts",
+      "import": "./dist/icons.mjs",
+      "require": "./dist/icons.cjs"
+    },
+    "./primitives": {
+      "types": "./dist/types/src/primitives.d.ts",
+      "import": "./dist/primitives.mjs",
+      "require": "./dist/primitives.cjs"
+    },
+    "./domain": {
+      "types": "./dist/types/src/domain.d.ts",
+      "import": "./dist/domain.mjs",
+      "require": "./dist/domain.cjs"
+    },
+    "./tailwind": {
+      "types": "./dist/types/src/tailwind.d.ts",
+      "import": "./dist/tailwind.mjs",
+      "require": "./dist/tailwind.cjs"
+    },
+    "./styles.css": "./styles.css",
+    "./themes/*.css": "./themes/*.css",
+    "./assets/*": "./assets/*",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "dev": "vite --config vite.explorer.config.ts",
+    "clean": "node -e \"const fs=require('node:fs');for(const d of['dist','dist-explorer','test-results','playwright-report'])fs.rmSync(d,{recursive:true,force:true})\"",
+    "build": "npm run clean && npm run build:types && npm run build:lib && npm run build:explorer",
+    "build:lib": "vite build",
+    "build:explorer": "vite build --config vite.explorer.config.ts",
+    "build:types": "tsc -p tsconfig.build.json",
+    "build:declarations": "tsc -p tsconfig.declarations.json",
+    "preview": "vite preview --config vite.explorer.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "vendor:icons": "node scripts/vendor-icons.js",
+    "validate": "node scripts/validate.js",
+    "test:a11y": "playwright test -c tests/playwright.config.ts tests/a11y",
+    "test:visual": "playwright test -c tests/playwright.config.ts tests/visual",
+    "test:visual:update": "playwright test -c tests/playwright.config.ts tests/visual --update-snapshots",
+    "test": "npm run test:a11y && npm run test:visual"
+  },
+  "peerDependencies": {
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "dependencies": {
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.1",
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^26.1.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "lucide-static": "0.453.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

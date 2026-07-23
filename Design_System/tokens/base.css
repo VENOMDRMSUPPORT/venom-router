@@ -1,0 +1,77 @@
+/* Venom Design System — base resets, global behaviors, and type styles.
+   Everything references tokens; a raw hex or px color here is a defect. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-family-ui);
+  font-size: var(--font-size-md);
+  line-height: var(--font-line-height-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--text-link); text-decoration: none; }
+a:hover { color: var(--text-link-hover); text-decoration: underline; }
+
+::selection { background: var(--selection-bg); color: var(--selection-fg); }
+
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-xs);
+}
+
+hr { border: 0; border-top: var(--border-hairline) solid var(--border-subtle); margin: var(--space-4) 0; }
+
+code, kbd, samp, pre { font-family: var(--font-family-mono); }
+
+/* Motion collapses fully under reduced motion — no component opts out. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Thin, theme-aware scrollbars for dense panes. */
+.vn-scroll { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.vn-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.vn-scroll::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: var(--radius-full); }
+.vn-scroll::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+/* ---- Type styles ------------------------------------------------------- */
+/* Display — first-run / auth screens only. */
+.vn-display { font-size: var(--font-size-4xl); font-weight: var(--font-weight-semibold); line-height: var(--font-line-height-tight); letter-spacing: -0.01em; }
+/* Page title — one per page header. */
+.vn-title-page { font-size: var(--font-size-xl); font-weight: var(--font-weight-semibold); line-height: var(--font-line-height-tight); }
+/* Section heading. */
+.vn-title-section { font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); line-height: var(--font-line-height-snug); }
+/* Sub-heading / drawer titles. */
+.vn-title-sub { font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); line-height: var(--font-line-height-snug); }
+/* Body. */
+.vn-body { font-size: var(--font-size-md); line-height: var(--font-line-height-normal); }
+/* Compact body — dense descriptions, table prose. */
+.vn-body-compact { font-size: var(--font-size-sm); line-height: var(--font-line-height-snug); }
+/* Field / column labels. Sentence case, never uppercase-only meaning. */
+.vn-label { font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); color: var(--text-secondary); line-height: var(--font-line-height-snug); }
+/* Group overlines (nav groups, matrix headers). */
+.vn-overline { font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); text-transform: uppercase; letter-spacing: var(--font-tracking-wider); color: var(--text-muted); }
+/* Captions / timestamps / provenance notes. Never below 11px. */
+.vn-caption { font-size: var(--font-size-2xs); color: var(--text-muted); line-height: var(--font-line-height-snug); }
+/* Data-table typography — tabular figures are mandatory for numeric columns. */
+.vn-data { font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; }
+.vn-numeric { font-variant-numeric: tabular-nums; text-align: right; }
+/* Monospace — identifiers, model IDs, key prefixes, trace IDs, window keys, timestamps, error codes. */
+.vn-mono { font-family: var(--font-family-mono); font-size: var(--font-size-sm); }
+.vn-mono-xs { font-family: var(--font-family-mono); font-size: var(--font-size-xs); }
+
+.vn-text-secondary { color: var(--text-secondary); }
+.vn-text-muted { color: var(--text-muted); }
+.vn-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

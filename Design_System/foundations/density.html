@@ -1,0 +1,20 @@
+<!-- @dsCard group="Foundations" viewport="700x240" subtitle="Comfortable vs compact — tokens only, layouts never fork" name="Density" -->
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Venom DS — Density</title><link rel="stylesheet" href="../styles.css">
+<style>body{margin:0;padding:0;background:var(--surface-canvas)}.half{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pane{background:var(--surface-canvas);padding:12px;border-radius:6px;border:1px solid var(--border-default)}</style>
+</head><body>
+<div class="half">
+  <div class="pane" data-density="comfortable">
+    <div class="vn-overline" style="margin-bottom:8px">comfortable</div>
+    <div style="display:flex;gap:8px;margin-bottom:10px"><button class="vn-btn vn-btn--primary">Connect</button><input class="vn-input" style="width:150px" placeholder="Search models"></div>
+    <div class="vn-table-wrap"><table class="vn-table"><thead><tr><th>Model</th><th class="vn-numeric">Context</th></tr></thead>
+    <tbody><tr><td class="vn-mono">gpt-5.2-codex</td><td class="vn-numeric">400,000</td></tr><tr><td class="vn-mono">grok-4-fast</td><td class="vn-numeric">2,000,000</td></tr></tbody></table></div>
+  </div>
+  <div class="pane" data-density="compact">
+    <div class="vn-overline" style="margin-bottom:8px">compact</div>
+    <div style="display:flex;gap:8px;margin-bottom:10px"><button class="vn-btn vn-btn--primary">Connect</button><input class="vn-input" style="width:150px" placeholder="Search models"></div>
+    <div class="vn-table-wrap"><table class="vn-table"><thead><tr><th>Model</th><th class="vn-numeric">Context</th></tr></thead>
+    <tbody><tr><td class="vn-mono">gpt-5.2-codex</td><td class="vn-numeric">400,000</td></tr><tr><td class="vn-mono">grok-4-fast</td><td class="vn-numeric">2,000,000</td></tr></tbody></table></div>
+  </div>
+</div>
+<p class="vn-caption" style="margin:8px 0 0">data-density switches --density-* tokens (control heights, paddings, row heights). Compact never shrinks fonts below 11px, never drops labels, never reduces contrast.</p>
+</body></html>

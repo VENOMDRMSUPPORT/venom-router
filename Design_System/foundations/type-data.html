@@ -1,0 +1,13 @@
+<!-- @dsCard group="Type" viewport="700x190" subtitle="Tabular figures are mandatory for numeric columns" name="Numeric & data type" -->
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Venom DS — Numeric & data type</title><link rel="stylesheet" href="../styles.css">
+<style>body{margin:0;padding:14px;background:var(--surface-canvas)}table{max-width:560px}</style>
+</head><body>
+<div class="vn-table-wrap"><table class="vn-table">
+<thead><tr><th>Account</th><th class="vn-numeric">Requests</th><th class="vn-numeric">Tokens in</th><th class="vn-numeric">p95 latency</th><th class="vn-numeric">Remaining</th></tr></thead>
+<tbody>
+<tr><td>ops@venom.local</td><td class="vn-numeric">1,204</td><td class="vn-numeric">8,113,940</td><td class="vn-numeric">412 ms</td><td class="vn-numeric">61.4%</td></tr>
+<tr><td>dev@venom.local</td><td class="vn-numeric">987</td><td class="vn-numeric">903,118</td><td class="vn-numeric">1,038 ms</td><td class="vn-numeric">8.0%</td></tr>
+<tr><td>lab@venom.local</td><td class="vn-numeric">33</td><td class="vn-numeric">40,205</td><td class="vn-numeric">96 ms</td><td class="vn-numeric vn-text-muted">Unknown</td></tr>
+</tbody></table></div>
+<p class="vn-caption" style="margin:8px 0 0">.vn-numeric → right-aligned, font-variant-numeric: tabular-nums. Unknown renders as the word "Unknown", never a fabricated number.</p>
+</body></html>

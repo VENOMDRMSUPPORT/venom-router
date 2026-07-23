@@ -1,0 +1,1029 @@
+{
+  "package": "@venom/design-system",
+  "version": "1.0.0",
+  "runAt": "2026-07-23T00:28:49.844Z",
+  "finishedAt": "2026-07-23T00:29:00.464Z",
+  "gateCount": 12,
+  "passed": 12,
+  "failed": 0,
+  "gates": [
+    {
+      "name": "Token build (schema, completeness, reference legality)",
+      "command": "buildVenomTokens(io)",
+      "status": "PASS",
+      "startedAt": "2026-07-23T00:28:49.846Z",
+      "finishedAt": "2026-07-23T00:28:49.856Z",
+      "logs": [
+        "OK: 164 primitives, 93 semantic tokens x 3 themes, 73 component tokens, 16 density tokens, 17 tailwind theme groups."
+      ],
+      "summary": {
+        "venom-dark": {
+          "count": 93,
+          "missing": [],
+          "extra": []
+        },
+        "venom-light": {
+          "count": 93,
+          "missing": [],
+          "extra": []
+        },
+        "venom-hc": {
+          "count": 93,
+          "missing": [],
+          "extra": []
+        }
+      }
+    },
+    {
+      "name": "Contrast (WCAG AA; AAA core text in venom-hc)",
+      "command": "checkVenomContrast(io)",
+      "status": "PASS",
+      "startedAt": "2026-07-23T00:28:49.856Z",
+      "finishedAt": "2026-07-23T00:28:49.857Z",
+      "logs": [
+        "CONTRAST: 119 pairings checked, 0 failures"
+      ],
+      "summary": {
+        "summary": {
+          "checked": 119,
+          "failed": 0,
+          "failures": []
+        },
+        "results": [
+          {
+            "theme": "venom-dark",
+            "pair": "text.primary on surface.canvas",
+            "ratio": 17.78,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.secondary on surface.canvas",
+            "ratio": 11.98,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.muted on surface.canvas",
+            "ratio": 8.52,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.primary on surface.primary",
+            "ratio": 17.08,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.secondary on surface.primary",
+            "ratio": 11.51,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.muted on surface.primary",
+            "ratio": 8.18,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.primary on surface.secondary",
+            "ratio": 16.16,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.secondary on surface.secondary",
+            "ratio": 10.89,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.muted on surface.secondary",
+            "ratio": 7.74,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.primary on surface.raised",
+            "ratio": 14.43,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.secondary on surface.raised",
+            "ratio": 9.72,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.muted on surface.raised",
+            "ratio": 6.91,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.link on surface.canvas",
+            "ratio": 10.8,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.link on surface.primary",
+            "ratio": 10.37,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "text.on-accent on accent.default",
+            "ratio": 8.14,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "accent.text on surface.canvas",
+            "ratio": 10.8,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "accent.text on surface.primary",
+            "ratio": 10.37,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.healthy.fg on status.healthy.bg",
+            "ratio": 7.57,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.healthy.fg on surface.primary",
+            "ratio": 10.37,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.degraded.fg on status.degraded.bg",
+            "ratio": 6.98,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.degraded.fg on surface.primary",
+            "ratio": 8.85,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.warning.fg on status.warning.bg",
+            "ratio": 7.61,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.warning.fg on surface.primary",
+            "ratio": 10.63,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.critical.fg on status.critical.bg",
+            "ratio": 6.84,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.critical.fg on surface.primary",
+            "ratio": 8.36,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.info.fg on status.info.bg",
+            "ratio": 6.92,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.info.fg on surface.primary",
+            "ratio": 8.62,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.unknown.fg on status.unknown.bg",
+            "ratio": 9.72,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.unknown.fg on surface.primary",
+            "ratio": 11.51,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.inactive.fg on status.inactive.bg",
+            "ratio": 7.74,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "status.inactive.fg on surface.primary",
+            "ratio": 8.18,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "tier.lite.fg on tier.lite.bg",
+            "ratio": 7.35,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "tier.pro.fg on tier.pro.bg",
+            "ratio": 6.53,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "tier.max.fg on tier.max.bg",
+            "ratio": 7.73,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "action.primary.fg on action.primary.bg",
+            "ratio": 8.14,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "action.secondary.fg on action.secondary.bg",
+            "ratio": 14.43,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "action.destructive.fg on action.destructive.bg",
+            "ratio": 6.15,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "border.strong on surface.primary",
+            "ratio": 5.16,
+            "need": 3,
+            "pass": true,
+            "label": "control boundary"
+          },
+          {
+            "theme": "venom-dark",
+            "pair": "focus.ring on surface.canvas",
+            "ratio": 10.8,
+            "need": 3,
+            "pass": true,
+            "label": "focus ring"
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.primary on surface.canvas",
+            "ratio": 17.36,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.secondary on surface.canvas",
+            "ratio": 8.84,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.muted on surface.canvas",
+            "ratio": 5.83,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.primary on surface.primary",
+            "ratio": 16.89,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.secondary on surface.primary",
+            "ratio": 8.6,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.muted on surface.primary",
+            "ratio": 5.67,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.primary on surface.secondary",
+            "ratio": 16.16,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.secondary on surface.secondary",
+            "ratio": 8.22,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.muted on surface.secondary",
+            "ratio": 5.42,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.primary on surface.raised",
+            "ratio": 17.36,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.secondary on surface.raised",
+            "ratio": 8.84,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.muted on surface.raised",
+            "ratio": 5.83,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.link on surface.canvas",
+            "ratio": 6.6,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.link on surface.primary",
+            "ratio": 6.42,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "text.on-accent on accent.default",
+            "ratio": 6.6,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "accent.text on surface.canvas",
+            "ratio": 6.6,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "accent.text on surface.primary",
+            "ratio": 6.42,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.healthy.fg on status.healthy.bg",
+            "ratio": 5.7,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.healthy.fg on surface.primary",
+            "ratio": 6.42,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.degraded.fg on status.degraded.bg",
+            "ratio": 6.39,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.degraded.fg on surface.primary",
+            "ratio": 7.58,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.warning.fg on status.warning.bg",
+            "ratio": 5.67,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.warning.fg on surface.primary",
+            "ratio": 6.49,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.critical.fg on status.critical.bg",
+            "ratio": 6.88,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.critical.fg on surface.primary",
+            "ratio": 8.28,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.info.fg on status.info.bg",
+            "ratio": 7.12,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.info.fg on surface.primary",
+            "ratio": 8.47,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.unknown.fg on status.unknown.bg",
+            "ratio": 7.72,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.unknown.fg on surface.primary",
+            "ratio": 8.6,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.inactive.fg on status.inactive.bg",
+            "ratio": 5.42,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "status.inactive.fg on surface.primary",
+            "ratio": 5.67,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-light",
+            "pair": "tier.lite.fg on tier.lite.bg",
+            "ratio": 6.68,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "tier.pro.fg on tier.pro.bg",
+            "ratio": 7.54,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "tier.max.fg on tier.max.bg",
+            "ratio": 6.09,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "action.primary.fg on action.primary.bg",
+            "ratio": 6.6,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "action.secondary.fg on action.secondary.bg",
+            "ratio": 17.36,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "action.destructive.fg on action.destructive.bg",
+            "ratio": 6.15,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-light",
+            "pair": "border.strong on surface.primary",
+            "ratio": 3.46,
+            "need": 3,
+            "pass": true,
+            "label": "control boundary"
+          },
+          {
+            "theme": "venom-light",
+            "pair": "focus.ring on surface.canvas",
+            "ratio": 4.63,
+            "need": 3,
+            "pass": true,
+            "label": "focus ring"
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.primary on surface.canvas",
+            "ratio": 21,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.secondary on surface.canvas",
+            "ratio": 18.35,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.muted on surface.canvas",
+            "ratio": 16.39,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.primary on surface.primary",
+            "ratio": 21,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.secondary on surface.primary",
+            "ratio": 18.35,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.muted on surface.primary",
+            "ratio": 16.39,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.primary on surface.secondary",
+            "ratio": 19.11,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.secondary on surface.secondary",
+            "ratio": 16.69,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.muted on surface.secondary",
+            "ratio": 14.91,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.primary on surface.raised",
+            "ratio": 18.35,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.secondary on surface.raised",
+            "ratio": 16.03,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.muted on surface.raised",
+            "ratio": 14.32,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.link on surface.canvas",
+            "ratio": 14.27,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.link on surface.primary",
+            "ratio": 14.27,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.on-accent on accent.default",
+            "ratio": 11.87,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "accent.text on surface.canvas",
+            "ratio": 15.21,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "accent.text on surface.primary",
+            "ratio": 15.21,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.healthy.fg on status.healthy.bg",
+            "ratio": 9.7,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.healthy.fg on surface.primary",
+            "ratio": 15.21,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.degraded.fg on status.degraded.bg",
+            "ratio": 9.34,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.degraded.fg on surface.primary",
+            "ratio": 13.54,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.warning.fg on status.warning.bg",
+            "ratio": 9.43,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.warning.fg on surface.primary",
+            "ratio": 15.07,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.critical.fg on status.critical.bg",
+            "ratio": 9.17,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.critical.fg on surface.primary",
+            "ratio": 12.84,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.info.fg on status.info.bg",
+            "ratio": 9.51,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.info.fg on surface.primary",
+            "ratio": 13.55,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.unknown.fg on status.unknown.bg",
+            "ratio": 13.54,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.unknown.fg on surface.primary",
+            "ratio": 18.35,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.inactive.fg on status.inactive.bg",
+            "ratio": 10.89,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "status.inactive.fg on surface.primary",
+            "ratio": 13.17,
+            "need": 3,
+            "pass": true,
+            "label": "icon/graphic on surface"
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "tier.lite.fg on tier.lite.bg",
+            "ratio": 9.73,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "tier.pro.fg on tier.pro.bg",
+            "ratio": 9.42,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "tier.max.fg on tier.max.bg",
+            "ratio": 9.69,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "action.primary.fg on action.primary.bg",
+            "ratio": 11.87,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "action.secondary.fg on action.secondary.bg",
+            "ratio": 18.35,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "action.destructive.fg on action.destructive.bg",
+            "ratio": 9.57,
+            "need": 4.5,
+            "pass": true
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "border.strong on surface.primary",
+            "ratio": 16.39,
+            "need": 3,
+            "pass": true,
+            "label": "control boundary"
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "focus.ring on surface.canvas",
+            "ratio": 14.81,
+            "need": 3,
+            "pass": true,
+            "label": "focus ring"
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.primary on surface.canvas",
+            "ratio": 21,
+            "need": 7,
+            "pass": true,
+            "label": "AAA"
+          },
+          {
+            "theme": "venom-hc",
+            "pair": "text.secondary on surface.canvas",
+            "ratio": 18.35,
+            "need": 7,
+            "pass": true,
+            "label": "AAA"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Guardrails (raw-color, terminology, secrets, icon map, state coverage, story coverage, CDN scan, required components)",
+      "command": "checkVenomGuardrails(io)",
+      "status": "PASS",
+      "startedAt": "2026-07-23T00:28:49.857Z",
+      "finishedAt": "2026-07-23T00:28:49.981Z",
+      "logs": [
+        "GUARDRAILS: 131 lint files, 187 terminology files, 41/79 glyphs, 97 state checks, 56 components, 195 cdn-scanned files, 113 any-scanned files, 0 violations"
+      ],
+      "summary": {
+        "lintFiles": 131,
+        "terminologyFiles": 187,
+        "iconGlyphsDefined": 79,
+        "iconGlyphsUsed": 41,
+        "stateChecks": 97,
+        "componentFileCount": 56,
+        "cdnScanFiles": 195,
+        "requiredComponentsChecked": 4,
+        "anyScannedFiles": 113,
+        "errors": []
+      }
+    },
+    {
+      "name": "Type check (strict)",
+      "command": "npx tsc -p tsconfig.json --noEmit",
+      "status": "PASS",
+      "startedAt": "2026-07-23T00:28:49.981Z",
+      "finishedAt": "2026-07-23T00:28:52.349Z",
+      "output": ""
+    },
+    {
+      "name": "Declaration generation (components/**/*.tsx -> sibling .d.ts)",
+      "command": "npx tsc -p tsconfig.declarations.json",
+      "status": "PASS",
+      "startedAt": "2026-07-23T00:28:52.369Z",
+      "finishedAt": "2026-07-23T00:28:54.604Z",
+      "output": ""
+    },
+    {
+      "name": "Declaration drift check (checked-in .d.ts vs freshly generated)",
+      "command": "diff before/after tsc -p tsconfig.declarations.json",
+      "status": "PASS",
+      "startedAt": "2026-07-23T00:28:54.604Z",
+      "finishedAt": "2026-07-23T00:28:54.625Z",
+      "logs": [],
+      "summary": {
+        "declarationFilesChecked": 57,
+        "drifted": 0
+      }
+    },
+    {
+      "name": "Declaration generation (package entry points -> dist/types)",
+      "command": "npx tsc -p tsconfig.build.json",
+      "status": "PASS",
+      "startedAt": "2026-07-23T00:28:54.640Z",
+      "finishedAt": "2026-07-23T00:28:57.002Z",
+      "output": ""
+    },
+    {
+      "name": "Explorer production build (Vite, no in-browser transpilation)",
+      "command": "npx vite build --config vite.explorer.config.ts",
+      "status": "PASS",
+      "startedAt": "2026-07-23T00:28:57.002Z",
+      "finishedAt": "2026-07-23T00:28:58.986Z",
+      "output": "\u001b[36mvite v5.4.21 \u001b[32mbuilding for production...\u001b[36m\u001b[39m\ntransforming...\n\u001b[32m✓\u001b[39m 206 modules transformed.\nrendering chunks...\ncomputing gzip size...\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/icons/icon.card.html                                    \u001b[39m\u001b[1m\u001b[2m  0.65 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.44 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/domain-routing/routing.card.html                        \u001b[39m\u001b[1m\u001b[2m  0.84 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.48 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/data/data.card.html                                     \u001b[39m\u001b[1m\u001b[2m  0.85 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.45 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mstates/capability-truth.html                                       \u001b[39m\u001b[1m\u001b[2m  0.85 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.49 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/containers/containers.card.html                         \u001b[39m\u001b[1m\u001b[2m  0.89 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.47 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/domain-quota/quota.card.html                            \u001b[39m\u001b[1m\u001b[2m  0.89 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.49 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/navigation/navigation.card.html                         \u001b[39m\u001b[1m\u001b[2m  0.90 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.47 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mstates/async-jobs.html                                             \u001b[39m\u001b[1m\u001b[2m  0.92 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.51 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mstates/quota-freshness.html                                        \u001b[39m\u001b[1m\u001b[2m  0.92 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.51 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mstates/account-lifecycle.html                                      \u001b[39m\u001b[1m\u001b[2m  0.93 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.51 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mstates/credential-lifecycle.html                                   \u001b[39m\u001b[1m\u001b[2m  0.94 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.51 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mstates/funding-evidence.html                                       \u001b[39m\u001b[1m\u001b[2m  0.96 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.53 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mstates/reservation-reconciliation.html                             \u001b[39m\u001b[1m\u001b[2m  0.98 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.52 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/domain-diagnostics/diagnostics.card.html                \u001b[39m\u001b[1m\u001b[2m  1.01 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.53 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mstates/routing-outcomes.html                                       \u001b[39m\u001b[1m\u001b[2m  1.02 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.53 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/domain-model/model.card.html                            \u001b[39m\u001b[1m\u001b[2m  1.05 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.53 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/actions/actions.card.html                               \u001b[39m\u001b[1m\u001b[2m  1.05 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.53 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/domain-provider/provider.card.html                      \u001b[39m\u001b[1m\u001b[2m  1.11 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.54 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/forms/forms.card.html                                   \u001b[39m\u001b[1m\u001b[2m  1.16 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.54 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mstates/certification.html                                          \u001b[39m\u001b[1m\u001b[2m  1.19 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.66 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/display/display.card.html                               \u001b[39m\u001b[1m\u001b[2m  1.23 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.58 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/feedback/feedback.card.html                             \u001b[39m\u001b[1m\u001b[2m  1.24 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.58 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/domain-security/security.card.html                      \u001b[39m\u001b[1m\u001b[2m  1.24 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.57 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mstates/owner-authentication.html                                   \u001b[39m\u001b[1m\u001b[2m  1.26 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.57 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mcomponents/overlay/overlay.card.html                               \u001b[39m\u001b[1m\u001b[2m  1.26 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.56 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/focus.html                                             \u001b[39m\u001b[1m\u001b[2m  1.37 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.67 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/type-data.html                                         \u001b[39m\u001b[1m\u001b[2m  1.42 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.66 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/colors-tiers.html                                      \u001b[39m\u001b[1m\u001b[2m  1.48 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.69 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/motion.html                                            \u001b[39m\u001b[1m\u001b[2m  1.66 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.83 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/radius-borders.html                                    \u001b[39m\u001b[1m\u001b[2m  1.66 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.73 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/type-ui.html                                           \u001b[39m\u001b[1m\u001b[2m  1.69 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.75 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/colors-accent.html                                     \u001b[39m\u001b[1m\u001b[2m  1.78 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.81 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/type-mono.html                                         \u001b[39m\u001b[1m\u001b[2m  1.79 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.81 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/elevation.html                                         \u001b[39m\u001b[1m\u001b[2m  1.89 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.72 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/spacing.html                                           \u001b[39m\u001b[1m\u001b[2m  1.91 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.73 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/colors-viz.html                                        \u001b[39m\u001b[1m\u001b[2m  2.06 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.71 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/density.html                                           \u001b[39m\u001b[1m\u001b[2m  2.11 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.80 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/colors-status.html                                     \u001b[39m\u001b[1m\u001b[2m  2.58 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.74 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mui_kits/venom-console/index.html                                   \u001b[39m\u001b[1m\u001b[2m  3.16 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.94 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/colors-surfaces.html                                   \u001b[39m\u001b[1m\u001b[2m  3.22 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.69 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mfoundations/icons.html                                             \u001b[39m\u001b[1m\u001b[2m  3.71 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.02 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[32mstorybook/index.html                                               \u001b[39m\u001b[1m\u001b[2m  6.67 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  2.21 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[35massets/styles-Mqm1xW1E.css                                         \u001b[39m\u001b[1m\u001b[2m157.79 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip: 17.06 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Spinner-DXf-AZC4.js                                         \u001b[39m\u001b[1m\u001b[2m  0.24 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.21 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/KeyValueList-XTaLBUmc.js                                    \u001b[39m\u001b[1m\u001b[2m  0.31 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.24 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/EmptyState-CdrxxLhu.js                                      \u001b[39m\u001b[1m\u001b[2m  0.35 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.24 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/SegmentedControl-DmVGr1Iu.js                                \u001b[39m\u001b[1m\u001b[2m  0.40 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.29 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Panel-B9DtvX2W.js                                           \u001b[39m\u001b[1m\u001b[2m  0.41 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.27 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Tag-CQWwx7Mk.js                                             \u001b[39m\u001b[1m\u001b[2m  0.42 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.30 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/IconButton-AJBesZJN.js                                      \u001b[39m\u001b[1m\u001b[2m  0.43 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.31 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Button-BYgRgTIg.js                                          \u001b[39m\u001b[1m\u001b[2m  0.47 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.34 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Mark-MCMB3tc0.js                                            \u001b[39m\u001b[1m\u001b[2m  0.49 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.36 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/CopyButton-B1oe__OM.js                                      \u001b[39m\u001b[1m\u001b[2m  0.65 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.42 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Badge-C9rj8N_v.js                                           \u001b[39m\u001b[1m\u001b[2m  0.70 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.41 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Card-DtrjL2sY.js                                            \u001b[39m\u001b[1m\u001b[2m  0.73 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.40 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Meter-DWYSV0oc.js                                           \u001b[39m\u001b[1m\u001b[2m  0.80 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.44 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_icons_icon.card-xdzG3SkT.js                      \u001b[39m\u001b[1m\u001b[2m  0.96 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.53 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Input-DcA1rN_S.js                                           \u001b[39m\u001b[1m\u001b[2m  1.05 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.56 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Stepper-CkWFl_sx.js                                         \u001b[39m\u001b[1m\u001b[2m  1.08 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.55 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Banner-D3xD38-n.js                                          \u001b[39m\u001b[1m\u001b[2m  1.08 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.47 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Tabs-Ce1jcUVH.js                                            \u001b[39m\u001b[1m\u001b[2m  1.34 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.69 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_domain-security_security.card-BTOSIrZ1.js        \u001b[39m\u001b[1m\u001b[2m  1.46 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.77 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/states_async-jobs-DQL-sa-W.js                               \u001b[39m\u001b[1m\u001b[2m  1.55 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.78 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/states_capability-truth-D7v94lDd.js                         \u001b[39m\u001b[1m\u001b[2m  1.56 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.73 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_domain-quota_quota.card-CwlN7cOv.js              \u001b[39m\u001b[1m\u001b[2m  1.57 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.76 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/states_reservation-reconciliation-D4KR0mgM.js               \u001b[39m\u001b[1m\u001b[2m  1.58 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.80 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_navigation_navigation.card-B5bzCDYF.js           \u001b[39m\u001b[1m\u001b[2m  1.59 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.82 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Table-29T2UY2j.js                                           \u001b[39m\u001b[1m\u001b[2m  1.59 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.80 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/states_account-lifecycle-pL7F6m8Y.js                        \u001b[39m\u001b[1m\u001b[2m  1.61 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.70 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/states_owner-authentication-ZBIG8OKp.js                     \u001b[39m\u001b[1m\u001b[2m  1.71 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.88 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/states_credential-lifecycle-6P07EB5-.js                     \u001b[39m\u001b[1m\u001b[2m  1.79 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.74 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_domain-routing_routing.card-C-IggzAk.js          \u001b[39m\u001b[1m\u001b[2m  1.79 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.91 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/states_certification-CJPKjKV3.js                            \u001b[39m\u001b[1m\u001b[2m  1.85 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.82 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/states_funding-evidence-BDDjX0Ei.js                         \u001b[39m\u001b[1m\u001b[2m  1.93 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.77 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_domain-diagnostics_diagnostics.card-DCujE9CR.js  \u001b[39m\u001b[1m\u001b[2m  1.98 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.10 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/DensityToggle-B8DjqpK5.js                                   \u001b[39m\u001b[1m\u001b[2m  1.98 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.70 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_data_data.card-BkpM9gpb.js                       \u001b[39m\u001b[1m\u001b[2m  2.04 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.96 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_domain-provider_provider.card-YavkYa5E.js        \u001b[39m\u001b[1m\u001b[2m  2.11 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.98 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_actions_actions.card-COUqxrDb.js                 \u001b[39m\u001b[1m\u001b[2m  2.14 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.91 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Drawer-Cv2-Ov5o.js                                          \u001b[39m\u001b[1m\u001b[2m  2.19 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.03 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_containers_containers.card-RGFiCNC-.js           \u001b[39m\u001b[1m\u001b[2m  2.31 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.09 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/states_quota-freshness-DJbnj0_e.js                          \u001b[39m\u001b[1m\u001b[2m  2.49 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.86 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_domain-model_model.card-joSWnkUJ.js              \u001b[39m\u001b[1m\u001b[2m  2.51 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.04 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_display_display.card-Btoz2TxZ.js                 \u001b[39m\u001b[1m\u001b[2m  2.74 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.24 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/states_routing-outcomes-CHVIt7lz.js                         \u001b[39m\u001b[1m\u001b[2m  2.76 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.14 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Dialog-Cq1WVZ04.js                                          \u001b[39m\u001b[1m\u001b[2m  2.89 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.27 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/FilterBar-GQ_T8w1s.js                                       \u001b[39m\u001b[1m\u001b[2m  3.05 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.24 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_forms_forms.card-Ch_gPlne.js                     \u001b[39m\u001b[1m\u001b[2m  4.49 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  2.07 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Diagnostics-fRnH5Dba.js                                     \u001b[39m\u001b[1m\u001b[2m  5.36 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.69 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_feedback_feedback.card-pJWczNFL.js               \u001b[39m\u001b[1m\u001b[2m  5.63 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  2.28 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/components_overlay_overlay.card-CBzKoIxd.js                 \u001b[39m\u001b[1m\u001b[2m  7.20 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  2.84 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/ModelIntelligence-CameP6DE.js                               \u001b[39m\u001b[1m\u001b[2m  7.63 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  2.75 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Security-CAE-0mRk.js                                        \u001b[39m\u001b[1m\u001b[2m  7.75 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  2.59 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/ProviderFleet-EUP6POb4.js                                   \u001b[39m\u001b[1m\u001b[2m  8.08 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  2.70 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Quota-B8YXGX_p.js                                           \u001b[39m\u001b[1m\u001b[2m  8.70 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  2.74 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Routing-2Ull2zdQ.js                                         \u001b[39m\u001b[1m\u001b[2m 10.16 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  3.35 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/ui_kits_venom-console_index-Dv3Wyg9r.js                     \u001b[39m\u001b[1m\u001b[2m 47.28 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip: 13.42 kB\u001b[22m\n\u001b[2mdist-explorer/\u001b[22m\u001b[36massets/Icon-CGZF3jvm.js                                            \u001b[39m\u001b[1m\u001b[2m143.26 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip: 46.25 kB\u001b[22m\n\u001b[32m✓ built in 907ms\u001b[39m"
+    },
+    {
+      "name": "Library build (Vite, dist/*.mjs + dist/*.cjs)",
+      "command": "npx vite build",
+      "status": "PASS",
+      "startedAt": "2026-07-23T00:28:58.986Z",
+      "finishedAt": "2026-07-23T00:29:00.369Z",
+      "output": "\u001b[36mvite v5.4.21 \u001b[32mbuilding for production...\u001b[36m\u001b[39m\ntransforming...\n\u001b[32m✓\u001b[39m 67 modules transformed.\nrendering chunks...\ncomputing gzip size...\n\u001b[2mdist/\u001b[22m\u001b[36micons.mjs                \u001b[39m\u001b[1m\u001b[2m 0.14 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.14 kB\u001b[22m\u001b[2m │ map:   0.09 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mdensity.mjs              \u001b[39m\u001b[1m\u001b[2m 0.40 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.27 kB\u001b[22m\u001b[2m │ map:   1.41 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mthemes.mjs               \u001b[39m\u001b[1m\u001b[2m 0.59 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.32 kB\u001b[22m\u001b[2m │ map:   2.23 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mIcon-Dg97Ygra.js         \u001b[39m\u001b[1m\u001b[2m 1.22 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.72 kB\u001b[22m\u001b[2m │ map:   2.88 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mprimitives.mjs           \u001b[39m\u001b[1m\u001b[2m 1.66 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.81 kB\u001b[22m\u001b[2m │ map:   0.10 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mdomain.mjs               \u001b[39m\u001b[1m\u001b[2m 2.72 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.19 kB\u001b[22m\u001b[2m │ map:   0.09 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mindex.mjs                \u001b[39m\u001b[1m\u001b[2m 5.09 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  2.08 kB\u001b[22m\u001b[2m │ map:   0.10 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mtailwind.mjs             \u001b[39m\u001b[1m\u001b[2m 7.25 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.58 kB\u001b[22m\u001b[2m │ map:  13.46 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mFormField-F08LnzSy.js    \u001b[39m\u001b[1m\u001b[2m12.12 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  3.58 kB\u001b[22m\u001b[2m │ map:  33.95 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mtokens.mjs               \u001b[39m\u001b[1m\u001b[2m16.71 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  2.98 kB\u001b[22m\u001b[2m │ map:  24.99 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mFilterBar-v0bQ35BK.js    \u001b[39m\u001b[1m\u001b[2m39.63 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  9.11 kB\u001b[22m\u001b[2m │ map: 104.65 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mDiagnostics-CahZiWht.js  \u001b[39m\u001b[1m\u001b[2m66.08 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip: 13.76 kB\u001b[22m\u001b[2m │ map: 148.99 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36micons.cjs                 \u001b[39m\u001b[1m\u001b[2m 0.22 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.19 kB\u001b[22m\u001b[2m │ map:   0.09 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mdensity.cjs               \u001b[39m\u001b[1m\u001b[2m 0.44 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.30 kB\u001b[22m\u001b[2m │ map:   1.40 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mthemes.cjs                \u001b[39m\u001b[1m\u001b[2m 0.61 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.35 kB\u001b[22m\u001b[2m │ map:   2.20 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mIcon-BiRXj-Us.cjs         \u001b[39m\u001b[1m\u001b[2m 0.99 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.65 kB\u001b[22m\u001b[2m │ map:   2.69 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mprimitives.cjs            \u001b[39m\u001b[1m\u001b[2m 1.89 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  0.68 kB\u001b[22m\u001b[2m │ map:   0.10 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mdomain.cjs                \u001b[39m\u001b[1m\u001b[2m 3.67 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.01 kB\u001b[22m\u001b[2m │ map:   0.09 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mtailwind.cjs              \u001b[39m\u001b[1m\u001b[2m 5.52 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.54 kB\u001b[22m\u001b[2m │ map:  12.33 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mindex.cjs                 \u001b[39m\u001b[1m\u001b[2m 6.02 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  1.69 kB\u001b[22m\u001b[2m │ map:   0.09 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mFormField-D8igPt9H.cjs    \u001b[39m\u001b[1m\u001b[2m 9.20 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  3.33 kB\u001b[22m\u001b[2m │ map:  33.31 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mtokens.cjs                \u001b[39m\u001b[1m\u001b[2m14.67 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  2.93 kB\u001b[22m\u001b[2m │ map:  23.54 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mFilterBar-BCHGqFX9.cjs    \u001b[39m\u001b[1m\u001b[2m28.99 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  8.31 kB\u001b[22m\u001b[2m │ map: 101.80 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36mDiagnostics-DRAZIq1c.cjs  \u001b[39m\u001b[1m\u001b[2m51.21 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip: 13.13 kB\u001b[22m\u001b[2m │ map: 145.18 kB\u001b[22m\n\u001b[32m✓ built in 323ms\u001b[39m"
+    },
+    {
+      "name": "Package export completeness (every dist/*.mjs entry point is importable and non-empty)",
+      "command": "node dist\\.export-check.mjs",
+      "status": "PASS",
+      "startedAt": "2026-07-23T00:29:00.369Z",
+      "finishedAt": "2026-07-23T00:29:00.448Z",
+      "output": "index: 148 symbols\ntokens: 1 symbols\nthemes: 6 symbols\ndensity: 5 symbols\nicons: 2 symbols\nprimitives: 60 symbols\ndomain: 74 symbols\ntailwind: 2 symbols"
+    },
+    {
+      "name": "No stale validation artifacts",
+      "command": "ls('validation') + filename check",
+      "status": "PASS",
+      "startedAt": "2026-07-23T00:29:00.448Z",
+      "finishedAt": "2026-07-23T00:29:00.449Z",
+      "logs": [],
+      "summary": {
+        "scannedFiles": 10,
+        "staleFound": 0
+      }
+    },
+    {
+      "name": "Handoff manifest (classification, canonical sources, generated artifacts, stale duplicates, exclusions)",
+      "command": "checkVenomHandoff(io)",
+      "status": "PASS",
+      "startedAt": "2026-07-23T00:29:00.449Z",
+      "finishedAt": "2026-07-23T00:29:00.464Z",
+      "logs": [
+        "HANDOFF: 30 top-level entries classified, 10 canonical concerns present, 57 component modules with generated declarations, 0 stale duplicates, exclusions covered."
+      ],
+      "summary": {
+        "topLevelEntries": 30,
+        "canonicalConcerns": 10,
+        "componentModulesWithDeclarations": 57,
+        "errors": []
+      }
+    }
+  ]
+}

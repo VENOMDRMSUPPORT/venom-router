@@ -1,0 +1,96 @@
+/* Venom Design System — icon language.
+   One coherent set: Lucide (24px grid, 2px stroke), pinned lucide-static@0.453.0.
+   Rendered via CSS mask + currentColor so icons inherit text color in every
+   theme. Icons NEVER carry meaning alone — always pair with a label or an
+   accessible name (see accessibility/contract.md). Vendored locally into
+   assets/icons/ (`npm run vendor:icons` regenerates both the SVGs and this file
+   from the pinned lucide-static devDependency) — no runtime network access. */
+.vn-icon {
+  display: inline-block; width: 16px; height: 16px; flex: none;
+  background-color: currentColor;
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+  vertical-align: -0.125em;
+}
+.vn-icon--sm { width: 12px; height: 12px; }
+.vn-icon--lg { width: 20px; height: 20px; }
+.vn-icon--xl { width: 28px; height: 28px; }
+.vn-icon--layout-dashboard { -webkit-mask-image: url(../assets/icons/layout-dashboard.svg); mask-image: url(../assets/icons/layout-dashboard.svg); }
+.vn-icon--server { -webkit-mask-image: url(../assets/icons/server.svg); mask-image: url(../assets/icons/server.svg); }
+.vn-icon--box { -webkit-mask-image: url(../assets/icons/box.svg); mask-image: url(../assets/icons/box.svg); }
+.vn-icon--route { -webkit-mask-image: url(../assets/icons/route.svg); mask-image: url(../assets/icons/route.svg); }
+.vn-icon--terminal { -webkit-mask-image: url(../assets/icons/terminal.svg); mask-image: url(../assets/icons/terminal.svg); }
+.vn-icon--chart-line { -webkit-mask-image: url(../assets/icons/chart-line.svg); mask-image: url(../assets/icons/chart-line.svg); }
+.vn-icon--gauge { -webkit-mask-image: url(../assets/icons/gauge.svg); mask-image: url(../assets/icons/gauge.svg); }
+.vn-icon--heart-pulse { -webkit-mask-image: url(../assets/icons/heart-pulse.svg); mask-image: url(../assets/icons/heart-pulse.svg); }
+.vn-icon--activity { -webkit-mask-image: url(../assets/icons/activity.svg); mask-image: url(../assets/icons/activity.svg); }
+.vn-icon--key-round { -webkit-mask-image: url(../assets/icons/key-round.svg); mask-image: url(../assets/icons/key-round.svg); }
+.vn-icon--settings { -webkit-mask-image: url(../assets/icons/settings.svg); mask-image: url(../assets/icons/settings.svg); }
+.vn-icon--message-square { -webkit-mask-image: url(../assets/icons/message-square.svg); mask-image: url(../assets/icons/message-square.svg); }
+.vn-icon--radio { -webkit-mask-image: url(../assets/icons/radio.svg); mask-image: url(../assets/icons/radio.svg); }
+.vn-icon--wrench { -webkit-mask-image: url(../assets/icons/wrench.svg); mask-image: url(../assets/icons/wrench.svg); }
+.vn-icon--braces { -webkit-mask-image: url(../assets/icons/braces.svg); mask-image: url(../assets/icons/braces.svg); }
+.vn-icon--brain { -webkit-mask-image: url(../assets/icons/brain.svg); mask-image: url(../assets/icons/brain.svg); }
+.vn-icon--eye { -webkit-mask-image: url(../assets/icons/eye.svg); mask-image: url(../assets/icons/eye.svg); }
+.vn-icon--eye-off { -webkit-mask-image: url(../assets/icons/eye-off.svg); mask-image: url(../assets/icons/eye-off.svg); }
+.vn-icon--scan-text { -webkit-mask-image: url(../assets/icons/scan-text.svg); mask-image: url(../assets/icons/scan-text.svg); }
+.vn-icon--code { -webkit-mask-image: url(../assets/icons/code.svg); mask-image: url(../assets/icons/code.svg); }
+.vn-icon--shield { -webkit-mask-image: url(../assets/icons/shield.svg); mask-image: url(../assets/icons/shield.svg); }
+.vn-icon--shield-check { -webkit-mask-image: url(../assets/icons/shield-check.svg); mask-image: url(../assets/icons/shield-check.svg); }
+.vn-icon--fingerprint { -webkit-mask-image: url(../assets/icons/fingerprint.svg); mask-image: url(../assets/icons/fingerprint.svg); }
+.vn-icon--user-round { -webkit-mask-image: url(../assets/icons/user-round.svg); mask-image: url(../assets/icons/user-round.svg); }
+.vn-icon--badge-check { -webkit-mask-image: url(../assets/icons/badge-check.svg); mask-image: url(../assets/icons/badge-check.svg); }
+.vn-icon--flask-conical { -webkit-mask-image: url(../assets/icons/flask-conical.svg); mask-image: url(../assets/icons/flask-conical.svg); }
+.vn-icon--hourglass { -webkit-mask-image: url(../assets/icons/hourglass.svg); mask-image: url(../assets/icons/hourglass.svg); }
+.vn-icon--git-branch { -webkit-mask-image: url(../assets/icons/git-branch.svg); mask-image: url(../assets/icons/git-branch.svg); }
+.vn-icon--list-tree { -webkit-mask-image: url(../assets/icons/list-tree.svg); mask-image: url(../assets/icons/list-tree.svg); }
+.vn-icon--lock { -webkit-mask-image: url(../assets/icons/lock.svg); mask-image: url(../assets/icons/lock.svg); }
+.vn-icon--archive { -webkit-mask-image: url(../assets/icons/archive.svg); mask-image: url(../assets/icons/archive.svg); }
+.vn-icon--archive-restore { -webkit-mask-image: url(../assets/icons/archive-restore.svg); mask-image: url(../assets/icons/archive-restore.svg); }
+.vn-icon--timer { -webkit-mask-image: url(../assets/icons/timer.svg); mask-image: url(../assets/icons/timer.svg); }
+.vn-icon--coins { -webkit-mask-image: url(../assets/icons/coins.svg); mask-image: url(../assets/icons/coins.svg); }
+.vn-icon--hand-coins { -webkit-mask-image: url(../assets/icons/hand-coins.svg); mask-image: url(../assets/icons/hand-coins.svg); }
+.vn-icon--credit-card { -webkit-mask-image: url(../assets/icons/credit-card.svg); mask-image: url(../assets/icons/credit-card.svg); }
+.vn-icon--circle-help { -webkit-mask-image: url(../assets/icons/circle-help.svg); mask-image: url(../assets/icons/circle-help.svg); }
+.vn-icon--check { -webkit-mask-image: url(../assets/icons/check.svg); mask-image: url(../assets/icons/check.svg); }
+.vn-icon--x { -webkit-mask-image: url(../assets/icons/x.svg); mask-image: url(../assets/icons/x.svg); }
+.vn-icon--chevron-down { -webkit-mask-image: url(../assets/icons/chevron-down.svg); mask-image: url(../assets/icons/chevron-down.svg); }
+.vn-icon--chevron-right { -webkit-mask-image: url(../assets/icons/chevron-right.svg); mask-image: url(../assets/icons/chevron-right.svg); }
+.vn-icon--chevron-left { -webkit-mask-image: url(../assets/icons/chevron-left.svg); mask-image: url(../assets/icons/chevron-left.svg); }
+.vn-icon--chevrons-up-down { -webkit-mask-image: url(../assets/icons/chevrons-up-down.svg); mask-image: url(../assets/icons/chevrons-up-down.svg); }
+.vn-icon--search { -webkit-mask-image: url(../assets/icons/search.svg); mask-image: url(../assets/icons/search.svg); }
+.vn-icon--copy { -webkit-mask-image: url(../assets/icons/copy.svg); mask-image: url(../assets/icons/copy.svg); }
+.vn-icon--triangle-alert { -webkit-mask-image: url(../assets/icons/triangle-alert.svg); mask-image: url(../assets/icons/triangle-alert.svg); }
+.vn-icon--circle-alert { -webkit-mask-image: url(../assets/icons/circle-alert.svg); mask-image: url(../assets/icons/circle-alert.svg); }
+.vn-icon--info { -webkit-mask-image: url(../assets/icons/info.svg); mask-image: url(../assets/icons/info.svg); }
+.vn-icon--circle-check { -webkit-mask-image: url(../assets/icons/circle-check.svg); mask-image: url(../assets/icons/circle-check.svg); }
+.vn-icon--circle-x { -webkit-mask-image: url(../assets/icons/circle-x.svg); mask-image: url(../assets/icons/circle-x.svg); }
+.vn-icon--loader-circle { -webkit-mask-image: url(../assets/icons/loader-circle.svg); mask-image: url(../assets/icons/loader-circle.svg); }
+.vn-icon--plus { -webkit-mask-image: url(../assets/icons/plus.svg); mask-image: url(../assets/icons/plus.svg); }
+.vn-icon--minus { -webkit-mask-image: url(../assets/icons/minus.svg); mask-image: url(../assets/icons/minus.svg); }
+.vn-icon--ellipsis { -webkit-mask-image: url(../assets/icons/ellipsis.svg); mask-image: url(../assets/icons/ellipsis.svg); }
+.vn-icon--external-link { -webkit-mask-image: url(../assets/icons/external-link.svg); mask-image: url(../assets/icons/external-link.svg); }
+.vn-icon--refresh-cw { -webkit-mask-image: url(../assets/icons/refresh-cw.svg); mask-image: url(../assets/icons/refresh-cw.svg); }
+.vn-icon--rotate-ccw { -webkit-mask-image: url(../assets/icons/rotate-ccw.svg); mask-image: url(../assets/icons/rotate-ccw.svg); }
+.vn-icon--trash-2 { -webkit-mask-image: url(../assets/icons/trash-2.svg); mask-image: url(../assets/icons/trash-2.svg); }
+.vn-icon--filter { -webkit-mask-image: url(../assets/icons/filter.svg); mask-image: url(../assets/icons/filter.svg); }
+.vn-icon--arrow-right { -webkit-mask-image: url(../assets/icons/arrow-right.svg); mask-image: url(../assets/icons/arrow-right.svg); }
+.vn-icon--corner-down-right { -webkit-mask-image: url(../assets/icons/corner-down-right.svg); mask-image: url(../assets/icons/corner-down-right.svg); }
+.vn-icon--clock { -webkit-mask-image: url(../assets/icons/clock.svg); mask-image: url(../assets/icons/clock.svg); }
+.vn-icon--play { -webkit-mask-image: url(../assets/icons/play.svg); mask-image: url(../assets/icons/play.svg); }
+.vn-icon--pause { -webkit-mask-image: url(../assets/icons/pause.svg); mask-image: url(../assets/icons/pause.svg); }
+.vn-icon--ban { -webkit-mask-image: url(../assets/icons/ban.svg); mask-image: url(../assets/icons/ban.svg); }
+.vn-icon--database { -webkit-mask-image: url(../assets/icons/database.svg); mask-image: url(../assets/icons/database.svg); }
+.vn-icon--download { -webkit-mask-image: url(../assets/icons/download.svg); mask-image: url(../assets/icons/download.svg); }
+.vn-icon--upload { -webkit-mask-image: url(../assets/icons/upload.svg); mask-image: url(../assets/icons/upload.svg); }
+.vn-icon--log-out { -webkit-mask-image: url(../assets/icons/log-out.svg); mask-image: url(../assets/icons/log-out.svg); }
+.vn-icon--inbox { -webkit-mask-image: url(../assets/icons/inbox.svg); mask-image: url(../assets/icons/inbox.svg); }
+.vn-icon--zap { -webkit-mask-image: url(../assets/icons/zap.svg); mask-image: url(../assets/icons/zap.svg); }
+.vn-icon--sliders-horizontal { -webkit-mask-image: url(../assets/icons/sliders-horizontal.svg); mask-image: url(../assets/icons/sliders-horizontal.svg); }
+.vn-icon--moon { -webkit-mask-image: url(../assets/icons/moon.svg); mask-image: url(../assets/icons/moon.svg); }
+.vn-icon--sun { -webkit-mask-image: url(../assets/icons/sun.svg); mask-image: url(../assets/icons/sun.svg); }
+.vn-icon--contrast { -webkit-mask-image: url(../assets/icons/contrast.svg); mask-image: url(../assets/icons/contrast.svg); }
+.vn-icon--rows-3 { -webkit-mask-image: url(../assets/icons/rows-3.svg); mask-image: url(../assets/icons/rows-3.svg); }
+.vn-icon--plug { -webkit-mask-image: url(../assets/icons/plug.svg); mask-image: url(../assets/icons/plug.svg); }
+.vn-icon--unplug { -webkit-mask-image: url(../assets/icons/unplug.svg); mask-image: url(../assets/icons/unplug.svg); }
+.vn-icon--power { -webkit-mask-image: url(../assets/icons/power.svg); mask-image: url(../assets/icons/power.svg); }

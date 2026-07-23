@@ -1,0 +1,57 @@
+{
+  "$description": "Layer 3 — component tokens. Every value derives from a semantic token (alias) — never from a primitive, never a raw literal. Only parts that genuinely need their own knob get one.",
+  "button": {
+    "primary":     { "bg": { "$value": "{action.primary.bg}" }, "bg-hover": { "$value": "{action.primary.bg-hover}" }, "bg-active": { "$value": "{action.primary.bg-active}" }, "fg": { "$value": "{action.primary.fg}" } },
+    "secondary":   { "bg": { "$value": "{action.secondary.bg}" }, "bg-hover": { "$value": "{action.secondary.bg-hover}" }, "border": { "$value": "{action.secondary.border}" }, "fg": { "$value": "{action.secondary.fg}" } },
+    "destructive": { "bg": { "$value": "{action.destructive.bg}" }, "bg-hover": { "$value": "{action.destructive.bg-hover}" }, "fg": { "$value": "{action.destructive.fg}" } },
+    "ghost":       { "fg": { "$value": "{text.secondary}" }, "bg-hover": { "$value": "{action.ghost.bg-hover}" } },
+    "disabled":    { "bg": { "$value": "{action.disabled.bg}" }, "fg": { "$value": "{action.disabled.fg}" } }
+  },
+  "input": {
+    "bg":            { "$value": "{surface.primary}" },
+    "fg":            { "$value": "{text.primary}" },
+    "placeholder":   { "$value": "{text.muted}" },
+    "border":        { "default": { "$value": "{border.strong}" }, "focus": { "$value": "{border.focus}" }, "invalid": { "$value": "{status.critical.border}" } },
+    "bg-disabled":   { "$value": "{action.disabled.bg}" }
+  },
+  "card":  { "surface": { "$value": "{surface.secondary}" }, "border": { "$value": "{border.default}" }, "shadow": { "$value": "{elevation.card}" } },
+  "panel": { "surface": { "$value": "{surface.primary}" },   "border": { "$value": "{border.subtle}" } },
+  "table": {
+    "header": { "bg": { "$value": "{surface.primary}" }, "fg": { "$value": "{text.secondary}" } },
+    "row":    { "bg": { "$value": "{surface.canvas}" }, "hover": { "bg": { "$value": "{surface.secondary}" } }, "selected": { "bg": { "$value": "{accent.subtle-bg}" } } },
+    "border": { "$value": "{border.subtle}" }
+  },
+  "tooltip": { "bg": { "$value": "{surface.inverse}" }, "fg": { "$value": "{text.inverse}" } },
+  "menu": {
+    "bg": { "$value": "{surface.raised}" },
+    "border": { "$value": "{border.default}" },
+    "shadow": { "$value": "{elevation.popover}" },
+    "item": { "fg": { "$value": "{text.primary}" }, "hover": { "bg": { "$value": "{action.ghost.bg-hover}" } }, "danger-fg": { "$value": "{status.critical.fg}" } }
+  },
+  "dialog": { "bg": { "$value": "{surface.raised}" }, "border": { "$value": "{border.default}" }, "shadow": { "$value": "{elevation.modal}" }, "scrim": { "$value": "{surface.scrim}" } },
+  "toast":  { "bg": { "$value": "{surface.raised}" }, "border": { "$value": "{border.default}" }, "fg": { "$value": "{text.primary}" }, "shadow": { "$value": "{elevation.toast}" } },
+  "nav": {
+    "bg": { "$value": "{surface.primary}" },
+    "item": {
+      "fg": { "$value": "{text.secondary}" },
+      "hover": { "bg": { "$value": "{action.ghost.bg-hover}" } },
+      "active": { "fg": { "$value": "{accent.text}" }, "bg": { "$value": "{accent.subtle-bg}" }, "indicator": { "$value": "{accent.default}" } }
+    },
+    "group-label": { "fg": { "$value": "{text.muted}" } }
+  },
+  "code": { "bg": { "$value": "{surface.sunken}" }, "fg": { "$value": "{text.primary}" }, "border": { "$value": "{border.subtle}" } },
+  "kbd":  { "bg": { "$value": "{surface.raised}" }, "border": { "$value": "{border.strong}" }, "fg": { "$value": "{text.secondary}" } },
+  "meter": {
+    "track": { "$value": "{surface.sunken}" },
+    "border": { "$value": "{border.subtle}" },
+    "fill": { "$value": "{accent.default}" },
+    "warning": { "fill": { "$value": "{status.warning.fg}" } },
+    "critical": { "fill": { "$value": "{status.critical.fg}" } },
+    "unknown": { "fg": { "$value": "{status.unknown.fg}" } }
+  },
+  "trace": {
+    "row": { "selected": { "bg": { "$value": "{accent.subtle-bg}" }, "border": { "$value": "{accent.default}" } } },
+    "excluded": { "fg": { "$value": "{text.muted}" } }
+  },
+  "skeleton": { "base": { "$value": "{surface.raised}" }, "highlight": { "$value": "{border.subtle}" } }
+}
