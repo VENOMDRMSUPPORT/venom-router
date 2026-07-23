@@ -61,6 +61,20 @@ var ErrKeyringUnavailable = errors.New("secrets: keyring file could not be read"
 type Keyring struct {
 	ActiveKeyID string
 	Keys        map[string][]byte
+
+	// PendingRotation is non-nil when a key rotation (P1-SEC-003) was
+	// interrupted before its ciphertext re-wrap fully completed. Both
+	// its FromKeyID and ToKeyID are guaranteed present in Keys for as
+	// long as this is set — see rotate.go.
+	PendingRotation *PendingRotation
+}
+
+// PendingRotation records an in-progress key rotation. See the doc
+// comment on Keyring.PendingRotation and rotate.go's KeyringHolder for
+// the crash-safety contract this supports.
+type PendingRotation struct {
+	FromKeyID string
+	ToKeyID   string
 }
 
 // ActiveKey returns the master key material for the keyring's active
@@ -70,18 +84,25 @@ func (k *Keyring) ActiveKey() []byte {
 }
 
 // fileFormat is the on-disk JSON shape of keyring.json. It holds a set
-// of key_id -> key entries plus which one is active, so that key
-// rotation (SEC-003) can add entries later without changing the format:
-// this unit always writes and expects exactly one entry.
+// of key_id -> key entries plus which one is active. pending_rotation
+// is omitted from the file entirely (via omitempty) except while a
+// SEC-003 rotation's ciphertext re-wrap is outstanding.
 type fileFormat struct {
-	ActiveKeyID string              `json:"active_key_id"`
-	Keys        map[string]keyEntry `json:"keys"`
+	ActiveKeyID     string               `json:"active_key_id"`
+	Keys            map[string]keyEntry  `json:"keys"`
+	PendingRotation *pendingRotationJSON `json:"pending_rotation,omitempty"`
 }
 
 // keyEntry holds one key's material, base64-standard-encoded (RFC 4648
 // with padding) — the same encoding VENOM_ENCRYPTION_KEY uses.
 type keyEntry struct {
 	Material string `json:"material"`
+}
+
+// pendingRotationJSON is the on-disk shape of PendingRotation.
+type pendingRotationJSON struct {
+	FromKeyID string `json:"from_key_id"`
+	ToKeyID   string `json:"to_key_id"`
 }
 
 // Load resolves the master keyring for one run.
@@ -120,7 +141,7 @@ func Load(dataDir, envValue string, envPresent bool) (*Keyring, error) {
 	data, err := os.ReadFile(keyringPath)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		return createKeyring(secretsDir, keyringPath)
+		return createKeyring(secretsDir)
 	case err != nil:
 		return nil, fmt.Errorf("%w: %w", ErrKeyringUnavailable, err)
 	}
@@ -150,7 +171,23 @@ func parseKeyring(data []byte) (*Keyring, error) {
 		return nil, fmt.Errorf("%w: active_key_id %q not present in keys", ErrKeyringCorrupt, ff.ActiveKeyID)
 	}
 
-	return &Keyring{ActiveKeyID: ff.ActiveKeyID, Keys: keys}, nil
+	var pending *PendingRotation
+	if ff.PendingRotation != nil {
+		if _, ok := keys[ff.PendingRotation.FromKeyID]; !ok {
+			return nil, fmt.Errorf("%w: pending_rotation.from_key_id %q not present in keys",
+				ErrKeyringCorrupt, ff.PendingRotation.FromKeyID)
+		}
+		if _, ok := keys[ff.PendingRotation.ToKeyID]; !ok {
+			return nil, fmt.Errorf("%w: pending_rotation.to_key_id %q not present in keys",
+				ErrKeyringCorrupt, ff.PendingRotation.ToKeyID)
+		}
+		pending = &PendingRotation{
+			FromKeyID: ff.PendingRotation.FromKeyID,
+			ToKeyID:   ff.PendingRotation.ToKeyID,
+		}
+	}
+
+	return &Keyring{ActiveKeyID: ff.ActiveKeyID, Keys: keys, PendingRotation: pending}, nil
 }
 
 func decodeMaterial(s string) ([]byte, error) {
@@ -164,7 +201,7 @@ func decodeMaterial(s string) ([]byte, error) {
 	return b, nil
 }
 
-func createKeyring(secretsDir, keyringPath string) (*Keyring, error) {
+func createKeyring(secretsDir string) (*Keyring, error) {
 	material := make([]byte, keyLength)
 	if _, err := rand.Read(material); err != nil {
 		return nil, fmt.Errorf("secrets: generate key material: %w", err)
@@ -174,25 +211,46 @@ func createKeyring(secretsDir, keyringPath string) (*Keyring, error) {
 		return nil, fmt.Errorf("secrets: generate key id: %w", err)
 	}
 
-	ff := fileFormat{
-		ActiveKeyID: keyID,
-		Keys: map[string]keyEntry{
-			keyID: {Material: base64.StdEncoding.EncodeToString(material)},
-		},
-	}
-	data, err := json.MarshalIndent(&ff, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("secrets: encode keyring: %w", err)
-	}
-
-	if err := writeFileAtomic(secretsDir, keyringPath, data); err != nil {
-		return nil, err
-	}
-
-	return &Keyring{
+	kr := &Keyring{
 		ActiveKeyID: keyID,
 		Keys:        map[string][]byte{keyID: material},
-	}, nil
+	}
+	if err := persistKeyring(kr, secretsDir); err != nil {
+		return nil, err
+	}
+	return kr, nil
+}
+
+// encodeKeyring builds the on-disk fileFormat for kr, base64-encoding
+// every key's material and carrying through kr.PendingRotation (if any)
+// as-is.
+func encodeKeyring(kr *Keyring) fileFormat {
+	keys := make(map[string]keyEntry, len(kr.Keys))
+	for id, material := range kr.Keys {
+		keys[id] = keyEntry{Material: base64.StdEncoding.EncodeToString(material)}
+	}
+
+	ff := fileFormat{ActiveKeyID: kr.ActiveKeyID, Keys: keys}
+	if kr.PendingRotation != nil {
+		ff.PendingRotation = &pendingRotationJSON{
+			FromKeyID: kr.PendingRotation.FromKeyID,
+			ToKeyID:   kr.PendingRotation.ToKeyID,
+		}
+	}
+	return ff
+}
+
+// persistKeyring encodes kr and writes it to <secretsDir>/keyring.json
+// atomically (writeFileAtomic: temp file in secretsDir + rename), so the
+// file on disk is always either the pre- or the post-write keyring,
+// never a torn mix of the two.
+func persistKeyring(kr *Keyring, secretsDir string) error {
+	data, err := json.MarshalIndent(encodeKeyring(kr), "", "  ")
+	if err != nil {
+		return fmt.Errorf("secrets: encode keyring: %w", err)
+	}
+	keyringPath := filepath.Join(secretsDir, keyringFileName)
+	return writeFileAtomic(secretsDir, keyringPath, data)
 }
 
 // generateKeyID returns a fresh, non-secret identifier for a newly
