@@ -1,0 +1,25 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - gocyclo
+    - forbidigo
+  settings:
+    forbidigo:
+      forbid:
+        - pattern: '^fmt\.Print(f|ln)?$'
+          msg: use internal/observability's structured logger instead of raw fmt.Print*
+        - pattern: '^panic$'
+          msg: return a typed error and let internal/observability log it instead of panicking
+        - pattern: '^os\.(Getenv|LookupEnv)$'
+          msg: os.Getenv/os.LookupEnv is only allowed inside internal/config and internal/platform — read env/platform values there and pass them in as typed config
+  exclusions:
+    rules:
+      - path: 'internal/(config|platform)/'
+        linters:
+          - forbidigo
+        text: 'os\.(Getenv|LookupEnv)'

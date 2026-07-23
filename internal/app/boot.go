@@ -1,0 +1,209 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/httpapi"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
+)
+
+// StartupStage names one step of the mandated fail-closed startup order
+// (01 §2). Boot logs each stage, in order, immediately before performing
+// it. Tests assert ordering from that log rather than from internal
+// state — the same way a real boot's ordering would be audited.
+type StartupStage string
+
+const (
+	StageValidateEmbeddedAssets StartupStage = "validate_embedded_assets"
+	StageAcquireLock            StartupStage = "acquire_lock"
+	StageLoadKeyring            StartupStage = "load_keyring" // stub until P1
+	StageOpenDatabase           StartupStage = "open_database"
+	StageMigrateDatabase        StartupStage = "migrate_database"
+	StageReconcileKeyring       StartupStage = "reconcile_keyring"       // stub until P1
+	StageBuildRepositories      StartupStage = "build_repositories"      // stub until P2b+
+	StageBuildProviderRegistry  StartupStage = "build_provider_registry" // stub until P2b+
+	StageBuildServices          StartupStage = "build_services"          // stub until P2b+
+	StageMountHTTPMux           StartupStage = "mount_http_mux"
+	StageListen                 StartupStage = "listen"
+)
+
+// BootConfig bundles Boot's inputs.
+type BootConfig struct {
+	// Bind is the TCP address to listen on (e.g. from config.Config.Bind).
+	Bind string
+	// Logger receives one "startup stage" record per stage, in order. If
+	// nil, observability.Default() is used.
+	Logger *observability.Logger
+}
+
+// Server represents a successfully booted process: a mounted HTTP mux
+// listening on a real address, plus everything the fail-closed startup
+// sequence built. Boot returns a non-nil *Server only on full success —
+// a failure at any earlier stage returns (nil, error) and never reaches
+// the point of opening a listener.
+type Server struct {
+	Addr string
+
+	db   *storage.DB
+	lock *Lock
+	http *http.Server
+	ln   net.Listener
+}
+
+// Shutdown gracefully stops the listener and releases what Boot
+// acquired (the database handle, then the single-instance lock), in
+// reverse order of acquisition.
+func (s *Server) Shutdown(ctx context.Context) error {
+	var errs []error
+	if err := s.http.Shutdown(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("http shutdown: %w", err))
+	}
+	if err := s.db.Close(); err != nil {
+		errs = append(errs, fmt.Errorf("db close: %w", err))
+	}
+	if err := s.lock.Release(); err != nil {
+		errs = append(errs, fmt.Errorf("release lock: %w", err))
+	}
+	return errors.Join(errs...)
+}
+
+// Boot performs the composition root: the mandated fail-closed startup
+// order from 01 §2, wiring already-approved pieces (platform's data-dir
+// resolution, this package's single-instance lock, storage's SQLite open
+// + migrate/integrity-verify, the observability logger) together, then
+// mounts a placeholder HTTP mux and starts listening.
+//
+// Any failure — including a migration/integrity failure from
+// storage.Migrate — aborts before net.Listen is ever called, so no
+// listener opens on a half-initialized process. Provider outages or
+// empty tier pools are deliberately NOT modeled as startup failures here
+// (01 §2) — they are runtime states, and this phase has no real provider
+// registry yet regardless (see the stub stages below).
+//
+// internal/execution's dispatcher is intentionally NOT wired here:
+// "build services" is a stub, exactly like "build provider registry" —
+// wiring the real execution path is separate, later work.
+func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = observability.Default()
+	}
+	logStage := func(s StartupStage) {
+		logger.Info("startup stage", observability.String("stage", string(s)))
+	}
+
+	// 1. Validate embedded assets. Stub: no embedded assets exist yet —
+	// the dashboard's go:embed lands with internal/httpui (P2b+).
+	logStage(StageValidateEmbeddedAssets)
+	if err := validateEmbeddedAssetsStub(); err != nil {
+		return nil, fmt.Errorf("app: validate embedded assets: %w", err)
+	}
+
+	// 2. Acquire the single-instance lock before any keyring/DB creation.
+	logStage(StageAcquireLock)
+	lock, err := AcquireLock()
+	if err != nil {
+		return nil, fmt.Errorf("app: acquire lock: %w", err)
+	}
+	// From here on, every early-return path must release the lock so a
+	// failed boot leaves no half-state.
+	release := func() { _ = lock.Release() }
+
+	// 3. Load/create keyring in memory. Stub until P1-SEC-*.
+	logStage(StageLoadKeyring)
+	if err := loadKeyringStub(); err != nil {
+		release()
+		return nil, fmt.Errorf("app: load keyring: %w", err)
+	}
+
+	// 4. Open SQLite.
+	logStage(StageOpenDatabase)
+	dataDir, err := platform.EnsureDataDir()
+	if err != nil {
+		release()
+		return nil, fmt.Errorf("app: resolve data dir: %w", err)
+	}
+	db, err := storage.Open(dataDir)
+	if err != nil {
+		release()
+		return nil, fmt.Errorf("app: open database: %w", err)
+	}
+	closeDB := func() { _ = db.Close() }
+
+	// 4b. Run migrations, which includes P0-DB-002's PRAGMA
+	// integrity_check and checksum-tamper guard. Any failure here aborts
+	// before a listener ever opens — this is the fail-closed boundary
+	// 01 §2 mandates ("any integrity failure aborts startup").
+	logStage(StageMigrateDatabase)
+	if _, err := storage.Migrate(ctx, db); err != nil {
+		closeDB()
+		release()
+		return nil, fmt.Errorf("app: migrate database: %w", err)
+	}
+
+	// 5. Reconcile keyring with DB + validate every stored ciphertext.
+	// Stub until P1-SEC-*.
+	logStage(StageReconcileKeyring)
+	if err := reconcileKeyringStub(); err != nil {
+		closeDB()
+		release()
+		return nil, fmt.Errorf("app: reconcile keyring: %w", err)
+	}
+
+	// 6-8. Repositories / provider registry / services: all stubs until
+	// P1/P2b+. Deliberately NOT internal/execution's dispatcher — wiring
+	// the real execution path is separate, later work, not this unit's.
+	logStage(StageBuildRepositories)
+	buildRepositoriesStub()
+	logStage(StageBuildProviderRegistry)
+	buildProviderRegistryStub()
+	logStage(StageBuildServices)
+	buildServicesStub()
+
+	// 9. Mount the HTTP mux. /health is httpapi's definitive liveness
+	// surface (01 §6d): unauthenticated, outside /api/control/v1, behind
+	// the loopback + Host-allowlist network gate. This replaces
+	// P0-FND-007's original placeholder handler — there is exactly one
+	// liveness surface.
+	logStage(StageMountHTTPMux)
+	mux := httpapi.HealthMux(cfg.Bind)
+
+	// 10. Listen.
+	logStage(StageListen)
+	ln, err := net.Listen("tcp", cfg.Bind)
+	if err != nil {
+		closeDB()
+		release()
+		return nil, fmt.Errorf("app: listen on %q: %w", cfg.Bind, err)
+	}
+	httpServer := &http.Server{Handler: mux}
+	go func() {
+		_ = httpServer.Serve(ln)
+	}()
+
+	return &Server{
+		Addr: ln.Addr().String(),
+		db:   db,
+		lock: lock,
+		http: httpServer,
+		ln:   ln,
+	}, nil
+}
+
+// The following are explicit stubs for stages this phase does not yet
+// implement: keyring/ciphertext reconcile is P1-SEC-*; repositories,
+// provider registry, and services are P2b+. Each is a clearly-marked
+// no-op — none is wired to internal/execution's dispatcher.
+
+func validateEmbeddedAssetsStub() error { return nil }
+func loadKeyringStub() error            { return nil }
+func reconcileKeyringStub() error       { return nil }
+func buildRepositoriesStub()            {}
+func buildProviderRegistryStub()        {}
+func buildServicesStub()                {}

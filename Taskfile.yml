@@ -1,0 +1,113 @@
+version: "3"
+
+tasks:
+  build:
+    desc: Build all packages
+    cmds:
+      - go build ./...
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run
+
+  vendor-check:
+    desc: Fail if third_party/bifrost has drifted from its pinned commit or been locally modified
+    cmds:
+      - |
+        set -e
+        if git submodule status third_party/bifrost | grep -qE '^[+\-U]'; then
+          echo "third_party/bifrost is not pinned cleanly:" >&2
+          git submodule status third_party/bifrost >&2
+          exit 1
+        fi
+        if [ -n "$(git -C third_party/bifrost status --porcelain)" ]; then
+          echo "third_party/bifrost has local modifications:" >&2
+          git -C third_party/bifrost status --porcelain >&2
+          exit 1
+        fi
+        echo "third_party/bifrost: clean, pinned at $(git -C third_party/bifrost rev-parse HEAD)"
+
+  gate:
+    desc: >
+      The single blocking static-invariants gate (P0-TEST-001): gofmt,
+      goimports, go vet, golangci-lint (incl. the no-panic/no-fmt.Print*/
+      no-os.Getenv-outside-config-or-platform forbidigo rules), the
+      import-layering test, and the no-slug-switch check (the latter two
+      run as part of `go test ./...`, since they are regular Go tests
+      under internal/staticgate and internal/execution respectively).
+      CI invokes exactly this one command on both Windows and Linux — no
+      gate logic is duplicated in the CI workflow file. The race
+      detector (CGO_ENABLED=1) is wired as a separate CI step, not part
+      of this command, since it needs cgo and this command must stay
+      green on hosts without a C toolchain. schema-lint, no-hardcoding,
+      and secret-canary are reserved placeholders (see the `schema-lint`,
+      `no-hardcoding-lint`, and `secret-canary` tasks below) — not part
+      of this gate until populated in P1/P3.
+    cmds:
+      - |
+        set -e
+
+        echo "== gofmt =="
+        UNFORMATTED=$(gofmt -l ./internal)
+        if [ -n "$UNFORMATTED" ]; then
+          echo "gofmt would reformat the following files:" >&2
+          echo "$UNFORMATTED" >&2
+          exit 1
+        fi
+
+        echo "== goimports =="
+        UNORGANIZED=$(goimports -l ./internal)
+        if [ -n "$UNORGANIZED" ]; then
+          echo "goimports would change the following files:" >&2
+          echo "$UNORGANIZED" >&2
+          exit 1
+        fi
+
+        echo "== go vet =="
+        go vet ./...
+
+        echo "== golangci-lint =="
+        golangci-lint run
+
+        echo "== go test (includes the layering test and no-slug-switch check) =="
+        go test ./...
+
+        echo "== gate: all static invariants green =="
+
+  test-race:
+    desc: >
+      Race detector (test-only). Requires CGO_ENABLED=1 — a build-time
+      requirement of Go's race detector, not a change to production
+      builds, which stay CGO_ENABLED=0. Wired into CI for both Windows
+      and Linux as its own step (see .github/workflows/ci.yml), separate
+      from `gate`, since it needs a working C toolchain to even compile
+      and `gate` must stay green on hosts without one.
+    cmds:
+      - CGO_ENABLED=1 go test -race ./...
+
+  schema-lint:
+    desc: >
+      RESERVED placeholder — schema-lint (nullable numerics mean
+      unknown, append-only evidence tables keep exactly one current row,
+      everything keys on account_id). Populated in P1; intentionally a
+      no-op until then, and not part of `gate`.
+    cmds:
+      - 'echo "schema-lint: reserved placeholder, not yet implemented (lands in P1)"'
+
+  no-hardcoding-lint:
+    desc: >
+      RESERVED placeholder — bans model-name/capability literals in
+      routing/models and asserts no static model list exists. Populated
+      in P3; intentionally a no-op until then, and not part of `gate`.
+    cmds:
+      - 'echo "no-hardcoding-lint: reserved placeholder, not yet implemented (lands in P3)"'
+
+  secret-canary:
+    desc: >
+      RESERVED placeholder — asserts an injected secret never appears in
+      any log, error, trace, or audit row. Populated in P1 alongside
+      internal/sanitize; intentionally a no-op until then, and not part
+      of `gate`.
+    cmds:
+      - 'echo "secret-canary: reserved placeholder, not yet implemented (lands in P1)"'

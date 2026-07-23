@@ -1,0 +1,106 @@
+//go:build windows
+
+package platform
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestDataDir_Windows(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LOCALAPPDATA", dir)
+
+	got, err := DataDir()
+	if err != nil {
+		t.Fatalf("DataDir() error = %v", err)
+	}
+	want := filepath.Join(dir, "VenomRouter")
+	if got != want {
+		t.Fatalf("DataDir() = %q, want %q", got, want)
+	}
+}
+
+func TestDataDir_Windows_Unset(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", "")
+
+	_, err := DataDir()
+	if !errors.Is(err, ErrLocalAppDataUnset) {
+		t.Fatalf("DataDir() error = %v, want ErrLocalAppDataUnset", err)
+	}
+}
+
+func TestEnsureDataDir_Windows(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("LOCALAPPDATA", base)
+
+	dir, err := EnsureDataDir()
+	if err != nil {
+		t.Fatalf("EnsureDataDir() error = %v", err)
+	}
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat %q: %v", dir, err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("%q is not a directory", dir)
+	}
+
+	// Idempotent: calling again when the directory already exists must
+	// succeed without error.
+	dir2, err := EnsureDataDir()
+	if err != nil {
+		t.Fatalf("EnsureDataDir() second call error = %v", err)
+	}
+	if dir2 != dir {
+		t.Fatalf("EnsureDataDir() second call = %q, want %q", dir2, dir)
+	}
+}
+
+func TestTryLockFile_ExclusiveAcrossHandles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.lock")
+
+	f1, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatalf("open f1: %v", err)
+	}
+	defer func() { _ = f1.Close() }()
+
+	if err := TryLockFile(f1); err != nil {
+		t.Fatalf("first TryLockFile() error = %v", err)
+	}
+
+	f2, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatalf("open f2: %v", err)
+	}
+	defer func() { _ = f2.Close() }()
+
+	if err := TryLockFile(f2); !errors.Is(err, ErrLocked) {
+		t.Fatalf("second TryLockFile() (independent handle, same path) error = %v, want ErrLocked", err)
+	}
+
+	if err := UnlockFile(f1); err != nil {
+		t.Fatalf("UnlockFile(f1) error = %v", err)
+	}
+
+	if err := TryLockFile(f2); err != nil {
+		t.Fatalf("TryLockFile(f2) after f1 released, error = %v, want success", err)
+	}
+	if err := UnlockFile(f2); err != nil {
+		t.Fatalf("UnlockFile(f2) error = %v", err)
+	}
+}
+
+func TestIsProcessRunning(t *testing.T) {
+	if !IsProcessRunning(os.Getpid()) {
+		t.Fatalf("IsProcessRunning(own pid) = false, want true")
+	}
+	if IsProcessRunning(999999999) {
+		t.Fatalf("IsProcessRunning(implausible pid) = true, want false")
+	}
+}

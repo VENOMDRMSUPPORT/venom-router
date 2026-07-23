@@ -1,0 +1,82 @@
+//go:build windows
+
+package platform
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"golang.org/x/sys/windows"
+)
+
+// ErrLocalAppDataUnset is returned when %LOCALAPPDATA% is unset or empty.
+var ErrLocalAppDataUnset = errors.New("platform: LOCALAPPDATA is unset")
+
+// DataDir returns %LOCALAPPDATA%\VenomRouter.
+func DataDir() (string, error) {
+	base, ok := os.LookupEnv("LOCALAPPDATA")
+	if !ok || base == "" {
+		return "", ErrLocalAppDataUnset
+	}
+	return filepath.Join(base, "VenomRouter"), nil
+}
+
+// TryLockFile acquires an exclusive, non-blocking OS-level lock on f via
+// LockFileEx. The lock is scoped to this specific open handle: opening
+// the same path again (in this process or another) yields an independent
+// handle that will conflict with an already-locked one, which is exactly
+// the real mutual exclusion single-instance enforcement needs.
+func TryLockFile(f *os.File) error {
+	ol := new(windows.Overlapped)
+	err := windows.LockFileEx(
+		windows.Handle(f.Fd()),
+		windows.LOCKFILE_FAIL_IMMEDIATELY|windows.LOCKFILE_EXCLUSIVE_LOCK,
+		0,
+		1, 0,
+		ol,
+	)
+	if err != nil {
+		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+			return ErrLocked
+		}
+		return fmt.Errorf("platform: lock file: %w", err)
+	}
+	return nil
+}
+
+// UnlockFile releases a lock previously acquired by TryLockFile on f.
+func UnlockFile(f *os.File) error {
+	ol := new(windows.Overlapped)
+	if err := windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, ol); err != nil {
+		return fmt.Errorf("platform: unlock file: %w", err)
+	}
+	return nil
+}
+
+// stillActive is the Windows API STILL_ACTIVE constant (winbase.h),
+// returned by GetExitCodeProcess for a process that has not yet exited.
+// It is not exported by golang.org/x/sys/windows, so it is defined here.
+const stillActive = 259
+
+// IsProcessRunning reports whether pid identifies a currently running
+// process. It is a diagnostic aid only (used to log what a recovered
+// stale lock belonged to) — TryLockFile/UnlockFile, not this function,
+// are what single-instance correctness actually depends on.
+func IsProcessRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return false
+	}
+	defer func() { _ = windows.CloseHandle(h) }()
+
+	var code uint32
+	if err := windows.GetExitCodeProcess(h, &code); err != nil {
+		return false
+	}
+	return code == stillActive
+}

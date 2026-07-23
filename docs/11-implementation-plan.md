@@ -421,7 +421,7 @@ Data impact: none. API impact: none. Security: env-only secret var *names* docum
 Tests: table-driven precedence (default/env/flag override, invalid values rejected).
 Evidence: unit test report.
 Deps: P0-FND-001. Parallel-with: P0-FND-003/006, P0-EXEC-001. Blocks: P0-FND-007.
-DoD: precedence proven; bind default correct; no `os.Getenv` outside `config` (vet).
+DoD: precedence proven; bind default correct; no `os.Getenv` outside `config` (forbidigo).
 
 #### P0-FND-003 — Platform paths
 Purpose: OS-correct data dirs.
