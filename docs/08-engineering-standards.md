@@ -49,9 +49,9 @@ The package layout and its acyclic dependency rule are defined in
   Handlers, routing, and Bifrost never issue ad-hoc SQL (an anti-pattern from the old build).
 - **The dashboard is its own workspace** with the design-system package (07) as a dependency; it
   talks to the app only through the typed control API. UI and core evolve behind that contract.
-  **The Venom Design System does not exist yet** — it is produced in a separate dedicated task from
-  the brief in [07](07-design-system.md). Dashboard implementation (and the design-system CI gates
-  in §7 below) begins only **after** that Design System passes its own acceptance gate.
+  **The Venom Design System is implemented and approved** as the versioned `Design_System/`
+  package. Application consumption begins in Phase P2a. P0 and P1 must neither rebuild nor modify
+  it.
 - **`third_party/bifrost` is vendored, never edited in product branches.** Execution seams are added
   upstream and pulled via submodule SHA; a check flags local modifications to vendored code.
 
@@ -62,6 +62,11 @@ The package layout and its acyclic dependency rule are defined in
 - **Language/tooling:** Go 1.26+, `CGO_ENABLED=0`. `gofmt`/`goimports` clean; `go vet` +
   `golangci-lint` (staticcheck, errcheck, ineffassign, gocyclo, forbidigo) green. Dashboard:
   TypeScript `strict`, ESLint, Prettier, no `any` without justification.
+- **Bootstrap tool versions:** the verified Windows baseline is Go `1.26.5`, `goimports` from
+  `golang.org/x/tools@v0.48.0`, `golangci-lint` `v2.12.2`, and Task `3.52.0`. P0-FND-001 records
+  repository-level Go/tool pins and the Taskfile so a global workstation install is never the sole
+  source of reproducibility. Long-running shells and desktop apps must be restarted after PATH
+  changes, then all four commands must resolve by name before P0-FND-001 begins.
 - **Error handling:** wrap with context (`%w`); never discard an error silently (the old build
   swallowed usage/billing writes — errcheck + a review rule forbid it). Public failures use the one
   stable envelope `{ error: { code, message, request_id, retryable } }` — no raw provider errors, no

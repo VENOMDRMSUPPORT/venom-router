@@ -43,9 +43,9 @@
 | Application implementation code | **None.** No `go.mod`, `cmd/`, `internal/`, `third_party/`, migrations, or dashboard workspace exist. The application workspace is empty. |
 | Approved planning package | `README.md` + `docs/01`–`docs/10`, internally consistent and cross-referenced. |
 | Approved Design System | `Design_System/` = `@venom/design-system@1.0.0`, **12/12 `npm run validate` gates PASS** (see `Design_System/validation/report.md`), handoff-cleaned and manifest-classified. |
-| Version control | Git repository initialized at workspace root (`main` branch, remote: `git@github.com:VENOMDRMSUPPORT/venom-router.git` via SSH). `.gitignore` + `.gitattributes` (LF enforcement) in place. The Design System declares its own handoff/exclusion set in `Design_System/validation/handoff-manifest.json`. No branch/worktree policy is imposed by the repo beyond the initial `main` branch. |
+| Version control | Git repository initialized at workspace root; `main` tracks `origin/main` at `git@github.com:VENOMDRMSUPPORT/venom-router.git` over SSH. No dependency/build/test output is tracked. `.gitignore` excludes those outputs and `.gitattributes` explicitly enforces LF for repository metadata, Go, SQL, JS/TS, config, docs, and scripts. The Design System keeps its additional handoff exclusions in `Design_System/validation/handoff-manifest.json`. |
 | Frontend contract | React + Vite + TypeScript (strict), embedded via `go:embed`; consumes `@venom/design-system`. ([`01 §7`](01-architecture.md#7-tech-stack), [`07 §2.3`](07-design-system.md)) |
-| Backend contract | Go 1.26+, `CGO_ENABLED=0`; embedded Bifrost core (submodule + `replace`) as the primary OpenAI-compatible transport. ([`01 §7`](01-architecture.md#7-tech-stack)) |
+| Backend contract | Go 1.26+, `CGO_ENABLED=0`; embedded Bifrost core (submodule + `replace`) as the primary OpenAI-compatible transport. Approved P0-EXEC-001 pin: `github.com/maximhq/bifrost/core@v1.7.3`, release commit `8f0ef396f589528210f6409383c90863bfa1e99f`. The dependency is not fetched before that task. ([`01 §7`](01-architecture.md#7-tech-stack)) |
 | Database contract | SQLite via `modernc.org/sqlite` (pure-Go), single file, single writer, WAL; goose embedded checksummed migrations. ([`01 §5/§7`](01-architecture.md#5-persistence--sqlite)) |
 | Crypto contract | AES-256-GCM keyring outside SQLite; Argon2id KDF; XChaCha20-Poly1305/AES-256-GCM for backup; `x/oauth2`, `golang-jwt`. ([`01 §7/§8`](01-architecture.md#8-security-model)) |
 | Undecided technology | **None material.** All layers are fixed by the approved stack. The only host choice (desktop tray vs headless `serve`) is a run-mode, not an undecided dependency. |
@@ -56,15 +56,11 @@
 | Roadmap phases + gates | 12 phases (`P0`–`P8` with `2a/2b`, `3a/3b/3c`), each with a deterministic gate [`06`]. Preserved verbatim. |
 
 **Conflict scan (mission requirement — verify, don't invent resolutions).** No genuine
-source-to-source conflict was found. Two apparent tensions were verified as *layering/sequence*, not
-contradiction, and are recorded in the Decision Register (§19) rather than resolved by invention:
+source-to-source conflict was found. The former Design System status drift has been remediated
+across `README`, `07`, and `08`; the package is now consistently recorded as implemented and
+gate-passed. One apparent sequencing tension remains documented rather than resolved by invention:
 
-1. **`docs/07` status banner ("no Design System implemented yet") vs. the present, gate-passed
-   `Design_System/` package.** Not a conflict: `docs/07` is the *brief* authored before the dedicated
-   Design System task; that task has since completed and produced the package (mission preamble
-   confirms it passed audit + handoff cleanup). The authoritative current state is the package. The
-   banner is historical framing. **[DEC-DS-STATUS]**
-2. **`06 Phase 2b` "free-set discovery" for `opencode-zen` vs. `06 Phase 3a` "discovery
+1. **`06 Phase 2b` "free-set discovery" for `opencode-zen` vs. `06 Phase 3a` "discovery
    orchestration."** Not a conflict: 2b proves the *adapter's* `DiscoverModels` + authentic
    validation at the fixture level and connect-time best-effort sync; 3a owns the *pipeline*
    (generations, atomic snapshot apply, effective-offering read model, certification lifecycle) and
@@ -128,8 +124,8 @@ manual-evidence — never "files exist."
 
 - **Planning status:** implementation-grade, ready for independent audit.
 - **Phases:** 12 (`P0, P1, P2a, P2b, P3a, P3b, P3c, P4, P5, P6, P7, P8`).
-- **Workstreams:** 21 (§4).
-- **Implementation units (tasks):** 178 (`P0`:14, `P1`:6, `P2a`:6, `P2b`:34, `P3a`:14, `P3b`:14,
+- **Workstreams:** 22 (§4).
+- **Implementation units (tasks):** 179 (`P0`:15, `P1`:6, `P2a`:6, `P2b`:34, `P3a`:14, `P3b`:14,
   `P3c`:12, `P4`:22, `P5`:12, `P6`:16, `P7`:14, `P8`:14). Counts verified against the authored cards in §§9–13.
 - **Critical path length:** 8 phase hops (`P0→P1→P2b→P3a→P3c→P4→P5→P8`), with `P3b` joined into
   `P3c` and `P2a`/`P7`/`P6` overlapping off the critical line.
@@ -138,17 +134,19 @@ manual-evidence — never "files exist."
 
 ## 4. Workstream model
 
-Derived from [`01 §3`](01-architecture.md#3-components-package-boundaries). No workstream contradicts
-the approved package boundaries (pure-domain packages never own I/O; `@venom/design-system` is never
-duplicated).
+The implementation workstreams are derived from [`01 §3`](01-architecture.md#3-components-package-boundaries),
+plus one program-enablement stream (`ENV`) for the reproducible developer/CI bootstrap. No workstream
+contradicts the approved package boundaries (pure-domain packages never own I/O;
+`@venom/design-system` is never duplicated).
 
 > **Workstream count note:** `HLTH` is a **cross-cutting capability workstream** — it defines the
 > health/cooldown/circuit-breaker behavior but is implemented entirely through tasks owned by
-> `DOM`/`CAPI`/`QUOTA`/`ROUTE`/`UI` (see its row below). The 21 workstreams are therefore 20
+> `DOM`/`CAPI`/`QUOTA`/`ROUTE`/`UI` (see its row below). The 22 workstreams are therefore 21
 > task-owning workstreams plus this one cross-cutting workstream; no artificial `HLTH-*` tasks exist.
 
 | Code | Workstream | Primary package(s) | Owns |
 |---|---|---|---|
+| `ENV` | Development environment bootstrap | host + CI bootstrap | Exact tool versions, persistent PATH verification, Git/SSH readiness, and the handoff into repository-level pins. |
 | `FND` | Repository & build foundation | `app`, `cli`, `config`, `platform`, `tray` | Module skeleton, config precedence, OS paths, run modes, composition root, single-instance lock, tray. |
 | `SEC` | Security & owner authentication | `secrets`, `sanitize`, `httpapi`(auth) | Keyring, bound-AAD crypto, redaction, canary, owner auth/session/CSRF/re-verify/lockout/recovery. |
 | `DB` | Database & migrations | `storage` (migrations) | Migration groups M1–M8, pragmas, checksum/integrity/rollback harness, schema-lint. |
@@ -373,29 +371,37 @@ Acceptance gate · Required evidence · Exit · Rollback/containment.** Task car
 - **Exit:** gate green.
 - **Rollback/containment:** none needed — no persistent external state yet; a failed startup leaves no half-state (lock acquired before any DB/keyring work).
 
-#### P0-ENV-001 — Development environment setup ✅ COMPLETED
+#### P0-ENV-001 — Development environment setup
 Purpose: ensure Go toolchain, Git, and essential dev tools are installed and configured before any code task begins.
 References: [`01 §7`](01-architecture.md#7-tech-stack), [`08 §3`](08-engineering-standards.md#3-coding-standards).
 Preconditions: none (first task in program).
 Scope:
 - Install Go 1.26.5 via Winget (`GoLang.Go`); verify `go version` returns `go1.26.5`.
 - Initialize Git at workspace root: `git init`, `.gitignore` (node_modules, dist, test outputs), `.gitattributes` (LF enforcement), remote `origin` via SSH.
-- Install Go tools: `go install golang.org/x/tools/cmd/goimports@latest`, `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`.
+- Install Go tools at exact bootstrap versions: `go install golang.org/x/tools/cmd/goimports@v0.48.0` and `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`.
 - Install Task runner via Winget (`Task.Task` v3.52.0) for cross-platform build orchestration.
-- Persist Go/Tool paths in shell profile for bash (MSYS) and PowerShell.
+- Persist `C:\Program Files\Go\bin`, `%USERPROFILE%\go\bin`, and the Winget Task package path in
+  machine/user PATH so every new shell resolves all four tools by name.
 Non-goals: any project code, go.mod, or application skeleton.
 Boundaries: host machine, shell profiles, `~/.ssh/config`.
 Data impact: none. API impact: none. Security: SSH key added to GitHub; `.gitignore` excludes secrets.
-Tests: `go version` → 1.26.5; `goimports --help`; `golangci-lint --version`; `task --version`; `ssh -T git@github.com` → authenticated; `git status` clean.
-Evidence: tool version outputs, SSH auth success, git remote verification.
+Tests: from a **fresh shell**, `Get-Command go,goimports,golangci-lint,task` resolves all four;
+`go version` → 1.26.5; `go version -m` proves goimports `v0.48.0`; `golangci-lint version` →
+`2.12.2`; `task --version` → `3.52.0`; `ssh -T git@github.com` authenticates; `git status` is clean;
+ignored dependency/build/test paths remain untracked; `git check-attr eol` returns `lf` for Go/SQL.
+Evidence: fresh-shell command resolution + tool version outputs, SSH auth, remote HEAD, Git ignore/
+attribute checks.
 Deps: none. Parallel-with: —. Blocks: P0-FND-001.
-DoD: all tools installed, PATH persistent, Git initialized with remote, SSH authenticated.
+DoD: exact versions installed; permanent PATH contains every tool; a fresh shell resolves every
+command by name; Git/SSH/ignore/LF checks pass. Global installation is bootstrap evidence only —
+repository-level pins land in P0-FND-001.
 
 #### P0-FND-001 — Go module, repo skeleton & tooling
 Purpose: establish the build so every later task compiles and lints from day one.
 References: [`01 §3/§7`](01-architecture.md#3-components-package-boundaries), [`08 §3`](08-engineering-standards.md#3-coding-standards).
 Preconditions: P0-ENV-001 (Go + tools + Git installed).
-Scope: `go.mod` (Go 1.26, `CGO_ENABLED=0`); `internal/{app,cli,config,platform,tray,secrets,sanitize,providers,accounts/domain,accounts/application,models,intelligence,routing,execution,quota,httpapi,httpui,storage,observability}` package skeletons; `golangci-lint` config (staticcheck, errcheck, ineffassign, gocyclo, forbidigo); `gofmt`/`goimports`; task/make runner; LF enforcement (`.gitattributes`).
+Scope: `go.mod` (`go 1.26.0`, `toolchain go1.26.5`) with Go `tool` directives pinning goimports
+`v0.48.0` and golangci-lint `v2.12.2`; `internal/{app,cli,config,platform,tray,secrets,sanitize,providers,accounts/domain,accounts/application,models,intelligence,routing,execution,quota,httpapi,httpui,storage,observability}` package skeletons; `golangci-lint` config (staticcheck, errcheck, ineffassign, gocyclo, forbidigo); Taskfile using Task `3.52.0`; LF enforcement (`.gitattributes`).
 Non-goals: any behavior.
 Boundaries: repo root, `internal/*`.
 Data impact: none. API impact: none. Security: forbidigo rules declared. Failure/rollback: n/a.
@@ -493,8 +499,11 @@ DoD: migrations run, verify, roll back in dev, and fail closed on tamper — bot
 Purpose: the commodity execution plumbing.
 References: [`01 §4.3/§7`](01-architecture.md#4-the-execution-boundary), [`08 §2/§8`](08-engineering-standards.md#2-repository--module-layering).
 Preconditions: P0-FND-001.
-Scope: `third_party/bifrost` as submodule + Go `replace`; pinned SHA; a check flags local modifications to vendored code.
-Non-goals: editing Bifrost; adding transports (P4).
+Scope: fetch the approved module pin `github.com/maximhq/bifrost/core@v1.7.3` using the upstream
+installation contract; pin the corresponding release commit
+`8f0ef396f589528210f6409383c90863bfa1e99f` in `third_party/bifrost` as a submodule; wire the Go
+`replace`; add a check that flags local modifications to vendored code.
+Non-goals: fetching/installing Bifrost before this task; editing Bifrost; adding transports (P4).
 Boundaries: `third_party/bifrost`, `go.mod`. Data/API impact: none. Security: n/a. Failure/rollback: build pins SHA; local-mod check blocks drift.
 Tests: build includes vendored core; local-mod check green.
 Evidence: submodule SHA + local-mod check log.
@@ -3038,7 +3047,8 @@ recording dated evidence. **No gate passes because files exist.**
 | DEC-15 | Exact tier names/IDs: `venom/lite`, `venom/pro`, `venom/max` (context 256K/512K/1M; thinking none/extended/ultra) | [`05 §1`](05-tier-engine.md#1-the-three-tiers-authoritative-policy) |
 | DEC-16 | Competitive band Pro ≤0.08 / Max ≤0.03 (0–1 quality scale; never auto-widen) | [`05 §8.5`](05-tier-engine.md#8-resolved-product-decisions) |
 | DEC-17 | Step-5 scoring weights fixed for V1 (dashboard tuning deferred) | [`05 §8.4`](05-tier-engine.md#8-resolved-product-decisions) |
-| DEC-DS-STATUS | `docs/07` "not implemented" banner is historical; the gate-passed package is the current state (§1) | this plan §1 |
+| DEC-18 | Bifrost Core candidate pin is `github.com/maximhq/bifrost/core@v1.7.3` at release commit `8f0ef396f589528210f6409383c90863bfa1e99f`; fetching and integration belong exclusively to `P0-EXEC-001` | [official release](https://github.com/maximhq/bifrost/releases/tag/core/v1.7.3) |
+| DEC-DS-STATUS | `README`, `07`, `08`, and this plan now consistently record the gate-passed `Design_System/` package as the current implementation | this plan §1 |
 | DEC-DISC-LAYERING | P2b proves adapter discovery at fixture level; P3a owns the discovery pipeline + free-safety persistence (§1) | this plan §1 |
 
 **23.2 Change classification (what a change requires):**
@@ -3110,17 +3120,16 @@ dependencies are authoritative; (3) migration parallelism clarified (§8/§14 + 
 preparation/isolated testing parallel, numbering/landing/application/integration serialized;
 (4) Backup/Restore removed from the P6 gate and `P6-TEST-002` (its endpoints land in P8) and placed
 end-to-end in the P8 gate; (5) production Backup/Restore UI ownership assigned to the new
-`P8-UI-001` (task count 177 → **178**, `P8` 13 → 14); (6) `HLTH` clarified as a cross-cutting
-workstream implemented via `P2b-DOM-001`/`P2b-CAPI-004`/`P3b-QUOTA-008`/`P4-ROUTE-014`/`P6-UI-007`.
+`P8-UI-001` (task count 177 → 178, `P8` 13 → 14); (6) `HLTH` clarified as a cross-cutting
+workstream implemented via `P2b-DOM-001`/`P2b-CAPI-004`/`P3b-QUOTA-008`/`P4-ROUTE-014`/`P6-UI-007`;
+(7) `P0-ENV-001` added as the environment-bootstrap unit (task count 178 → **179**, `P0` 14 → 15,
+workstreams 21 → 22), with exact tool-version pins and a fresh-shell PATH resolution gate.
 
 ---
 
 *End of implementation plan. Machine-readable companions:*
 [Appendix A — task dependency matrix](11-appendix-A-task-dependency-matrix.md) ·
 [Appendix B — requirement traceability](11-appendix-B-requirement-traceability.md).
-
-
-
 
 
 

@@ -85,7 +85,8 @@ Integration handoff contract              | 07 §10     | DS task → dashboard 
   dated live evidence with the fixture suite as the CI gate.
 - **Tasks without gates:** none — every task's evidence rolls into a phase gate (main plan §21).
 - **Circular dependencies:** none — Appendix A `hard_deps` form a DAG (critical-path spine confirms no back-edge).
-- **Unresolved decisions:** none — all product decisions are frozen (main plan §23.1); the two layering
-  observations (`DEC-DS-STATUS`, `DEC-DISC-LAYERING`) are recorded, not open.
+- **Unresolved decisions:** none — all product decisions are frozen (main plan §23.1); Design System
+  status is synchronized across the docs (`DEC-DS-STATUS`) and the remaining discovery sequencing
+  observation (`DEC-DISC-LAYERING`) is recorded, not open.
 - **Out-of-plan by design:** `docs/05 §9` future scope (image generation, embeddings/audio,
   cross-provider equivalence, per-offering funding override) — no V1 phase or gate, as intended.

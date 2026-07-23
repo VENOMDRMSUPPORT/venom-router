@@ -115,16 +115,15 @@ Read in order. Each doc is self-contained but assumes the principles above.
 4. **[04-model-intelligence.md](docs/04-model-intelligence.md)** — account-scoped discovery, dynamic capability/context probing, certification, and the effective-offering read model. *No hardcoding, ever.*
 5. **[05-tier-engine.md](docs/05-tier-engine.md)** — the `lite/pro/max` policies, per-request offering selection, per-tier free/paid distribution (Pro mix target; Max quota-fair), fallback/cooldown, and quota accounting.
 6. **[06-roadmap.md](docs/06-roadmap.md)** — the phased greenfield build plan with gates.
-7. **[07-design-system.md](docs/07-design-system.md)** — the **authoritative planning brief** for the future Venom Design System (token architecture, multi-theme contract, component inventory, accessibility/density rules, drift-prevention guardrails). **No Venom Design System is implemented yet** — see the status banner in that doc.
+7. **[07-design-system.md](docs/07-design-system.md)** — the authoritative requirements and acceptance contract for the implemented Venom Design System (token architecture, multi-theme contract, component inventory, accessibility/density rules, drift-prevention guardrails). The versioned package lives in `Design_System/`.
 8. **[08-engineering-standards.md](docs/08-engineering-standards.md)** — how the project is built so it stays professional and drift-free: layering rules, definition of done, testing gates, extension points, and the change checklist.
 9. **[09-control-api.md](docs/09-control-api.md)** — the owner/control-plane API contracts (planning-level, language-neutral): enrollment, OAuth, reauthentication, discovery, health/quota sync, probes, certification, diagnostics, settings, backup/restore.
 10. **[10-requirements-coverage.md](docs/10-requirements-coverage.md)** — the requirement → subsystem → roadmap-phase → deliverable → acceptance-gate coverage matrix.
+11. **[11-implementation-plan.md](docs/11-implementation-plan.md)** — the authoritative execution order, task boundaries, dependencies, evidence, and phase gates. Its two appendices carry the machine-readable task graph and requirement traceability.
 
-> **Design System status:** the repository does **not** contain an implemented Venom Design System.
-> An unrelated legacy bundle (a different product, "Hex AIOS") was removed during planning
-> remediation. `docs/07-design-system.md` is the planning specification for a **separate, dedicated
-> Design System creation task**; UI implementation must not begin until that new Design System
-> passes its own acceptance gate.
+> **Design System status:** The Design System is implemented and approved in `Design_System/` as
+> `@venom/design-system@1.0.0`. Application consumption begins in Phase P2a. Do not rebuild or
+> modify the package during P0 or P1.
 
 
 ---

@@ -1,11 +1,21 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+.gitattributes text eol=lf
+.gitignore text eol=lf
 
 # TypeScript/JavaScript
 *.ts text eol=lf
 *.tsx text eol=lf
 *.js text eol=lf
 *.jsx text eol=lf
+*.cjs text eol=lf
+*.mjs text eol=lf
+
+# Go and database
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+*.sql text eol=lf
 
 # Web
 *.html text eol=lf
@@ -20,6 +30,7 @@
 
 # Shell scripts
 *.sh text eol=lf
+*.ps1 text eol=lf
 
 # Denote these files as binary (do not normalize)
 *.png binary

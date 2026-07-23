@@ -1,16 +1,15 @@
-# 07 — Design System (planning brief for a dedicated creation task)
+# 07 — Design System requirements & acceptance contract
 
 > **STATUS — read first.**
-> - **No Venom Design System is implemented in this repository.** An unrelated legacy bundle
->   (a different product, "Hex AIOS") was **removed** during planning remediation; none of its
->   tokens, themes, components, or assumptions were carried over.
-> - **This document is the authoritative planning brief** for a **separate, dedicated Venom Design
->   System creation task**. It defines *what that task must produce and satisfy*; it does not itself
->   contain an implemented design system.
-> - **This task did not build the Design System** (no tokens, themes, components, or Storybook were
->   created). Those are deliverables of the dedicated task (see [§10](#10-deliverables-for-the-dedicated-design-system-task)).
-> - **UI implementation must not begin** until the dedicated Design System task **passes its own
->   acceptance gate** ([§8](#8-drift-prevention-guardrails-how-this-stays-enforced), [§10](#10-deliverables-for-the-dedicated-design-system-task); enforced by roadmap Phase 2a).
+> - The dedicated Design System task is complete. Its implementation lives in `Design_System/` as
+>   the versioned `@venom/design-system@1.0.0` package; the legacy "Hex AIOS" bundle remains removed
+>   and is not a source of tokens, components, or product assumptions.
+> - This document remains the authoritative requirements and acceptance contract. The package's
+>   `README.md`, `SKILL.md`, and `validation/handoff-contract.md` define its operational consumption
+>   and maintenance rules.
+> - The package has passed its mechanical acceptance gate (`npm run validate`: 12/12). Roadmap
+>   Phase 2a must re-run that gate and prove dashboard consumption across the required themes and
+>   densities before any production Venom UI surface is built.
 
 The visual and interaction foundation for the Venom control dashboard. This doc is a spec, not a
 mood board: it defines a **product identity**, a **token architecture**, a **multi-theme contract**,

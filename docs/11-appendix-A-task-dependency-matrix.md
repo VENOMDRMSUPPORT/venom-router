@@ -15,7 +15,7 @@ unit. Pipe-delimited, stable columns, sortable by `id`. This is the machine-read
   concurrently modify or land the canonical migration sequence, and a later group is conceptually
   rebased onto the latest accepted schema ordering before landing (main plan §8/§14).
 
-Counts: 178 tasks. P0:14 · P1:6 · P2a:6 · P2b:34 · P3a:14 · P3b:14 · P3c:12 · P4:22 · P5:12 · P6:16 · P7:14 · P8:14.
+Counts: 179 tasks. P0:15 · P1:6 · P2a:6 · P2b:34 · P3a:14 · P3b:14 · P3c:12 · P4:22 · P5:12 · P6:16 · P7:14 · P8:14.
 
 ## Phase P0 — Foundation (gate: P0)
 
