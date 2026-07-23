@@ -33,17 +33,18 @@ tasks:
       The single blocking static-invariants gate (P0-TEST-001): gofmt,
       goimports, go vet, golangci-lint (incl. the no-panic/no-fmt.Print*/
       no-os.Getenv-outside-config-or-platform forbidigo rules), the
-      import-layering test, and the no-slug-switch check (the latter two
-      run as part of `go test ./...`, since they are regular Go tests
-      under internal/staticgate and internal/execution respectively).
-      CI invokes exactly this one command on both Windows and Linux — no
-      gate logic is duplicated in the CI workflow file. The race
-      detector (CGO_ENABLED=1) is wired as a separate CI step, not part
-      of this command, since it needs cgo and this command must stay
-      green on hosts without a C toolchain. schema-lint, no-hardcoding,
-      and secret-canary are reserved placeholders (see the `schema-lint`,
-      `no-hardcoding-lint`, and `secret-canary` tasks below) — not part
-      of this gate until populated in P1/P3.
+      import-layering test, the no-slug-switch check, and the P1-SEC-006
+      secret canary (the latter three run as part of `go test ./...`,
+      since they are regular Go tests — under internal/staticgate,
+      internal/execution, and internal/secrets [package secrets_test]
+      respectively). CI invokes exactly this one command on both Windows
+      and Linux — no gate logic is duplicated in the CI workflow file.
+      The race detector (CGO_ENABLED=1) is wired as a separate CI step,
+      not part of this command, since it needs cgo and this command must
+      stay green on hosts without a C toolchain. schema-lint and
+      no-hardcoding remain reserved placeholders (see the `schema-lint`
+      and `no-hardcoding-lint` tasks below) — not part of this gate until
+      populated in P3.
     cmds:
       - |
         set -e
@@ -105,9 +106,16 @@ tasks:
 
   secret-canary:
     desc: >
-      RESERVED placeholder — asserts an injected secret never appears in
-      any log, error, trace, or audit row. Populated in P1 alongside
-      internal/sanitize; intentionally a no-op until then, and not part
-      of `gate`.
+      P1-SEC-006: mechanically proves a known injected secret never
+      survives the leak paths that exist at P1 — encryption (the
+      envelope + Encrypt/Decrypt/Load errors) and structured logging
+      through the sanitize boundary (internal/secrets/canary_test.go,
+      package secrets_test). Trace and audit leak paths don't exist yet
+      (tracing is later, the audit log lands with M2/P2b) and are noted
+      as extension points there rather than faked. This task runs just
+      the canary tests directly for a fast, targeted signal; `gate`'s
+      `go test ./...` already runs them on every build, on both CI OSes
+      — that is the authoritative "runs forever after" gate for this
+      unit.
     cmds:
-      - 'echo "secret-canary: reserved placeholder, not yet implemented (lands in P1)"'
+      - go test -run '^(TestCanaryDetector_|TestSecretCanary_)' ./internal/... -v
