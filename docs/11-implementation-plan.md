@@ -43,7 +43,7 @@
 | Application implementation code | **None.** No `go.mod`, `cmd/`, `internal/`, `third_party/`, migrations, or dashboard workspace exist. The application workspace is empty. |
 | Approved planning package | `README.md` + `docs/01`–`docs/10`, internally consistent and cross-referenced. |
 | Approved Design System | `Design_System/` = `@venom/design-system@1.0.0`, **12/12 `npm run validate` gates PASS** (see `Design_System/validation/report.md`), handoff-cleaned and manifest-classified. |
-| Version control | Not a git repository at the workspace root; the Design System declares its own handoff/exclusion set in `Design_System/validation/handoff-manifest.json`. No branch/worktree policy is imposed by the repo. |
+| Version control | Git repository initialized at workspace root (`main` branch, remote: `git@github.com:VENOMDRMSUPPORT/venom-router.git` via SSH). `.gitignore` + `.gitattributes` (LF enforcement) in place. The Design System declares its own handoff/exclusion set in `Design_System/validation/handoff-manifest.json`. No branch/worktree policy is imposed by the repo beyond the initial `main` branch. |
 | Frontend contract | React + Vite + TypeScript (strict), embedded via `go:embed`; consumes `@venom/design-system`. ([`01 §7`](01-architecture.md#7-tech-stack), [`07 §2.3`](07-design-system.md)) |
 | Backend contract | Go 1.26+, `CGO_ENABLED=0`; embedded Bifrost core (submodule + `replace`) as the primary OpenAI-compatible transport. ([`01 §7`](01-architecture.md#7-tech-stack)) |
 | Database contract | SQLite via `modernc.org/sqlite` (pure-Go), single file, single writer, WAL; goose embedded checksummed migrations. ([`01 §5/§7`](01-architecture.md#5-persistence--sqlite)) |
@@ -373,10 +373,28 @@ Acceptance gate · Required evidence · Exit · Rollback/containment.** Task car
 - **Exit:** gate green.
 - **Rollback/containment:** none needed — no persistent external state yet; a failed startup leaves no half-state (lock acquired before any DB/keyring work).
 
+#### P0-ENV-001 — Development environment setup ✅ COMPLETED
+Purpose: ensure Go toolchain, Git, and essential dev tools are installed and configured before any code task begins.
+References: [`01 §7`](01-architecture.md#7-tech-stack), [`08 §3`](08-engineering-standards.md#3-coding-standards).
+Preconditions: none (first task in program).
+Scope:
+- Install Go 1.26.5 via Winget (`GoLang.Go`); verify `go version` returns `go1.26.5`.
+- Initialize Git at workspace root: `git init`, `.gitignore` (node_modules, dist, test outputs), `.gitattributes` (LF enforcement), remote `origin` via SSH.
+- Install Go tools: `go install golang.org/x/tools/cmd/goimports@latest`, `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`.
+- Install Task runner via Winget (`Task.Task` v3.52.0) for cross-platform build orchestration.
+- Persist Go/Tool paths in shell profile for bash (MSYS) and PowerShell.
+Non-goals: any project code, go.mod, or application skeleton.
+Boundaries: host machine, shell profiles, `~/.ssh/config`.
+Data impact: none. API impact: none. Security: SSH key added to GitHub; `.gitignore` excludes secrets.
+Tests: `go version` → 1.26.5; `goimports --help`; `golangci-lint --version`; `task --version`; `ssh -T git@github.com` → authenticated; `git status` clean.
+Evidence: tool version outputs, SSH auth success, git remote verification.
+Deps: none. Parallel-with: —. Blocks: P0-FND-001.
+DoD: all tools installed, PATH persistent, Git initialized with remote, SSH authenticated.
+
 #### P0-FND-001 — Go module, repo skeleton & tooling
 Purpose: establish the build so every later task compiles and lints from day one.
 References: [`01 §3/§7`](01-architecture.md#3-components-package-boundaries), [`08 §3`](08-engineering-standards.md#3-coding-standards).
-Preconditions: baseline §1.
+Preconditions: P0-ENV-001 (Go + tools + Git installed).
 Scope: `go.mod` (Go 1.26, `CGO_ENABLED=0`); `internal/{app,cli,config,platform,tray,secrets,sanitize,providers,accounts/domain,accounts/application,models,intelligence,routing,execution,quota,httpapi,httpui,storage,observability}` package skeletons; `golangci-lint` config (staticcheck, errcheck, ineffassign, gocyclo, forbidigo); `gofmt`/`goimports`; task/make runner; LF enforcement (`.gitattributes`).
 Non-goals: any behavior.
 Boundaries: repo root, `internal/*`.

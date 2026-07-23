@@ -21,7 +21,8 @@ Counts: 178 tasks. P0:14 · P1:6 · P2a:6 · P2b:34 · P3a:14 · P3b:14 · P3c:1
 
 ```
 id            | phase | ws   | hard_deps            | parallel_safe_with        | blocks                          | gate
-P0-FND-001    | P0    | FND  | —                    | —                         | all P0                          | P0
+P0-ENV-001    | P0    | ENV  | —                    | —                         | P0-FND-001                      | P0
+P0-FND-001    | P0    | FND  | P0-ENV-001           | —                         | all P0                          | P0
 P0-FND-002    | P0    | FND  | P0-FND-001           | P0-FND-003,006;P0-EXEC-001| P0-FND-007                      | P0
 P0-FND-003    | P0    | FND  | P0-FND-001           | P0-FND-002,006            | P0-FND-005,007;P0-DB-001        | P0
 P0-FND-004    | P0    | FND  | P0-FND-002           | DB track                  | P0-FND-007;P2b-SEC-007          | P0
