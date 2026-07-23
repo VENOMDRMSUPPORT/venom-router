@@ -104,25 +104,31 @@ func TestDispatch_Unrecognized(t *testing.T) {
 
 func TestDispatch_Serve_BlocksThenShutsDownWithinBound(t *testing.T) {
 	setTestDataDir(t)
+
+	// A known, pre-reserved address (not ":0") so the test can
+	// synchronize on the listener actually being up before cancelling,
+	// instead of racing a fixed sleep against app.Boot's lock/DB/migrate
+	// work. A fixed sleep here is exactly what caused this test to flake
+	// on a slow CI Windows runner: migration was still in progress when
+	// the sleep elapsed and cancel() fired, aborting Boot mid-migration.
+	bind := freeLoopbackAddr(t)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	var stdout, stderr bytes.Buffer
 
 	done := make(chan error, 1)
 	go func() {
-		// -bind 127.0.0.1:0 (ephemeral): this test only checks dispatch
-		// timing and the shutdown message, never dials the listener, so
-		// the actual resolved port doesn't matter — it just must not be
-		// the hardcoded default (which could collide with something else
-		// already using it).
-		done <- Dispatch(ctx, []string{"serve", "-bind", "127.0.0.1:0"}, &stdout, &stderr)
+		done <- Dispatch(ctx, []string{"serve", "-bind", bind}, &stdout, &stderr)
 	}()
+
+	waitForListener(t, bind)
 
 	select {
 	case err := <-done:
 		t.Fatalf("Dispatch() returned before shutdown was requested, err = %v", err)
-	case <-time.After(200 * time.Millisecond):
-		// still blocking on the run loop, as expected — real Boot (lock,
-		// DB open, migrate) takes a little longer than the old stub did
+	default:
+		// still running, as expected — the listener came up, so Boot
+		// succeeded and Dispatch is now blocked waiting for ctx.Done()
 	}
 
 	begin := time.Now()
@@ -149,10 +155,15 @@ func TestDispatch_Serve_BlocksThenShutsDownWithinBound(t *testing.T) {
 
 func TestDispatch_Bare_BlocksThenShutsDownWithinBound(t *testing.T) {
 	setTestDataDir(t)
+
 	// Bare mode takes no subcommand word, so it has no flags of its own;
-	// override the bind via the env var config.Load already supports so
-	// this test doesn't fight over the hardcoded default port either.
-	t.Setenv("VENOM_BIND", "127.0.0.1:0")
+	// override the bind via the env var config.Load already supports,
+	// using a known, pre-reserved address (not ":0") so the test can
+	// synchronize on the listener actually being up before cancelling —
+	// the same fixed-sleep race described in the serve test above would
+	// otherwise apply here too.
+	bind := freeLoopbackAddr(t)
+	t.Setenv("VENOM_BIND", bind)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var stdout, stderr bytes.Buffer
@@ -162,12 +173,14 @@ func TestDispatch_Bare_BlocksThenShutsDownWithinBound(t *testing.T) {
 		done <- Dispatch(ctx, nil, &stdout, &stderr)
 	}()
 
+	waitForListener(t, bind)
+
 	select {
 	case err := <-done:
 		t.Fatalf("Dispatch() returned before shutdown was requested, err = %v", err)
-	case <-time.After(200 * time.Millisecond):
-		// still blocking on the run loop, as expected — real Boot (lock,
-		// DB open, migrate) takes a little longer than the old stub did
+	default:
+		// still running, as expected — the listener came up, so Boot
+		// succeeded and Dispatch is now blocked waiting for ctx.Done()
 	}
 
 	begin := time.Now()
