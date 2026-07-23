@@ -18,6 +18,15 @@ linters:
         - pattern: '^os\.(Getenv|LookupEnv)$'
           msg: os.Getenv/os.LookupEnv is only allowed inside internal/config and internal/platform — read env/platform values there and pass them in as typed config
   exclusions:
+    paths:
+      # Node workspaces (dashboard/, Design_System/) ship third-party npm packages
+      # that vendor stray .go files (e.g. flatted/golang/**/*.go). Those files are
+      # not part of this Go module; exclude any node_modules path so `task gate`
+      # stays green whenever node_modules is present on disk. node_modules is
+      # gitignored, so CI's fresh checkout never sees these files regardless — this
+      # only fixes the local/dev working-tree case (and any CI job that chains
+      # `npm install` + `task gate`).
+      - (^|/)node_modules($|/)
     rules:
       - path: 'internal/(config|platform)/'
         linters:
