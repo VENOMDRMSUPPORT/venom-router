@@ -139,3 +139,78 @@ jobs:
 
       - name: Run the race detector
         run: task test-race
+
+  # P2a-DS-004: continuous CI coverage for the frontend, finally wired in.
+  # A SEPARATE job from `gate`/`race` — it runs in PARALLEL with them (no
+  # `needs:`), so the Go jobs above stay exactly as fast as before; nothing
+  # here folds into `task gate`. Design_System/dist is not committed, so it
+  # must be built here (npm ci + npm run build) before the dashboard's
+  # `file:` dependency on it will resolve. Also re-verifies the Design
+  # System's own 12/12 gate (`npm run validate`) as a pinned prerequisite,
+  # then builds + embeds the dashboard into internal/httpui/dist and runs
+  # the one Go test that proves the real embed is served end-to-end
+  # (P2a-UI-001) — the only place this repo's CI touches both Node and Go
+  # in the same job, and only for that one narrow, targeted test run.
+  dashboard:
+    name: dashboard (design system + app)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules, for the pinned third_party/bifrost)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: |
+            Design_System/package-lock.json
+            dashboard/package-lock.json
+
+      - name: Install Design_System dependencies
+        working-directory: Design_System
+        run: npm ci
+
+      - name: "Build Design_System (dist/ — the dashboard's file: dependency needs it)"
+        working-directory: Design_System
+        run: npm run build
+
+      - name: Re-verify the Design System gate (12/12, pinned prerequisite)
+        working-directory: Design_System
+        run: npm run validate
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Build the dashboard
+        working-directory: dashboard
+        run: npm run build
+
+      - name: Lint the dashboard (incl. the no-raw-values guardrail, P2a-DS-003)
+        working-directory: dashboard
+        run: npm run lint
+
+      - name: Test the dashboard (theme/density runtime + smoke inventory, 3 themes x 2 densities)
+        working-directory: dashboard
+        run: npm run test
+
+      - name: Set up Go (for the embed pipeline's Go-side test only)
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Task (pinned, prebuilt binary — no from-source build)
+        uses: arduino/setup-task@v2
+        with:
+          version: ${{ env.TASK_VERSION }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + embed the dashboard into internal/httpui/dist (P2a-UI-001)
+        run: task dashboard:build-embed
+
+      - name: Run the real-embed Go test (proves the SPA is served end-to-end)
+        run: go test ./internal/httpui/... ./internal/app/... -run 'TestBoot_ServesEmbeddedDashboardSPA|TestNew_UsesEmbeddedDist' -v

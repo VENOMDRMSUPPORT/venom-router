@@ -5,10 +5,16 @@
 // package defaults are the only source of truth. Browser storage
 // (localStorage/sessionStorage) is never touched here — forbidden by the
 // DS handoff contract.
-import { applyDensity, DEFAULT_DENSITY, DENSITIES, type DensityName } from "@venom/design-system/density";
-import { applyTheme, DEFAULT_THEME, THEMES, type ThemeName } from "@venom/design-system/themes";
+import {
+  applyDensity,
+  DEFAULT_DENSITY,
+  DENSITIES,
+  DENSITY_LABELS,
+  type DensityName,
+} from "@venom/design-system/density";
+import { applyTheme, DEFAULT_THEME, THEMES, THEME_LABELS, type ThemeName } from "@venom/design-system/themes";
 
-export { DEFAULT_DENSITY, DEFAULT_THEME, DENSITIES, THEMES };
+export { DEFAULT_DENSITY, DEFAULT_THEME, DENSITIES, DENSITY_LABELS, THEMES, THEME_LABELS };
 export type { DensityName, ThemeName };
 
 /** Applies the package defaults (venom-dark / comfortable) to root — call once at startup, before first paint. */
