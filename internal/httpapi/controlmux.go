@@ -63,8 +63,11 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB) http.Handl
 	mux.Handle("/api/control/v1/providers", gated(providersHandler.ServeList))
 	mux.Handle("/api/control/v1/providers/{id}", gated(providersHandler.ServeGet))
 
-	// /api/control/v1/jobs/{job_id} (P2b-JOBS-001) is added here once that
-	// unit lands later in this batch.
+	// GET /jobs/{job_id} (P2b-JOBS-001, 09 §3.12) is the single canonical
+	// async-job status surface — no per-resource status route exists or
+	// may be added alongside it.
+	jobsHandler := NewJobsHandler(db)
+	mux.Handle("/api/control/v1/jobs/{job_id}", gated(jobsHandler.ServeGet))
 
 	mux.Handle("/", networkGate(allowedHost, spa))
 	return mux
