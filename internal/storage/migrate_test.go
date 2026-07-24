@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/pressly/goose/v3"
@@ -23,16 +24,17 @@ func TestMigrate_UpDownUp(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	ctx := context.Background()
+	total := embeddedMigrationCount(t)
 
 	results, err := Migrate(ctx, db)
 	if err != nil {
 		t.Fatalf("Migrate() (up) error = %v", err)
 	}
-	if len(results) != 1 {
-		t.Fatalf("Migrate() (up) applied %d migrations, want 1", len(results))
+	if len(results) != total {
+		t.Fatalf("Migrate() (up) applied %d migrations, want %d", len(results), total)
 	}
-	if got := currentVersion(t, db); got != 1 {
-		t.Fatalf("version after up = %d, want 1", got)
+	if got := currentVersion(t, db); got != int64(total) {
+		t.Fatalf("version after up = %d, want %d", got, total)
 	}
 	assertBaselineTableExists(t, db, true)
 
@@ -40,13 +42,12 @@ func TestMigrate_UpDownUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DownOne() error = %v", err)
 	}
-	if downResult.Source.Version != 1 {
-		t.Fatalf("DownOne() rolled back version %d, want 1", downResult.Source.Version)
+	if downResult.Source.Version != int64(total) {
+		t.Fatalf("DownOne() rolled back version %d, want %d", downResult.Source.Version, total)
 	}
-	if got := currentVersion(t, db); got != 0 {
-		t.Fatalf("version after down = %d, want 0", got)
+	if got := currentVersion(t, db); got != int64(total-1) {
+		t.Fatalf("version after down = %d, want %d", got, total-1)
 	}
-	assertBaselineTableExists(t, db, false)
 
 	results, err = Migrate(ctx, db)
 	if err != nil {
@@ -55,10 +56,34 @@ func TestMigrate_UpDownUp(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("Migrate() (re-up) applied %d migrations, want 1", len(results))
 	}
-	if got := currentVersion(t, db); got != 1 {
-		t.Fatalf("version after re-up = %d, want 1", got)
+	if got := currentVersion(t, db); got != int64(total) {
+		t.Fatalf("version after re-up = %d, want %d", got, total)
 	}
 	assertBaselineTableExists(t, db, true)
+}
+
+// embeddedMigrationCount derives the expected number of embedded migrations
+// from the embedded filesystem itself, rather than a hard-coded literal, so
+// this test keeps working as M2/M3+ migrations land.
+func embeddedMigrationCount(t *testing.T) int {
+	t.Helper()
+
+	fsys, err := migrationsRootFS()
+	if err != nil {
+		t.Fatalf("migrationsRootFS: %v", err)
+	}
+	entries, err := fs.ReadDir(fsys, ".")
+	if err != nil {
+		t.Fatalf("read migrations dir: %v", err)
+	}
+
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			count++
+		}
+	}
+	return count
 }
 
 // TestMigrate_ChecksumTamperRejected forces the actual failure condition:
@@ -207,28 +232,44 @@ func TestMigrationBytes_LFOnlyAndChecksumDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrationsRootFS: %v", err)
 	}
-	data, err := fs.ReadFile(fsys, "00001_baseline.sql")
+	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
-		t.Fatalf("read embedded migration: %v", err)
-	}
-	if bytes.ContainsRune(data, '\r') {
-		t.Fatalf("embedded migration contains CR bytes; checksums would not be stable across OSes")
+		t.Fatalf("read migrations dir: %v", err)
 	}
 
-	sum1 := sha256.Sum256(data)
-	sum2 := sha256.Sum256(data)
-	if sum1 != sum2 {
-		t.Fatalf("checksum is not deterministic across repeated computations of the same bytes")
-	}
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		checked++
 
-	source := &goose.Source{Path: "00001_baseline.sql", Version: 1, Type: goose.TypeSQL}
-	got, err := checksumSource(source)
-	if err != nil {
-		t.Fatalf("checksumSource: %v", err)
+		data, err := fs.ReadFile(fsys, e.Name())
+		if err != nil {
+			t.Fatalf("read embedded migration %s: %v", e.Name(), err)
+		}
+		if bytes.ContainsRune(data, '\r') {
+			t.Fatalf("embedded migration %s contains CR bytes; checksums would not be stable across OSes", e.Name())
+		}
+
+		sum1 := sha256.Sum256(data)
+		sum2 := sha256.Sum256(data)
+		if sum1 != sum2 {
+			t.Fatalf("checksum for %s is not deterministic across repeated computations of the same bytes", e.Name())
+		}
+
+		source := &goose.Source{Path: e.Name(), Version: 1, Type: goose.TypeSQL}
+		got, err := checksumSource(source)
+		if err != nil {
+			t.Fatalf("checksumSource(%s): %v", e.Name(), err)
+		}
+		want := hex.EncodeToString(sum1[:])
+		if got != want {
+			t.Fatalf("checksumSource(%s) = %q, want %q (must be a pure function of the embedded bytes)", e.Name(), got, want)
+		}
 	}
-	want := hex.EncodeToString(sum1[:])
-	if got != want {
-		t.Fatalf("checksumSource = %q, want %q (must be a pure function of the embedded bytes)", got, want)
+	if checked == 0 {
+		t.Fatalf("no embedded .sql migrations found to check")
 	}
 }
 
