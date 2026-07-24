@@ -155,3 +155,35 @@ func TestControlMux_SPAFallbackRouteBehindGate(t *testing.T) {
 		t.Fatalf("GET /providers/42/edit status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }
+
+// TestControlMux_AccountDelete_RoutesToDisconnect proves DELETE
+// /accounts/{id} is wired THROUGH THE MUX to ServeDisconnect — a
+// regression guard for a real gap: the account detail route is registered
+// method-lessly to ServeGet, so before a method-specific DELETE pattern was
+// added a DELETE fell through to ServeGet and returned 405, leaving the
+// soft-disconnect handler unreachable. This asserts the composed mux, not
+// the handler in isolation (accounts_test.go covers the disconnect logic
+// directly). An unknown account id is used deliberately: ServeDisconnect
+// answers 404 not_found for it, whereas the old dead routing answered 405 —
+// so 404 (not 405) is exactly the proof the route reaches ServeDisconnect.
+// Removing the DELETE registration in ControlMux turns this RED (405).
+func TestControlMux_AccountDelete_RoutesToDisconnect(t *testing.T) {
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
+	cookie, csrfToken := setupOwnerWithCSRF(t, mux)
+
+	req := newAuthRequest(t, http.MethodDelete, "/api/control/v1/accounts/does-not-exist", nil)
+	req.AddCookie(cookie)
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusMethodNotAllowed {
+		t.Fatalf("DELETE /accounts/{id} returned 405 — the route is not wired to ServeDisconnect (regression)")
+	}
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("DELETE /accounts/{id} status = %d, want 404 (ServeDisconnect for an unknown account); body = %q", rec.Code, rec.Body.String())
+	}
+	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "not_found" {
+		t.Fatalf("error code = %q, want not_found", code)
+	}
+}

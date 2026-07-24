@@ -156,6 +156,14 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	accountsHandler := NewAccountsHandler(accountRepo, credentialRepo, fundingRepo, credentialService, audit, nil, newOAuthTransactionID)
 	mux.Handle("/api/control/v1/accounts", gated(accountsHandler.ServeList))
 	mux.Handle("/api/control/v1/accounts/{id}", gated(accountsHandler.ServeGet))
+	// DELETE /accounts/{id} is the soft-disconnect route (09 §2). It is
+	// registered as a method-specific pattern so it reaches ServeDisconnect;
+	// the method-less /accounts/{id} above only ever serves GET (it 405s any
+	// other method), so without this line a DELETE fell through to ServeGet
+	// and 405'd — ServeDisconnect was unreachable dead code. Go 1.22's
+	// ServeMux treats "DELETE /accounts/{id}" as more specific than the
+	// method-less pattern, so the two do not conflict.
+	mux.Handle("DELETE /api/control/v1/accounts/{id}", gated(accountsHandler.ServeDisconnect))
 	mux.Handle("/api/control/v1/accounts/{id}/reveal", gated(accountsHandler.ServeReveal))
 	mux.Handle("/api/control/v1/accounts/{id}/funding", gated(accountsHandler.ServeFunding))
 	mux.Handle("/api/control/v1/accounts/{id}/stop", gated(accountsHandler.ServeStop))
