@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+// enrollmentVersion is the goose version of the M2 enrollment-core
+// migration (00003_enrollment_core.sql).
+const enrollmentVersion = 3
+
 func TestMigrateEnrollment_UpDownUp(t *testing.T) {
 	dir := t.TempDir()
 	db, err := Open(dir)
@@ -24,8 +28,14 @@ func TestMigrateEnrollment_UpDownUp(t *testing.T) {
 	assertTableExists(t, db, "account_funding_evidence", true)
 	assertTableExists(t, db, "oauth_transactions", true)
 
-	if _, err := DownOne(ctx, db); err != nil {
-		t.Fatalf("DownOne() error = %v", err)
+	// Roll back every migration applied on top of M2, then M2 itself, so
+	// this proves M2's own down path no matter how many later migrations
+	// exist (enrollmentVersion is M2's goose version). The M1/M3 up/down
+	// tests use the same robustness.
+	for currentVersion(t, db) >= enrollmentVersion {
+		if _, err := DownOne(ctx, db); err != nil {
+			t.Fatalf("DownOne() error = %v", err)
+		}
 	}
 	assertTableExists(t, db, "providers", false)
 	assertTableExists(t, db, "accounts", false)
