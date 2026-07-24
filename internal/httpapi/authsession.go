@@ -57,12 +57,19 @@ func (h *AuthHandlers) ServeLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.loginLimiter.Allow(time.Now()) {
-		writeAuthError(w, http.StatusTooManyRequests, "rate_limited", "too many login attempts, try again later", true)
+	ctx := r.Context()
+	now := h.now()
+
+	locked, retryAfter, err := h.checkLockout(ctx, "login", now)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
 		return
 	}
-
-	ctx := r.Context()
+	if locked {
+		h.recordAuthEvent(ctx, "login", "failure", "locked_out", now)
+		writeLockedOut(w, retryAfter)
+		return
+	}
 
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -87,6 +94,7 @@ func (h *AuthHandlers) ServeLogin(w http.ResponseWriter, r *http.Request) {
 	verified := secrets.VerifyOwnerPassword(req.Password, stored)
 
 	if !exists || !verified {
+		h.recordAuthEvent(ctx, "login", "failure", "invalid_credentials", now)
 		writeAuthError(w, http.StatusUnauthorized, "invalid_credentials", "invalid credentials", false)
 		return
 	}
@@ -96,6 +104,7 @@ func (h *AuthHandlers) ServeLogin(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
 		return
 	}
+	h.recordAuthEvent(ctx, "login", "success", "", now)
 
 	csrfToken := h.issueCSRFToken(tokenHash)
 	setCSRFCookie(w, r, csrfToken)

@@ -48,8 +48,16 @@ func (h *AuthHandlers) ServeReverify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.reverifyLimiter.Allow(h.now()) {
-		writeAuthError(w, http.StatusTooManyRequests, "rate_limited", "too many re-verification attempts, try again later", true)
+	now := h.now()
+
+	locked, retryAfter, err := h.checkLockout(ctx, "reverify", now)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+	if locked {
+		h.recordAuthEvent(ctx, "reverify", "failure", "locked_out", now)
+		writeLockedOut(w, retryAfter)
 		return
 	}
 
@@ -77,15 +85,17 @@ func (h *AuthHandlers) ServeReverify(w http.ResponseWriter, r *http.Request) {
 	verified := secrets.VerifyOwnerPassword(req.Password, stored)
 
 	if !exists || !verified {
+		h.recordAuthEvent(ctx, "reverify", "failure", "invalid_credentials", now)
 		writeAuthError(w, http.StatusUnauthorized, "invalid_credentials", "invalid credentials", false)
 		return
 	}
 
-	until := h.now().UTC().Add(reverifyFreshnessTTL)
+	until := now.UTC().Add(reverifyFreshnessTTL)
 	if err := h.ownerSessions.StampReverify(ctx, session.TokenHash, until); err != nil {
 		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
 		return
 	}
+	h.recordAuthEvent(ctx, "reverify", "success", "", now)
 
 	writeAuthJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{

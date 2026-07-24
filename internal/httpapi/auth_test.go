@@ -233,20 +233,35 @@ func TestAuthCanary_SetupPasswordNeverLeaks(t *testing.T) {
 	assertNoFragment(t, rejectRec.Body.String(), shortCanary, "validation-error response body")
 }
 
-// assertNoFragment fails the test if any window (>= 4 chars) of secret
-// appears anywhere in output — the same rigor internal/secrets' own
-// canary suite uses (secrets_test.assertNoSecretFragment), reimplemented
-// here since it is a private test helper in a different package.
-func assertNoFragment(t *testing.T, output, secret, where string) {
-	t.Helper()
-	const minWindow = 4
-	for start := 0; start+minWindow <= len(secret); start++ {
-		for end := start + minWindow; end <= len(secret); end++ {
+// minFragmentWindow is the smallest secret substring length these
+// canary helpers treat as a meaningful leak — the same rigor
+// internal/secrets' own canary suite uses (secrets_test.
+// findSecretFragment), reimplemented here since it is a private test
+// helper in a different package.
+const minFragmentWindow = 4
+
+// findFragment reports the first window (>= minFragmentWindow chars)
+// of secret that appears anywhere in output. It is pure (no *testing.T)
+// so a meta-test can assert its return value directly, proving the
+// detector actually detects a leak rather than merely never firing.
+func findFragment(output, secret string) (fragment string, found bool) {
+	for start := 0; start+minFragmentWindow <= len(secret); start++ {
+		for end := start + minFragmentWindow; end <= len(secret); end++ {
 			frag := secret[start:end]
 			if strings.Contains(output, frag) {
-				t.Fatalf("%s leaked secret fragment %q", where, frag)
+				return frag, true
 			}
 		}
+	}
+	return "", false
+}
+
+// assertNoFragment fails the test if any window (>= 4 chars) of secret
+// appears anywhere in output.
+func assertNoFragment(t *testing.T, output, secret, where string) {
+	t.Helper()
+	if frag, found := findFragment(output, secret); found {
+		t.Fatalf("%s leaked secret fragment %q", where, frag)
 	}
 }
 
