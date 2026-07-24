@@ -6,8 +6,22 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
+
+// testKeyring builds a fresh, ready-to-use keyring for a ControlMux test
+// (P2b-PROV-006) — ControlMux now needs a *secrets.Keyring to wire the
+// OAuth enrollment service, even for tests that never exercise
+// /api/control/v1/providers/*/oauth/* or /api/control/v1/oauth/*.
+func testKeyring(t *testing.T) *secrets.Keyring {
+	t.Helper()
+	kr, err := secrets.Load(t.TempDir(), "", false)
+	if err != nil {
+		t.Fatalf("secrets.Load: %v", err)
+	}
+	return kr
+}
 
 // fakeSPA is a minimal stand-in for httpui's real SPA handler — ControlMux
 // must compose whatever http.Handler it's given behind the gate without
@@ -44,7 +58,7 @@ func testControlDB(t *testing.T) *storage.DB {
 // a loopback client with an allowed Host reaches the SPA handler mounted
 // at "/".
 func TestControlMux_SPABehindGate_LoopbackAllowedHostReturns200(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
@@ -65,7 +79,7 @@ func TestControlMux_SPABehindGate_LoopbackAllowedHostReturns200(t *testing.T) {
 // serving exactly as HealthMux alone does, even with the SPA now mounted
 // on the same mux at "/".
 func TestControlMux_HealthStillWorksAlongsideSPA(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
@@ -86,7 +100,7 @@ func TestControlMux_HealthStillWorksAlongsideSPA(t *testing.T) {
 // disallowed Host header is rejected with 403 before either the SPA or
 // /health ever runs.
 func TestControlMux_DisallowedHostRejected_BothRoutes(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 
 	for _, p := range []string{"/", "/health"} {
 		req := httptest.NewRequest(http.MethodGet, p, nil)
@@ -106,7 +120,7 @@ func TestControlMux_DisallowedHostRejected_BothRoutes(t *testing.T) {
 // non-loopback RemoteAddr is rejected for both the SPA and /health, and
 // a spoofed X-Forwarded-For claiming loopback is never consulted.
 func TestControlMux_NonLoopbackRejected_BothRoutes(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 
 	for _, p := range []string{"/", "/health"} {
 		req := httptest.NewRequest(http.MethodGet, p, nil)
@@ -128,7 +142,7 @@ func TestControlMux_NonLoopbackRejected_BothRoutes(t *testing.T) {
 // the SPA handler behind the gate — ControlMux mounts the SPA at "/" as
 // a catch-all, not an exact match.
 func TestControlMux_SPAFallbackRouteBehindGate(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 
 	req := httptest.NewRequest(http.MethodGet, "/providers/42/edit", nil)
 	req.RemoteAddr = "127.0.0.1:54321"

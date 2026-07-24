@@ -34,7 +34,7 @@ func newAuthRequest(t *testing.T, method, path string, body *bytes.Buffer) *http
 }
 
 func TestAuthStatus_FalseBeforeSetup(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodGet, "/api/control/v1/auth/status", nil))
@@ -57,7 +57,7 @@ func TestAuthStatus_FalseBeforeSetup(t *testing.T) {
 
 func TestAuthSetup_SucceedsOnceAndStatusFlipsToTrue(t *testing.T) {
 	db := testControlDB(t)
-	mux := ControlMux(testAllowedHost, fakeSPA(), db)
+	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodPost, "/api/control/v1/auth/setup", setupRequestBody(testSetupPassword)))
@@ -117,7 +117,7 @@ func TestAuthSetup_SucceedsOnceAndStatusFlipsToTrue(t *testing.T) {
 
 func TestAuthSetup_SecondAttemptRejected(t *testing.T) {
 	db := testControlDB(t)
-	mux := ControlMux(testAllowedHost, fakeSPA(), db)
+	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
 
 	first := httptest.NewRecorder()
 	mux.ServeHTTP(first, newAuthRequest(t, http.MethodPost, "/api/control/v1/auth/setup", setupRequestBody(testSetupPassword)))
@@ -149,7 +149,7 @@ func TestAuthSetup_SecondAttemptRejected(t *testing.T) {
 }
 
 func TestAuthSetup_RejectsTooShortPassword(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodPost, "/api/control/v1/auth/setup", setupRequestBody("short")))
@@ -164,7 +164,7 @@ func TestAuthSetup_RejectsTooShortPassword(t *testing.T) {
 // hash verifies the real password while rejecting a wrong one.
 func TestAuthSetup_StoredHashMatchesDocumentedParamsAndVerifies(t *testing.T) {
 	db := testControlDB(t)
-	mux := ControlMux(testAllowedHost, fakeSPA(), db)
+	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodPost, "/api/control/v1/auth/setup", setupRequestBody(testSetupPassword)))
@@ -202,7 +202,7 @@ func TestAuthCanary_SetupPasswordNeverLeaks(t *testing.T) {
 	const canaryPassword = "CANARY-SECRET-9f3Kx2Qw8pLm0Zt7Vb4Nr1Hy6Dc5Ea-longenough"
 
 	db := testControlDB(t)
-	mux := ControlMux(testAllowedHost, fakeSPA(), db)
+	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodPost, "/api/control/v1/auth/setup", setupRequestBody(canaryPassword)))
@@ -228,7 +228,7 @@ func TestAuthCanary_SetupPasswordNeverLeaks(t *testing.T) {
 	// it rejected either.
 	const shortCanary = "SHORT9f3K"
 	rejectRec := httptest.NewRecorder()
-	mux2 := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux2 := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 	mux2.ServeHTTP(rejectRec, newAuthRequest(t, http.MethodPost, "/api/control/v1/auth/setup", setupRequestBody(shortCanary)))
 	assertNoFragment(t, rejectRec.Body.String(), shortCanary, "validation-error response body")
 }

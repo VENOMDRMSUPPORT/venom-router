@@ -3,7 +3,9 @@ package httpapi
 import (
 	"net/http"
 
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/application"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
@@ -34,7 +36,12 @@ import (
 // package does not import httpui — it only composes whatever handler
 // it's given behind the gate, keeping httpui a pure, gate-agnostic
 // handler package.
-func ControlMux(allowedHost string, spa http.Handler, db *storage.DB) http.Handler {
+//
+// kr is the process's active keyring (P2b-PROV-006), needed here to wire
+// OAuthEnrollmentService's PKCE-verifier and credential envelope
+// encryption — the same keyring internal/app.Boot already loads at its
+// load_keyring stage.
+func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secrets.Keyring) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/health", networkGate(allowedHost, http.HandlerFunc(healthHandler)))
 
@@ -58,8 +65,11 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB) http.Handl
 	// correctly reports zero capabilities for every catalog entry. It is
 	// constructed here, at this composition point, rather than plumbed
 	// through ControlMux's signature, to keep this unit's boot ripple to
-	// zero call-site changes.
-	providersHandler := NewProvidersHandler(providers.NewRegistry())
+	// zero call-site changes. It is shared with the OAuth handler below
+	// (P2b-PROV-006) rather than each building its own — one registry
+	// per process, exactly like every other composition-root singleton.
+	reg := providers.NewRegistry()
+	providersHandler := NewProvidersHandler(reg)
 	mux.Handle("/api/control/v1/providers", gated(providersHandler.ServeList))
 	mux.Handle("/api/control/v1/providers/{id}", gated(providersHandler.ServeGet))
 
@@ -68,6 +78,24 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB) http.Handl
 	// may be added alongside it.
 	jobsHandler := NewJobsHandler(db)
 	mux.Handle("/api/control/v1/jobs/{job_id}", gated(jobsHandler.ServeGet))
+
+	// OAuth enrollment framework (P2b-PROV-006): begin is owner-session +
+	// CSRF gated like every other mutating control route; callback and
+	// status are network-gated ONLY — the provider's redirect and a
+	// status poller both carry no owner session/CSRF, and the
+	// transaction_id itself is the unguessable capability token the
+	// status endpoint relies on. reg is empty of real OAuth adapters this
+	// phase (PROV-007 registers the first live one); every route here is
+	// exercised in tests against a fake adapter registered directly into
+	// a Registry, not through this shared, still-empty one.
+	oauthTxRepo := storage.NewOAuthTransactionRepo(db)
+	oauthService := application.NewOAuthEnrollmentService(
+		oauthTxRepo, storage.NewEnrollmentRepo(db), storage.NewAccountRepo(db), kr, newOAuthTransactionID, nil,
+	)
+	oauthHandler := NewOAuthHandler(oauthService, reg, oauthTxRepo, allowedHost)
+	mux.Handle("/api/control/v1/providers/{id}/oauth/begin", gated(oauthHandler.ServeBegin))
+	mux.Handle("/api/control/v1/oauth/{provider}/callback", networkGate(allowedHost, http.HandlerFunc(oauthHandler.ServeCallback)))
+	mux.Handle("/api/control/v1/oauth/{transaction_id}/status", networkGateJSON(allowedHost, http.HandlerFunc(oauthHandler.ServeStatus)))
 
 	mux.Handle("/", networkGate(allowedHost, spa))
 	return mux

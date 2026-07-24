@@ -140,7 +140,7 @@ func TestOwnerSessionGate_GetNeedsNoCSRF(t *testing.T) {
 // route get the typed envelope, and header-spoofed loopback claims
 // don't bypass it.
 func TestControlMux_GatedRoutesBehindNetworkGateJSON_NonLoopbackRejected(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/control/v1/providers", nil)
 	req.RemoteAddr = "203.0.113.5:54321"
@@ -159,7 +159,7 @@ func TestControlMux_GatedRoutesBehindNetworkGateJSON_NonLoopbackRejected(t *test
 }
 
 func TestControlMux_GatedRoutesBehindNetworkGateJSON_BadHostRejected(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/control/v1/providers", nil)
 	req.RemoteAddr = "127.0.0.1:54321"

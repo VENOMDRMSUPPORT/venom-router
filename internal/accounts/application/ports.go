@@ -66,3 +66,47 @@ type EnrollmentPort interface {
 		funding domain.FundingEvidence,
 	) error
 }
+
+// OAuthTransactionRepo is the storage port OAuthEnrollmentService depends
+// on (P2b-PROV-006): the oauth_transactions table (migration 00003),
+// exposed purely in terms of stdlib and secrets.Envelope — never a
+// storage/database type — so this package never imports internal/storage.
+// internal/storage implements this interface structurally
+// (internal/storage/oauth_transactions.go); the composition root supplies
+// the concrete value.
+//
+// Every method here is deliberately silent about the raw OAuth `state`
+// value: callers pass and this port stores only hex(sha256(state)) — the
+// raw state string is never a parameter or return value anywhere in this
+// interface.
+type OAuthTransactionRepo interface {
+	// Create persists a new pending oauth_transactions row keyed by
+	// stateHash (hex(sha256(state))). verifierEnv is the PKCE verifier's
+	// encrypted envelope — this method never sees the verifier plaintext.
+	// expiresAt is the absolute expiry (createdAt + the service's TTL).
+	Create(ctx context.Context, stateHash, providerID, transactionID string, verifierEnv secrets.Envelope, createdAt, expiresAt time.Time) error
+
+	// ConsumeByStateHash is the single replay-safe operation this port
+	// exists for: in ONE storage-side transaction, it captures the row
+	// named by stateHash (its provider_id, transaction_id, and verifier
+	// envelope) and marks it consumed via a guarded UPDATE ... WHERE
+	// consumed = 0 whose affected-row count must be exactly 1 — the
+	// anti-replay invariant a concurrent second caller cannot also
+	// satisfy. ok is false — with every other return zeroed and the row
+	// left completely unchanged — for every failure case uniformly: no
+	// such row, already consumed, or expired. These cases are
+	// deliberately NOT distinguished from one another (a canary-safe,
+	// non-oracle-shaped API): the caller learns only "this attempt did
+	// not win", never which of the three reasons applied.
+	ConsumeByStateHash(ctx context.Context, stateHash string, now time.Time) (providerID, transactionID string, verifierEnv secrets.Envelope, ok bool, err error)
+
+	// GetStatusByTransactionID reads just enough of a row's lifecycle to
+	// derive pending/expired for the status endpoint when no cached
+	// terminal result exists: whether a row named by transactionID
+	// exists at all (ok), whether it is already consumed, and whether
+	// now is past its expiry. It deliberately never returns the
+	// envelope or provider_id — the status endpoint has no need for
+	// either, and this keeps a read-only status lookup from ever having
+	// secret-shaped data pass through it.
+	GetStatusByTransactionID(ctx context.Context, transactionID string, now time.Time) (consumed bool, expired bool, ok bool, err error)
+}

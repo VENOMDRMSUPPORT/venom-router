@@ -28,7 +28,7 @@ func getGated(t *testing.T, mux http.Handler, path string, cookie *http.Cookie) 
 }
 
 func TestProvidersList_ReturnsElevenBuiltinsPlusCustom(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 	cookie := setupOwner(t, mux, testSetupPassword)
 
 	rec := getGated(t, mux, "/api/control/v1/providers", cookie)
@@ -47,7 +47,7 @@ func TestProvidersList_ReturnsElevenBuiltinsPlusCustom(t *testing.T) {
 }
 
 func TestProvidersList_UnauthenticatedRejected(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodGet, "/api/control/v1/providers", nil))
@@ -58,7 +58,7 @@ func TestProvidersList_UnauthenticatedRejected(t *testing.T) {
 }
 
 func TestProvidersGet_UnknownID404(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 	cookie := setupOwner(t, mux, testSetupPassword)
 
 	rec := getGated(t, mux, "/api/control/v1/providers/does-not-exist", cookie)
@@ -72,7 +72,7 @@ func TestProvidersGet_UnknownID404(t *testing.T) {
 }
 
 func TestProvidersGet_KnownIDReturnsEntry(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 	cookie := setupOwner(t, mux, testSetupPassword)
 
 	rec := getGated(t, mux, "/api/control/v1/providers/clinepass", cookie)
@@ -101,7 +101,7 @@ func TestProvidersList_AntigravityConfiguredReflectsEnv(t *testing.T) {
 	_ = os.Unsetenv(secretVar)
 	_ = os.Unsetenv(idVar)
 
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 	cookie := setupOwner(t, mux, testSetupPassword)
 
 	rec := getGated(t, mux, "/api/control/v1/providers/antigravity", cookie)

@@ -11,7 +11,7 @@ import (
 )
 
 func TestJobsGet_UnauthenticatedRejected(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodGet, "/api/control/v1/jobs/some-job", nil))
@@ -22,7 +22,7 @@ func TestJobsGet_UnauthenticatedRejected(t *testing.T) {
 }
 
 func TestJobsGet_UnknownID404(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 	cookie := setupOwner(t, mux, testSetupPassword)
 
 	rec := getGated(t, mux, "/api/control/v1/jobs/does-not-exist", cookie)
@@ -37,7 +37,7 @@ func TestJobsGet_UnknownID404(t *testing.T) {
 
 func TestJobsGet_KnownIDReturnsDocumentedBody(t *testing.T) {
 	db := testControlDB(t)
-	mux := ControlMux(testAllowedHost, fakeSPA(), db)
+	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
 	cookie := setupOwner(t, mux, testSetupPassword)
 
 	jobs := storage.NewJobRepo(db)
@@ -73,7 +73,7 @@ func TestJobsGet_KnownIDReturnsDocumentedBody(t *testing.T) {
 
 func TestJobsGet_RepollDoesNotMutate(t *testing.T) {
 	db := testControlDB(t)
-	mux := ControlMux(testAllowedHost, fakeSPA(), db)
+	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
 	cookie := setupOwner(t, mux, testSetupPassword)
 
 	jobs := storage.NewJobRepo(db)
@@ -106,7 +106,7 @@ func TestJobsGet_ErrorFieldDoesNotLeakBeyondItself(t *testing.T) {
 	const canary = "CANARY-9f3Kx2Qw8pLm0Zt7Vb4Nr1Hy6Dc5Ea-joberror"
 
 	db := testControlDB(t)
-	mux := ControlMux(testAllowedHost, fakeSPA(), db)
+	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
 	cookie := setupOwner(t, mux, testSetupPassword)
 
 	jobs := storage.NewJobRepo(db)
@@ -138,7 +138,7 @@ func TestJobsGet_ErrorFieldDoesNotLeakBeyondItself(t *testing.T) {
 // competing "per-resource status" URL shapes and confirms none of them
 // serves a job-shaped response — GET /jobs/{job_id} is the only surface.
 func TestJobs_OnlyOneCanonicalStatusSurface(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 	cookie := setupOwner(t, mux, testSetupPassword)
 
 	for _, path := range []string{

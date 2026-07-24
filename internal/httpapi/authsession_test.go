@@ -59,7 +59,7 @@ func decodeErrorCode(t *testing.T, body []byte) string {
 
 func TestAuthLogin_SucceedsAfterSetup(t *testing.T) {
 	db := testControlDB(t)
-	mux := ControlMux(testAllowedHost, fakeSPA(), db)
+	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
 	setupOwner(t, mux, testSetupPassword)
 
 	before := 0
@@ -129,7 +129,7 @@ func TestAuthLogin_SucceedsAfterSetup(t *testing.T) {
 
 func TestAuthLogin_WrongPasswordRejectedGeneric(t *testing.T) {
 	db := testControlDB(t)
-	mux := ControlMux(testAllowedHost, fakeSPA(), db)
+	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
 	setupOwner(t, mux, testSetupPassword)
 
 	rec := httptest.NewRecorder()
@@ -150,13 +150,13 @@ func TestAuthLogin_WrongPasswordRejectedGeneric(t *testing.T) {
 func TestAuthLogin_NoOwnerRow_SameGenericResponseAsWrongPassword(t *testing.T) {
 	// Case A: no owner_auth row exists at all.
 	noOwnerDB := testControlDB(t)
-	noOwnerMux := ControlMux(testAllowedHost, fakeSPA(), noOwnerDB)
+	noOwnerMux := ControlMux(testAllowedHost, fakeSPA(), noOwnerDB, testKeyring(t))
 	noOwnerRec := httptest.NewRecorder()
 	noOwnerMux.ServeHTTP(noOwnerRec, newAuthRequest(t, http.MethodPost, "/api/control/v1/auth/login", setupRequestBody("whatever-password-value")))
 
 	// Case B: owner exists, wrong password supplied.
 	wrongPwDB := testControlDB(t)
-	wrongPwMux := ControlMux(testAllowedHost, fakeSPA(), wrongPwDB)
+	wrongPwMux := ControlMux(testAllowedHost, fakeSPA(), wrongPwDB, testKeyring(t))
 	setupOwner(t, wrongPwMux, testSetupPassword)
 	wrongPwRec := httptest.NewRecorder()
 	wrongPwMux.ServeHTTP(wrongPwRec, newAuthRequest(t, http.MethodPost, "/api/control/v1/auth/login", setupRequestBody("whatever-password-value")))
@@ -187,7 +187,7 @@ func TestAuthLogin_NoOwnerRow_SameGenericResponseAsWrongPassword(t *testing.T) {
 
 func TestAuthLogout_RevokesSessionAndClearsCookie(t *testing.T) {
 	db := testControlDB(t)
-	mux := ControlMux(testAllowedHost, fakeSPA(), db)
+	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
 	cookie := setupOwner(t, mux, testSetupPassword)
 
 	// Confirm the session is valid before logout.
@@ -230,7 +230,7 @@ func TestAuthLogout_RevokesSessionAndClearsCookie(t *testing.T) {
 }
 
 func TestAuthLogout_NoOpWithoutValidCookie(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodPost, "/api/control/v1/auth/logout", nil))
@@ -241,7 +241,7 @@ func TestAuthLogout_NoOpWithoutValidCookie(t *testing.T) {
 }
 
 func TestAuthSession_ValidReturnsExpiry(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 	cookie := setupOwner(t, mux, testSetupPassword)
 
 	req := newAuthRequest(t, http.MethodGet, "/api/control/v1/auth/session", nil)
@@ -259,7 +259,7 @@ func TestAuthSession_ValidReturnsExpiry(t *testing.T) {
 }
 
 func TestAuthSession_AbsentCookieRejected(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodGet, "/api/control/v1/auth/session", nil))
@@ -273,7 +273,7 @@ func TestAuthSession_AbsentCookieRejected(t *testing.T) {
 }
 
 func TestAuthSession_UnknownCookieValueRejected(t *testing.T) {
-	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 	setupOwner(t, mux, testSetupPassword)
 
 	req := newAuthRequest(t, http.MethodGet, "/api/control/v1/auth/session", nil)
@@ -294,7 +294,7 @@ func TestAuthCanary_LoginPasswordNeverLeaks(t *testing.T) {
 	const canaryPassword = "CANARY-SECRET-9f3Kx2Qw8pLm0Zt7Vb4Nr1Hy6Dc5Ea-login"
 
 	db := testControlDB(t)
-	mux := ControlMux(testAllowedHost, fakeSPA(), db)
+	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
 	setupOwner(t, mux, testSetupPassword)
 
 	rec := httptest.NewRecorder()
@@ -310,7 +310,7 @@ func TestAuthCanary_LoginPasswordNeverLeaks(t *testing.T) {
 	}
 
 	// The no-owner-row branch, too.
-	noOwnerMux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	noOwnerMux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 	noOwnerRec := httptest.NewRecorder()
 	noOwnerMux.ServeHTTP(noOwnerRec, newAuthRequest(t, http.MethodPost, "/api/control/v1/auth/login", setupRequestBody(canaryPassword)))
 	assertNoFragment(t, noOwnerRec.Body.String(), canaryPassword, "no-owner login response body")
