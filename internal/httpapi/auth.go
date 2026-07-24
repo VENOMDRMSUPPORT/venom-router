@@ -22,14 +22,15 @@ const sessionCookieName = "venom_session"
 // controlAPIPath is the base path 09 §5.2's cookie is scoped to.
 const controlAPIPath = "/api/control/v1"
 
-// AuthHandlers holds the first-run owner-setup handlers' dependencies:
-// the two M1 repositories and a minimal per-endpoint rate limiter.
-// Constructed once at composition (ControlMux) and shared across
-// requests.
+// AuthHandlers holds the owner-auth handlers' dependencies: the two M1
+// repositories and a minimal per-endpoint rate limiter per mutating
+// endpoint. Constructed once at composition (ControlMux) and shared
+// across requests.
 type AuthHandlers struct {
 	ownerAuth     *storage.OwnerAuthRepo
 	ownerSessions *storage.OwnerSessionRepo
 	setupLimiter  *fixedWindowLimiter
+	loginLimiter  *fixedWindowLimiter
 }
 
 // NewAuthHandlers builds the auth handlers over db's existing connection.
@@ -38,6 +39,7 @@ func NewAuthHandlers(db *storage.DB) *AuthHandlers {
 		ownerAuth:     storage.NewOwnerAuthRepo(db),
 		ownerSessions: storage.NewOwnerSessionRepo(db),
 		setupLimiter:  newFixedWindowLimiter(5, time.Minute),
+		loginLimiter:  newFixedWindowLimiter(5, time.Minute),
 	}
 }
 
@@ -103,7 +105,7 @@ func (h *AuthHandlers) ServeSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idleExpiresAt, absoluteExpiresAt, err := h.createFirstSession(ctx, r, w)
+	idleExpiresAt, absoluteExpiresAt, err := h.createSession(ctx, r, w)
 	if err != nil {
 		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
 		return
@@ -119,10 +121,13 @@ func (h *AuthHandlers) ServeSetup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// createFirstSession mints a fresh opaque session (internal/secrets),
+// createSession mints a fresh opaque session (internal/secrets),
 // persists only its verifier hash, and sets the session cookie. It
-// returns the computed expiry timestamps for the response body.
-func (h *AuthHandlers) createFirstSession(ctx context.Context, r *http.Request, w http.ResponseWriter) (idleExpiresAt, absoluteExpiresAt time.Time, err error) {
+// returns the computed expiry timestamps for the response body. Shared
+// by ServeSetup (the first session) and ServeLogin (every subsequent
+// session) — both create a session identically once the caller is
+// authenticated.
+func (h *AuthHandlers) createSession(ctx context.Context, r *http.Request, w http.ResponseWriter) (idleExpiresAt, absoluteExpiresAt time.Time, err error) {
 	session, err := secrets.MintOwnerSession()
 	if err != nil {
 		return time.Time{}, time.Time{}, err

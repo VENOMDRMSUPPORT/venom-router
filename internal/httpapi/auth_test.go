@@ -13,27 +13,6 @@ import (
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
-// ownerPasswordHashFromRow adapts a persisted storage.OwnerAuthRow back
-// into the secrets.OwnerPasswordHash shape VerifyOwnerPassword expects.
-// This conversion is test-only: the production ServeSetup handler never
-// needs to read the row back and verify it (that round-trip is SEC-002's
-// login flow); this unit's own test uses it to prove the stored row
-// really does verify the password that produced it.
-func ownerPasswordHashFromRow(row storage.OwnerAuthRow) secrets.OwnerPasswordHash {
-	return secrets.OwnerPasswordHash{
-		Hash:    row.PasswordHash,
-		Salt:    row.Salt,
-		Time:    row.KDFTime,
-		MemKiB:  row.KDFMemKiB,
-		Threads: row.KDFThreads,
-		KeyLen:  row.KDFKeyLen,
-	}
-}
-
-func verifyOwnerPassword(password string, stored secrets.OwnerPasswordHash) bool {
-	return secrets.VerifyOwnerPassword(password, stored)
-}
-
 const testSetupPassword = "correct-horse-battery-staple-9"
 
 func setupRequestBody(password string) *bytes.Buffer {
@@ -202,10 +181,10 @@ func TestAuthSetup_StoredHashMatchesDocumentedParamsAndVerifies(t *testing.T) {
 	}
 
 	stored := ownerPasswordHashFromRow(row)
-	if !verifyOwnerPassword(testSetupPassword, stored) {
+	if !secrets.VerifyOwnerPassword(testSetupPassword, stored) {
 		t.Fatalf("stored hash did not verify the real setup password")
 	}
-	if verifyOwnerPassword("definitely-the-wrong-password", stored) {
+	if secrets.VerifyOwnerPassword("definitely-the-wrong-password", stored) {
 		t.Fatalf("stored hash verified a wrong password, want rejection")
 	}
 }
