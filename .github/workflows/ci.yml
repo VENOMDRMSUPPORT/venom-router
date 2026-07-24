@@ -1,16 +1,44 @@
 name: CI
 
+# CI speed note: all gate LOGIC still lives in Taskfile.yml (`task gate`,
+# `task test-race`) — this workflow only invokes those single commands on both
+# Windows and Linux (the P0-TEST-001 invariant). The only thing tuned here is how
+# the pinned tools are PROVISIONED: building golangci-lint/goimports from source
+# via `go install` cost ~3 min per job on every run. They are now restored from a
+# version-keyed cache (built once per pinned-version bump, then reused), and Task
+# comes from a prebuilt binary. The full gate — gofmt, goimports, go vet,
+# golangci-lint, the layering + no-slug-switch tests — still runs on BOTH OSes,
+# unchanged, because build-tagged per-OS files (platform_*, *_windows/_linux) are
+# only linted on their own OS.
+
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+
+# A new push to a ref cancels an in-progress run for that same ref, so rapid
+# pushes don't queue up redundant multi-OS runs.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.26.5"
+  # Pinned tool versions (must match docs/Taskfile expectations). Bumping any of
+  # these changes the tool cache key below, forcing a one-time rebuild.
+  GOLANGCI_LINT_VERSION: "v2.12.2"
+  GOIMPORTS_VERSION: "v0.48.0"
+  TASK_VERSION: "3.52.0"
 
 jobs:
-  # The single blocking static-invariants gate (P0-TEST-001): gofmt,
-  # goimports, go vet, golangci-lint (incl. the layering test and the
-  # no-slug-switch check, both of which run as part of `go test ./...`).
-  # All gate LOGIC lives in Taskfile.yml's `gate` target — this workflow
-  # only invokes it, on both Windows and Linux.
+  # The single blocking static-invariants gate (P0-TEST-001): gofmt, goimports,
+  # go vet, golangci-lint (incl. the layering test and the no-slug-switch check,
+  # both of which run as part of `go test ./...`). All gate LOGIC lives in
+  # Taskfile.yml's `gate` target — this workflow only invokes it, on both OSes.
   gate:
     name: gate (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -27,25 +55,43 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.5"
+          go-version: ${{ env.GO_VERSION }}
+          # Build + module cache keyed on go.sum (default on; explicit here). Speeds
+          # up `go vet`/`go test` in the gate and the CGO race build in the race job.
+          cache: true
 
-      - name: Install goimports (pinned)
-        run: go install golang.org/x/tools/cmd/goimports@v0.48.0
+      - name: Set up Task (pinned, prebuilt binary — no from-source build)
+        uses: arduino/setup-task@v2
+        with:
+          version: ${{ env.TASK_VERSION }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install golangci-lint (pinned)
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+      - name: Locate GOPATH/bin (where go install places the pinned tools)
+        id: gobin
+        shell: bash
+        run: echo "dir=$(go env GOPATH)/bin" >> "$GITHUB_OUTPUT"
 
-      - name: Install Task (pinned)
-        run: go install github.com/go-task/task/v3/cmd/task@v3.52.0
+      - name: Cache the pinned lint tools (golangci-lint, goimports)
+        id: lint-tools-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.gobin.outputs.dir }}
+          key: lint-tools-${{ runner.os }}-go${{ env.GO_VERSION }}-glci${{ env.GOLANGCI_LINT_VERSION }}-goimports${{ env.GOIMPORTS_VERSION }}
+
+      - name: Install the pinned lint tools (only on a cache miss)
+        if: steps.lint-tools-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }}
+          go install golang.org/x/tools/cmd/goimports@${{ env.GOIMPORTS_VERSION }}
 
       - name: Run the static gate
         run: task gate
 
-  # Race detector (test-only). CGO_ENABLED=1 is a build requirement of
-  # Go's race detector itself — production builds stay CGO_ENABLED=0;
-  # these do not conflict. Kept as its own job, separate from `gate`,
-  # since it needs a working C toolchain to even compile, and `gate`
-  # must stay green on hosts without one.
+  # Race detector (test-only). CGO_ENABLED=1 is a build requirement of Go's race
+  # detector itself — production builds stay CGO_ENABLED=0; these do not conflict.
+  # Kept as its own job, separate from `gate`, since it needs a working C toolchain
+  # to even compile, and `gate` must stay green on hosts without one.
   race:
     name: race detector (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -62,15 +108,18 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.5"
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
-      - name: Install Task (pinned)
-        run: go install github.com/go-task/task/v3/cmd/task@v3.52.0
+      - name: Set up Task (pinned, prebuilt binary — no from-source build)
+        uses: arduino/setup-task@v2
+        with:
+          version: ${{ env.TASK_VERSION }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # ubuntu-latest ships gcc already. windows-latest ships MinGW but
-      # not always on PATH for a bare `gcc` invocation; add it via
-      # chocolatey if it isn't already resolvable, so cgo has a compiler
-      # to build the race runtime with.
+      # ubuntu-latest ships gcc already. windows-latest ships MinGW but not always
+      # on PATH for a bare `gcc` invocation; add it via chocolatey only if it isn't
+      # already resolvable, so cgo has a compiler to build the race runtime with.
       - name: Ensure a C toolchain is available for cgo (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
