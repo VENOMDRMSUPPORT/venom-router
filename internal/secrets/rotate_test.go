@@ -1,4 +1,4 @@
-package secrets
+package secrets_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
@@ -43,7 +44,7 @@ func newTestCiphertextStore(t *testing.T, db *storage.DB) *testCiphertextStore {
 	return &testCiphertextStore{db: db}
 }
 
-func (s *testCiphertextStore) seed(t *testing.T, id string, identity RecordIdentity, env Envelope) {
+func (s *testCiphertextStore) seed(t *testing.T, id string, identity secrets.RecordIdentity, env secrets.Envelope) {
 	t.Helper()
 	_, err := s.db.Conn().Exec(`
 		INSERT INTO test_ciphertext_rows (id, purpose, provider, account, record, kind, key_id, nonce, ciphertext)
@@ -64,10 +65,10 @@ func (s *testCiphertextStore) rowsUnderKey(t *testing.T, keyID string) int {
 	return n
 }
 
-func (s *testCiphertextStore) load(t *testing.T, id string) (RecordIdentity, Envelope) {
+func (s *testCiphertextStore) load(t *testing.T, id string) (secrets.RecordIdentity, secrets.Envelope) {
 	t.Helper()
-	var identity RecordIdentity
-	var env Envelope
+	var identity secrets.RecordIdentity
+	var env secrets.Envelope
 	err := s.db.Conn().QueryRow(`
 		SELECT purpose, provider, account, record, kind, key_id, nonce, ciphertext
 		FROM test_ciphertext_rows WHERE id = ?
@@ -86,7 +87,7 @@ func (s *testCiphertextStore) load(t *testing.T, id string) (RecordIdentity, Env
 // batch back to exactly its pre-call state — proving the "single SQL
 // transaction" atomicity the card requires against real SQLite, not a
 // pure in-memory fake.
-func (s *testCiphertextStore) RewrapAll(ctx context.Context, fromKeyID string, rewrap func(RewrapRow) (Envelope, error)) error {
+func (s *testCiphertextStore) RewrapAll(ctx context.Context, fromKeyID string, rewrap func(secrets.RewrapRow) (secrets.Envelope, error)) error {
 	s.mu.Lock()
 	s.rewrapCalls++
 	s.mu.Unlock()
@@ -107,7 +108,7 @@ func (s *testCiphertextStore) RewrapAll(ctx context.Context, fromKeyID string, r
 
 	type batchRow struct {
 		id       string
-		identity RecordIdentity
+		identity secrets.RecordIdentity
 		nonce    []byte
 		cipher   []byte
 	}
@@ -132,10 +133,10 @@ func (s *testCiphertextStore) RewrapAll(ctx context.Context, fromKeyID string, r
 			return errors.New("secrets_test: simulated store failure on row " + r.id)
 		}
 
-		newEnv, err := rewrap(RewrapRow{
+		newEnv, err := rewrap(secrets.RewrapRow{
 			ID:       r.id,
 			Identity: r.identity,
-			Envelope: Envelope{KeyID: fromKeyID, Nonce: r.nonce, Ciphertext: r.cipher},
+			Envelope: secrets.Envelope{KeyID: fromKeyID, Nonce: r.nonce, Ciphertext: r.cipher},
 		})
 		if err != nil {
 			return err
@@ -161,17 +162,17 @@ func openTestDB(t *testing.T) *storage.DB {
 	return db
 }
 
-// seedRows creates n rows, each with a distinct RecordIdentity and
+// seedRows creates n rows, each with a distinct secrets.RecordIdentity and
 // plaintext, encrypted under kr's current active key. It returns the
 // row ids and the original plaintexts, keyed by row id, for later
 // decrypt-and-compare assertions.
-func seedRows(t *testing.T, store *testCiphertextStore, kr *Keyring, n int) (ids []string, plaintexts map[string][]byte, identities map[string]RecordIdentity) {
+func seedRows(t *testing.T, store *testCiphertextStore, kr *secrets.Keyring, n int) (ids []string, plaintexts map[string][]byte, identities map[string]secrets.RecordIdentity) {
 	t.Helper()
 	plaintexts = make(map[string][]byte, n)
-	identities = make(map[string]RecordIdentity, n)
+	identities = make(map[string]secrets.RecordIdentity, n)
 	for i := 0; i < n; i++ {
 		id := "row-" + string(rune('a'+i))
-		identity := RecordIdentity{
+		identity := secrets.RecordIdentity{
 			Purpose:  "test",
 			Provider: "provider",
 			Account:  "account",
@@ -180,9 +181,9 @@ func seedRows(t *testing.T, store *testCiphertextStore, kr *Keyring, n int) (ids
 		}
 		plaintext := []byte("secret-plaintext-" + string(rune('a'+i)))
 
-		env, err := Encrypt(kr, identity, plaintext)
+		env, err := secrets.Encrypt(kr, identity, plaintext)
 		if err != nil {
-			t.Fatalf("seed Encrypt() error = %v", err)
+			t.Fatalf("seed secrets.Encrypt() error = %v", err)
 		}
 		store.seed(t, id, identity, env)
 
@@ -197,7 +198,7 @@ func TestRotate_AtomicRewrap_AllRowsMoveToNewKey(t *testing.T) {
 	dir := t.TempDir()
 	secretsDir := dir + "/secrets"
 
-	kr, err := Load(dir, "", false)
+	kr, err := secrets.Load(dir, "", false)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -207,7 +208,7 @@ func TestRotate_AtomicRewrap_AllRowsMoveToNewKey(t *testing.T) {
 	store := newTestCiphertextStore(t, db)
 	ids, plaintexts, identities := seedRows(t, store, kr, 5)
 
-	holder := NewKeyringHolder(kr)
+	holder := secrets.NewKeyringHolder(kr)
 	if err := holder.Rotate(context.Background(), secretsDir, store); err != nil {
 		t.Fatalf("Rotate() error = %v", err)
 	}
@@ -235,16 +236,16 @@ func TestRotate_AtomicRewrap_AllRowsMoveToNewKey(t *testing.T) {
 		if identity != identities[id] {
 			t.Fatalf("row %q identity changed: got %+v, want %+v", id, identity, identities[id])
 		}
-		got, err := Decrypt(newKr, identity, env)
+		got, err := secrets.Decrypt(newKr, identity, env)
 		if err != nil {
-			t.Fatalf("Decrypt(row %q) error = %v", id, err)
+			t.Fatalf("secrets.Decrypt(row %q) error = %v", id, err)
 		}
 		if string(got) != string(plaintexts[id]) {
 			t.Fatalf("row %q decrypted plaintext = %q, want %q", id, got, plaintexts[id])
 		}
 	}
 
-	reloaded, err := Load(dir, "", false)
+	reloaded, err := secrets.Load(dir, "", false)
 	if err != nil {
 		t.Fatalf("reload Load() error = %v", err)
 	}
@@ -266,7 +267,7 @@ func TestRotate_BatchFailurePartway_RollsBackEntirely(t *testing.T) {
 	dir := t.TempDir()
 	secretsDir := dir + "/secrets"
 
-	kr, err := Load(dir, "", false)
+	kr, err := secrets.Load(dir, "", false)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -277,7 +278,7 @@ func TestRotate_BatchFailurePartway_RollsBackEntirely(t *testing.T) {
 	ids, plaintexts, identities := seedRows(t, store, kr, 4)
 	store.failRowID = ids[2] // fail after rows 0,1 would have been staged
 
-	holder := NewKeyringHolder(kr)
+	holder := secrets.NewKeyringHolder(kr)
 	err = holder.Rotate(context.Background(), secretsDir, store)
 	if err == nil {
 		t.Fatalf("Rotate() error = nil, want a failure from the injected store fault")
@@ -295,9 +296,9 @@ func TestRotate_BatchFailurePartway_RollsBackEntirely(t *testing.T) {
 		if env.KeyID != oldKeyID {
 			t.Fatalf("row %q key_id = %q after rollback, want unchanged %q", id, env.KeyID, oldKeyID)
 		}
-		got, err := Decrypt(kr, identity, env)
+		got, err := secrets.Decrypt(kr, identity, env)
 		if err != nil {
-			t.Fatalf("Decrypt(row %q) after rollback error = %v", id, err)
+			t.Fatalf("secrets.Decrypt(row %q) after rollback error = %v", id, err)
 		}
 		if string(got) != string(plaintexts[id]) {
 			t.Fatalf("row %q plaintext after rollback = %q, want %q", id, got, plaintexts[id])
@@ -320,7 +321,7 @@ func TestRotate_CrashMidRotation_ResumeCompletesIdempotently(t *testing.T) {
 	dir := t.TempDir()
 	secretsDir := dir + "/secrets"
 
-	kr, err := Load(dir, "", false)
+	kr, err := secrets.Load(dir, "", false)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -331,7 +332,7 @@ func TestRotate_CrashMidRotation_ResumeCompletesIdempotently(t *testing.T) {
 	ids, plaintexts, identities := seedRows(t, store, kr, 3)
 	store.failRowID = ids[1] // force Rotate to fail, leaving a pending marker on disk
 
-	holder := NewKeyringHolder(kr)
+	holder := secrets.NewKeyringHolder(kr)
 	if err := holder.Rotate(context.Background(), secretsDir, store); err == nil {
 		t.Fatalf("Rotate() error = nil, want the injected failure")
 	}
@@ -342,14 +343,14 @@ func TestRotate_CrashMidRotation_ResumeCompletesIdempotently(t *testing.T) {
 	// the old key remains in the keyring and usable.
 	for _, id := range ids {
 		identity, env := store.load(t, id)
-		if _, err := Decrypt(kr, identity, env); err != nil {
+		if _, err := secrets.Decrypt(kr, identity, env); err != nil {
 			t.Fatalf("row %q not decryptable immediately after the failed Rotate: %v", id, err)
 		}
 	}
 
 	// Simulate a crash: drop the in-memory holder/keyring entirely and
 	// reload from disk, exactly as a restarted process would.
-	reloaded, err := Load(dir, "", false)
+	reloaded, err := secrets.Load(dir, "", false)
 	if err != nil {
 		t.Fatalf("post-crash reload Load() error = %v", err)
 	}
@@ -362,7 +363,7 @@ func TestRotate_CrashMidRotation_ResumeCompletesIdempotently(t *testing.T) {
 
 	// Retry, this time without the injected fault.
 	store.failRowID = ""
-	resumeHolder := NewKeyringHolder(reloaded)
+	resumeHolder := secrets.NewKeyringHolder(reloaded)
 	if err := resumeHolder.Resume(context.Background(), secretsDir, store); err != nil {
 		t.Fatalf("Resume() error = %v", err)
 	}
@@ -385,9 +386,9 @@ func TestRotate_CrashMidRotation_ResumeCompletesIdempotently(t *testing.T) {
 		if identity != identities[id] {
 			t.Fatalf("row %q identity changed across resume", id)
 		}
-		got, err := Decrypt(finalKr, identity, env)
+		got, err := secrets.Decrypt(finalKr, identity, env)
 		if err != nil {
-			t.Fatalf("Decrypt(row %q) after Resume error = %v", id, err)
+			t.Fatalf("secrets.Decrypt(row %q) after Resume error = %v", id, err)
 		}
 		if string(got) != string(plaintexts[id]) {
 			t.Fatalf("row %q plaintext after Resume = %q, want %q", id, got, plaintexts[id])
@@ -411,7 +412,7 @@ func TestRotate_RefusesWhileAPriorRotationIsPending(t *testing.T) {
 	dir := t.TempDir()
 	secretsDir := dir + "/secrets"
 
-	kr, err := Load(dir, "", false)
+	kr, err := secrets.Load(dir, "", false)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -421,14 +422,14 @@ func TestRotate_RefusesWhileAPriorRotationIsPending(t *testing.T) {
 	ids, _, _ := seedRows(t, store, kr, 2)
 	store.failRowID = ids[1]
 
-	holder := NewKeyringHolder(kr)
+	holder := secrets.NewKeyringHolder(kr)
 	if err := holder.Rotate(context.Background(), secretsDir, store); err == nil {
 		t.Fatalf("Rotate() error = nil, want the injected failure to leave a pending rotation")
 	}
 
 	err = holder.Rotate(context.Background(), secretsDir, store)
-	if !errors.Is(err, ErrRotationInProgress) {
-		t.Fatalf("second Rotate() error = %v, want ErrRotationInProgress", err)
+	if !errors.Is(err, secrets.ErrRotationInProgress) {
+		t.Fatalf("second Rotate() error = %v, want secrets.ErrRotationInProgress", err)
 	}
 }
 
@@ -436,7 +437,7 @@ func TestKeyringHolder_ConcurrentEncryptDecryptDuringRotate(t *testing.T) {
 	dir := t.TempDir()
 	secretsDir := dir + "/secrets"
 
-	kr, err := Load(dir, "", false)
+	kr, err := secrets.Load(dir, "", false)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -445,8 +446,8 @@ func TestKeyringHolder_ConcurrentEncryptDecryptDuringRotate(t *testing.T) {
 	store := newTestCiphertextStore(t, db)
 	_, _, _ = seedRows(t, store, kr, 3)
 
-	holder := NewKeyringHolder(kr)
-	identity := RecordIdentity{Purpose: "p", Provider: "pr", Account: "a", Record: "r", Kind: "k"}
+	holder := secrets.NewKeyringHolder(kr)
+	identity := secrets.RecordIdentity{Purpose: "p", Provider: "pr", Account: "a", Record: "r", Kind: "k"}
 
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
@@ -463,12 +464,12 @@ func TestKeyringHolder_ConcurrentEncryptDecryptDuringRotate(t *testing.T) {
 				default:
 				}
 				snap := holder.Get()
-				env, err := Encrypt(snap, identity, []byte("hello"))
+				env, err := secrets.Encrypt(snap, identity, []byte("hello"))
 				if err != nil {
 					errs <- err
 					return
 				}
-				if _, err := Decrypt(snap, identity, env); err != nil {
+				if _, err := secrets.Decrypt(snap, identity, env); err != nil {
 					errs <- err
 					return
 				}
