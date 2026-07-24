@@ -28,6 +28,7 @@ const (
 	AuditActionAccountDisconnect = "account_disconnect" // DELETE /accounts/{id} (soft-disconnect)
 	AuditActionAccountHealth     = "account_health"     // POST /accounts/{id}/health
 	AuditActionProviderSync      = "provider_sync"      // POST /providers/{id}/sync
+	AuditActionSettingsUpdate    = "settings_update"    // PUT /settings
 )
 
 // Audit result codes.
@@ -40,6 +41,7 @@ const (
 const (
 	AuditResourceProvider = "provider"
 	AuditResourceAccount  = "account"
+	AuditResourceSettings = "settings"
 )
 
 // auditEmitter records one audit_events row per mutating control call

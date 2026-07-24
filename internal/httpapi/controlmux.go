@@ -98,6 +98,16 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	jobsHandler := NewJobsHandler(db)
 	mux.Handle("/api/control/v1/jobs/{job_id}", gated(jobsHandler.ServeGet))
 
+	// Owner settings (P2b-CAPI-005, 07 §2.3/§3): server-side theme/density
+	// persistence — the single GET/PUT surface the app shell (UI-001)
+	// restores from at boot. Config only (no secret, no per-provider
+	// state); wired httpapi<->storage directly like /jobs, with NO
+	// accounts/application port (settings are configuration, not account-
+	// domain orchestration). Owner-session + CSRF gated like every other
+	// authenticated control route.
+	settingsHandler := NewSettingsHandler(storage.NewSettingsRepo(db), audit, nil)
+	mux.Handle("/api/control/v1/settings", gated(settingsHandler.ServeSettings))
+
 	// OAuth enrollment framework (P2b-PROV-006) + reauthentication
 	// staging (P2b-PROV-008): begin/reauth-begin are owner-session +
 	// CSRF gated like every other mutating control route; callback and

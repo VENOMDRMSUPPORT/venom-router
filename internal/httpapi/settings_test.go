@@ -1,0 +1,301 @@
+package httpapi
+
+// settings_test.go exercises the P2b-CAPI-005 owner-settings surface
+// (internal/httpapi/settings.go): GET /settings (defaults on a fresh DB),
+// PUT /settings (valid values round-trip + audit), the validation_error
+// paths (invalid theme / density), the 405 for other methods, and that GET
+// emits no audit row. The handler-direct tests build over a migrated test
+// DB + a real auditEmitter (the same posture accounts_test.go /
+// enrollment_test.go use); the ControlMux tests prove the route is owner-
+// session + CSRF gated.
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
+)
+
+// newTestSettingsHandler builds a SettingsHandler over a fresh migrated DB
+// with an injectable clock, returning the handler and the DB (for direct
+// audit-row assertions).
+func newTestSettingsHandler(t *testing.T, clock func() time.Time) (*SettingsHandler, *storage.DB) {
+	t.Helper()
+	db := testControlDB(t)
+	audit := newAuditEmitter(db, nil)
+	return NewSettingsHandler(storage.NewSettingsRepo(db), audit, clock), db
+}
+
+func fixedSettingsClock() time.Time {
+	return time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+}
+
+// settingsRequest builds a loopback, allowed-Host request to /settings with
+// the given method and optional JSON body.
+func settingsRequest(method string, body map[string]string) *http.Request {
+	var req *http.Request
+	if body != nil {
+		b, _ := json.Marshal(body)
+		req = httptest.NewRequest(method, "/api/control/v1/settings", bytes.NewReader(b))
+	} else {
+		req = httptest.NewRequest(method, "/api/control/v1/settings", nil)
+	}
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Host = testAllowedHost
+	return req
+}
+
+// decodeSettingsData decodes the success envelope's data.theme/density.
+func decodeSettingsData(t *testing.T, body []byte) (theme, density string) {
+	t.Helper()
+	var got struct {
+		Data struct {
+			Theme   string `json:"theme"`
+			Density string `json:"density"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode settings response: %v; body = %q", err, body)
+	}
+	return got.Data.Theme, got.Data.Density
+}
+
+// --- GET ---
+
+// TestSettings_Get_FreshDB_ReturnsDefaults proves GET /settings on a fresh
+// (migrated, empty) DB returns the frozen design-system defaults:
+// {"data":{"theme":"venom-dark","density":"comfortable"}}.
+func TestSettings_Get_FreshDB_ReturnsDefaults(t *testing.T) {
+	h, _ := newTestSettingsHandler(t, nil)
+
+	rec := httptest.NewRecorder()
+	h.ServeSettings(rec, settingsRequest(http.MethodGet, nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+	theme, density := decodeSettingsData(t, rec.Body.Bytes())
+	if theme != "venom-dark" {
+		t.Fatalf("theme = %q, want venom-dark", theme)
+	}
+	if density != "comfortable" {
+		t.Fatalf("density = %q, want comfortable", density)
+	}
+}
+
+// TestSettings_Get_EmitsNoAudit proves GET emits no audit_event row (reads
+// are not audited, like GET /accounts).
+func TestSettings_Get_EmitsNoAudit(t *testing.T) {
+	h, db := newTestSettingsHandler(t, nil)
+
+	rec := httptest.NewRecorder()
+	h.ServeSettings(rec, settingsRequest(http.MethodGet, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200", rec.Code)
+	}
+
+	var n int
+	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM audit_events WHERE action = ?`, AuditActionSettingsUpdate).Scan(&n); err != nil {
+		t.Fatalf("count audit: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("GET audit rows = %d, want 0 (reads are not audited)", n)
+	}
+}
+
+// --- PUT success ---
+
+// TestSettings_Put_Valid_EchoesAndPersists proves PUT /settings with valid
+// values echoes them back, a subsequent GET returns them, and exactly one
+// audit_events row (settings_update / success) is recorded.
+func TestSettings_Put_Valid_EchoesAndPersists(t *testing.T) {
+	clock := fixedSettingsClock()
+	h, db := newTestSettingsHandler(t, func() time.Time { return clock })
+
+	rec := httptest.NewRecorder()
+	h.ServeSettings(rec, settingsRequest(http.MethodPut, map[string]string{
+		"theme":   "venom-light",
+		"density": "compact",
+	}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+	theme, density := decodeSettingsData(t, rec.Body.Bytes())
+	if theme != "venom-light" || density != "compact" {
+		t.Fatalf("PUT echoed = %s/%s, want venom-light/compact", theme, density)
+	}
+
+	// A subsequent GET returns the persisted values.
+	getRec := httptest.NewRecorder()
+	h.ServeSettings(getRec, settingsRequest(http.MethodGet, nil))
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET after PUT status = %d, want 200", getRec.Code)
+	}
+	theme, density = decodeSettingsData(t, getRec.Body.Bytes())
+	if theme != "venom-light" || density != "compact" {
+		t.Fatalf("GET after PUT = %s/%s, want venom-light/compact (persisted)", theme, density)
+	}
+
+	// Exactly one audit_events row, settings_update / success.
+	var n int
+	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM audit_events WHERE action = ? AND result = ?`, AuditActionSettingsUpdate, AuditResultSuccess).Scan(&n); err != nil {
+		t.Fatalf("count audit: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("settings_update success audit rows = %d, want 1", n)
+	}
+}
+
+// --- PUT validation failures ---
+
+// TestSettings_Put_InvalidTheme proves an invalid theme is rejected with
+// 400 validation_error, leaves the DB unchanged, and records exactly one
+// failure audit row (reason validation_error).
+func TestSettings_Put_InvalidTheme(t *testing.T) {
+	h, db := newTestSettingsHandler(t, nil)
+
+	// Seed a known value first so we can prove the DB is unchanged.
+	if err := h.settings.Put(context.Background(), "venom-dark", "comfortable", time.Now()); err != nil {
+		t.Fatalf("seed settings: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeSettings(rec, settingsRequest(http.MethodPut, map[string]string{
+		"theme":   "dark", // NOT venom-dark — invalid
+		"density": "comfortable",
+	}))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid-theme PUT status = %d, want 400; body = %q", rec.Code, rec.Body.String())
+	}
+	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "validation_error" {
+		t.Fatalf("error code = %q, want validation_error", code)
+	}
+
+	// DB unchanged.
+	row, err := h.settings.Get(context.Background())
+	if err != nil {
+		t.Fatalf("Get after invalid PUT: %v", err)
+	}
+	if row.Theme != "venom-dark" || row.Density != "comfortable" {
+		t.Fatalf("DB after invalid PUT = %s/%s, want venom-dark/comfortable (unchanged)", row.Theme, row.Density)
+	}
+
+	// Exactly one failure audit row.
+	var n int
+	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM audit_events WHERE action = ? AND result = ?`, AuditActionSettingsUpdate, AuditResultFailure).Scan(&n); err != nil {
+		t.Fatalf("count audit: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("settings_update failure audit rows = %d, want 1", n)
+	}
+}
+
+// TestSettings_Put_InvalidDensity proves an invalid density is rejected
+// with 400 validation_error.
+func TestSettings_Put_InvalidDensity(t *testing.T) {
+	h, _ := newTestSettingsHandler(t, nil)
+
+	rec := httptest.NewRecorder()
+	h.ServeSettings(rec, settingsRequest(http.MethodPut, map[string]string{
+		"theme":   "venom-dark",
+		"density": "cozy", // invalid
+	}))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid-density PUT status = %d, want 400; body = %q", rec.Code, rec.Body.String())
+	}
+	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "validation_error" {
+		t.Fatalf("error code = %q, want validation_error", code)
+	}
+}
+
+// --- method ---
+
+// TestSettings_OtherMethod_405 proves POST/DELETE/etc return 405
+// method_not_allowed (one handler serves GET+PUT only).
+func TestSettings_OtherMethod_405(t *testing.T) {
+	h, _ := newTestSettingsHandler(t, nil)
+
+	for _, method := range []string{http.MethodPost, http.MethodDelete, http.MethodPatch} {
+		rec := httptest.NewRecorder()
+		h.ServeSettings(rec, settingsRequest(method, nil))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s status = %d, want 405; body = %q", method, rec.Code, rec.Body.String())
+		}
+		if code := decodeErrorCode(t, rec.Body.Bytes()); code != "method_not_allowed" {
+			t.Fatalf("%s error code = %q, want method_not_allowed", method, code)
+		}
+	}
+}
+
+// --- Gating (ControlMux composition) ---
+
+// TestControlMux_Settings_UnauthenticatedRejected proves the real
+// ControlMux composition rejects an unauthenticated GET /settings with 401.
+func TestControlMux_Settings_UnauthenticatedRejected(t *testing.T) {
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
+
+	req := newAuthRequest(t, http.MethodGet, "/api/control/v1/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /settings unauthenticated status = %d, want 401", rec.Code)
+	}
+}
+
+// TestControlMux_SettingsPut_SessionWithoutCSRFRejected proves a mutating
+// PUT /settings with a valid session but no CSRF token is rejected 403
+// before the handler runs.
+func TestControlMux_SettingsPut_SessionWithoutCSRFRejected(t *testing.T) {
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
+	cookie, _ := setupOwnerWithCSRF(t, mux)
+
+	req := newAuthRequest(t, http.MethodPut, "/api/control/v1/settings", nil)
+	req.AddCookie(cookie) // no X-CSRF-Token
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("PUT /settings without CSRF status = %d, want 403", rec.Code)
+	}
+	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "csrf_failed" {
+		t.Fatalf("error code = %q, want csrf_failed", code)
+	}
+}
+
+// TestControlMux_SettingsPut_ValidSessionAndCSRF_Succeeds proves a fully
+// authenticated + CSRF'd PUT reaches the handler and persists (the
+// end-to-end path through the real ControlMux).
+func TestControlMux_SettingsPut_ValidSessionAndCSRF_Succeeds(t *testing.T) {
+	db := testControlDB(t)
+	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
+	cookie, csrfToken := setupOwnerWithCSRF(t, mux)
+
+	body, _ := json.Marshal(map[string]string{"theme": "venom-hc", "density": "compact"})
+	req := newAuthRequest(t, http.MethodPut, "/api/control/v1/settings", bytes.NewBuffer(body))
+	req.AddCookie(cookie)
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT /settings status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+	theme, density := decodeSettingsData(t, rec.Body.Bytes())
+	if theme != "venom-hc" || density != "compact" {
+		t.Fatalf("PUT /settings echoed = %s/%s, want venom-hc/compact", theme, density)
+	}
+
+	// Persisted at the DB layer.
+	repo := storage.NewSettingsRepo(db)
+	row, err := repo.Get(context.Background())
+	if err != nil {
+		t.Fatalf("Get after PUT: %v", err)
+	}
+	if row.Theme != "venom-hc" || row.Density != "compact" {
+		t.Fatalf("DB after PUT = %s/%s, want venom-hc/compact", row.Theme, row.Density)
+	}
+}
