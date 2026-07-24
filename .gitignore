@@ -36,3 +36,12 @@ coverage/
 # Temp
 tmp/
 .tmp/
+
+# internal/httpui/dist is populated by `task dashboard:build-embed`
+# (dashboard/dist copied here for go:embed, P2a-UI-001). Only the
+# compile-time placeholder marker is tracked, so go:embed always has
+# something to embed on a fresh checkout that hasn't run the dashboard
+# build yet; httpui.New() fails closed if that's all it finds.
+!internal/httpui/dist/
+internal/httpui/dist/*
+!internal/httpui/dist/.buildmarker

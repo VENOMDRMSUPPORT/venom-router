@@ -1,0 +1,10 @@
+This directory is populated by `task dashboard:build-embed`, which builds
+dashboard/ (Vite) and copies its dist/ output here for internal/httpui's
+go:embed directive to package into the single binary (P2a-UI-001).
+
+This marker file is the only tracked entry under dist/ — it exists solely
+so `//go:embed all:dist` has at least one file to match on a fresh
+checkout, before the dashboard build has ever run. httpui.New() checks
+for a real index.html + assets/ (not just this marker) and fails closed
+with a clear error if the real dashboard build output isn't present —
+see internal/httpui/httpui.go.

@@ -6,12 +6,32 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/app"
 )
+
+// TestMain injects a fake dashboard SPA into every boot the cli dispatch
+// tests trigger, so the real serve/bare run loop is exercised without
+// requiring a frontend build (P2a-UI-001's real embed is covered by
+// internal/httpui and internal/app tests). version/help modes don't boot
+// and are unaffected.
+func TestMain(m *testing.M) {
+	realBoot := bootFunc
+	bootFunc = func(ctx context.Context, cfg app.BootConfig) (*app.Server, error) {
+		if cfg.SPAHandler == nil {
+			cfg.SPAHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				_, _ = w.Write([]byte("<!doctype html><html><body>fake spa</body></html>"))
+			})
+		}
+		return realBoot(ctx, cfg)
+	}
+	os.Exit(m.Run())
+}
 
 // setTestDataDir points platform's data-dir resolution (used by
 // app.Boot's lock/DB) at a fresh temp directory for the duration of the

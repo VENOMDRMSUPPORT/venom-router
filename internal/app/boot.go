@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/httpapi"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/httpui"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
@@ -49,6 +50,16 @@ type BootConfig struct {
 	// deliberately mismatched key_id reference to prove the fail-closed
 	// path without needing real credential rows.
 	CiphertextStore secrets.CiphertextRefStore
+	// SPAHandler is the dashboard SPA served on the control plane at "/"
+	// (P2a-UI-001). If nil, Boot builds it from internal/httpui's embedded
+	// dashboard via httpui.New(), which fails closed when the embed is the
+	// un-built placeholder rather than a real dashboard build. Exposed here
+	// (rather than always calling httpui.New()) so tests can inject a fake
+	// handler and not depend on a real frontend build — the real embed is
+	// covered by internal/httpui's own tests and the build+embed pipeline,
+	// and exercised in CI once the dashboard build is wired in (P2a-DS-004).
+	// Production (cmd/venom) leaves this nil, so behavior there is unchanged.
+	SPAHandler http.Handler
 }
 
 // Server represents a successfully booted process: a mounted HTTP mux
@@ -86,8 +97,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // Boot performs the composition root: the mandated fail-closed startup
 // order from 01 §2, wiring already-approved pieces (platform's data-dir
 // resolution, this package's single-instance lock, storage's SQLite open
-// + migrate/integrity-verify, the observability logger) together, then
-// mounts a placeholder HTTP mux and starts listening.
+// + migrate/integrity-verify, the observability logger, httpui's embedded
+// dashboard SPA) together, then mounts the control-plane HTTP mux and
+// starts listening.
 //
 // Any failure — including a migration/integrity failure from
 // storage.Migrate — aborts before net.Listen is ever called, so no
@@ -108,11 +120,20 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		logger.Info("startup stage", observability.String("stage", string(s)))
 	}
 
-	// 1. Validate embedded assets. Stub: no embedded assets exist yet —
-	// the dashboard's go:embed lands with internal/httpui (P2b+).
+	// 1. Validate embedded assets: build the dashboard SPA handler from
+	// internal/httpui's go:embed (P2a-UI-001). httpui.New() fails closed
+	// if the embedded dist is the un-built placeholder rather than a
+	// real dashboard build (`task dashboard:build-embed`) — no listener
+	// may ever open behind a broken/empty SPA. The returned handler is
+	// mounted later, at stage 9 (mount_http_mux).
 	logStage(StageValidateEmbeddedAssets)
-	if err := validateEmbeddedAssetsStub(); err != nil {
-		return nil, fmt.Errorf("app: validate embedded assets: %w", err)
+	spa := cfg.SPAHandler
+	if spa == nil {
+		built, buildErr := httpui.New()
+		if buildErr != nil {
+			return nil, fmt.Errorf("app: validate embedded assets: %w", buildErr)
+		}
+		spa = built
 	}
 
 	// 2. Acquire the single-instance lock before any keyring/DB creation.
@@ -208,9 +229,10 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 	// surface (01 §6d): unauthenticated, outside /api/control/v1, behind
 	// the loopback + Host-allowlist network gate. This replaces
 	// P0-FND-007's original placeholder handler — there is exactly one
-	// liveness surface.
+	// liveness surface. The dashboard SPA built at stage 1 joins it on
+	// the same mux, behind the identical gate (P2a-UI-001, 01 §1/§3).
 	logStage(StageMountHTTPMux)
-	mux := httpapi.HealthMux(cfg.Bind)
+	mux := httpapi.ControlMux(cfg.Bind, spa)
 
 	// 10. Listen.
 	logStage(StageListen)
@@ -248,9 +270,9 @@ func (noCiphertextStore) ListKeyRefs(_ context.Context) ([]secrets.CiphertextRef
 // The following are explicit stubs for stages this phase does not yet
 // implement: repositories, provider registry, and services are P2b+.
 // Each is a clearly-marked no-op — none is wired to internal/execution's
-// dispatcher.
+// dispatcher. validate_embedded_assets is no longer a stub as of
+// P2a-UI-001 — it calls httpui.New() directly, above.
 
-func validateEmbeddedAssetsStub() error { return nil }
-func buildRepositoriesStub()            {}
-func buildProviderRegistryStub()        {}
-func buildServicesStub()                {}
+func buildRepositoriesStub()     {}
+func buildProviderRegistryStub() {}
+func buildServicesStub()         {}

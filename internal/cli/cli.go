@@ -33,6 +33,13 @@ Usage:
 // binary does not recognize.
 var ErrUnrecognizedMode = errors.New("cli: unrecognized mode")
 
+// bootFunc is the composition-root boot entry, indirected only so the
+// dispatch tests can substitute a boot that injects a fake dashboard SPA
+// (app.BootConfig.SPAHandler). Production always uses app.Boot unchanged,
+// which builds the real embedded dashboard via httpui.New(). This keeps
+// the cli serve/bare tests independent of a frontend build.
+var bootFunc = app.Boot
+
 // Dispatch routes process arguments (typically os.Args[1:]) to the
 // correct run mode, writing mode output to stdout and error output to
 // stderr. ctx carries the shutdown request for serve/bare's run loop —
@@ -80,7 +87,7 @@ func runServeLoop(ctx context.Context, configArgs []string, stdout io.Writer) er
 		return fmt.Errorf("cli: load config: %w", err)
 	}
 
-	srv, err := app.Boot(ctx, app.BootConfig{Bind: cfg.Bind})
+	srv, err := bootFunc(ctx, app.BootConfig{Bind: cfg.Bind})
 	if err != nil {
 		return fmt.Errorf("cli: boot: %w", err)
 	}

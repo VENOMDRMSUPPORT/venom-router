@@ -11,6 +11,37 @@ tasks:
     cmds:
       - golangci-lint run
 
+  dashboard:build-embed:
+    desc: >
+      P2a-UI-001: builds the dashboard (Vite) and copies its dist/
+      output into internal/httpui/dist/ so `go:embed` packages it into
+      the single binary. @venom/design-system is built first since
+      dashboard depends on its dist/ output (P2a-DS-001). Must run
+      before building/running the binary with a real embedded
+      dashboard — without it, internal/httpui.New() fails closed with a
+      clear error at Boot's validate_embedded_assets stage (the
+      compile itself still succeeds via the committed
+      internal/httpui/dist/.buildmarker placeholder, so `go build`/
+      `go vet`/`go test` never require this task to have run).
+    cmds:
+      - |
+        set -e
+        echo "== building @venom/design-system (dashboard's file: dependency) =="
+        (cd Design_System && npm run build)
+        echo "== building dashboard =="
+        (cd dashboard && npm run build)
+        echo "== copying dashboard/dist -> internal/httpui/dist (preserving .buildmarker) =="
+        node -e "
+          const fs = require('node:fs');
+          const dest = 'internal/httpui/dist';
+          for (const entry of fs.readdirSync(dest)) {
+            if (entry === '.buildmarker') continue;
+            fs.rmSync(dest + '/' + entry, { recursive: true, force: true });
+          }
+          fs.cpSync('dashboard/dist', dest, { recursive: true });
+        "
+        echo "== dashboard:build-embed: internal/httpui/dist now holds the real dashboard build =="
+
   vendor-check:
     desc: Fail if third_party/bifrost has drifted from its pinned commit or been locally modified
     cmds:
