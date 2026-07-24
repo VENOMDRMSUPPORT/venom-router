@@ -291,6 +291,70 @@ func TestOwnerSessionRepo_RevokeAll_RevokesEveryActiveSession(t *testing.T) {
 	}
 }
 
+func TestOwnerSessionRepo_StampReverify_SetsReverifyFreshUntil(t *testing.T) {
+	db := migratedOwnerAuthDB(t)
+	repo := NewOwnerSessionRepo(db)
+	ctx := context.Background()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	tokenHash := []byte("reverify-me")
+	if err := repo.Create(ctx, OwnerSessionRow{
+		TokenHash:         tokenHash,
+		CreatedAt:         now,
+		LastSeenAt:        now,
+		IdleExpiresAt:     now.Add(30 * time.Minute),
+		AbsoluteExpiresAt: now.Add(12 * time.Hour),
+	}); err != nil {
+		t.Fatalf("Create: unexpected error: %v", err)
+	}
+
+	until := now.Add(5 * time.Minute)
+	if err := repo.StampReverify(ctx, tokenHash, until); err != nil {
+		t.Fatalf("StampReverify: unexpected error: %v", err)
+	}
+
+	got, ok, err := repo.GetByTokenHash(ctx, tokenHash)
+	if err != nil || !ok {
+		t.Fatalf("GetByTokenHash: ok=%v err=%v", ok, err)
+	}
+	if got.ReverifyFreshUntil == nil || !got.ReverifyFreshUntil.Equal(until) {
+		t.Fatalf("ReverifyFreshUntil = %v, want %v", got.ReverifyFreshUntil, until)
+	}
+}
+
+func TestOwnerSessionRepo_StampReverify_RevokedSessionUnaffected(t *testing.T) {
+	db := migratedOwnerAuthDB(t)
+	repo := NewOwnerSessionRepo(db)
+	ctx := context.Background()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	tokenHash := []byte("reverify-revoked")
+	if err := repo.Create(ctx, OwnerSessionRow{
+		TokenHash:         tokenHash,
+		CreatedAt:         now,
+		LastSeenAt:        now,
+		IdleExpiresAt:     now.Add(30 * time.Minute),
+		AbsoluteExpiresAt: now.Add(12 * time.Hour),
+	}); err != nil {
+		t.Fatalf("Create: unexpected error: %v", err)
+	}
+	if err := repo.Revoke(ctx, tokenHash); err != nil {
+		t.Fatalf("Revoke: unexpected error: %v", err)
+	}
+
+	if err := repo.StampReverify(ctx, tokenHash, now.Add(5*time.Minute)); err != nil {
+		t.Fatalf("StampReverify: unexpected error: %v", err)
+	}
+
+	got, ok, err := repo.GetByTokenHash(ctx, tokenHash)
+	if err != nil || !ok {
+		t.Fatalf("GetByTokenHash: ok=%v err=%v", ok, err)
+	}
+	if got.ReverifyFreshUntil != nil {
+		t.Fatalf("ReverifyFreshUntil = %v, want nil (StampReverify must not touch a revoked session)", got.ReverifyFreshUntil)
+	}
+}
+
 func TestOwnerSessionRepo_Revoke_IdempotentAndNeverResurrects(t *testing.T) {
 	db := migratedOwnerAuthDB(t)
 	repo := NewOwnerSessionRepo(db)

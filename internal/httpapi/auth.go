@@ -27,10 +27,11 @@ const controlAPIPath = "/api/control/v1"
 // endpoint. Constructed once at composition (ControlMux) and shared
 // across requests.
 type AuthHandlers struct {
-	ownerAuth     *storage.OwnerAuthRepo
-	ownerSessions *storage.OwnerSessionRepo
-	setupLimiter  *fixedWindowLimiter
-	loginLimiter  *fixedWindowLimiter
+	ownerAuth       *storage.OwnerAuthRepo
+	ownerSessions   *storage.OwnerSessionRepo
+	setupLimiter    *fixedWindowLimiter
+	loginLimiter    *fixedWindowLimiter
+	reverifyLimiter *fixedWindowLimiter
 
 	// csrfKey is a random 32-byte key generated once per AuthHandlers
 	// (process lifetime), never persisted. It is the sole secret input
@@ -64,12 +65,13 @@ func NewAuthHandlers(db *storage.DB) *AuthHandlers {
 	_, _ = rand.Read(csrfKey)
 
 	return &AuthHandlers{
-		ownerAuth:     storage.NewOwnerAuthRepo(db),
-		ownerSessions: storage.NewOwnerSessionRepo(db),
-		setupLimiter:  newFixedWindowLimiter(5, time.Minute),
-		loginLimiter:  newFixedWindowLimiter(5, time.Minute),
-		csrfKey:       csrfKey,
-		now:           time.Now,
+		ownerAuth:       storage.NewOwnerAuthRepo(db),
+		ownerSessions:   storage.NewOwnerSessionRepo(db),
+		setupLimiter:    newFixedWindowLimiter(5, time.Minute),
+		loginLimiter:    newFixedWindowLimiter(5, time.Minute),
+		reverifyLimiter: newFixedWindowLimiter(5, time.Minute),
+		csrfKey:         csrfKey,
+		now:             time.Now,
 	}
 }
 

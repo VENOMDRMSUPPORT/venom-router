@@ -31,12 +31,13 @@ func parseTimestamp(s string) (time.Time, error) {
 // — the raw opaque handle is minted by internal/secrets, handed to the
 // caller as the cookie value, and never stored.
 type OwnerSessionRow struct {
-	TokenHash         []byte
-	CreatedAt         time.Time
-	LastSeenAt        time.Time
-	IdleExpiresAt     time.Time
-	AbsoluteExpiresAt time.Time
-	RevokedAt         *time.Time // nil = not revoked
+	TokenHash          []byte
+	CreatedAt          time.Time
+	LastSeenAt         time.Time
+	IdleExpiresAt      time.Time
+	AbsoluteExpiresAt  time.Time
+	RevokedAt          *time.Time // nil = not revoked
+	ReverifyFreshUntil *time.Time // nil = never re-verified (or freshness already consumed by a later stamp's absence)
 }
 
 // OwnerSessionRepo persists owner_sessions rows over the M1 schema.
@@ -77,14 +78,14 @@ func (r *OwnerSessionRepo) Create(ctx context.Context, row OwnerSessionRow) erro
 func (r *OwnerSessionRepo) GetByTokenHash(ctx context.Context, tokenHash []byte) (OwnerSessionRow, bool, error) {
 	var (
 		createdAt, lastSeenAt, idleExpiresAt, absoluteExpiresAt string
-		revokedAt                                               sql.NullString
+		revokedAt, reverifyFreshUntil                           sql.NullString
 	)
 
 	err := r.db.Conn().QueryRowContext(ctx,
-		`SELECT created_at, last_seen_at, idle_expires_at, absolute_expires_at, revoked_at
+		`SELECT created_at, last_seen_at, idle_expires_at, absolute_expires_at, revoked_at, reverify_fresh_until
 		 FROM owner_sessions WHERE token_hash = ?`,
 		tokenHash,
-	).Scan(&createdAt, &lastSeenAt, &idleExpiresAt, &absoluteExpiresAt, &revokedAt)
+	).Scan(&createdAt, &lastSeenAt, &idleExpiresAt, &absoluteExpiresAt, &revokedAt, &reverifyFreshUntil)
 	if errors.Is(err, sql.ErrNoRows) {
 		return OwnerSessionRow{}, false, nil
 	}
@@ -111,6 +112,13 @@ func (r *OwnerSessionRepo) GetByTokenHash(ctx context.Context, tokenHash []byte)
 			return OwnerSessionRow{}, false, parseErr
 		}
 		row.RevokedAt = &t
+	}
+	if reverifyFreshUntil.Valid {
+		t, parseErr := parseTimestamp(reverifyFreshUntil.String)
+		if parseErr != nil {
+			return OwnerSessionRow{}, false, parseErr
+		}
+		row.ReverifyFreshUntil = &t
 	}
 
 	return row, true, nil
@@ -148,6 +156,24 @@ func (r *OwnerSessionRepo) RevokeAll(ctx context.Context, at time.Time) error {
 	)
 	if err != nil {
 		return fmt.Errorf("storage: revoke all owner_sessions rows: %w", err)
+	}
+	return nil
+}
+
+// StampReverify sets reverify_fresh_until for the still-active session
+// identified by tokenHash (09 §5.5: "on success stamp the session's
+// reverify_fresh_until = now + 5 minutes"). The caller computes until
+// (exactly now+5m) — this method persists it verbatim, mirroring
+// Renew's division of responsibility. The WHERE clause only ever
+// matches a still-active row: stamping a revoked or absent session is a
+// no-op, not an error.
+func (r *OwnerSessionRepo) StampReverify(ctx context.Context, tokenHash []byte, until time.Time) error {
+	_, err := r.db.Conn().ExecContext(ctx,
+		`UPDATE owner_sessions SET reverify_fresh_until = ? WHERE token_hash = ? AND revoked_at IS NULL`,
+		formatTimestamp(until), tokenHash,
+	)
+	if err != nil {
+		return fmt.Errorf("storage: stamp reverify_fresh_until: %w", err)
 	}
 	return nil
 }

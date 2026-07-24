@@ -36,6 +36,7 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB) http.Handl
 	mux.Handle("/api/control/v1/auth/login", networkGate(allowedHost, http.HandlerFunc(auth.ServeLogin)))
 	mux.Handle("/api/control/v1/auth/logout", networkGate(allowedHost, http.HandlerFunc(auth.ServeLogout)))
 	mux.Handle("/api/control/v1/auth/session", networkGate(allowedHost, http.HandlerFunc(auth.ServeSession)))
+	mux.Handle("/api/control/v1/auth/reverify", networkGate(allowedHost, http.HandlerFunc(auth.ServeReverify)))
 
 	// The provider registry (P2b-PROV-001) is empty this phase — no
 	// adapter registers until PROV-005/PROV-007 — so DerivedCapabilities
