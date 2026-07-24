@@ -1,15 +1,21 @@
 name: CI
 
-# CI speed note: all gate LOGIC still lives in Taskfile.yml (`task gate`,
-# `task test-race`) — this workflow only invokes those single commands on both
-# Windows and Linux (the P0-TEST-001 invariant). The only thing tuned here is how
-# the pinned tools are PROVISIONED: building golangci-lint/goimports from source
-# via `go install` cost ~3 min per job on every run. They are now restored from a
-# version-keyed cache (built once per pinned-version bump, then reused), and Task
-# comes from a prebuilt binary. The full gate — gofmt, goimports, go vet,
-# golangci-lint, the layering + no-slug-switch tests — still runs on BOTH OSes,
-# unchanged, because build-tagged per-OS files (platform_*, *_windows/_linux) are
-# only linted on their own OS.
+# Speed structure (why this shape):
+#   - The full static gate (`task gate`: gofmt, goimports, go vet, golangci-lint,
+#     go test — incl. the layering + no-slug-switch tests) runs on LINUX ONLY.
+#     gofmt/goimports are OS-independent: they format every .go file by name
+#     regardless of build tags, so windows-tagged files (platform_windows.go,
+#     the windows lock, keyring_windows_test.go, …) ARE format-checked here.
+#   - The race job runs on BOTH Linux and Windows. `go test -race ./...` COMPILES
+#     AND RUNS every test, so the windows race job is the full compile+test
+#     coverage of windows-tagged code — it is what keeps the Windows build/tests
+#     green now that the (slow) windows static-gate job has been dropped.
+#   Accepted tradeoff for speed: golangci-lint / go vet STATIC ANALYSIS is not run
+#   on windows-ONLY-tagged source files (they are still compiled + tested on Windows
+#   by the race job, and format-checked on Linux). Reinstate a windows gate job if a
+#   windows-only lint regression ever slips through.
+#   Gate LOGIC still lives entirely in Taskfile.yml (`task gate` / `task test-race`) —
+#   the P0-TEST-001 "one command, no gate logic in the workflow" invariant holds.
 
 on:
   push:
@@ -21,31 +27,26 @@ on:
       - "**/*.md"
 
 # A new push to a ref cancels an in-progress run for that same ref, so rapid
-# pushes don't queue up redundant multi-OS runs.
+# pushes don't queue up redundant runs.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   GO_VERSION: "1.26.5"
-  # Pinned tool versions (must match docs/Taskfile expectations). Bumping any of
-  # these changes the tool cache key below, forcing a one-time rebuild.
+  # Pinned tool versions. Bumping any of these rotates the tool cache key below,
+  # forcing a one-time rebuild of that tool.
   GOLANGCI_LINT_VERSION: "v2.12.2"
   GOIMPORTS_VERSION: "v0.48.0"
   TASK_VERSION: "3.52.0"
 
 jobs:
-  # The single blocking static-invariants gate (P0-TEST-001): gofmt, goimports,
-  # go vet, golangci-lint (incl. the layering test and the no-slug-switch check,
-  # both of which run as part of `go test ./...`). All gate LOGIC lives in
-  # Taskfile.yml's `gate` target — this workflow only invokes it, on both OSes.
+  # The single blocking static-invariants gate (P0-TEST-001), Linux-only — see the
+  # header note for why one OS is sufficient for the STATIC checks. All gate logic
+  # lives in Taskfile.yml's `gate` target; this job only invokes it.
   gate:
-    name: gate (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest]
+    name: gate (ubuntu-latest)
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout (with submodules, for the pinned third_party/bifrost)
         uses: actions/checkout@v4
@@ -56,8 +57,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          # Build + module cache keyed on go.sum (default on; explicit here). Speeds
-          # up `go vet`/`go test` in the gate and the CGO race build in the race job.
+          # Build + module cache keyed on go.sum: makes go vet / go test /
+          # golangci-lint reuse compiled packages (incl. the Bifrost submodule)
+          # across runs instead of recompiling everything cold.
           cache: true
 
       - name: Set up Task (pinned, prebuilt binary — no from-source build)
@@ -85,13 +87,20 @@ jobs:
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }}
           go install golang.org/x/tools/cmd/goimports@${{ env.GOIMPORTS_VERSION }}
 
+      - name: Cache the golangci-lint analysis cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/golangci-lint
+          key: golangci-analysis-${{ runner.os }}-glci${{ env.GOLANGCI_LINT_VERSION }}-${{ hashFiles('go.sum', '.golangci.yml') }}
+          restore-keys: |
+            golangci-analysis-${{ runner.os }}-glci${{ env.GOLANGCI_LINT_VERSION }}-
+
       - name: Run the static gate
         run: task gate
 
-  # Race detector (test-only). CGO_ENABLED=1 is a build requirement of Go's race
-  # detector itself — production builds stay CGO_ENABLED=0; these do not conflict.
-  # Kept as its own job, separate from `gate`, since it needs a working C toolchain
-  # to even compile, and `gate` must stay green on hosts without one.
+  # Race detector on BOTH OSes. CGO_ENABLED=1 is a build requirement of Go's race
+  # detector itself. `go test -race ./...` compiles AND runs every test, so the
+  # windows leg is the full compile+test coverage of windows-tagged code.
   race:
     name: race detector (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
