@@ -31,6 +31,7 @@ type OAuthHandler struct {
 	allowedHost string
 	cache       *oauthResultCache
 	reauth      *reauthBindingCache
+	audit       *auditEmitter
 	now         func() time.Time
 }
 
@@ -40,11 +41,13 @@ type OAuthHandler struct {
 // callback redirect_uri Begin hands the adapter and Complete later
 // re-derives; it performs no gating of its own (ControlMux's mux-level
 // wiring does that). accounts resolves the target account for a
-// reauthentication begin (P2b-PROV-008).
-func NewOAuthHandler(service *application.OAuthEnrollmentService, reg *providers.Registry, tx *storage.OAuthTransactionRepo, accounts *storage.AccountRepo, allowedHost string) *OAuthHandler {
+// reauthentication begin (P2b-PROV-008). audit is the shared
+// P2b-OBS-001 emitter every mutating route (and the network-gated
+// callback's terminal outcome) records exactly one audit_event through.
+func NewOAuthHandler(service *application.OAuthEnrollmentService, reg *providers.Registry, tx *storage.OAuthTransactionRepo, accounts *storage.AccountRepo, allowedHost string, audit *auditEmitter) *OAuthHandler {
 	return &OAuthHandler{
 		service: service, reg: reg, tx: tx, accounts: accounts, allowedHost: allowedHost,
-		cache: newOAuthResultCache(), reauth: newReauthBindingCache(), now: time.Now,
+		cache: newOAuthResultCache(), reauth: newReauthBindingCache(), audit: audit, now: time.Now,
 	}
 }
 
@@ -77,6 +80,7 @@ func (h *OAuthHandler) ServeBegin(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	adapter, ok := h.reg.OAuthAdapter(providers.ProviderID(id))
 	if !ok {
+		h.audit.Emit(r.Context(), AuditActionOAuthBegin, AuditResultFailure, AuditResourceProvider, id, "not_found")
 		writeAuthError(w, http.StatusNotFound, "not_found", "provider has no OAuth adapter registered", false)
 		return
 	}
@@ -87,10 +91,12 @@ func (h *OAuthHandler) ServeBegin(w http.ResponseWriter, r *http.Request) {
 		RedirectURI: h.callbackURL(id),
 	})
 	if err != nil {
+		h.audit.Emit(r.Context(), AuditActionOAuthBegin, AuditResultFailure, AuditResourceProvider, id, "internal_error")
 		writeAuthError(w, http.StatusInternalServerError, "internal", "failed to begin OAuth enrollment", true)
 		return
 	}
 
+	h.audit.Emit(r.Context(), AuditActionOAuthBegin, AuditResultSuccess, AuditResourceProvider, id, "")
 	writeData(w, http.StatusAccepted, beginOAuthJSON{
 		TransactionID: result.TransactionID,
 		AuthorizeURL:  result.AuthorizeURL,
@@ -120,6 +126,7 @@ func (h *OAuthHandler) ServeCallback(w http.ResponseWriter, r *http.Request) {
 
 	adapter, ok := h.reg.OAuthAdapter(providers.ProviderID(providerID))
 	if !ok {
+		h.audit.Emit(r.Context(), AuditActionOAuthComplete, AuditResultFailure, AuditResourceProvider, providerID, "not_found")
 		renderOAuthCallbackPage(w, false)
 		return
 	}
@@ -150,11 +157,13 @@ func (h *OAuthHandler) ServeCallback(w http.ResponseWriter, r *http.Request) {
 		if txID != "" {
 			h.cache.storeFailed(txID, safeOAuthErrorCode(err))
 		}
+		h.audit.Emit(r.Context(), AuditActionOAuthComplete, AuditResultFailure, AuditResourceProvider, providerID, safeOAuthErrorCode(err))
 		renderOAuthCallbackPage(w, false)
 		return
 	}
 
 	h.cache.storeCompleted(txID, account.ID)
+	h.audit.Emit(r.Context(), AuditActionOAuthComplete, AuditResultSuccess, AuditResourceAccount, account.ID, "")
 	renderOAuthCallbackPage(w, true)
 }
 
@@ -244,16 +253,19 @@ func (h *OAuthHandler) ServeReauthBegin(w http.ResponseWriter, r *http.Request) 
 	id := r.PathValue("id")
 	acct, ok, err := h.accounts.GetByID(r.Context(), id)
 	if err != nil {
+		h.audit.Emit(r.Context(), AuditActionReauthBegin, AuditResultFailure, AuditResourceAccount, id, "internal_error")
 		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
 		return
 	}
 	if !ok {
+		h.audit.Emit(r.Context(), AuditActionReauthBegin, AuditResultFailure, AuditResourceAccount, id, "not_found")
 		writeAuthError(w, http.StatusNotFound, "not_found", "account not found", false)
 		return
 	}
 
 	adapter, ok := h.reg.OAuthAdapter(providers.ProviderID(acct.ProviderID))
 	if !ok {
+		h.audit.Emit(r.Context(), AuditActionReauthBegin, AuditResultFailure, AuditResourceAccount, id, "not_found")
 		writeAuthError(w, http.StatusNotFound, "not_found", "provider has no OAuth adapter registered", false)
 		return
 	}
@@ -264,12 +276,14 @@ func (h *OAuthHandler) ServeReauthBegin(w http.ResponseWriter, r *http.Request) 
 		RedirectURI: h.callbackURL(acct.ProviderID),
 	})
 	if err != nil {
+		h.audit.Emit(r.Context(), AuditActionReauthBegin, AuditResultFailure, AuditResourceAccount, id, "internal_error")
 		writeAuthError(w, http.StatusInternalServerError, "internal", "failed to begin reauthentication", true)
 		return
 	}
 
 	h.reauth.bind(result.TransactionID, acct.ID, acct.ExternalID)
 
+	h.audit.Emit(r.Context(), AuditActionReauthBegin, AuditResultSuccess, AuditResourceAccount, acct.ID, "")
 	writeData(w, http.StatusAccepted, beginOAuthJSON{
 		TransactionID: result.TransactionID,
 		AuthorizeURL:  result.AuthorizeURL,

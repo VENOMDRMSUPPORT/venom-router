@@ -27,26 +27,44 @@ var ErrConnectInvalidCredential = errors.New("application: connect: the provided
 // so (fail closed) no row is created either; the caller should retry.
 var ErrConnectProviderUnavailable = errors.New("application: connect: the provider is currently unavailable, try again later")
 
+// ErrConnectAccountAlreadyConnected is returned when the adapter's
+// validated identity resolves to a (provider_id, external_id) pair an
+// account already exists for (P2b-CAPI-003). Unlike the OAuth flow —
+// where an identity that resolves to an existing account is always a
+// reauthentication (P2b-PROV-008) — the API-key connect flow has no
+// staged-reauthentication path of its own this phase, so a duplicate
+// identity here is a straightforward, friendly conflict: nothing is
+// created, and the caller should use the existing account (or its own
+// reauthentication surface, once one exists for API-key accounts)
+// instead of enrolling a second one for the same identity.
+var ErrConnectAccountAlreadyConnected = errors.New("application: connect: an account for this provider identity already exists")
+
 // ConnectService performs the API-key connect-time enrollment flow (03
 // §2b): validate the key through the provider's APIKeyAdapter, then —
 // ONLY on a valid result — atomically create the account, its first
 // credential (encrypted), and its first funding-evidence row via
 // EnrollmentPort. An invalid or unavailable key creates NOTHING (fail
 // closed): there is no path that leaves a partially-enrolled account
-// behind a rejected credential.
+// behind a rejected credential. A validated identity that already
+// resolves to an existing account is likewise rejected (fail closed)
+// with ErrConnectAccountAlreadyConnected, checked via AccountRepo BEFORE
+// any row is created — mirroring OAuthEnrollmentService.Complete's own
+// GetByProviderExternalID lookup, rather than relying on the storage
+// layer's UNIQUE constraint to surface an untyped error after the fact.
 type ConnectService struct {
 	enrollment EnrollmentPort
+	accounts   AccountRepo
 	kr         *secrets.Keyring
 	newID      IDGenerator
 	now        func() time.Time
 }
 
 // NewConnectService builds the service. now defaults to time.Now when nil.
-func NewConnectService(enrollment EnrollmentPort, kr *secrets.Keyring, newID IDGenerator, now func() time.Time) *ConnectService {
+func NewConnectService(enrollment EnrollmentPort, accounts AccountRepo, kr *secrets.Keyring, newID IDGenerator, now func() time.Time) *ConnectService {
 	if now == nil {
 		now = time.Now
 	}
-	return &ConnectService{enrollment: enrollment, kr: kr, newID: newID, now: now}
+	return &ConnectService{enrollment: enrollment, accounts: accounts, kr: kr, newID: newID, now: now}
 }
 
 // ConnectAPIKeyAccountParams is ConnectAPIKeyAccount's input.
@@ -82,6 +100,12 @@ func (s *ConnectService) ConnectAPIKeyAccount(ctx context.Context, p ConnectAPIK
 		default:
 			return domain.Account{}, fmt.Errorf("application: connect: adapter error: %w", err)
 		}
+	}
+
+	if _, foundExisting, err := s.accounts.GetByProviderExternalID(ctx, p.ProviderID, identity.ExternalID); err != nil {
+		return domain.Account{}, fmt.Errorf("application: connect: check existing account: %w", err)
+	} else if foundExisting {
+		return domain.Account{}, ErrConnectAccountAlreadyConnected
 	}
 
 	now := s.now()

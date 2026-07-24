@@ -84,8 +84,9 @@ func TestConnectService_ValidKey_CreatesExactlyOneAccountCredentialFunding(t *te
 
 	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL))
 	enrollment := storage.NewEnrollmentRepo(db)
+	accounts := storage.NewAccountRepo(db)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	svc := application.NewConnectService(enrollment, newTestKeyring(t), sequentialIDGenerator("id"), func() time.Time { return now })
+	svc := application.NewConnectService(enrollment, accounts, newTestKeyring(t), sequentialIDGenerator("id"), func() time.Time { return now })
 
 	account, err := svc.ConnectAPIKeyAccount(context.Background(), application.ConnectAPIKeyAccountParams{
 		ProviderID: "opencode-zen", Adapter: adapter, PlaintextKey: "good-key",
@@ -120,8 +121,9 @@ func TestConnectService_OwnerOverride_StampsOwnerOverrideSource(t *testing.T) {
 
 	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL))
 	enrollment := storage.NewEnrollmentRepo(db)
+	accounts := storage.NewAccountRepo(db)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	svc := application.NewConnectService(enrollment, newTestKeyring(t), sequentialIDGenerator("id"), func() time.Time { return now })
+	svc := application.NewConnectService(enrollment, accounts, newTestKeyring(t), sequentialIDGenerator("id"), func() time.Time { return now })
 
 	paid := domain.FundingPaid
 	account, err := svc.ConnectAPIKeyAccount(context.Background(), application.ConnectAPIKeyAccountParams{
@@ -141,6 +143,40 @@ func TestConnectService_OwnerOverride_StampsOwnerOverrideSource(t *testing.T) {
 	}
 }
 
+func TestConnectService_DuplicateIdentity_ReturnsAccountAlreadyConnected(t *testing.T) {
+	server := fixtureOpenCodeZenServer(t)
+	defer server.Close()
+
+	db := migratedDB(t)
+	seedProvider(t, db, "opencode-zen")
+
+	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL))
+	enrollment := storage.NewEnrollmentRepo(db)
+	accounts := storage.NewAccountRepo(db)
+	svc := application.NewConnectService(enrollment, accounts, newTestKeyring(t), sequentialIDGenerator("id"), nil)
+
+	params := application.ConnectAPIKeyAccountParams{
+		ProviderID: "opencode-zen", Adapter: adapter, PlaintextKey: "good-key",
+		FundingMode: domain.FundingModeOwnerPolicy,
+	}
+
+	if _, err := svc.ConnectAPIKeyAccount(context.Background(), params); err != nil {
+		t.Fatalf("first ConnectAPIKeyAccount: %v", err)
+	}
+	assertCount(t, db, "accounts", 1)
+
+	_, err := svc.ConnectAPIKeyAccount(context.Background(), params)
+	if !errors.Is(err, application.ErrConnectAccountAlreadyConnected) {
+		t.Fatalf("second ConnectAPIKeyAccount error = %v, want ErrConnectAccountAlreadyConnected", err)
+	}
+
+	// The duplicate attempt must not have created a second account, nor
+	// any credential/funding row for it.
+	assertCount(t, db, "accounts", 1)
+	assertCount(t, db, "account_credentials", 1)
+	assertCount(t, db, "account_funding_evidence", 1)
+}
+
 func TestConnectService_InvalidKey_CreatesZeroRows(t *testing.T) {
 	server := fixtureOpenCodeZenServer(t)
 	defer server.Close()
@@ -150,7 +186,8 @@ func TestConnectService_InvalidKey_CreatesZeroRows(t *testing.T) {
 
 	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL))
 	enrollment := storage.NewEnrollmentRepo(db)
-	svc := application.NewConnectService(enrollment, newTestKeyring(t), sequentialIDGenerator("id"), nil)
+	accounts := storage.NewAccountRepo(db)
+	svc := application.NewConnectService(enrollment, accounts, newTestKeyring(t), sequentialIDGenerator("id"), nil)
 
 	_, err := svc.ConnectAPIKeyAccount(context.Background(), application.ConnectAPIKeyAccountParams{
 		ProviderID: "opencode-zen", Adapter: adapter, PlaintextKey: "bad-key",
@@ -176,7 +213,8 @@ func TestConnectService_UnavailableProvider_CreatesZeroRows(t *testing.T) {
 
 	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL))
 	enrollment := storage.NewEnrollmentRepo(db)
-	svc := application.NewConnectService(enrollment, newTestKeyring(t), sequentialIDGenerator("id"), nil)
+	accounts := storage.NewAccountRepo(db)
+	svc := application.NewConnectService(enrollment, accounts, newTestKeyring(t), sequentialIDGenerator("id"), nil)
 
 	_, err := svc.ConnectAPIKeyAccount(context.Background(), application.ConnectAPIKeyAccountParams{
 		ProviderID: "opencode-zen", Adapter: adapter, PlaintextKey: "any-key",

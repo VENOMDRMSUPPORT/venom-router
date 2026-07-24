@@ -74,7 +74,7 @@ func newTestOAuthHandler(t *testing.T, providerID string, adapter providers.OAut
 		storage.NewAccountCredentialRepo(db), storage.NewReauthRepo(db),
 		testKeyring(t), newOAuthTransactionID, nil,
 	)
-	return NewOAuthHandler(svc, reg, txRepo, accountRepo, testAllowedHost), db
+	return NewOAuthHandler(svc, reg, txRepo, accountRepo, testAllowedHost, newAuditEmitter(db, nil)), db
 }
 
 // newTestOAuthMux wires h's four routes on a bare http.ServeMux — the

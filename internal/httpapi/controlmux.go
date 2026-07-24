@@ -74,6 +74,20 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// env vars are both configured; see registerAntigravityIfConfigured's
 	// doc comment for why its error is safely discardable here.
 	_ = registerAntigravityIfConfigured(reg)
+	// opencode-zen (P2b-PROV-005/CAPI-003) is the first live API-key
+	// adapter registered into this shared registry, over the real HTTP
+	// seams built in opencode_zen_seams.go — always registered
+	// unconditionally (unlike antigravity, opencode-zen needs no
+	// confidential-client env vars); see registerOpenCodeZen's doc
+	// comment for why its error is safely discardable here.
+	_ = registerOpenCodeZen(reg)
+
+	// audit is the shared P2b-OBS-001 emitter every mutating control
+	// route below records exactly one audit_event through (log is nil
+	// here, so it defaults to observability.Default() — a future unit
+	// may thread a boot-level logger through ControlMux's own signature
+	// instead).
+	audit := newAuditEmitter(db, nil)
 	providersHandler := NewProvidersHandler(reg)
 	mux.Handle("/api/control/v1/providers", gated(providersHandler.ServeList))
 	mux.Handle("/api/control/v1/providers/{id}", gated(providersHandler.ServeGet))
@@ -101,11 +115,23 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 		storage.NewAccountCredentialRepo(db), storage.NewReauthRepo(db),
 		kr, newOAuthTransactionID, nil,
 	)
-	oauthHandler := NewOAuthHandler(oauthService, reg, oauthTxRepo, accountRepo, allowedHost)
+	oauthHandler := NewOAuthHandler(oauthService, reg, oauthTxRepo, accountRepo, allowedHost, audit)
 	mux.Handle("/api/control/v1/providers/{id}/oauth/begin", gated(oauthHandler.ServeBegin))
 	mux.Handle("/api/control/v1/oauth/{provider}/callback", networkGate(allowedHost, http.HandlerFunc(oauthHandler.ServeCallback)))
 	mux.Handle("/api/control/v1/oauth/{transaction_id}/status", networkGateJSON(allowedHost, http.HandlerFunc(oauthHandler.ServeStatus)))
 	mux.Handle("/api/control/v1/accounts/{id}/reauth/begin", gated(oauthHandler.ServeReauthBegin))
+
+	// API-key enrollment (P2b-CAPI-003): POST /providers/{id}/accounts,
+	// owner-session + CSRF gated and Idempotency-Key aware like every
+	// other mutating control route. newOAuthTransactionID is reused as
+	// ConnectService's IDGenerator — it is already a generic,
+	// high-entropy random-id minter with no OAuth-specific behavior,
+	// despite its name (see its own doc comment).
+	connectService := application.NewConnectService(storage.NewEnrollmentRepo(db), accountRepo, kr, newOAuthTransactionID, nil)
+	fundingRepo := storage.NewFundingEvidenceRepo(db)
+	idem := newIdempotencyStore()
+	enrollmentHandler := NewEnrollmentHandler(connectService, reg, fundingRepo, idem, audit)
+	mux.Handle("/api/control/v1/providers/{id}/accounts", gated(enrollmentHandler.ServeConnect))
 
 	mux.Handle("/", networkGate(allowedHost, spa))
 	return mux
