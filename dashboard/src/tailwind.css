@@ -1,0 +1,6 @@
+/* Tailwind's own layers only — no hand-authored rules here. All
+   utilities resolve through venomTailwindPreset (tailwind.config.js) to
+   @venom/design-system's CSS custom properties (07 §2.3/§8). */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
