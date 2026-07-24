@@ -14,11 +14,24 @@ type providerListResponse struct {
 	} `json:"data"`
 }
 
+// getGated issues an authenticated GET against mux at path, using
+// cookie for the owner session established by the caller. GET routes
+// through ownerSessionGate (P2b-CAPI-001) need no CSRF token — only
+// mutations do.
+func getGated(t *testing.T, mux http.Handler, path string, cookie *http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	req := newAuthRequest(t, http.MethodGet, path, nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
 func TestProvidersList_ReturnsElevenBuiltinsPlusCustom(t *testing.T) {
 	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	cookie := setupOwner(t, mux, testSetupPassword)
 
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodGet, "/api/control/v1/providers", nil))
+	rec := getGated(t, mux, "/api/control/v1/providers", cookie)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /providers status = %d, want %d; body = %q", rec.Code, http.StatusOK, rec.Body.String())
@@ -33,11 +46,22 @@ func TestProvidersList_ReturnsElevenBuiltinsPlusCustom(t *testing.T) {
 	}
 }
 
-func TestProvidersGet_UnknownID404(t *testing.T) {
+func TestProvidersList_UnauthenticatedRejected(t *testing.T) {
 	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
 
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodGet, "/api/control/v1/providers/does-not-exist", nil))
+	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodGet, "/api/control/v1/providers", nil))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d without a session (P2b-CAPI-001 gate)", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestProvidersGet_UnknownID404(t *testing.T) {
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	cookie := setupOwner(t, mux, testSetupPassword)
+
+	rec := getGated(t, mux, "/api/control/v1/providers/does-not-exist", cookie)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
@@ -49,9 +73,9 @@ func TestProvidersGet_UnknownID404(t *testing.T) {
 
 func TestProvidersGet_KnownIDReturnsEntry(t *testing.T) {
 	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
+	cookie := setupOwner(t, mux, testSetupPassword)
 
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodGet, "/api/control/v1/providers/clinepass", nil))
+	rec := getGated(t, mux, "/api/control/v1/providers/clinepass", cookie)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body = %q", rec.Code, http.StatusOK, rec.Body.String())
@@ -78,8 +102,9 @@ func TestProvidersList_AntigravityConfiguredReflectsEnv(t *testing.T) {
 	_ = os.Unsetenv(idVar)
 
 	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t))
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodGet, "/api/control/v1/providers/antigravity", nil))
+	cookie := setupOwner(t, mux, testSetupPassword)
+
+	rec := getGated(t, mux, "/api/control/v1/providers/antigravity", cookie)
 
 	var unsetGot struct {
 		Data providerJSON `json:"data"`
@@ -109,8 +134,7 @@ func TestProvidersList_AntigravityConfiguredReflectsEnv(t *testing.T) {
 	t.Setenv(secretVar, canarySecretValue)
 	t.Setenv(idVar, canaryIDValue)
 
-	rec2 := httptest.NewRecorder()
-	mux.ServeHTTP(rec2, newAuthRequest(t, http.MethodGet, "/api/control/v1/providers/antigravity", nil))
+	rec2 := getGated(t, mux, "/api/control/v1/providers/antigravity", cookie)
 	var setGot struct {
 		Data providerJSON `json:"data"`
 	}

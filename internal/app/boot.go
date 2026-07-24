@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/httpapi"
@@ -244,8 +245,18 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 	logStage(StageMountHTTPMux)
 	mux := httpapi.ControlMux(cfg.Bind, spa, db)
 
-	// 10. Listen.
+	// 10. Listen. The control plane must never bind off-host (01 §6a/§8,
+	// P2b-CAPI-001): the network gate's loopback check only ever sees
+	// requests that already reached a loopback-bound listener, so THIS
+	// check is what actually keeps a misconfigured bind-all address
+	// (e.g. ":8081" or a routable IP) from exposing the control plane at
+	// all — fail closed before net.Listen, with no override flag.
 	logStage(StageListen)
+	if !isLoopbackBind(cfg.Bind) {
+		closeDB()
+		release()
+		return nil, fmt.Errorf("app: listen on %q: %w", cfg.Bind, ErrNonLoopbackBind)
+	}
 	ln, err := net.Listen("tcp", cfg.Bind)
 	if err != nil {
 		closeDB()
@@ -265,6 +276,29 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		ln:      ln,
 		keyring: kr,
 	}, nil
+}
+
+// ErrNonLoopbackBind is returned by Boot when cfg.Bind's host is not a
+// loopback address (P2b-CAPI-001, 01 §6a/§8). There is no configuration
+// escape hatch for this — the control plane is loopback-only by
+// construction.
+var ErrNonLoopbackBind = errors.New("app: control plane bind must be loopback-only (127.0.0.0/8, ::1, or localhost)")
+
+// isLoopbackBind reports whether bind's host component refers only to
+// the local host: "localhost", or an IP in 127.0.0.0/8 or ::1. An empty
+// host (e.g. ":8081", which binds every interface) is deliberately NOT
+// loopback — that is exactly the off-host exposure this check exists to
+// reject.
+func isLoopbackBind(bind string) bool {
+	host, _, err := net.SplitHostPort(bind)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // noCiphertextStore is the default, empty secrets.CiphertextRefStore

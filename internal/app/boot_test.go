@@ -394,6 +394,57 @@ func TestBoot_StartupOrderEnforced(t *testing.T) {
 	}
 }
 
+// TestBoot_FailClosedOnNonLoopbackBind is P2b-CAPI-001's fail-closed
+// proof: a syntactically valid but non-loopback bind address must never
+// reach net.Listen at all — Boot aborts first, so nothing is ever
+// attempted to be exposed off-host.
+func TestBoot_FailClosedOnNonLoopbackBind(t *testing.T) {
+	setDataDirEnv(t)
+	ctx := context.Background()
+
+	const nonLoopbackBind = "203.0.113.5:8081" // TEST-NET-3 (RFC 5737) — never actually dialable/listenable here
+
+	var logBuf bytes.Buffer
+	logger := observability.New(slog.NewJSONHandler(&logBuf, nil))
+
+	srv, err := Boot(ctx, BootConfig{Bind: nonLoopbackBind, Logger: logger, SPAHandler: fakeSPA()})
+	if err == nil {
+		_ = srv.Shutdown(ctx)
+		t.Fatalf("Boot() succeeded with a non-loopback bind, want failure")
+	}
+	if !errors.Is(err, ErrNonLoopbackBind) {
+		t.Fatalf("Boot() error = %v, want it to wrap ErrNonLoopbackBind", err)
+	}
+	if srv != nil {
+		t.Fatalf("Boot() returned a non-nil *Server alongside an error")
+	}
+
+	conn, dialErr := net.DialTimeout("tcp", nonLoopbackBind, 200*time.Millisecond)
+	if dialErr == nil {
+		_ = conn.Close()
+		t.Fatalf("dial to %q succeeded — a listener came up despite the fail-closed bind rejection", nonLoopbackBind)
+	}
+}
+
+// TestBoot_LoopbackBindVariantsAccepted proves the check is not merely
+// "127.0.0.1" special-cased: "localhost" and the IPv6 loopback also
+// boot successfully.
+func TestBoot_LoopbackBindVariantsAccepted(t *testing.T) {
+	for _, bind := range []string{"localhost:0", "[::1]:0"} {
+		t.Run(bind, func(t *testing.T) {
+			setDataDirEnv(t)
+
+			srv, err := Boot(context.Background(), BootConfig{Bind: bind, SPAHandler: fakeSPA()})
+			if err != nil {
+				t.Fatalf("Boot() with bind %q error = %v", bind, err)
+			}
+			if err := srv.Shutdown(context.Background()); err != nil {
+				t.Fatalf("Shutdown() error = %v", err)
+			}
+		})
+	}
+}
+
 func parseStages(t *testing.T, logBytes []byte) []string {
 	t.Helper()
 

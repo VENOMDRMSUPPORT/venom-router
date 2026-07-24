@@ -33,6 +33,26 @@ func networkGate(allowedHost string, next http.Handler) http.Handler {
 	})
 }
 
+// networkGateJSON is networkGate's typed-envelope sibling (P2b-CAPI-001,
+// 09 §1): identical loopback + Host-allowlist checks, but rejections are
+// the shared JSON error envelope rather than plain text, since every
+// /api/control/v1/* route is a JSON API surface. /health and the SPA
+// (plain networkGate, unchanged) are not JSON surfaces and keep their
+// original plain-text 403.
+func networkGateJSON(allowedHost string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopbackRemoteAddr(r.RemoteAddr) {
+			writeAuthError(w, http.StatusForbidden, "not_loopback", "forbidden: not loopback", false)
+			return
+		}
+		if !isAllowedHost(r.Host, allowedHost) {
+			writeAuthError(w, http.StatusForbidden, "host_not_allowed", "forbidden: host not allowed", false)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // isLoopbackRemoteAddr reports whether remoteAddr (an http.Request's
 // RemoteAddr, "host:port" from the real accepted TCP connection) is a
 // loopback address. It never looks at any header.
