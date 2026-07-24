@@ -80,6 +80,17 @@ func (r *OwnerAuthRepo) Create(ctx context.Context, row OwnerAuthRow) error {
 	return nil
 }
 
+// Clear deletes the single owner_auth row if one exists (09 §5.7's
+// local-owner reset: "clears the owner_auth row"). It is idempotent —
+// deleting when no row exists is a no-op, not an error — so a caller
+// never needs to check existence first.
+func (r *OwnerAuthRepo) Clear(ctx context.Context) error {
+	if _, err := r.db.Conn().ExecContext(ctx, `DELETE FROM owner_auth WHERE id = 1`); err != nil {
+		return fmt.Errorf("storage: clear owner_auth row: %w", err)
+	}
+	return nil
+}
+
 // Get reads back the single owner_auth row. ok is false if no row exists
 // yet.
 func (r *OwnerAuthRepo) Get(ctx context.Context) (row OwnerAuthRow, ok bool, err error) {

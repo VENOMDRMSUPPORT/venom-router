@@ -11,9 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/app"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/config"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
 // version is a placeholder build identifier. A real build-time version
@@ -23,10 +26,13 @@ const version = "dev"
 const usage = `venom - Venom Router
 
 Usage:
-  venom            Tray mode: starts the server (tray icon is a stub, see P6-FND-001)
-  venom serve      Headless server mode with graceful shutdown
-  venom version    Print version
-  venom help       Print this help text
+  venom              Tray mode: starts the server (tray icon is a stub, see P6-FND-001)
+  venom serve        Headless server mode with graceful shutdown
+  venom reset-owner  Clear the owner login (first-run setup state) without
+                      touching encrypted provider credentials. Requires
+                      venom to NOT be currently running.
+  venom version      Print version
+  venom help         Print this help text
 `
 
 // ErrUnrecognizedMode is returned by Dispatch when args names a mode this
@@ -64,6 +70,8 @@ func Dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		// args[1:] (everything after "serve" itself) is what config.Load
 		// parses for flags, so `venom serve -bind host:port` works.
 		return runServeLoop(ctx, args[1:], stdout)
+	case "reset-owner":
+		return runResetOwner(ctx, stdout, stderr)
 	case "version":
 		_, _ = fmt.Fprintln(stdout, version)
 		return nil
@@ -74,6 +82,57 @@ func Dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		_, _ = fmt.Fprintf(stderr, "venom: unrecognized mode %q\n\n%s", mode, usage)
 		return fmt.Errorf("%w: %q", ErrUnrecognizedMode, mode)
 	}
+}
+
+// runResetOwner implements `venom reset-owner` (P2b-SEC-007, 09 §5.7's
+// "local owner reset"): the owner physically controls the machine, so
+// running this subcommand on the host IS the authorization — there is
+// no password, no email, no recoverable hint. It clears the owner_auth
+// row and revokes every session, returning the app to the first-run
+// setup state. It NEVER touches the keyring or any encrypted provider
+// credential — those remain protected by the device keyring exactly as
+// before; this only resets the login gate.
+//
+// The single-instance lock is acquired FIRST and is the "server is
+// stopped" proof: if venom is currently running, AcquireLock fails with
+// app.ErrAlreadyRunning and this refuses outright, rather than mutating
+// owner_auth out from under a live session.
+func runResetOwner(ctx context.Context, stdout, stderr io.Writer) error {
+	lock, err := app.AcquireLock()
+	if err != nil {
+		if errors.Is(err, app.ErrAlreadyRunning) {
+			_, _ = fmt.Fprintln(stderr, "venom: cannot reset while venom is running — stop it first")
+			return err
+		}
+		return fmt.Errorf("cli: acquire lock: %w", err)
+	}
+	defer func() { _ = lock.Release() }()
+
+	dataDir, err := platform.EnsureDataDir()
+	if err != nil {
+		return fmt.Errorf("cli: resolve data dir: %w", err)
+	}
+
+	db, err := storage.Open(dataDir)
+	if err != nil {
+		return fmt.Errorf("cli: open database: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if _, err := storage.Migrate(ctx, db); err != nil {
+		return fmt.Errorf("cli: migrate database: %w", err)
+	}
+
+	if err := storage.NewOwnerAuthRepo(db).Clear(ctx); err != nil {
+		return fmt.Errorf("cli: clear owner auth: %w", err)
+	}
+	if err := storage.NewOwnerSessionRepo(db).RevokeAll(ctx, time.Now()); err != nil {
+		return fmt.Errorf("cli: revoke sessions: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(stdout, "venom: owner login reset — the app is back to first-run setup state.")
+	_, _ = fmt.Fprintln(stdout, "venom: provider credentials remain encrypted and were not touched.")
+	return nil
 }
 
 // runServeLoop loads config, boots the real composition root

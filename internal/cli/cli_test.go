@@ -7,11 +7,15 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/app"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
 // TestMain injects a fake dashboard SPA into every boot the cli dispatch
@@ -75,6 +79,124 @@ func waitForListener(t *testing.T, addr string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for a listener at %q", addr)
+}
+
+func TestResetOwner_ClearsOwnerAuthRevokesSessionsKeepsKeyringUntouched(t *testing.T) {
+	setTestDataDir(t)
+	dataDir, err := platform.EnsureDataDir()
+	if err != nil {
+		t.Fatalf("EnsureDataDir: %v", err)
+	}
+
+	// Seed a keyring, mirroring what a real first boot would have
+	// created, so this test can prove reset-owner leaves it untouched.
+	if _, err := secrets.Load(dataDir, "", false); err != nil {
+		t.Fatalf("secrets.Load: %v", err)
+	}
+	keyringPath := filepath.Join(dataDir, "secrets", "keyring.json")
+	before, err := os.ReadFile(keyringPath)
+	if err != nil {
+		t.Fatalf("read keyring before reset: %v", err)
+	}
+
+	db, err := storage.Open(dataDir)
+	if err != nil {
+		t.Fatalf("storage.Open: %v", err)
+	}
+	if _, err := storage.Migrate(context.Background(), db); err != nil {
+		t.Fatalf("storage.Migrate: %v", err)
+	}
+
+	hash, err := secrets.DeriveOwnerPasswordHash("a-long-enough-owner-password-1")
+	if err != nil {
+		t.Fatalf("DeriveOwnerPasswordHash: %v", err)
+	}
+	ownerAuth := storage.NewOwnerAuthRepo(db)
+	if err := ownerAuth.Create(context.Background(), storage.OwnerAuthRow{
+		PasswordHash: hash.Hash, Salt: hash.Salt, KDFTime: hash.Time, KDFMemKiB: hash.MemKiB, KDFThreads: hash.Threads, KDFKeyLen: hash.KeyLen,
+	}); err != nil {
+		t.Fatalf("OwnerAuthRepo.Create: %v", err)
+	}
+
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	sessionTokenHash := []byte("a-session-token-hash")
+	sessions := storage.NewOwnerSessionRepo(db)
+	if err := sessions.Create(context.Background(), storage.OwnerSessionRow{
+		TokenHash:         sessionTokenHash,
+		CreatedAt:         now,
+		LastSeenAt:        now,
+		IdleExpiresAt:     now.Add(30 * time.Minute),
+		AbsoluteExpiresAt: now.Add(12 * time.Hour),
+	}); err != nil {
+		t.Fatalf("OwnerSessionRepo.Create: %v", err)
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("close seed db: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := Dispatch(context.Background(), []string{"reset-owner"}, &stdout, &stderr); err != nil {
+		t.Fatalf("Dispatch(reset-owner) error = %v; stderr = %q", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "reset") {
+		t.Fatalf("stdout = %q, want a reset confirmation", stdout.String())
+	}
+
+	after, err := os.ReadFile(keyringPath)
+	if err != nil {
+		t.Fatalf("read keyring after reset: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("keyring file changed by reset-owner — credentials must remain untouched")
+	}
+
+	db2, err := storage.Open(dataDir)
+	if err != nil {
+		t.Fatalf("reopen db: %v", err)
+	}
+	defer func() { _ = db2.Close() }()
+
+	exists, err := storage.NewOwnerAuthRepo(db2).Exists(context.Background())
+	if err != nil {
+		t.Fatalf("Exists: %v", err)
+	}
+	if exists {
+		t.Fatalf("owner_auth row still exists after reset-owner")
+	}
+
+	row, ok, err := storage.NewOwnerSessionRepo(db2).GetByTokenHash(context.Background(), sessionTokenHash)
+	if err != nil || !ok {
+		t.Fatalf("GetByTokenHash: ok=%v err=%v", ok, err)
+	}
+	if row.RevokedAt == nil {
+		t.Fatalf("session not revoked after reset-owner")
+	}
+}
+
+func TestResetOwner_RefusesWhileServerRunning(t *testing.T) {
+	setTestDataDir(t)
+
+	lock, err := app.AcquireLock()
+	if err != nil {
+		t.Fatalf("AcquireLock: %v", err)
+	}
+	defer func() { _ = lock.Release() }()
+
+	var stdout, stderr bytes.Buffer
+	err = Dispatch(context.Background(), []string{"reset-owner"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("Dispatch(reset-owner) succeeded while locked, want refusal")
+	}
+	if !errors.Is(err, app.ErrAlreadyRunning) {
+		t.Fatalf("error = %v, want app.ErrAlreadyRunning", err)
+	}
+	if stderr.Len() == 0 {
+		t.Fatalf("stderr empty, want a refusal message")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty on refusal", stdout.String())
+	}
 }
 
 func TestDispatch_Version(t *testing.T) {

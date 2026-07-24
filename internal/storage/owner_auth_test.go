@@ -83,6 +83,44 @@ func TestOwnerAuthRepo_SecondCreateRejected(t *testing.T) {
 	}
 }
 
+func TestOwnerAuthRepo_Clear_RemovesRowAndAllowsSetupAgain(t *testing.T) {
+	db := migratedOwnerAuthDB(t)
+	repo := NewOwnerAuthRepo(db)
+	ctx := context.Background()
+
+	row := OwnerAuthRow{PasswordHash: []byte("h1"), Salt: []byte("s1"), KDFTime: 3, KDFMemKiB: 65536, KDFThreads: 4, KDFKeyLen: 32}
+	if err := repo.Create(ctx, row); err != nil {
+		t.Fatalf("Create: unexpected error: %v", err)
+	}
+
+	if err := repo.Clear(ctx); err != nil {
+		t.Fatalf("Clear: unexpected error: %v", err)
+	}
+
+	exists, err := repo.Exists(ctx)
+	if err != nil {
+		t.Fatalf("Exists: unexpected error: %v", err)
+	}
+	if exists {
+		t.Fatalf("Exists() = true after Clear, want false")
+	}
+
+	// The M1 CHECK(id=1) single-row constraint doesn't block a fresh
+	// Create after Clear — it only blocks a SECOND row while one exists.
+	if err := repo.Create(ctx, OwnerAuthRow{PasswordHash: []byte("h2"), Salt: []byte("s2"), KDFTime: 3, KDFMemKiB: 65536, KDFThreads: 4, KDFKeyLen: 32}); err != nil {
+		t.Fatalf("Create after Clear: unexpected error: %v", err)
+	}
+}
+
+func TestOwnerAuthRepo_Clear_NoRowIsANoOp(t *testing.T) {
+	db := migratedOwnerAuthDB(t)
+	repo := NewOwnerAuthRepo(db)
+
+	if err := repo.Clear(context.Background()); err != nil {
+		t.Fatalf("Clear with no row: unexpected error: %v", err)
+	}
+}
+
 func TestOwnerAuthRepo_GetOkFalseBeforeCreate(t *testing.T) {
 	db := migratedOwnerAuthDB(t)
 	repo := NewOwnerAuthRepo(db)
