@@ -64,3 +64,44 @@ func TestEnvPresent(t *testing.T) {
 		t.Fatalf("EnvPresent(set) = false, want true")
 	}
 }
+
+func TestAntigravityOAuthClientCredentials_BothSet(t *testing.T) {
+	t.Setenv("VENOM_ANTIGRAVITY_CLIENT_ID", "test-client-id")
+	t.Setenv("VENOM_ANTIGRAVITY_CLIENT_SECRET", "test-client-secret")
+
+	id, secret, ok := AntigravityOAuthClientCredentials()
+	if !ok {
+		t.Fatalf("ok = false, want true when both vars are set and non-empty")
+	}
+	if id != "test-client-id" || secret != "test-client-secret" {
+		t.Fatalf("id=%q secret=%q, want test-client-id/test-client-secret", id, secret)
+	}
+}
+
+func TestAntigravityOAuthClientCredentials_MissingEither(t *testing.T) {
+	t.Setenv("VENOM_ANTIGRAVITY_CLIENT_ID", "only-id-set")
+	if err := os.Unsetenv("VENOM_ANTIGRAVITY_CLIENT_SECRET"); err != nil {
+		t.Fatalf("unsetenv: %v", err)
+	}
+
+	if _, _, ok := AntigravityOAuthClientCredentials(); ok {
+		t.Fatalf("ok = true with only the client id set, want false")
+	}
+
+	if err := os.Unsetenv("VENOM_ANTIGRAVITY_CLIENT_ID"); err != nil {
+		t.Fatalf("unsetenv: %v", err)
+	}
+	t.Setenv("VENOM_ANTIGRAVITY_CLIENT_SECRET", "only-secret-set")
+	if _, _, ok := AntigravityOAuthClientCredentials(); ok {
+		t.Fatalf("ok = true with only the client secret set, want false")
+	}
+}
+
+func TestAntigravityOAuthClientCredentials_SetButEmptyTreatedAsMissing(t *testing.T) {
+	t.Setenv("VENOM_ANTIGRAVITY_CLIENT_ID", "")
+	t.Setenv("VENOM_ANTIGRAVITY_CLIENT_SECRET", "a-secret")
+
+	if _, _, ok := AntigravityOAuthClientCredentials(); ok {
+		t.Fatalf("ok = true with an empty-string client id, want false")
+	}
+}

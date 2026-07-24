@@ -69,6 +69,11 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// (P2b-PROV-006) rather than each building its own — one registry
 	// per process, exactly like every other composition-root singleton.
 	reg := providers.NewRegistry()
+	// antigravity (P2b-PROV-007) is the first live OAuth adapter this
+	// registry can hold — registered only when its confidential-client
+	// env vars are both configured; see registerAntigravityIfConfigured's
+	// doc comment for why its error is safely discardable here.
+	_ = registerAntigravityIfConfigured(reg)
 	providersHandler := NewProvidersHandler(reg)
 	mux.Handle("/api/control/v1/providers", gated(providersHandler.ServeList))
 	mux.Handle("/api/control/v1/providers/{id}", gated(providersHandler.ServeGet))
@@ -79,23 +84,28 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	jobsHandler := NewJobsHandler(db)
 	mux.Handle("/api/control/v1/jobs/{job_id}", gated(jobsHandler.ServeGet))
 
-	// OAuth enrollment framework (P2b-PROV-006): begin is owner-session +
+	// OAuth enrollment framework (P2b-PROV-006) + reauthentication
+	// staging (P2b-PROV-008): begin/reauth-begin are owner-session +
 	// CSRF gated like every other mutating control route; callback and
 	// status are network-gated ONLY — the provider's redirect and a
 	// status poller both carry no owner session/CSRF, and the
 	// transaction_id itself is the unguessable capability token the
-	// status endpoint relies on. reg is empty of real OAuth adapters this
-	// phase (PROV-007 registers the first live one); every route here is
-	// exercised in tests against a fake adapter registered directly into
-	// a Registry, not through this shared, still-empty one.
+	// status endpoint relies on. reg gains a live antigravity OAuth
+	// adapter above when configured (P2b-PROV-007); every OTHER route
+	// here is exercised in tests against a fake adapter registered
+	// directly into a Registry, not through this shared one.
 	oauthTxRepo := storage.NewOAuthTransactionRepo(db)
+	accountRepo := storage.NewAccountRepo(db)
 	oauthService := application.NewOAuthEnrollmentService(
-		oauthTxRepo, storage.NewEnrollmentRepo(db), storage.NewAccountRepo(db), kr, newOAuthTransactionID, nil,
+		oauthTxRepo, storage.NewEnrollmentRepo(db), accountRepo,
+		storage.NewAccountCredentialRepo(db), storage.NewReauthRepo(db),
+		kr, newOAuthTransactionID, nil,
 	)
-	oauthHandler := NewOAuthHandler(oauthService, reg, oauthTxRepo, allowedHost)
+	oauthHandler := NewOAuthHandler(oauthService, reg, oauthTxRepo, accountRepo, allowedHost)
 	mux.Handle("/api/control/v1/providers/{id}/oauth/begin", gated(oauthHandler.ServeBegin))
 	mux.Handle("/api/control/v1/oauth/{provider}/callback", networkGate(allowedHost, http.HandlerFunc(oauthHandler.ServeCallback)))
 	mux.Handle("/api/control/v1/oauth/{transaction_id}/status", networkGateJSON(allowedHost, http.HandlerFunc(oauthHandler.ServeStatus)))
+	mux.Handle("/api/control/v1/accounts/{id}/reauth/begin", gated(oauthHandler.ServeReauthBegin))
 
 	mux.Handle("/", networkGate(allowedHost, spa))
 	return mux

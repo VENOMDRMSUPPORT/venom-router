@@ -21,7 +21,13 @@ type IdentityResult struct {
 	ExternalID string // immutable provider ID when available
 	Email      string
 	Plan       string
-	Funding    string         // free | paid | unknown (provider_evidence only)
+	Funding    string // free | paid | unknown (provider_evidence only)
+	// Confidence is the adapter's own confidence in Funding (meaningful
+	// only alongside a non-empty Funding, i.e. FundingModeProviderEvidence
+	// callers, P2b-PROV-007): e.g. antigravity reports 0.95 for a
+	// recognized plan (Free/Pro). Zero value (0) for adapters that never
+	// set it — those callers' funding mode doesn't consult this field.
+	Confidence float64
 	Evidence   map[string]any // sanitized before storage
 }
 

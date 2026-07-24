@@ -110,3 +110,45 @@ type OAuthTransactionRepo interface {
 	// secret-shaped data pass through it.
 	GetStatusByTransactionID(ctx context.Context, transactionID string, now time.Time) (consumed bool, expired bool, ok bool, err error)
 }
+
+// ReauthRepo is the storage port the OAuth reauthentication-staging flow
+// depends on (P2b-PROV-008, 03 section 2e): stage a new credential
+// alongside an account's existing active one, atomically swap it in
+// (retiring the old active credential first) or roll a failed attempt
+// back, and sweep staged rows a crash left behind - all in terms of
+// accounts/domain types and secrets.Envelope, never a storage type, so
+// this package never imports internal/storage. internal/storage
+// implements this interface structurally (internal/storage/reauth.go);
+// the composition root supplies the concrete value.
+type ReauthRepo interface {
+	// StageCredential inserts a new 'staged' account_credentials row for
+	// accountID and sets accounts.reauth_in_progress = 1, in ONE
+	// transaction.
+	StageCredential(ctx context.Context, accountID, providerID string, cred domain.Credential, env secrets.Envelope, now time.Time) error
+
+	// DiscardStaged deletes credentialID's row (only if it is currently
+	// staged and belongs to accountID) and clears
+	// accounts.reauth_in_progress for accountID, in ONE transaction. Used
+	// both to roll back a failed validation/swap attempt and by the
+	// crash-recovery sweep; the account's active credential (if any) is
+	// never touched.
+	DiscardStaged(ctx context.Context, accountID, credentialID string) error
+
+	// SwapStagedToActive performs 03 section 2e's atomic reauthentication
+	// swap in ONE transaction: any existing active credential of kind for
+	// accountID is retired FIRST (state='retired', retired_at=now) -
+	// before stagedCredentialID is ever promoted - so the transaction can
+	// never observe two simultaneously-active rows of the same kind even
+	// mid-flight; the M2 idx_cred_active_per_kind partial-unique index is
+	// the structural backstop behind this ordering. On success it also
+	// sets accounts.health_state = 'healthy' and clears
+	// reauth_in_progress.
+	SwapStagedToActive(ctx context.Context, accountID, providerID string, kind domain.CredentialKind, stagedCredentialID string, now time.Time) error
+
+	// StaleStagedCredentials returns every staged credential row whose
+	// created_at is older than olderThan - the crash-recovery sweep's
+	// input (P2b-PROV-008 section 5): a process crash between staging and
+	// the swap/rollback would otherwise leave a staged row and
+	// reauth_in_progress=1 behind indefinitely.
+	StaleStagedCredentials(ctx context.Context, olderThan time.Time) ([]domain.Credential, error)
+}

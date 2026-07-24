@@ -76,6 +76,8 @@ func newOAuthTestService(t *testing.T, db *storage.DB, now func() time.Time) (*a
 		storage.NewOAuthTransactionRepo(db),
 		storage.NewEnrollmentRepo(db),
 		storage.NewAccountRepo(db),
+		storage.NewAccountCredentialRepo(db),
+		storage.NewReauthRepo(db),
 		newTestKeyring(t),
 		newID,
 		now,
@@ -459,12 +461,17 @@ func TestOAuthService_ProviderMismatch_Rejected(t *testing.T) {
 	}
 }
 
-// TestOAuthService_AccountAlreadyConnected_CreatesNothing proves
-// reauth/re-linking is out of scope for this unit: a provider identity
-// that already resolves to an existing account is rejected with
-// ErrOAuthAccountAlreadyConnected and creates no new account/credential/
-// funding rows.
-func TestOAuthService_AccountAlreadyConnected_CreatesNothing(t *testing.T) {
+// TestOAuthService_AccountAlreadyConnected_TriggersReauthSwap is adapted
+// for P2b-PROV-008 (was TestOAuthService_AccountAlreadyConnected_
+// CreatesNothing, which asserted PROV-006's now-superseded "reject
+// outright" branch — reauth/re-linking was explicitly out of scope for
+// PROV-006, but PROV-008 replaces that rejection with the atomic
+// reauthentication-staging flow this test now proves): a provider
+// identity that already resolves to an existing account is
+// reauthenticated — exactly one new (active) credential row is created,
+// the account itself is not duplicated, and (since PROV-008 never
+// touches funding evidence) no funding-evidence row is created either.
+func TestOAuthService_AccountAlreadyConnected_TriggersReauthSwap(t *testing.T) {
 	db := migratedDB(t)
 	seedProvider(t, db, "fake-oauth")
 	seedAccount(t, db, "fake-oauth", "existing-acct")
@@ -483,16 +490,27 @@ func TestOAuthService_AccountAlreadyConnected_CreatesNothing(t *testing.T) {
 		t.Fatalf("Begin: %v", err)
 	}
 
-	_, _, err := svc.Complete(context.Background(), application.CompleteOAuthParams{
+	_, account, err := svc.Complete(context.Background(), application.CompleteOAuthParams{
 		ProviderID: "fake-oauth", Adapter: adapter, RawState: adapter.lastState, Code: "any-code",
 		RedirectURI: "http://127.0.0.1:8081/callback", FundingMode: domain.FundingModeOwnerPolicy,
 	})
-	if !errors.Is(err, application.ErrOAuthAccountAlreadyConnected) {
-		t.Fatalf("error = %v, want ErrOAuthAccountAlreadyConnected", err)
+	if err != nil {
+		t.Fatalf("Complete: %v, want a successful reauthentication swap", err)
+	}
+	if account.ID != "existing-acct" {
+		t.Fatalf("account.ID = %q, want the existing account (existing-acct), not a new one", account.ID)
 	}
 	assertCount(t, db, "accounts", 1)
-	assertCount(t, db, "account_credentials", 0)
+	assertCount(t, db, "account_credentials", 1)
 	assertCount(t, db, "account_funding_evidence", 0)
+
+	var state, kind string
+	if err := db.Conn().QueryRow(`SELECT state, kind FROM account_credentials WHERE account_id = ?`, "existing-acct").Scan(&state, &kind); err != nil {
+		t.Fatalf("query credential: %v", err)
+	}
+	if state != "active" || kind != "oauth2" {
+		t.Fatalf("credential state/kind = %q/%q, want active/oauth2", state, kind)
+	}
 }
 
 // TestOAuthService_PKCE_ChallengeMatchesVerifierS256 proves the PKCE

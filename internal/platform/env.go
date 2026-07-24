@@ -29,3 +29,33 @@ func EnvPresent(name string) bool {
 	_, ok := os.LookupEnv(name)
 	return ok
 }
+
+// envAntigravityClientID/envAntigravityClientSecret are the two
+// confidential-client OAuth environment variables antigravity's catalog
+// entry declares as RequiredEnv (P2b-PROV-007). os.LookupEnv is called
+// only within this package (and internal/config); forbidigo enforces
+// that no other package reads environment variables directly —
+// internal/providers/internal/httpapi receive the resolved values as
+// constructor parameters instead of reading the environment themselves.
+const (
+	envAntigravityClientID     = "VENOM_ANTIGRAVITY_CLIENT_ID"
+	envAntigravityClientSecret = "VENOM_ANTIGRAVITY_CLIENT_SECRET"
+)
+
+// AntigravityOAuthClientCredentials returns antigravity's confidential
+// OAuth client id/secret pair and whether BOTH are present with a
+// non-empty value. Composition (internal/httpapi's ControlMux) uses this
+// to decide whether to register a live antigravity OAuth adapter; when
+// ok is false, the caller registers nothing and GET /providers/
+// antigravity continues to report configured=false + missing_env (via
+// EnvPresent, above) — the two are deliberately independent checks so a
+// var set to an empty string is treated as "missing" here without
+// changing EnvPresent's own presence-only semantics used elsewhere.
+func AntigravityOAuthClientCredentials() (clientID, clientSecret string, ok bool) {
+	id, idOK := os.LookupEnv(envAntigravityClientID)
+	secret, secretOK := os.LookupEnv(envAntigravityClientSecret)
+	if !idOK || !secretOK || id == "" || secret == "" {
+		return "", "", false
+	}
+	return id, secret, true
+}

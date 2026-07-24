@@ -54,13 +54,16 @@ const (
 // of which case actually applied.
 var ErrOAuthTransactionInvalid = errors.New("application: oauth: transaction is invalid, expired, or already used")
 
-// ErrOAuthAccountAlreadyConnected is returned by Complete when the
-// provider's identity resolves to an (providerID, externalID) pair an
-// account already exists for. Re-linking/reauthenticating that existing
-// account is out of scope for this unit (a future reauth-staging task) —
-// this path creates nothing new and leaves the existing account
-// untouched.
-var ErrOAuthAccountAlreadyConnected = errors.New("application: oauth: this provider account is already connected")
+// ErrOAuthAccountIdentityMismatch is returned by Complete when
+// ReauthAccountID is non-empty (a targeted reauthentication begun via
+// POST .../accounts/{id}/reauth/begin, P2b-PROV-008) but the exchanged
+// identity does not resolve to that exact account — either because it
+// resolves to no existing account at all, or because it resolves to a
+// DIFFERENT existing account. Nothing is staged or swapped; the target
+// account and its credentials are left completely untouched. Deliberately
+// one sentinel for both sub-cases, matching this package's other
+// canary-safe, non-oracle-shaped rejections.
+var ErrOAuthAccountIdentityMismatch = errors.New("application: oauth: reauthentication identity does not match the target account")
 
 // BeginOAuthParams is Begin's input.
 type BeginOAuthParams struct {
@@ -109,33 +112,65 @@ type CompleteOAuthParams struct {
 	// classification, exactly as ConnectAPIKeyAccountParams.OwnerFunding
 	// does for the API-key flow.
 	OwnerFunding *domain.Funding
+	// ReauthAccountID, when non-empty, marks this transaction as a
+	// TARGETED reauthentication for that specific account (begun via
+	// POST .../accounts/{id}/reauth/begin, P2b-PROV-008) — the exchanged
+	// identity MUST resolve to exactly this account, or Complete rejects
+	// with ErrOAuthAccountIdentityMismatch and stages/swaps nothing.
+	// Empty for a normal (non-targeted) begin/complete flow, where an
+	// identity that happens to resolve to an existing account is still
+	// reauthenticated (see Complete's doc comment) but no specific target
+	// is enforced.
+	ReauthAccountID string
+	// Validate, when non-nil, is an extra check run against the freshly
+	// staged credential before it is swapped in as active (03 §2e) — a
+	// lightweight seam for a provider-specific validation probe. A nil
+	// Validate treats the adapter's own successful CompleteOAuth exchange
+	// as sufficient validation, which is what every production call site
+	// (httpapi) supplies today.
+	Validate ReauthValidator
 }
+
+// ReauthValidator performs a lightweight, provider-specific check that a
+// freshly staged reauthentication credential actually works, before it
+// is swapped in as active (P2b-PROV-008 §1c). It receives the resolved
+// StoredCredentials (never a caller-supplied plaintext) and returns a
+// non-nil error to reject the swap — Complete then discards the staged
+// row and clears reauth_in_progress, leaving the prior active credential
+// untouched.
+type ReauthValidator func(ctx context.Context, creds providers.StoredCredentials) error
 
 // OAuthEnrollmentService is the provider-agnostic OAuth enrollment
 // framework (P2b-PROV-006): PKCE generation, a replay-safe
 // consume-before-exchange transaction lifecycle, and — on a successful
 // exchange for a brand-new (provider, external_id) pair — the same
 // atomic "account + first credential + first funding evidence" persist
-// ConnectService performs for the API-key flow. Reauthentication of an
-// already-connected account is explicitly out of scope (see
-// ErrOAuthAccountAlreadyConnected); this leaves the seam ready for a
-// future reauth-staging unit without building that logic now.
+// ConnectService performs for the API-key flow. When the exchanged
+// identity instead resolves to an EXISTING account, Complete
+// reauthenticates it (P2b-PROV-008, 03 §2e): stage the new credential,
+// validate it, then atomically swap it in as active while retiring the
+// old one — see reauthenticate's doc comment.
 type OAuthEnrollmentService struct {
-	tx         OAuthTransactionRepo
-	enrollment EnrollmentPort
-	accounts   AccountRepo
-	kr         *secrets.Keyring
-	newID      IDGenerator
-	now        func() time.Time
+	tx          OAuthTransactionRepo
+	enrollment  EnrollmentPort
+	accounts    AccountRepo
+	credentials CredentialRepo
+	reauth      ReauthRepo
+	kr          *secrets.Keyring
+	newID       IDGenerator
+	now         func() time.Time
 }
 
 // NewOAuthEnrollmentService builds the service. now defaults to
 // time.Now when nil.
-func NewOAuthEnrollmentService(tx OAuthTransactionRepo, enrollment EnrollmentPort, accounts AccountRepo, kr *secrets.Keyring, newID IDGenerator, now func() time.Time) *OAuthEnrollmentService {
+func NewOAuthEnrollmentService(tx OAuthTransactionRepo, enrollment EnrollmentPort, accounts AccountRepo, credentials CredentialRepo, reauth ReauthRepo, kr *secrets.Keyring, newID IDGenerator, now func() time.Time) *OAuthEnrollmentService {
 	if now == nil {
 		now = time.Now
 	}
-	return &OAuthEnrollmentService{tx: tx, enrollment: enrollment, accounts: accounts, kr: kr, newID: newID, now: now}
+	return &OAuthEnrollmentService{
+		tx: tx, enrollment: enrollment, accounts: accounts, credentials: credentials, reauth: reauth,
+		kr: kr, newID: newID, now: now,
+	}
 }
 
 // Begin starts a new OAuth transaction (P2b-PROV-006 §Begin): a
@@ -173,7 +208,7 @@ func (s *OAuthEnrollmentService) Begin(ctx context.Context, p BeginOAuthParams) 
 		return BeginOAuthResult{}, fmt.Errorf("application: oauth: encrypt verifier: %w", err)
 	}
 
-	stateHash := hashState(state)
+	stateHash := HashOAuthState(state)
 	if err := s.tx.Create(ctx, stateHash, p.ProviderID, transactionID, verifierEnv, now, expiresAt); err != nil {
 		return BeginOAuthResult{}, fmt.Errorf("application: oauth: persist transaction: %w", err)
 	}
@@ -205,7 +240,7 @@ func (s *OAuthEnrollmentService) Begin(ctx context.Context, p BeginOAuthParams) 
 // report in that case; the row (if any) is untouched.
 func (s *OAuthEnrollmentService) Complete(ctx context.Context, p CompleteOAuthParams) (transactionID string, account domain.Account, err error) {
 	now := s.now()
-	stateHash := hashState(p.RawState)
+	stateHash := HashOAuthState(p.RawState)
 
 	rowProviderID, rowTransactionID, verifierEnv, ok, err := s.tx.ConsumeByStateHash(ctx, stateHash, now)
 	if err != nil {
@@ -248,10 +283,31 @@ func (s *OAuthEnrollmentService) Complete(ctx context.Context, p CompleteOAuthPa
 		}
 	}
 
-	if _, ok, err := s.accounts.GetByProviderExternalID(ctx, rowProviderID, identity.ExternalID); err != nil {
+	existingAccount, foundExisting, err := s.accounts.GetByProviderExternalID(ctx, rowProviderID, identity.ExternalID)
+	if err != nil {
 		return rowTransactionID, domain.Account{}, fmt.Errorf("application: oauth: check existing account: %w", err)
-	} else if ok {
-		return rowTransactionID, domain.Account{}, ErrOAuthAccountAlreadyConnected
+	}
+
+	// A targeted reauthentication (POST .../accounts/{id}/reauth/begin,
+	// P2b-PROV-008) demands the exchanged identity resolve to EXACTLY
+	// that account — a different existing account, or no existing
+	// account at all, is rejected uniformly with
+	// ErrOAuthAccountIdentityMismatch and nothing is staged or swapped.
+	if p.ReauthAccountID != "" && (!foundExisting || existingAccount.ID != p.ReauthAccountID) {
+		return rowTransactionID, domain.Account{}, ErrOAuthAccountIdentityMismatch
+	}
+
+	// An identity that resolves to an existing account — targeted or
+	// not — is a reauthentication (P2b-PROV-008), never a second
+	// account for the same (provider, external_id): stage the new
+	// credential, validate it, then atomically swap it in as active
+	// while retiring the old one. See reauthenticate's doc comment.
+	if foundExisting {
+		updated, err := s.reauthenticate(ctx, existingAccount, rowProviderID, storedCreds, p, now)
+		if err != nil {
+			return rowTransactionID, domain.Account{}, err
+		}
+		return rowTransactionID, updated, nil
 	}
 
 	accountID := s.newID()
@@ -303,6 +359,15 @@ func (s *OAuthEnrollmentService) Complete(ctx context.Context, p CompleteOAuthPa
 // (the provider's own connect-time classification) as the value for
 // FundingModeProviderEvidence — the one mode where the provider's
 // response, not a fixed catalog default, is the source of truth.
+//
+// For FundingModeProviderEvidence specifically, the stamped confidence
+// is identity.Confidence — the adapter's OWN confidence in its
+// classification (P2b-PROV-007, e.g. antigravity's 0.95 for a
+// recognized plan) — never a hard-coded constant: a fixed 1.0 here
+// would misrepresent connect-time provider evidence as certain when the
+// adapter itself reported otherwise. Every other mode keeps the prior
+// fixed 1.0 (an administrative/catalog default, not provider evidence,
+// so there is nothing for the adapter to be less than certain about).
 func (s *OAuthEnrollmentService) firstFundingEvidence(p CompleteOAuthParams, identity providers.IdentityResult, accountID, fundingID string, now time.Time) (domain.FundingEvidence, error) {
 	if p.OwnerFunding != nil {
 		return domain.FundingEvidence{
@@ -314,14 +379,14 @@ func (s *OAuthEnrollmentService) firstFundingEvidence(p CompleteOAuthParams, ide
 	value := domain.FundingUnknown
 	confidence := 1.0
 	if p.FundingMode == domain.FundingModeProviderEvidence {
-		switch identity.Funding {
-		case string(domain.FundingFree):
+		if identity.Funding == string(domain.FundingFree) {
 			value = domain.FundingFree
-		case string(domain.FundingPaid):
+		} else if identity.Funding == string(domain.FundingPaid) {
 			value = domain.FundingPaid
-		default:
+		} else {
 			value = domain.FundingUnknown
 		}
+		confidence = identity.Confidence
 	}
 
 	stamped, err := domain.StampFirstEvidence(p.FundingMode, accountID, value, false, confidence, now)
@@ -332,10 +397,108 @@ func (s *OAuthEnrollmentService) firstFundingEvidence(p CompleteOAuthParams, ide
 	return stamped, nil
 }
 
-// hashState returns hex(sha256(state)) — the ONLY form of the OAuth
-// `state` value this package ever passes to a storage port. The raw
-// state itself is never a Create/ConsumeByStateHash argument.
-func hashState(state string) string {
+// reauthenticate implements P2b-PROV-008's atomic reauthentication-
+// staging flow (03 §2e) for an account Complete has already determined
+// the exchanged identity resolves to: stage the freshly exchanged
+// credential (rejecting with domain.ErrReauthenticationInProgress —
+// surfaced by httpapi as reauthentication_in_progress — if one of this
+// kind is already staged), optionally validate it via p.Validate, then
+// atomically swap it in as active (retiring the old active credential
+// of the same kind, if any) via the ONE-transaction ReauthRepo port. A
+// validation or swap failure discards the staged row and clears
+// reauth_in_progress, leaving the prior active credential completely
+// untouched — the caller (Complete) gets the error back either way.
+// existing.IdentityEmail/IdentityPlan/ExternalID and every other account
+// field besides its credential/health_state/reauth_in_progress are left
+// exactly as they were; connection_state stays connected throughout.
+func (s *OAuthEnrollmentService) reauthenticate(ctx context.Context, existing domain.Account, providerID string, storedCreds providers.StoredCredentials, p CompleteOAuthParams, now time.Time) (domain.Account, error) {
+	const kind = domain.CredentialKindOAuth2
+
+	existingCreds, err := s.credentials.ListForAccount(ctx, existing.ID)
+	if err != nil {
+		return domain.Account{}, fmt.Errorf("application: reauth: list existing credentials: %w", err)
+	}
+	if err := domain.CanStageCredential(existingCreds, kind); err != nil {
+		return domain.Account{}, err
+	}
+
+	stagedID := s.newID()
+	fingerprint := fingerprintCredentialKey(storedCreds.Value)
+	credIdentity := secrets.RecordIdentity{
+		Purpose: credentialAADPurpose, Provider: providerID, Account: existing.ID, Record: stagedID, Kind: string(kind),
+	}
+	env, err := secrets.Encrypt(s.kr, credIdentity, []byte(storedCreds.Value))
+	if err != nil {
+		return domain.Account{}, fmt.Errorf("application: reauth: encrypt staged credential: %w", err)
+	}
+	stagedCred := domain.Credential{ID: stagedID, AccountID: existing.ID, Kind: kind, State: domain.CredentialStaged, Fingerprint: fingerprint}
+
+	if err := s.reauth.StageCredential(ctx, existing.ID, providerID, stagedCred, env, now); err != nil {
+		return domain.Account{}, fmt.Errorf("application: reauth: stage credential: %w", err)
+	}
+
+	if p.Validate != nil {
+		if err := p.Validate(ctx, storedCreds); err != nil {
+			if discardErr := s.reauth.DiscardStaged(ctx, existing.ID, stagedID); discardErr != nil {
+				return domain.Account{}, fmt.Errorf("application: reauth: validation failed (%v) and rollback failed: %w", err, discardErr)
+			}
+			return domain.Account{}, fmt.Errorf("application: reauth: staged credential failed validation: %w", err)
+		}
+	}
+
+	if err := s.reauth.SwapStagedToActive(ctx, existing.ID, providerID, kind, stagedID, now); err != nil {
+		if discardErr := s.reauth.DiscardStaged(ctx, existing.ID, stagedID); discardErr != nil {
+			return domain.Account{}, fmt.Errorf("application: reauth: swap failed (%v) and rollback failed: %w", err, discardErr)
+		}
+		return domain.Account{}, fmt.Errorf("application: reauth: swap staged credential: %w", err)
+	}
+
+	updated, ok, err := s.accounts.GetByID(ctx, existing.ID)
+	if err != nil {
+		return domain.Account{}, fmt.Errorf("application: reauth: reload account: %w", err)
+	}
+	if !ok {
+		return domain.Account{}, fmt.Errorf("application: reauth: account %q vanished after a successful swap", existing.ID)
+	}
+	return updated, nil
+}
+
+// SweepStaleStagedCredentials discards every staged credential row older
+// than olderThan (P2b-PROV-008 §5, crash recovery): a process crash
+// between staging (reauthenticate, above) and its swap/rollback would
+// otherwise leave a staged row and reauth_in_progress=1 behind
+// indefinitely. The active credential is NEVER touched by this — only
+// staged rows past olderThan are discarded via ReauthRepo.DiscardStaged,
+// which itself never touches anything but a staged row and the
+// reauth_in_progress flag. Wiring this into a boot-time sweep is a
+// follow-up (see internal/app.Boot) — this method only proves the
+// reclaim logic itself; it returns how many stale rows were discarded.
+func (s *OAuthEnrollmentService) SweepStaleStagedCredentials(ctx context.Context, olderThan time.Time) (int, error) {
+	stale, err := s.reauth.StaleStagedCredentials(ctx, olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("application: sweep stale staged credentials: list: %w", err)
+	}
+
+	n := 0
+	for _, c := range stale {
+		if err := s.reauth.DiscardStaged(ctx, c.AccountID, c.ID); err != nil {
+			return n, fmt.Errorf("application: sweep stale staged credentials: discard %q: %w", c.ID, err)
+		}
+		n++
+	}
+	return n, nil
+}
+
+// HashOAuthState returns hex(sha256(state)) — the ONLY form of the
+// OAuth `state` value this package ever passes to a storage port. The
+// raw state itself is never a Create/ConsumeByStateHash argument.
+// Exported so httpapi's callback handler (P2b-PROV-008) can compute the
+// identical hash to peek a pending transaction's id (via
+// storage.OAuthTransactionRepo.PeekTransactionIDByStateHash) BEFORE
+// calling Complete — needed to resolve the reauth-binding cache early
+// enough for the account_identity_mismatch guard to apply before
+// anything is staged/swapped.
+func HashOAuthState(state string) string {
 	sum := sha256.Sum256([]byte(state))
 	return hex.EncodeToString(sum[:])
 }

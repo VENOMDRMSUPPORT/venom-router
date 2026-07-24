@@ -68,13 +68,16 @@ func newTestOAuthHandler(t *testing.T, providerID string, adapter providers.OAut
 	}
 
 	txRepo := storage.NewOAuthTransactionRepo(db)
+	accountRepo := storage.NewAccountRepo(db)
 	svc := application.NewOAuthEnrollmentService(
-		txRepo, storage.NewEnrollmentRepo(db), storage.NewAccountRepo(db), testKeyring(t), newOAuthTransactionID, nil,
+		txRepo, storage.NewEnrollmentRepo(db), accountRepo,
+		storage.NewAccountCredentialRepo(db), storage.NewReauthRepo(db),
+		testKeyring(t), newOAuthTransactionID, nil,
 	)
-	return NewOAuthHandler(svc, reg, txRepo, testAllowedHost), db
+	return NewOAuthHandler(svc, reg, txRepo, accountRepo, testAllowedHost), db
 }
 
-// newTestOAuthMux wires h's three routes on a bare http.ServeMux — the
+// newTestOAuthMux wires h's four routes on a bare http.ServeMux — the
 // same route patterns ControlMux registers — WITHOUT any gate, so these
 // tests exercise OAuthHandler's own behavior against a real fake adapter
 // in isolation from the (separately tested, see oauth_gating_test.go)
@@ -82,6 +85,7 @@ func newTestOAuthHandler(t *testing.T, providerID string, adapter providers.OAut
 func newTestOAuthMux(h *OAuthHandler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/control/v1/providers/{id}/oauth/begin", h.ServeBegin)
+	mux.HandleFunc("/api/control/v1/accounts/{id}/reauth/begin", h.ServeReauthBegin)
 	mux.HandleFunc("/api/control/v1/oauth/{provider}/callback", h.ServeCallback)
 	mux.HandleFunc("/api/control/v1/oauth/{transaction_id}/status", h.ServeStatus)
 	return mux

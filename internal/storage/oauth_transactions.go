@@ -119,6 +119,34 @@ func (r *OAuthTransactionRepo) ConsumeByStateHash(ctx context.Context, stateHash
 	return providerID, transactionID, secrets.Envelope{KeyID: keyID, Nonce: nonce, Ciphertext: ciphertext}, true, nil
 }
 
+// PeekTransactionIDByStateHash is a read-only, non-consuming lookup of
+// the transaction_id for a still-pending row named by stateHash — used
+// only by httpapi's callback handler (P2b-PROV-008) to resolve, BEFORE
+// calling Complete, whether an incoming callback belongs to a
+// transaction its own in-memory reauth-binding cache has bound to a
+// specific account (the account_identity_mismatch guard needs this
+// binding available at Complete's call site, not after — Complete
+// cannot un-stage/un-swap once it has already acted on a resolved
+// identity). It performs no consume/update side effect and does not
+// itself check expiry — Complete's own ConsumeByStateHash remains the
+// sole authority on whether the transaction is actually still valid;
+// this is purely a peek for reauth-binding correlation. ok is false if
+// stateHash names no row at all (never distinguished further, matching
+// this package's other canary-safe lookups).
+func (r *OAuthTransactionRepo) PeekTransactionIDByStateHash(ctx context.Context, stateHash string) (transactionID string, ok bool, err error) {
+	scanErr := r.db.Conn().QueryRowContext(ctx,
+		`SELECT transaction_id FROM oauth_transactions WHERE state_sha256 = ?`,
+		stateHash,
+	).Scan(&transactionID)
+	if errors.Is(scanErr, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if scanErr != nil {
+		return "", false, fmt.Errorf("storage: peek oauth transaction by state hash: %w", scanErr)
+	}
+	return transactionID, true, nil
+}
+
 // GetStatusByTransactionID reads only consumed/expires_at for the row
 // named by transactionID — never the envelope or provider_id, which the
 // status endpoint has no need for. ok is false if no such row exists.
