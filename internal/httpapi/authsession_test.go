@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -100,8 +99,31 @@ func TestAuthLogin_SucceedsAfterSetup(t *testing.T) {
 		t.Fatalf("login session cookie flags = %+v, want HttpOnly+SameSite=Strict+Path=%s", sessionCookie, controlAPIPath)
 	}
 
-	if body := rec.Body.String(); strings.Contains(body, "csrf_token") {
-		t.Fatalf("login response unexpectedly includes csrf_token (CSRF issuance is SEC-004, not this unit): %q", body)
+	// P2b-SEC-004: login now issues a session-bound CSRF token in the
+	// response body and as a readable XSRF-TOKEN cookie.
+	var csrfBody struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &csrfBody); err != nil {
+		t.Fatalf("decode csrf_token: %v", err)
+	}
+	if csrfBody.CSRFToken == "" {
+		t.Fatalf("login response missing csrf_token: %q", rec.Body.String())
+	}
+	var xsrfCookie *http.Cookie
+	for _, c := range resp.Cookies() {
+		if c.Name == csrfCookieName {
+			xsrfCookie = c
+		}
+	}
+	if xsrfCookie == nil {
+		t.Fatalf("login did not set an %s cookie", csrfCookieName)
+	}
+	if xsrfCookie.HttpOnly {
+		t.Fatalf("XSRF-TOKEN cookie HttpOnly = true, want false (client script must read it)")
+	}
+	if xsrfCookie.Value != csrfBody.CSRFToken {
+		t.Fatalf("XSRF-TOKEN cookie value %q != response csrf_token %q", xsrfCookie.Value, csrfBody.CSRFToken)
 	}
 }
 

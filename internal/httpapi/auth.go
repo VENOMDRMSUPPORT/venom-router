@@ -32,6 +32,14 @@ type AuthHandlers struct {
 	setupLimiter  *fixedWindowLimiter
 	loginLimiter  *fixedWindowLimiter
 
+	// csrfKey is a random 32-byte key generated once per AuthHandlers
+	// (process lifetime), never persisted. It is the sole secret input
+	// to issueCSRFToken/validateCSRF (09 §5.4) — CSRF tokens are
+	// deterministic HMACs of a session's token hash under this key, so
+	// they need no storage of their own and are trivially recomputed
+	// (e.g. by GET /auth/session) for the lifetime of this process.
+	csrfKey []byte
+
 	// now is the injectable clock every time-based decision in this
 	// package computes against (session expiry/renewal, CSRF issuance
 	// implicitly via session lookups, reverify freshness, lockout
@@ -44,11 +52,23 @@ type AuthHandlers struct {
 
 // NewAuthHandlers builds the auth handlers over db's existing connection.
 func NewAuthHandlers(db *storage.DB) *AuthHandlers {
+	// crypto/rand.Read is documented (Go 1.24+, this module's floor) to
+	// always fill the buffer and never return an error — unlike
+	// MintOwnerSession/DeriveOwnerPasswordHash (which still check it,
+	// for defense in depth on a value that leaves this process), this
+	// key never leaves the process, so there is nothing a typed error
+	// here could let a caller do differently; the error is deliberately
+	// discarded rather than propagated through every ControlMux/
+	// NewAuthHandlers call site for a condition that cannot occur.
+	csrfKey := make([]byte, 32)
+	_, _ = rand.Read(csrfKey)
+
 	return &AuthHandlers{
 		ownerAuth:     storage.NewOwnerAuthRepo(db),
 		ownerSessions: storage.NewOwnerSessionRepo(db),
 		setupLimiter:  newFixedWindowLimiter(5, time.Minute),
 		loginLimiter:  newFixedWindowLimiter(5, time.Minute),
+		csrfKey:       csrfKey,
 		now:           time.Now,
 	}
 }
@@ -115,11 +135,14 @@ func (h *AuthHandlers) ServeSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idleExpiresAt, absoluteExpiresAt, err := h.createSession(ctx, r, w)
+	idleExpiresAt, absoluteExpiresAt, tokenHash, err := h.createSession(ctx, r, w)
 	if err != nil {
 		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
 		return
 	}
+
+	csrfToken := h.issueCSRFToken(tokenHash)
+	setCSRFCookie(w, r, csrfToken)
 
 	writeAuthJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
@@ -128,6 +151,7 @@ func (h *AuthHandlers) ServeSetup(w http.ResponseWriter, r *http.Request) {
 				"absolute_expires_at": absoluteExpiresAt.Format(time.RFC3339),
 			},
 		},
+		"csrf_token": csrfToken,
 	})
 }
 
@@ -137,10 +161,10 @@ func (h *AuthHandlers) ServeSetup(w http.ResponseWriter, r *http.Request) {
 // by ServeSetup (the first session) and ServeLogin (every subsequent
 // session) — both create a session identically once the caller is
 // authenticated.
-func (h *AuthHandlers) createSession(ctx context.Context, r *http.Request, w http.ResponseWriter) (idleExpiresAt, absoluteExpiresAt time.Time, err error) {
+func (h *AuthHandlers) createSession(ctx context.Context, r *http.Request, w http.ResponseWriter) (idleExpiresAt, absoluteExpiresAt time.Time, tokenHash []byte, err error) {
 	session, err := secrets.MintOwnerSession()
 	if err != nil {
-		return time.Time{}, time.Time{}, err
+		return time.Time{}, time.Time{}, nil, err
 	}
 
 	now := h.now().UTC()
@@ -154,11 +178,11 @@ func (h *AuthHandlers) createSession(ctx context.Context, r *http.Request, w htt
 		IdleExpiresAt:     idleExpiresAt,
 		AbsoluteExpiresAt: absoluteExpiresAt,
 	}); err != nil {
-		return time.Time{}, time.Time{}, err
+		return time.Time{}, time.Time{}, nil, err
 	}
 
 	setSessionCookie(w, r, session.Handle)
-	return idleExpiresAt, absoluteExpiresAt, nil
+	return idleExpiresAt, absoluteExpiresAt, session.TokenHash, nil
 }
 
 // ServeStatus implements GET /auth/status (09 §5.1): whether the single

@@ -91,11 +91,14 @@ func (h *AuthHandlers) ServeLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idleExpiresAt, absoluteExpiresAt, err := h.createSession(ctx, r, w)
+	idleExpiresAt, absoluteExpiresAt, tokenHash, err := h.createSession(ctx, r, w)
 	if err != nil {
 		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
 		return
 	}
+
+	csrfToken := h.issueCSRFToken(tokenHash)
+	setCSRFCookie(w, r, csrfToken)
 
 	writeAuthJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
@@ -104,10 +107,8 @@ func (h *AuthHandlers) ServeLogin(w http.ResponseWriter, r *http.Request) {
 				"absolute_expires_at": absoluteExpiresAt.Format(time.RFC3339),
 			},
 		},
+		"csrf_token": csrfToken,
 	})
-	// No csrf_token is issued here — session-bound CSRF issuance is
-	// SEC-004; this unit deliberately omits it rather than fabricating a
-	// token nothing yet validates.
 }
 
 // ServeLogout implements POST /auth/logout (09 §5.3): revokes the
@@ -159,6 +160,12 @@ func (h *AuthHandlers) ServeSession(w http.ResponseWriter, r *http.Request) {
 				"absolute_expires_at": session.Row.AbsoluteExpiresAt.Format(time.RFC3339),
 			},
 		},
+		// Recomputed (never stored) from the resolved session's token
+		// hash — this is what makes CSRF issuance restart-safe: the SPA
+		// can always re-fetch a valid token for its live session via
+		// this GET, even though h.csrfKey is a fresh, process-lifetime
+		// secret every restart (09 §5.4's design note).
+		"csrf_token": h.issueCSRFToken(session.TokenHash),
 	})
 }
 
