@@ -17,3 +17,15 @@ const envKeyEncryptionKey = "VENOM_ENCRYPTION_KEY"
 func EncryptionKeyOverride() (value string, present bool) {
 	return os.LookupEnv(envKeyEncryptionKey)
 }
+
+// EnvPresent reports only whether the environment variable name is
+// set — never its value. This is deliberately presence-only (not a
+// general LookupEnv passthrough): callers that need to report a
+// confidential-client OAuth provider's missing configuration (e.g.
+// P2b-PROV-002's GET /providers) must never be able to accidentally
+// surface a secret's value, so the value itself is not retrievable
+// through this function at all.
+func EnvPresent(name string) bool {
+	_, ok := os.LookupEnv(name)
+	return ok
+}

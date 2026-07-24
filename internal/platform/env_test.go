@@ -42,3 +42,25 @@ func TestEncryptionKeyOverride_Absent(t *testing.T) {
 		t.Fatalf("present = true, want false")
 	}
 }
+
+func TestEnvPresent(t *testing.T) {
+	const name = "VENOM_TEST_ENV_PRESENT_CHECK"
+
+	if orig, ok := os.LookupEnv(name); ok {
+		t.Cleanup(func() { _ = os.Setenv(name, orig) })
+	} else {
+		t.Cleanup(func() { _ = os.Unsetenv(name) })
+	}
+
+	if err := os.Unsetenv(name); err != nil {
+		t.Fatalf("unsetenv: %v", err)
+	}
+	if EnvPresent(name) {
+		t.Fatalf("EnvPresent(unset) = true, want false")
+	}
+
+	t.Setenv(name, "irrelevant-value")
+	if !EnvPresent(name) {
+		t.Fatalf("EnvPresent(set) = false, want true")
+	}
+}

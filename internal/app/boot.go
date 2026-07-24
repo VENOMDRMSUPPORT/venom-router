@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/httpapi"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/httpui"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
@@ -215,13 +217,21 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		return nil, fmt.Errorf("app: reconcile keyring: %w", err)
 	}
 
-	// 6-8. Repositories / provider registry / services: all stubs until
-	// P1/P2b+. Deliberately NOT internal/execution's dispatcher — wiring
-	// the real execution path is separate, later work, not this unit's.
+	// 6-8. Repositories / provider registry / services. Repositories and
+	// services remain stubs until P2b+ wires the execution path — this is
+	// deliberately NOT internal/execution's dispatcher. The provider
+	// registry stage now seeds the M2 providers table from the frozen
+	// built-in catalog (P2b-PROV-002) so GET /providers has FK-consistent
+	// rows to read; it is fail-closed like every other stage — a seed
+	// error aborts boot before any listener opens.
 	logStage(StageBuildRepositories)
 	buildRepositoriesStub()
 	logStage(StageBuildProviderRegistry)
-	buildProviderRegistryStub()
+	if err := storage.SeedProviders(ctx, db, providers.BuiltinCatalog(), time.Now()); err != nil {
+		closeDB()
+		release()
+		return nil, fmt.Errorf("app: seed providers: %w", err)
+	}
 	logStage(StageBuildServices)
 	buildServicesStub()
 
@@ -268,11 +278,11 @@ func (noCiphertextStore) ListKeyRefs(_ context.Context) ([]secrets.CiphertextRef
 }
 
 // The following are explicit stubs for stages this phase does not yet
-// implement: repositories, provider registry, and services are P2b+.
-// Each is a clearly-marked no-op — none is wired to internal/execution's
-// dispatcher. validate_embedded_assets is no longer a stub as of
-// P2a-UI-001 — it calls httpui.New() directly, above.
+// implement: repositories and services are still P2b+ no-ops — neither
+// is wired to internal/execution's dispatcher. validate_embedded_assets
+// stopped being a stub at P2a-UI-001 (calls httpui.New() directly,
+// above), and build_provider_registry stopped being one at P2b-PROV-002
+// (seeds the providers table directly in Boot, above).
 
-func buildRepositoriesStub()     {}
-func buildProviderRegistryStub() {}
-func buildServicesStub()         {}
+func buildRepositoriesStub() {}
+func buildServicesStub()     {}

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
@@ -35,6 +36,16 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB) http.Handl
 	mux.Handle("/api/control/v1/auth/login", networkGate(allowedHost, http.HandlerFunc(auth.ServeLogin)))
 	mux.Handle("/api/control/v1/auth/logout", networkGate(allowedHost, http.HandlerFunc(auth.ServeLogout)))
 	mux.Handle("/api/control/v1/auth/session", networkGate(allowedHost, http.HandlerFunc(auth.ServeSession)))
+
+	// The provider registry (P2b-PROV-001) is empty this phase — no
+	// adapter registers until PROV-005/PROV-007 — so DerivedCapabilities
+	// correctly reports zero capabilities for every catalog entry. It is
+	// constructed here, at this composition point, rather than plumbed
+	// through ControlMux's signature, to keep this unit's boot ripple to
+	// zero call-site changes.
+	providersHandler := NewProvidersHandler(providers.NewRegistry())
+	mux.Handle("/api/control/v1/providers", networkGate(allowedHost, http.HandlerFunc(providersHandler.ServeList)))
+	mux.Handle("/api/control/v1/providers/{id}", networkGate(allowedHost, http.HandlerFunc(providersHandler.ServeGet)))
 
 	mux.Handle("/", networkGate(allowedHost, spa))
 	return mux
