@@ -116,6 +116,42 @@ func (r *OwnerSessionRepo) GetByTokenHash(ctx context.Context, tokenHash []byte)
 	return row, true, nil
 }
 
+// Renew advances a still-active session's last_seen_at/idle_expires_at
+// (09 §5.3's renewal: "each authenticated request within the idle
+// window advances last_seen_at and idle_expires_at = now + idle_ttl,
+// but never past absolute_expires_at"). The caller (httpapi's session
+// validator) computes idleExpires already clamped to the session's
+// absolute_expires_at — this method persists whatever it is given
+// verbatim, so the clamping invariant lives in exactly one place. The
+// WHERE clause only ever matches a still-active row, mirroring Revoke's
+// idempotency: renewing an already-revoked or absent session affects
+// zero rows and is not an error.
+func (r *OwnerSessionRepo) Renew(ctx context.Context, tokenHash []byte, lastSeen, idleExpires time.Time) error {
+	_, err := r.db.Conn().ExecContext(ctx,
+		`UPDATE owner_sessions SET last_seen_at = ?, idle_expires_at = ? WHERE token_hash = ? AND revoked_at IS NULL`,
+		formatTimestamp(lastSeen), formatTimestamp(idleExpires), tokenHash,
+	)
+	if err != nil {
+		return fmt.Errorf("storage: renew owner_sessions row: %w", err)
+	}
+	return nil
+}
+
+// RevokeAll revokes every still-active session at once (09 §5.3:
+// "changing the owner password revokes all existing sessions") —
+// the password-change endpoint itself is a later unit; this is the
+// storage primitive it will call.
+func (r *OwnerSessionRepo) RevokeAll(ctx context.Context, at time.Time) error {
+	_, err := r.db.Conn().ExecContext(ctx,
+		`UPDATE owner_sessions SET revoked_at = ? WHERE revoked_at IS NULL`,
+		formatTimestamp(at),
+	)
+	if err != nil {
+		return fmt.Errorf("storage: revoke all owner_sessions rows: %w", err)
+	}
+	return nil
+}
+
 // Revoke sets revoked_at = now for the session identified by tokenHash.
 // It is idempotent by construction (the WHERE clause only ever matches
 // and updates a still-active row): revoking an already-revoked row, or a

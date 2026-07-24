@@ -165,6 +165,132 @@ func TestOwnerSessionRepo_Revoke_SetsRevokedAt(t *testing.T) {
 	}
 }
 
+func TestOwnerSessionRepo_Renew_AdvancesLastSeenAndIdleExpiry(t *testing.T) {
+	db := migratedOwnerAuthDB(t)
+	repo := NewOwnerSessionRepo(db)
+	ctx := context.Background()
+	created := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	tokenHash := []byte("renew-me")
+	if err := repo.Create(ctx, OwnerSessionRow{
+		TokenHash:         tokenHash,
+		CreatedAt:         created,
+		LastSeenAt:        created,
+		IdleExpiresAt:     created.Add(30 * time.Minute),
+		AbsoluteExpiresAt: created.Add(12 * time.Hour),
+	}); err != nil {
+		t.Fatalf("Create: unexpected error: %v", err)
+	}
+
+	renewAt := created.Add(10 * time.Minute)
+	newIdle := renewAt.Add(30 * time.Minute)
+	if err := repo.Renew(ctx, tokenHash, renewAt, newIdle); err != nil {
+		t.Fatalf("Renew: unexpected error: %v", err)
+	}
+
+	got, ok, err := repo.GetByTokenHash(ctx, tokenHash)
+	if err != nil || !ok {
+		t.Fatalf("GetByTokenHash after Renew: ok=%v err=%v", ok, err)
+	}
+	if !got.LastSeenAt.Equal(renewAt) {
+		t.Fatalf("LastSeenAt = %v, want %v", got.LastSeenAt, renewAt)
+	}
+	if !got.IdleExpiresAt.Equal(newIdle) {
+		t.Fatalf("IdleExpiresAt = %v, want %v", got.IdleExpiresAt, newIdle)
+	}
+}
+
+func TestOwnerSessionRepo_Renew_RevokedSessionUnaffected(t *testing.T) {
+	db := migratedOwnerAuthDB(t)
+	repo := NewOwnerSessionRepo(db)
+	ctx := context.Background()
+	created := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	tokenHash := []byte("renew-revoked")
+	if err := repo.Create(ctx, OwnerSessionRow{
+		TokenHash:         tokenHash,
+		CreatedAt:         created,
+		LastSeenAt:        created,
+		IdleExpiresAt:     created.Add(30 * time.Minute),
+		AbsoluteExpiresAt: created.Add(12 * time.Hour),
+	}); err != nil {
+		t.Fatalf("Create: unexpected error: %v", err)
+	}
+	if err := repo.Revoke(ctx, tokenHash); err != nil {
+		t.Fatalf("Revoke: unexpected error: %v", err)
+	}
+
+	if err := repo.Renew(ctx, tokenHash, created.Add(time.Hour), created.Add(90*time.Minute)); err != nil {
+		t.Fatalf("Renew: unexpected error: %v", err)
+	}
+
+	got, ok, err := repo.GetByTokenHash(ctx, tokenHash)
+	if err != nil || !ok {
+		t.Fatalf("GetByTokenHash: ok=%v err=%v", ok, err)
+	}
+	if got.RevokedAt == nil {
+		t.Fatalf("RevokedAt = nil, want set (a revoked session must never be resurrected by Renew)")
+	}
+	// idle_expires_at must be unchanged from creation — Renew's WHERE
+	// clause excludes revoked rows.
+	if !got.IdleExpiresAt.Equal(created.Add(30 * time.Minute)) {
+		t.Fatalf("IdleExpiresAt = %v, want unchanged %v", got.IdleExpiresAt, created.Add(30*time.Minute))
+	}
+}
+
+func TestOwnerSessionRepo_RevokeAll_RevokesEveryActiveSession(t *testing.T) {
+	db := migratedOwnerAuthDB(t)
+	repo := NewOwnerSessionRepo(db)
+	ctx := context.Background()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	hashes := [][]byte{[]byte("sess-a"), []byte("sess-b"), []byte("sess-c")}
+	for _, h := range hashes {
+		if err := repo.Create(ctx, OwnerSessionRow{
+			TokenHash:         h,
+			CreatedAt:         now,
+			LastSeenAt:        now,
+			IdleExpiresAt:     now.Add(30 * time.Minute),
+			AbsoluteExpiresAt: now.Add(12 * time.Hour),
+		}); err != nil {
+			t.Fatalf("Create(%s): unexpected error: %v", h, err)
+		}
+	}
+
+	// One of the three is already revoked before RevokeAll runs.
+	if err := repo.Revoke(ctx, hashes[0]); err != nil {
+		t.Fatalf("pre-revoke: unexpected error: %v", err)
+	}
+	preRevokedAt, _, err := repo.GetByTokenHash(ctx, hashes[0])
+	if err != nil {
+		t.Fatalf("GetByTokenHash: %v", err)
+	}
+
+	if err := repo.RevokeAll(ctx, now.Add(time.Hour)); err != nil {
+		t.Fatalf("RevokeAll: unexpected error: %v", err)
+	}
+
+	for _, h := range hashes {
+		got, ok, err := repo.GetByTokenHash(ctx, h)
+		if err != nil || !ok {
+			t.Fatalf("GetByTokenHash(%s): ok=%v err=%v", h, ok, err)
+		}
+		if got.RevokedAt == nil {
+			t.Fatalf("session %s not revoked after RevokeAll", h)
+		}
+	}
+
+	// The already-revoked session's RevokedAt must be untouched by
+	// RevokeAll (its WHERE clause only matches still-active rows).
+	postRevokedAt, _, err := repo.GetByTokenHash(ctx, hashes[0])
+	if err != nil {
+		t.Fatalf("GetByTokenHash: %v", err)
+	}
+	if !postRevokedAt.RevokedAt.Equal(*preRevokedAt.RevokedAt) {
+		t.Fatalf("already-revoked session's RevokedAt changed by RevokeAll: before=%v after=%v", preRevokedAt.RevokedAt, postRevokedAt.RevokedAt)
+	}
+}
+
 func TestOwnerSessionRepo_Revoke_IdempotentAndNeverResurrects(t *testing.T) {
 	db := migratedOwnerAuthDB(t)
 	repo := NewOwnerSessionRepo(db)

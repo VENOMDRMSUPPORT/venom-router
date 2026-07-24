@@ -31,6 +31,15 @@ type AuthHandlers struct {
 	ownerSessions *storage.OwnerSessionRepo
 	setupLimiter  *fixedWindowLimiter
 	loginLimiter  *fixedWindowLimiter
+
+	// now is the injectable clock every time-based decision in this
+	// package computes against (session expiry/renewal, CSRF issuance
+	// implicitly via session lookups, reverify freshness, lockout
+	// windows) — tests set it to a fixed/steppable function so
+	// idle/absolute expiry, the 5-minute reverify window, and the
+	// lockout window are provable to the second rather than racing a
+	// real clock.
+	now func() time.Time
 }
 
 // NewAuthHandlers builds the auth handlers over db's existing connection.
@@ -40,6 +49,7 @@ func NewAuthHandlers(db *storage.DB) *AuthHandlers {
 		ownerSessions: storage.NewOwnerSessionRepo(db),
 		setupLimiter:  newFixedWindowLimiter(5, time.Minute),
 		loginLimiter:  newFixedWindowLimiter(5, time.Minute),
+		now:           time.Now,
 	}
 }
 
@@ -58,7 +68,7 @@ func (h *AuthHandlers) ServeSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.setupLimiter.Allow(time.Now()) {
+	if !h.setupLimiter.Allow(h.now()) {
 		writeAuthError(w, http.StatusTooManyRequests, "rate_limited", "too many setup attempts, try again later", true)
 		return
 	}
@@ -133,7 +143,7 @@ func (h *AuthHandlers) createSession(ctx context.Context, r *http.Request, w htt
 		return time.Time{}, time.Time{}, err
 	}
 
-	now := time.Now().UTC()
+	now := h.now().UTC()
 	idleExpiresAt = now.Add(secrets.DefaultIdleTTL)
 	absoluteExpiresAt = now.Add(secrets.DefaultAbsoluteTTL)
 

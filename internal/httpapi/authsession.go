@@ -134,38 +134,29 @@ func (h *AuthHandlers) ServeLogout(w http.ResponseWriter, r *http.Request) {
 
 // ServeSession implements GET /auth/session (09 §5.2/§5.3): reports the
 // current session's expiry timestamps if the incoming cookie names a
-// present, non-revoked session, else the generic invalid_credentials
-// (401) — the same no-leak posture as login. This does NOT enforce
-// idle/absolute expiry (SEC-003's job); a session past either deadline
-// but not yet revoked is still reported here as present.
+// still-valid session, else the appropriate typed error. Unlike its
+// original SEC-002 shape, this now ENFORCES idle/absolute expiry via
+// validateSession (SEC-003): a session past either deadline is revoked
+// and rejected with session_expired, never reported as present, and a
+// still-valid request's activity is renewed exactly as any other
+// authenticated route's would be.
 func (h *AuthHandlers) ServeSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeAuthError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", false)
 		return
 	}
 
-	cookie, err := r.Cookie(sessionCookieName)
-	if err != nil || cookie.Value == "" {
-		writeAuthError(w, http.StatusUnauthorized, "invalid_credentials", "invalid credentials", false)
-		return
-	}
-
-	tokenHash := secrets.HashSessionHandle(cookie.Value)
-	row, ok, err := h.ownerSessions.GetByTokenHash(r.Context(), tokenHash)
-	if err != nil {
-		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
-		return
-	}
-	if !ok || row.RevokedAt != nil {
-		writeAuthError(w, http.StatusUnauthorized, "invalid_credentials", "invalid credentials", false)
+	session, ok, errCode := h.validateSession(r.Context(), r)
+	if !ok {
+		writeSessionError(w, errCode)
 		return
 	}
 
 	writeAuthJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
 			"session": map[string]any{
-				"idle_expires_at":     row.IdleExpiresAt.Format(time.RFC3339),
-				"absolute_expires_at": row.AbsoluteExpiresAt.Format(time.RFC3339),
+				"idle_expires_at":     session.Row.IdleExpiresAt.Format(time.RFC3339),
+				"absolute_expires_at": session.Row.AbsoluteExpiresAt.Format(time.RFC3339),
 			},
 		},
 	})
