@@ -7,6 +7,10 @@ import (
 	"testing"
 )
 
+// ownerAuthVersion is the goose version of the M1 owner-auth migration
+// (00002_owner_auth.sql).
+const ownerAuthVersion = 2
+
 func TestMigrateOwnerAuth_UpDownUp(t *testing.T) {
 	dir := t.TempDir()
 	db, err := Open(dir)
@@ -24,8 +28,13 @@ func TestMigrateOwnerAuth_UpDownUp(t *testing.T) {
 	assertTableExists(t, db, "owner_sessions", true)
 	assertTableExists(t, db, "auth_events", true)
 
-	if _, err := DownOne(ctx, db); err != nil {
-		t.Fatalf("DownOne() error = %v", err)
+	// Roll back every migration applied on top of M1, then M1 itself, so
+	// this proves M1's own down path no matter how many later migrations
+	// exist (ownerAuthVersion is M1's goose version).
+	for currentVersion(t, db) >= ownerAuthVersion {
+		if _, err := DownOne(ctx, db); err != nil {
+			t.Fatalf("DownOne() error = %v", err)
+		}
 	}
 	assertTableExists(t, db, "owner_auth", false)
 	assertTableExists(t, db, "owner_sessions", false)

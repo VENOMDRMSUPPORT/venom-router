@@ -140,30 +140,21 @@ func TestVerify_IntegrityCheckPassesOnHealthyDB(t *testing.T) {
 }
 
 // TestVerify_IntegrityCheckFailsClosedOnCorruption forces real, on-disk
-// SQLite corruption: after migrating, it checkpoints WAL into the main
-// file (so the corruption lands on live data, not the not-yet-folded-in
-// WAL), closes the DB, then overwrites every byte in page 2 onward
-// (leaving page 1 — the schema/master-table page — untouched) with
-// garbage.
+// SQLite corruption: after migrating, it seeds enough row data that the
+// file gains data/overflow pages past the schema, checkpoints WAL into the
+// main file (so the corruption lands on live data, not the not-yet-folded
+// WAL), closes the DB, then overwrites the file's SECOND HALF with garbage.
+// The schema pages sit at the front, so this destroys table b-tree/overflow
+// pages while leaving the schema readable: Open/Ping still succeed, and only
+// integrity_check's full b-tree walk catches the damage.
 //
-// Two cruder approaches were tried first via a throwaway diagnostic
-// script and rejected:
-//   - Corrupting a narrow byte range (e.g. 100 bytes at offset 150) left
-//     PRAGMA integrity_check reporting "ok" every time — on this small,
-//     near-empty database, ranges up to several hundred bytes past the
-//     header repeatedly landed in each page's unused free space, which
-//     integrity_check's b-tree walk never needs to visit.
-//   - Corrupting everything past the 100-byte file header, including
-//     page 1 itself, breaks schema reading badly enough that
-//     storage.Open's own connection-time pragma application fails during
-//     Ping — the corruption is real, but it's caught by Open() with a
-//     generic wrapped error, never reaching this package's
-//     PRAGMA-integrity_check-based Verify path at all.
-//
-// Corrupting only page 2 onward keeps the schema page intact (Open/Ping
-// succeed) while destroying the actual table b-tree pages, which only a
-// full integrity_check walk detects — confirmed empirically before
-// writing this test.
+// This must be schema-size-aware. An earlier version wiped "page 2 onward"
+// on the assumption that page 1 held the whole schema; once M2 pushed
+// sqlite_master past a single page, wiping page 2+ destroyed part of the
+// schema and made Open() itself fail before Verify ever ran -- the opposite
+// of what this test asserts. Corrupting only the data-bearing second half
+// (with real data seeded first) restores the intended "Open succeeds,
+// integrity_check fails closed" separation regardless of schema size.
 func TestVerify_IntegrityCheckFailsClosedOnCorruption(t *testing.T) {
 	dir := t.TempDir()
 	db, err := Open(dir)
@@ -174,6 +165,19 @@ func TestVerify_IntegrityCheckFailsClosedOnCorruption(t *testing.T) {
 	ctx := context.Background()
 	if _, err := Migrate(ctx, db); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
+	}
+	// Seed enough real row data that the file gains many data/overflow
+	// pages after the schema pages, so corrupting the file's second half
+	// destroys table data while leaving the schema pages (at the front)
+	// intact for Open. Without this, a near-empty DB is almost all schema,
+	// so any corruption past the header hits the schema and breaks Open.
+	bigValue := strings.Repeat("x", 64*1024)
+	for i := 0; i < 8; i++ {
+		if _, err := db.Conn().Exec(
+			"INSERT INTO auth_events (action, result, reason_code) VALUES ('probe', 'ok', ?)", bigValue,
+		); err != nil {
+			t.Fatalf("seed data before corrupting: %v", err)
+		}
 	}
 	if _, err := db.Conn().Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		t.Fatalf("checkpoint before corrupting: %v", err)
@@ -217,12 +221,20 @@ func corruptDataPages(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("stat db file: %v", err)
 	}
-	if info.Size() <= sqlitePageSize {
-		t.Fatalf("db file has no page 2 to corrupt: %d bytes", info.Size())
+
+	// Corrupt only the file's second half (aligned down to a page boundary).
+	// The schema pages sit at the front of the file, so the second half is
+	// table/overflow data: wiping it keeps page 1 + every schema page intact
+	// (Open/Ping still succeed) while destroying data-carrying pages that
+	// only integrity_check's full b-tree walk visits.
+	start := info.Size() / 2
+	start -= start % sqlitePageSize
+	if start < sqlitePageSize {
+		t.Fatalf("db file too small to corrupt only its tail: %d bytes", info.Size())
 	}
 
-	garbage := bytes.Repeat([]byte{0xFF}, int(info.Size()-sqlitePageSize))
-	if _, err := f.WriteAt(garbage, sqlitePageSize); err != nil {
+	garbage := bytes.Repeat([]byte{0xFF}, int(info.Size()-start))
+	if _, err := f.WriteAt(garbage, start); err != nil {
 		t.Fatalf("write corruption: %v", err)
 	}
 }
