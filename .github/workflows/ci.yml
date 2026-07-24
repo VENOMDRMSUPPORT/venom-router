@@ -169,6 +169,15 @@ jobs:
             Design_System/package-lock.json
             dashboard/package-lock.json
 
+      # P2a-DS-005: fail fast, before anything is installed/built — this
+      # script has zero deps (Node stdlib + git only). Checks (1) no
+      # internal-path imports, (2) no vendored DS component/source copies,
+      # (3) Design_System/ is byte-clean (read-only), (4) the pinned
+      # version hasn't silently drifted. See dashboard/CONSUMPTION.md.
+      - name: Check @venom/design-system adherence (read-only, public exports only)
+        working-directory: dashboard
+        run: npm run check:ds-adherence
+
       - name: Install Design_System dependencies
         working-directory: Design_System
         run: npm ci
