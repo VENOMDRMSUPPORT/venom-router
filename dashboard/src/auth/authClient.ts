@@ -10,6 +10,17 @@
 // cache of the password or the CSRF token — callers (AuthGate and its
 // children) hold whatever state they need in React state only, for the
 // lifetime of the page.
+//
+// The envelope handling itself (the {data}/{error} unwrap, the AuthApiError
+// type, isSessionExpired/isLockedOut) is factored into ../api/http.ts so
+// api/controlClient.ts (P2b-UI-001/UI-003's non-auth control routes) can
+// reuse it verbatim rather than duplicating it. This file re-exports those
+// three names so every existing import of them `from "./authClient"` keeps
+// working unchanged.
+
+import { AuthApiError, isLockedOut, isSessionExpired, request as sharedRequest } from "../api/http";
+
+export { AuthApiError, isLockedOut, isSessionExpired };
 
 const AUTH_BASE = "/api/control/v1/auth";
 
@@ -36,73 +47,12 @@ export interface LiveSession {
   csrfToken: string;
 }
 
-interface AuthErrorBody {
-  code: string;
-  message: string;
-  request_id: string;
-  retryable: boolean;
-  retry_after?: number;
-}
-
-/** Typed error carrying the backend's exact error code (09 §5.8) so
- * callers can branch on it (`invalid_credentials`, `locked_out`,
- * `session_expired`, `csrf_failed`, ...) without parsing prose. */
-export class AuthApiError extends Error {
-  readonly status: number;
-  readonly code: string;
-  readonly requestId: string;
-  readonly retryable: boolean;
-  readonly retryAfterSeconds?: number;
-
-  constructor(status: number, body: AuthErrorBody) {
-    super(body.message);
-    this.name = "AuthApiError";
-    this.status = status;
-    this.code = body.code;
-    this.requestId = body.request_id;
-    this.retryable = body.retryable;
-    this.retryAfterSeconds = body.retry_after;
-  }
-}
-
-/** True for the one failure mode every authenticated call must react to
- * uniformly: clear all client-held auth state and route back to Login
- * (09 §5.3). */
-export function isSessionExpired(err: unknown): boolean {
-  return err instanceof AuthApiError && err.code === "session_expired";
-}
-
-/** True for the rate-limit failure mode (09 §5.6): the caller should
- * render the locked-out state with `retryAfterSeconds`. */
-export function isLockedOut(err: unknown): boolean {
-  return err instanceof AuthApiError && err.code === "locked_out";
-}
-
 function toSessionTimes(raw: RawSessionTimes): SessionTimes {
   return { idleExpiresAt: raw.idle_expires_at, absoluteExpiresAt: raw.absolute_expires_at };
 }
 
-async function request<T>(path: string, init: RequestInit): Promise<T> {
-  const response = await fetch(AUTH_BASE + path, {
-    ...init,
-    credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      ...(init.headers ?? {}),
-    },
-  });
-
-  const body: unknown = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    const errorBody =
-      body && typeof body === "object" && "error" in body
-        ? ((body as { error: AuthErrorBody }).error)
-        : { code: "unknown", message: "Unexpected error.", request_id: "", retryable: false };
-    throw new AuthApiError(response.status, errorBody);
-  }
-
-  return body as T;
+function request<T>(path: string, init: RequestInit): Promise<T> {
+  return sharedRequest<T>(AUTH_BASE, path, init);
 }
 
 /** GET /auth/status — whether the single owner_auth row exists yet. Does

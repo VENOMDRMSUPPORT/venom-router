@@ -27,6 +27,7 @@ describe("AuthGate — first-run setup", () => {
       "GET /api/control/v1/auth/status": () => jsonResponse(200, { data: { setup_complete: false } }),
       "POST /api/control/v1/auth/setup": () =>
         jsonResponse(200, { data: { session: SESSION_TIMES }, csrf_token: "csrf-setup-token" }),
+      "GET /api/control/v1/settings": () => jsonResponse(200, { data: { theme: "venom-dark", density: "comfortable" } }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -43,7 +44,11 @@ describe("AuthGate — first-run setup", () => {
     expect(inputValue(screen.getByLabelText(/owner password/i))).toBe("");
     expect(inputValue(screen.getByLabelText(/confirm password/i))).toBe("");
 
-    await screen.findByRole("button", { name: /sign out/i });
+    // P2b-UI-001: the authenticated area is now the real app shell (an
+    // AuthenticatedArea placeholder no longer exists) — its owner menu is
+    // the reachable, stable proof that AuthGate entered the authenticated
+    // state.
+    await screen.findByRole("button", { name: /owner menu/i });
 
     expect(document.body.innerHTML).not.toContain(password);
   });
@@ -74,6 +79,7 @@ describe("AuthGate — login", () => {
         jsonResponse(401, { error: { code: "session_expired", message: "session expired", request_id: "r1", retryable: false } }),
       "POST /api/control/v1/auth/login": () =>
         jsonResponse(200, { data: { session: SESSION_TIMES }, csrf_token: "csrf-login-token" }),
+      "GET /api/control/v1/settings": () => jsonResponse(200, { data: { theme: "venom-dark", density: "comfortable" } }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -87,7 +93,9 @@ describe("AuthGate — login", () => {
 
     expect(inputValue(screen.getByLabelText(/owner password/i))).toBe("");
 
-    await screen.findByRole("button", { name: /sign out/i });
+    // P2b-UI-001: the real app shell's owner menu is the reachable proof
+    // of the authenticated state (see the first-run test's own note).
+    await screen.findByRole("button", { name: /owner menu/i });
 
     expect(document.body.innerHTML).not.toContain(password);
   });
@@ -159,84 +167,66 @@ describe("AuthGate — login", () => {
   }, 10000);
 });
 
-describe("AuthGate — session expiry and reverify", () => {
+// P2b-UI-001 note: AuthenticatedArea's "Run sensitive action (stub)" demo
+// button (and the reverify gate it exercised) is gone along with that
+// placeholder component — the real app shell (AppShell) has no such demo
+// surface. The underlying guarantee this block used to prove via that
+// stub — "an authenticated mutating call that comes back session_expired
+// routes back to Login with no secret retained, and a mutating call
+// correctly threads the session's exact CSRF token" — is still real and
+// still proven below, now via the shell's own real mutating call
+// (PUT /settings, from a ThemeSwitcher change) instead of the removed
+// demo. The reverify-specific gate itself (reverification_required ->
+// ReverifyModal -> reverify -> success/locked_out) is exercised by its
+// real production caller now: the credential-reveal flow in
+// src/fleet/ProviderFleet.test.tsx (P2b-UI-003), which reuses this same
+// ReverifyModal component.
+describe("AuthGate — session expiry via an authenticated mutating call", () => {
   async function renderAuthenticated(extraHandlers: Record<string, () => Response> = {}) {
     const fetchMock = createFetchMock({
       "GET /api/control/v1/auth/status": () => jsonResponse(200, { data: { setup_complete: true } }),
       "GET /api/control/v1/auth/session": () =>
         jsonResponse(200, { data: { session: SESSION_TIMES }, csrf_token: "csrf-live-token" }),
+      "GET /api/control/v1/settings": () => jsonResponse(200, { data: { theme: "venom-dark", density: "comfortable" } }),
       ...extraHandlers,
     });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<AuthGate />);
-    await screen.findByRole("button", { name: /sign out/i });
+    await screen.findByRole("button", { name: /owner menu/i });
     return fetchMock;
   }
 
-  it("routes back to Login when a reverify call comes back session_expired, retaining no secret", async () => {
+  it("routes back to Login when an authenticated PUT /settings comes back session_expired", async () => {
     await renderAuthenticated({
-      "POST /api/control/v1/auth/reverify": () =>
+      "PUT /api/control/v1/settings": () =>
         jsonResponse(401, { error: { code: "session_expired", message: "session expired", request_id: "r4", retryable: false } }),
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /run sensitive action/i }));
-    const dialogPasswordInput = await screen.findByLabelText(/owner password/i);
-
-    const password = "password-typed-right-before-expiry";
-    fireEvent.change(dialogPasswordInput, { target: { value: password } });
-    fireEvent.click(screen.getByRole("button", { name: /^verify$/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /light/i }));
 
     await screen.findByRole("button", { name: /sign in/i });
 
-    expect(screen.queryByRole("button", { name: /sign out/i })).toBeNull();
-    expect(document.body.innerHTML).not.toContain(password);
+    expect(screen.queryByRole("button", { name: /owner menu/i })).toBeNull();
   });
 
-  it("gates the stub sensitive action behind reverify success, sending the exact session CSRF token", async () => {
+  it("sends the exact session CSRF token on an authenticated PUT /settings call", async () => {
     const fetchMock = await renderAuthenticated({
-      "POST /api/control/v1/auth/reverify": () =>
-        jsonResponse(200, { data: { reverify_fresh_until: "2026-07-24T00:05:00Z" } }),
+      "PUT /api/control/v1/settings": () => jsonResponse(200, { data: { theme: "venom-light", density: "comfortable" } }),
     });
 
-    expect(screen.queryByText(/sensitive action executed/i)).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: /light/i }));
 
-    fireEvent.click(screen.getByRole("button", { name: /run sensitive action/i }));
-    const dialogPasswordInput = await screen.findByLabelText(/owner password/i);
-    fireEvent.change(dialogPasswordInput, { target: { value: "owner-password-for-reverify" } });
-    fireEvent.click(screen.getByRole("button", { name: /^verify$/i }));
+    // There are two /settings calls (the initial GET, then this PUT); take
+    // the one whose init carries method PUT.
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "PUT");
+      expect(putCall).toBeTruthy();
+    });
 
-    await screen.findByText(/sensitive action executed/i);
-
-    const reverifyCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/auth/reverify"));
-    expect(reverifyCall).toBeTruthy();
-    const [, init] = reverifyCall as [unknown, RequestInit & { headers: Record<string, string> }];
+    const putCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "PUT");
+    const [, init] = putCall as [unknown, RequestInit & { headers: Record<string, string> }];
     expect(init.headers["X-CSRF-Token"]).toBe("csrf-live-token");
-  });
-
-  it("shows a locked-out reverify state with retry_after and never reveals the password", async () => {
-    await renderAuthenticated({
-      "POST /api/control/v1/auth/reverify": () =>
-        jsonResponse(429, {
-          error: {
-            code: "locked_out",
-            message: "too many failed attempts, try again later",
-            request_id: "r5",
-            retryable: true,
-            retry_after: 60,
-          },
-        }),
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /run sensitive action/i }));
-    const dialogPasswordInput = await screen.findByLabelText(/owner password/i);
-    const password = "wrong-reverify-password";
-    fireEvent.change(dialogPasswordInput, { target: { value: password } });
-    fireEvent.click(screen.getByRole("button", { name: /^verify$/i }));
-
-    await screen.findByText(/too many failed attempts/i);
-    await screen.findByText(/60s/);
-    expect(document.body.innerHTML).not.toContain(password);
   });
 });
 
@@ -247,7 +237,6 @@ describe("AuthGate — no secret ever reaches console output", () => {
 
     const setupPassword = "NEVERLOG-SETUP-PASSWORD-1";
     const loginPassword = "NEVERLOG-LOGIN-PASSWORD-2";
-    const reverifyPassword = "NEVERLOG-REVERIFY-PASSWORD-3";
 
     const fetchMock = createFetchMock({
       "GET /api/control/v1/auth/status": () => jsonResponse(200, { data: { setup_complete: false } }),
@@ -256,8 +245,7 @@ describe("AuthGate — no secret ever reaches console output", () => {
       "POST /api/control/v1/auth/logout": () => jsonResponse(200, { data: { logged_out: true } }),
       "POST /api/control/v1/auth/login": () =>
         jsonResponse(200, { data: { session: SESSION_TIMES }, csrf_token: "csrf-login" }),
-      "POST /api/control/v1/auth/reverify": () =>
-        jsonResponse(200, { data: { reverify_fresh_until: "2026-07-24T00:05:00Z" } }),
+      "GET /api/control/v1/settings": () => jsonResponse(200, { data: { theme: "venom-dark", density: "comfortable" } }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -267,22 +255,17 @@ describe("AuthGate — no secret ever reaches console output", () => {
     fireEvent.change(screen.getByLabelText(/owner password/i), { target: { value: setupPassword } });
     fireEvent.change(screen.getByLabelText(/confirm password/i), { target: { value: setupPassword } });
     fireEvent.click(screen.getByRole("button", { name: /create password/i }));
-    await screen.findByRole("button", { name: /sign out/i });
+    await screen.findByRole("button", { name: /owner menu/i });
 
-    fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
+    fireEvent.click(screen.getByRole("button", { name: /owner menu/i }));
+    fireEvent.click(await screen.findByText(/sign out/i));
     await screen.findByRole("button", { name: /sign in/i });
 
     fireEvent.change(screen.getByLabelText(/owner password/i), { target: { value: loginPassword } });
     fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
-    await screen.findByRole("button", { name: /sign out/i });
+    await screen.findByRole("button", { name: /owner menu/i });
 
-    fireEvent.click(screen.getByRole("button", { name: /run sensitive action/i }));
-    const dialogPasswordInput = await screen.findByLabelText(/owner password/i);
-    fireEvent.change(dialogPasswordInput, { target: { value: reverifyPassword } });
-    fireEvent.click(screen.getByRole("button", { name: /^verify$/i }));
-    await screen.findByText(/sensitive action executed/i);
-
-    const secrets = [setupPassword, loginPassword, reverifyPassword];
+    const secrets = [setupPassword, loginPassword];
     for (const spy of spies) {
       for (const call of spy.mock.calls) {
         for (const arg of call) {
@@ -296,6 +279,5 @@ describe("AuthGate — no secret ever reaches console output", () => {
     }
     expect(document.body.innerHTML).not.toContain(setupPassword);
     expect(document.body.innerHTML).not.toContain(loginPassword);
-    expect(document.body.innerHTML).not.toContain(reverifyPassword);
   });
 });

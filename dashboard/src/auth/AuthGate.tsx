@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Spinner } from "@venom/design-system/primitives";
 import { TypedErrorDisplay } from "@venom/design-system/domain";
-import AuthenticatedArea from "./AuthenticatedArea";
+import AppShell from "../shell/AppShell";
 import { AuthApiError, fetchAuthSession, fetchAuthStatus, type LiveSession, type SessionTimes } from "./authClient";
 import FirstRunSetup from "./FirstRunSetup";
 import LoginScreen from "./LoginScreen";
@@ -106,7 +106,7 @@ export default function AuthGate() {
       return <LoginScreen onSuccess={handleAuthenticated} />;
     case "authenticated":
       return (
-        <AuthenticatedArea
+        <AppShell
           session={state.session}
           csrfToken={state.csrfToken}
           onSessionExpired={handleReturnToLogin}
