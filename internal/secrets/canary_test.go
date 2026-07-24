@@ -196,3 +196,43 @@ func TestSecretCanary_Errors(t *testing.T) {
 	}
 	assertNoSecretFragment(t, decErr.Error(), canarySecret)
 }
+
+// TestSecretCanary_OwnerPasswordHash pushes canarySecret through
+// DeriveOwnerPasswordHash (P2b-SEC-001) as the owner password, then
+// asserts the raw secret appears in none of: the JSON-serialized
+// OwnerPasswordHash (only Hash/Salt/params should be present), the
+// too-short rejection error (a distinct, shorter canary-derived value),
+// or a wrong-password VerifyOwnerPassword call's inputs echoed anywhere.
+// The password itself is never returned by any of these functions, so a
+// leak here would mean a fragment of the raw secret bytes coincidentally
+// surviving into the derived hash/salt's byte representation — which
+// this proves does not happen.
+func TestSecretCanary_OwnerPasswordHash(t *testing.T) {
+	stored, err := secrets.DeriveOwnerPasswordHash(canarySecret)
+	if err != nil {
+		t.Fatalf("DeriveOwnerPasswordHash(canarySecret) error = %v", err)
+	}
+
+	data, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatalf("json.Marshal(stored) error = %v", err)
+	}
+	assertNoSecretFragment(t, string(data), canarySecret)
+
+	// canarySecret is well above MinPasswordLength, so also prove the
+	// too-short rejection path (a different, shorter secret) never echoes
+	// what was rejected.
+	shortSecret := canarySecret[:4]
+	_, shortErr := secrets.DeriveOwnerPasswordHash(shortSecret)
+	if shortErr == nil {
+		t.Fatalf("DeriveOwnerPasswordHash(shortSecret) succeeded, want ErrPasswordTooShort")
+	}
+	assertNoSecretFragment(t, shortErr.Error(), shortSecret)
+
+	if !secrets.VerifyOwnerPassword(canarySecret, stored) {
+		t.Fatalf("VerifyOwnerPassword(canarySecret, its own stored hash) = false, want true")
+	}
+	if secrets.VerifyOwnerPassword("a-completely-different-password", stored) {
+		t.Fatalf("VerifyOwnerPassword(wrong password, canarySecret's stored hash) = true, want false")
+	}
+}

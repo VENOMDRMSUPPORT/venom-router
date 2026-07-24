@@ -232,7 +232,7 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 	// liveness surface. The dashboard SPA built at stage 1 joins it on
 	// the same mux, behind the identical gate (P2a-UI-001, 01 §1/§3).
 	logStage(StageMountHTTPMux)
-	mux := httpapi.ControlMux(cfg.Bind, spa)
+	mux := httpapi.ControlMux(cfg.Bind, spa, db)
 
 	// 10. Listen.
 	logStage(StageListen)

@@ -1,0 +1,254 @@
+package httpapi
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
+)
+
+// sessionCookieName is the cookie the owner's browser carries the opaque
+// session handle in (09 §5.2). It carries only the opaque handle — never
+// identity or the password.
+const sessionCookieName = "venom_session"
+
+// controlAPIPath is the base path 09 §5.2's cookie is scoped to.
+const controlAPIPath = "/api/control/v1"
+
+// AuthHandlers holds the first-run owner-setup handlers' dependencies:
+// the two M1 repositories and a minimal per-endpoint rate limiter.
+// Constructed once at composition (ControlMux) and shared across
+// requests.
+type AuthHandlers struct {
+	ownerAuth     *storage.OwnerAuthRepo
+	ownerSessions *storage.OwnerSessionRepo
+	setupLimiter  *fixedWindowLimiter
+}
+
+// NewAuthHandlers builds the auth handlers over db's existing connection.
+func NewAuthHandlers(db *storage.DB) *AuthHandlers {
+	return &AuthHandlers{
+		ownerAuth:     storage.NewOwnerAuthRepo(db),
+		ownerSessions: storage.NewOwnerSessionRepo(db),
+		setupLimiter:  newFixedWindowLimiter(5, time.Minute),
+	}
+}
+
+type setupRequest struct {
+	Password string `json:"password"`
+}
+
+// ServeSetup implements POST /auth/setup (09 §5.1): first-run owner
+// password setup. Precondition: no owner_auth row exists. On success it
+// derives and stores the Argon2id hash, creates the first session (as
+// §5.2 describes), and sets the session cookie so setup flows straight
+// into a logged-in dashboard.
+func (h *AuthHandlers) ServeSetup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAuthError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", false)
+		return
+	}
+
+	if !h.setupLimiter.Allow(time.Now()) {
+		writeAuthError(w, http.StatusTooManyRequests, "rate_limited", "too many setup attempts, try again later", true)
+		return
+	}
+
+	ctx := r.Context()
+
+	exists, err := h.ownerAuth.Exists(ctx)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+	if exists {
+		writeAuthError(w, http.StatusConflict, "setup_already_complete", "owner setup has already been completed", false)
+		return
+	}
+
+	var req setupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAuthError(w, http.StatusBadRequest, "validation_error", "invalid request body", false)
+		return
+	}
+
+	derived, err := secrets.DeriveOwnerPasswordHash(req.Password)
+	if err != nil {
+		// secrets.DeriveOwnerPasswordHash's error never includes the
+		// password (see its doc comment) — safe to surface verbatim.
+		writeAuthError(w, http.StatusBadRequest, "validation_error", err.Error(), false)
+		return
+	}
+
+	if err := h.ownerAuth.Create(ctx, storage.OwnerAuthRow{
+		PasswordHash: derived.Hash,
+		Salt:         derived.Salt,
+		KDFTime:      derived.Time,
+		KDFMemKiB:    derived.MemKiB,
+		KDFThreads:   derived.Threads,
+		KDFKeyLen:    derived.KeyLen,
+	}); err != nil {
+		if errors.Is(err, storage.ErrOwnerAuthAlreadySet) {
+			writeAuthError(w, http.StatusConflict, "setup_already_complete", "owner setup has already been completed", false)
+			return
+		}
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+
+	idleExpiresAt, absoluteExpiresAt, err := h.createFirstSession(ctx, r, w)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+
+	writeAuthJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"session": map[string]any{
+				"idle_expires_at":     idleExpiresAt.Format(time.RFC3339),
+				"absolute_expires_at": absoluteExpiresAt.Format(time.RFC3339),
+			},
+		},
+	})
+}
+
+// createFirstSession mints a fresh opaque session (internal/secrets),
+// persists only its verifier hash, and sets the session cookie. It
+// returns the computed expiry timestamps for the response body.
+func (h *AuthHandlers) createFirstSession(ctx context.Context, r *http.Request, w http.ResponseWriter) (idleExpiresAt, absoluteExpiresAt time.Time, err error) {
+	session, err := secrets.MintOwnerSession()
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+
+	now := time.Now().UTC()
+	idleExpiresAt = now.Add(secrets.DefaultIdleTTL)
+	absoluteExpiresAt = now.Add(secrets.DefaultAbsoluteTTL)
+
+	if err := h.ownerSessions.Create(ctx, storage.OwnerSessionRow{
+		TokenHash:         session.TokenHash,
+		CreatedAt:         now,
+		LastSeenAt:        now,
+		IdleExpiresAt:     idleExpiresAt,
+		AbsoluteExpiresAt: absoluteExpiresAt,
+	}); err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+
+	setSessionCookie(w, r, session.Handle)
+	return idleExpiresAt, absoluteExpiresAt, nil
+}
+
+// ServeStatus implements GET /auth/status (09 §5.1): whether the single
+// owner_auth row exists yet.
+func (h *AuthHandlers) ServeStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAuthError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", false)
+		return
+	}
+
+	exists, err := h.ownerAuth.Exists(r.Context())
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+
+	writeAuthJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{"setup_complete": exists},
+	})
+}
+
+// setSessionCookie sets the opaque session handle as an HttpOnly,
+// SameSite=Strict cookie scoped to the control API path (09 §5.2). The
+// cookie carries only the opaque handle. Secure is set whenever the
+// request arrived over TLS; on plain-loopback HTTP (the control plane's
+// default bind) it is omitted, per 09 §5.2's explicit carve-out — the
+// only case Secure may be omitted.
+func setSessionCookie(w http.ResponseWriter, r *http.Request, handle string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    handle,
+		Path:     controlAPIPath,
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// writeAuthJSON writes body as the success envelope (09 §1: `{"data": ...}`).
+func writeAuthJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+// writeAuthError writes the shared error envelope (09 §1). message is
+// always a caller-supplied, pre-vetted user-safe string — this function
+// never receives or forwards a raw password, secret, or provider error.
+func writeAuthError(w http.ResponseWriter, status int, code, message string, retryable bool) {
+	writeAuthJSON(w, status, map[string]any{
+		"error": map[string]any{
+			"code":       code,
+			"message":    message,
+			"request_id": newRequestID(),
+			"retryable":  retryable,
+		},
+	})
+}
+
+// newRequestID generates a short random hex identifier for the error
+// envelope's request_id field. It carries no information about the
+// request itself, so it cannot leak anything by construction.
+func newRequestID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "unknown"
+	}
+	return hex.EncodeToString(b)
+}
+
+// fixedWindowLimiter is a minimal, single-endpoint rate limiter (09
+// §5.1: "Rate-limited"). Full lockout-with-backoff (5 consecutive
+// failures / 15 minutes, audit-integrated) is SEC-006's job; this only
+// blunts naive hammering of the Argon2id-cost setup endpoint until that
+// lands.
+type fixedWindowLimiter struct {
+	mu       sync.Mutex
+	max      int
+	window   time.Duration
+	attempts []time.Time
+}
+
+func newFixedWindowLimiter(max int, window time.Duration) *fixedWindowLimiter {
+	return &fixedWindowLimiter{max: max, window: window}
+}
+
+// Allow records one attempt at now and reports whether it is within the
+// limit. Attempts older than the window are dropped first, so this is a
+// simple sliding-window count, not a token bucket.
+func (l *fixedWindowLimiter) Allow(now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	cutoff := now.Add(-l.window)
+	kept := l.attempts[:0]
+	for _, t := range l.attempts {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	l.attempts = kept
+
+	if len(l.attempts) >= l.max {
+		return false
+	}
+	l.attempts = append(l.attempts, now)
+	return true
+}
