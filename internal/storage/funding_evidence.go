@@ -63,3 +63,52 @@ func (r *FundingEvidenceRepo) CurrentForAccount(ctx context.Context, accountID s
 	}
 	return e, true, nil
 }
+
+// AppendSupersession records a supersession the pure domain layer already
+// decided (domain.ApplyFundingSupersession), in ONE storage-side
+// transaction. When superseded is non-nil, that row's superseded_at is
+// stamped to now (it stops being current); newCurrent is then inserted as
+// the account's new current row. When superseded is nil (the account had
+// no current funding row), only newCurrent is inserted. The M2
+// idx_funding_current partial-unique index is the structural backstop
+// guaranteeing exactly one current row per account across the stamp +
+// insert — a concurrent second supersession for the same account would
+// trip it and roll the whole transaction back.
+//
+// This mirrors EnrollmentRepo's and ReauthRepo's one-tx discipline: the
+// stamp and the insert either both land or neither does, so an account
+// can never be observed with zero current rows mid-supersession.
+func (r *FundingEvidenceRepo) AppendSupersession(ctx context.Context, superseded *domain.FundingEvidence, newCurrent domain.FundingEvidence, now time.Time) error {
+	tx, err := r.db.Conn().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("storage: begin funding supersession tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once Commit has succeeded
+
+	if superseded != nil {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE account_funding_evidence SET superseded_at = ? WHERE id = ? AND superseded_at IS NULL`,
+			now.Unix(), superseded.ID,
+		); err != nil {
+			return fmt.Errorf("storage: funding supersession: stamp prior current: %w", err)
+		}
+	}
+
+	var reasonArg any
+	if newCurrent.Reason != "" {
+		reasonArg = newCurrent.Reason
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO account_funding_evidence (id, account_id, funding, source, locked, confidence, reason, observed_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		newCurrent.ID, newCurrent.AccountID, string(newCurrent.Funding), string(newCurrent.Source),
+		boolToInt(newCurrent.Locked), newCurrent.Confidence, reasonArg, newCurrent.ObservedAt.Unix(),
+	); err != nil {
+		return fmt.Errorf("storage: funding supersession: insert new current: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("storage: funding supersession: commit: %w", err)
+	}
+	return nil
+}

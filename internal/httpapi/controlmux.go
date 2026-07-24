@@ -133,6 +133,31 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	enrollmentHandler := NewEnrollmentHandler(connectService, reg, fundingRepo, idem, audit)
 	mux.Handle("/api/control/v1/providers/{id}/accounts", gated(enrollmentHandler.ServeConnect))
 
+	// Account lifecycle (P2b-CAPI-004): the GET list/detail projections,
+	// the credential reveal (the only plaintext-returning endpoint, behind
+	// the reverify-freshness gate), the funding owner override, and the
+	// connection/health lifecycle mutations. credentialRepo is shared with
+	// the OAuth path above (already constructed); credentialService is the
+	// ONE decrypt-for-reveal seam (CredentialService.Use), wired here for
+	// the first time. Every route below is owner-session + CSRF gated via
+	// `gated`, exactly like every other authenticated control route.
+	credentialRepo := storage.NewAccountCredentialRepo(db)
+	credentialService := application.NewCredentialService(credentialRepo, kr, nil)
+	accountsHandler := NewAccountsHandler(accountRepo, credentialRepo, fundingRepo, credentialService, audit, nil, newOAuthTransactionID)
+	mux.Handle("/api/control/v1/accounts", gated(accountsHandler.ServeList))
+	mux.Handle("/api/control/v1/accounts/{id}", gated(accountsHandler.ServeGet))
+	mux.Handle("/api/control/v1/accounts/{id}/reveal", gated(accountsHandler.ServeReveal))
+	mux.Handle("/api/control/v1/accounts/{id}/funding", gated(accountsHandler.ServeFunding))
+	mux.Handle("/api/control/v1/accounts/{id}/stop", gated(accountsHandler.ServeStop))
+	mux.Handle("/api/control/v1/accounts/{id}/resume", gated(accountsHandler.ServeResume))
+	mux.Handle("/api/control/v1/accounts/{id}/health", gated(accountsHandler.ServeHealth))
+	// /providers/{id}/sync is a provider-scoped best-effort refresh; it is
+	// registered alongside the provider routes but served by the same
+	// accounts handler (it iterates a provider's accounts). It does NOT
+	// collide with /providers/{id} because ServeMux matches the more
+	// specific /providers/{id}/sync path first.
+	mux.Handle("/api/control/v1/providers/{id}/sync", gated(accountsHandler.ServeProviderSync))
+
 	mux.Handle("/", networkGate(allowedHost, spa))
 	return mux
 }

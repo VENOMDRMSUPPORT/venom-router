@@ -16,6 +16,18 @@ const (
 	AuditActionOAuthComplete  = "oauth_complete"
 	AuditActionReauthBegin    = "reauth_begin"
 	AuditActionAccountConnect = "account_connect"
+
+	// P2b-CAPI-004 account-lifecycle action codes. Each is the fixed verb a
+	// mutating account endpoint (or the reveal/health/sync endpoints) emit
+	// under — the resource_id is always the account/provider id, NEVER any
+	// credential, key, or token (see auditEmitter's sanitize backstop).
+	AuditActionAccountReveal     = "account_reveal"     // POST /accounts/{id}/reveal
+	AuditActionAccountFunding    = "account_funding"    // PUT /accounts/{id}/funding
+	AuditActionAccountStop       = "account_stop"       // POST /accounts/{id}/stop
+	AuditActionAccountResume     = "account_resume"     // POST /accounts/{id}/resume
+	AuditActionAccountDisconnect = "account_disconnect" // DELETE /accounts/{id} (soft-disconnect)
+	AuditActionAccountHealth     = "account_health"     // POST /accounts/{id}/health
+	AuditActionProviderSync      = "provider_sync"      // POST /providers/{id}/sync
 )
 
 // Audit result codes.
