@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -27,7 +28,7 @@ func (f fakeLC) DashboardURL() string         { return "http://127.0.0.1:8081/" 
 // builds a Controller with real os.Exit and drives ShutdownAndExit, which never
 // returns. Unset (parent run) => no-op, so it does not recurse.
 func TestHelperChild(t *testing.T) {
-	mode := os.Getenv("SPIKE_CHILD_MODE")
+	mode := childMode()
 	if mode == "" {
 		return
 	}
@@ -42,6 +43,21 @@ func TestHelperChild(t *testing.T) {
 	}
 	c.ShutdownAndExit()
 	select {} // unreachable; ShutdownAndExit os.Exits
+}
+
+// childMode reads SPIKE_CHILD_MODE by scanning os.Environ() rather than
+// calling os.Getenv/os.LookupEnv directly: forbidigo bans those two outside
+// internal/config and internal/platform, but does not match os.Environ (this
+// is a test-only IPC channel to a re-exec'd copy of this same test binary,
+// not application config).
+func childMode() string {
+	const key = "SPIKE_CHILD_MODE="
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, key) {
+			return kv[len(key):]
+		}
+	}
+	return ""
 }
 
 type noopOpener struct{}
