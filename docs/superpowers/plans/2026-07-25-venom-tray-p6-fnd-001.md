@@ -1055,34 +1055,70 @@ Bare `venom` → `runTrayLoop`; `venom serve` unchanged. Append-only file logger
 **Interfaces:**
 - Consumes: `tray.NewController`, `tray.NewServerLifecycle`, `tray.NewOpener`, `tray.RunNativeUI`, `tray.Options`; `config.Load`; `platform.EnsureDataDir`; `observability.New`; `app.ShutdownTimeout`.
 
-- [ ] **Step 1: Write the failing test (bare mode dispatches to tray loop, not serve)**
+- [ ] **Step 1: Write the failing tests**
 
-Add to `internal/cli/cli_test.go`. Because tray mode on a headless CI Linux box behaves like headless serve (blocks until ctx), assert that bare mode boots and shuts down within bound when ctx is cancelled — the same contract the existing bare test used, now via `runTrayLoop`:
+**Why not an in-process full-lifecycle test:** `runTrayLoop` installs a `ctx.Done()` watcher that calls `Controller.ShutdownAndExit`, which calls `os.Exit` — an in-process test would kill the test binary. On Windows it would also launch a real `systray.Run` (needs a desktop). So the full desktop lifecycle is covered by the **Task 7 Windows manual-evidence recording** and the **Task 1 bounded-exit child-process proof**; here we test the two things that are hermetic and cross-platform: the append-only log (owner condition 3) and the bare→tray dispatch routing.
+
+Add to `internal/cli/cli_test.go`:
 
 ```go
-func TestDispatch_BareMode_BootsAndShutsDown(t *testing.T) {
-	bind := freeLoopbackAddr(t) // existing helper
-	t.Setenv("VENOM_BIND", bind)
-	ctx, cancel := context.WithCancel(context.Background())
+// Owner condition 3: the tray log is append-only — reopening never truncates.
+func TestOpenAppendLog_AppendsNeverTruncates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "venom.log")
+
+	f1, err := openAppendLog(path)
+	if err != nil {
+		t.Fatalf("openAppendLog #1: %v", err)
+	}
+	if _, err := f1.WriteString("first\n"); err != nil {
+		t.Fatalf("write #1: %v", err)
+	}
+	_ = f1.Close()
+
+	f2, err := openAppendLog(path)
+	if err != nil {
+		t.Fatalf("openAppendLog #2: %v", err)
+	}
+	if _, err := f2.WriteString("second\n"); err != nil {
+		t.Fatalf("write #2: %v", err)
+	}
+	_ = f2.Close()
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != "first\nsecond\n" {
+		t.Fatalf("append-only violated: got %q, want %q", got, "first\nsecond\n")
+	}
+}
+
+// Bare mode routes to tray mode, not serve. The tray loop is indirected via
+// runTrayLoopFn so this asserts routing without entering the real UI/os.Exit path.
+func TestDispatch_BareMode_RoutesToTrayNotServe(t *testing.T) {
+	prev := runTrayLoopFn
+	t.Cleanup(func() { runTrayLoopFn = prev })
+	called := false
+	runTrayLoopFn = func(_ context.Context, _ io.Writer) error {
+		called = true
+		return nil
+	}
 	var stdout, stderr strings.Builder
-	done := make(chan error, 1)
-	go func() { done <- Dispatch(ctx, nil, &stdout, &stderr) }()
-	time.Sleep(300 * time.Millisecond) // allow Boot + listener
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("bare/tray mode did not shut down within bound")
+	if err := Dispatch(context.Background(), nil, &stdout, &stderr); err != nil {
+		t.Fatalf("Dispatch bare mode: %v", err)
+	}
+	if !called {
+		t.Fatal("bare mode did not route to the tray loop")
 	}
 }
 ```
 
-Note: on Windows CI this exercises the systray path's headless fallback; on Linux it exercises `tray_other.go`. Both must return after cancel.
+**Also:** find the EXISTING bare-mode integration test in `internal/cli/cli_test.go` (the P0-FND-004 test that ran bare mode as a headless serve loop and asserted boot+graceful-shutdown). Bare mode is no longer a headless serve loop, so that test is now invalid (it would enter `runTrayLoop` → real Boot + `os.Exit`/systray). Replace it with the routing test above; do not leave a test that drives the real `runTrayLoop` body in-process.
 
-- [ ] **Step 2: Run to verify it fails / behaves wrong**
+- [ ] **Step 2: Run to verify they fail**
 
-Run: `go test ./internal/cli/ -run TestDispatch_BareMode -v`
-Expected: FAIL or hang until timeout (bare mode still calls the old `runServeLoop`, or the new path is not wired).
+Run: `go test ./internal/cli/ -run 'TestOpenAppendLog|TestDispatch_BareMode_RoutesToTray' -v`
+Expected: FAIL — `openAppendLog` / `runTrayLoopFn` undefined (and bare mode still calls the old `runServeLoop`).
 
 - [ ] **Step 3: Implement `runTrayLoop` and rewire bare mode in `internal/cli/cli.go`**
 
@@ -1091,8 +1127,9 @@ Change the dispatch:
 ```go
 	case "":
 		// Bare mode is tray mode (P6-FND-001): tray UI on Windows, headless
-		// fallback elsewhere. The server runs in-process; see internal/tray.
-		return runTrayLoop(ctx, stdout)
+		// fallback elsewhere. Indirected via runTrayLoopFn so dispatch routing
+		// is testable without the desktop UI / os.Exit path.
+		return runTrayLoopFn(ctx, stdout)
 ```
 
 Add:
@@ -1140,6 +1177,10 @@ func runTrayLoop(parent context.Context, stdout io.Writer) error {
 	return tray.RunNativeUI(ctx, cancel, ctrl)
 }
 
+// runTrayLoopFn indirects runTrayLoop so tests can assert bare-mode routing
+// without entering the real tray UI / bounded-exit path (mirrors bootFunc).
+var runTrayLoopFn = runTrayLoop
+
 // openTrayLog opens <dataDir>/logs/venom.log APPEND-ONLY (never truncated or
 // rotated — owner condition 3 / spec 4.3) and returns a JSON logger over it.
 func openTrayLog() (*observability.Logger, string, func(), error) {
@@ -1152,21 +1193,28 @@ func openTrayLog() (*observability.Logger, string, func(), error) {
 		return nil, "", func() {}, err
 	}
 	logPath := filepath.Join(logsDir, "venom.log")
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := openAppendLog(logPath)
 	if err != nil {
 		return nil, "", func() {}, err
 	}
 	logger := observability.New(slog.NewJSONHandler(f, nil))
 	return logger, logPath, func() { _ = f.Close() }, nil
 }
+
+// openAppendLog opens path append-only (O_APPEND|O_CREATE|O_WRONLY), never
+// truncating — owner condition 3 / spec 4.3. Factored out for a hermetic
+// append-only test against a temp path.
+func openAppendLog(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+}
 ```
 
 Add imports to `internal/cli/cli.go`: `io` (already), `os`, `path/filepath`, `log/slog`, `github.com/VENOMDRMSUPPORT/venom-router/internal/observability`, `github.com/VENOMDRMSUPPORT/venom-router/internal/platform`, `github.com/VENOMDRMSUPPORT/venom-router/internal/tray`. Note `runServeLoop` stays for `case "serve":`.
 
-- [ ] **Step 4: Run the bare-mode test to verify it passes**
+- [ ] **Step 4: Run the new tests to verify they pass**
 
-Run: `go test ./internal/cli/ -run TestDispatch_BareMode -v`
-Expected: PASS — boots and returns within bound after cancel.
+Run: `go test ./internal/cli/ -run 'TestOpenAppendLog|TestDispatch_BareMode_RoutesToTray' -v`
+Expected: PASS — append-only preserved across reopen; bare mode routes to the tray loop.
 
 - [ ] **Step 5: Run the full cli suite (serve unchanged)**
 
