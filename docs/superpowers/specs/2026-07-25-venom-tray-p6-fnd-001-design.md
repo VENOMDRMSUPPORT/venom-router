@@ -20,6 +20,13 @@
   bounded-exit backstop**: after graceful `Controller.Quit`, attempt
   `systray.Quit` + `PostThreadMessageW(WM_QUIT)`, then `os.Exit(0)` after a
   margin. Evidence in Appendix A.
+- **Revision r4 (2026-07-25):** r3's backstop fired *after* `Controller.Quit`
+  returned — but `Server.Shutdown` (`boot.go:86`) is unbounded past
+  `http.Shutdown`, so a hung `db.Close`/`lock.Release` meant `os.Exit` was never
+  reached. Fixed by **arming the absolute watchdog first, before any cleanup**
+  (§4.5), with a non-zero exit code when shutdown does not complete in time.
+  Proven by deterministic child-process tests that hang shutdown and the UI on
+  purpose (Appendix A.2) — the r3 instant-shutdown spike could not exercise this.
 
 ## 1. Context and problem
 
@@ -183,22 +190,32 @@ message loop.
   *returns* without `ready` set, `RunUI` logs and blocks on `ctx.Done()`
   (headless); if `Run` *never returns* (stuck windowless loop), the server still
   runs and the exit backstop below bounds shutdown once `ctx` is canceled.
-- **One idempotent teardown, then a guaranteed bounded exit (spike-proven,
-  Appendix A).** A single `sync.Once`-guarded `Controller.Quit` (bounded by
-  `ShutdownTimeout`) is the only *exit* teardown (distinct from `Restart`'s
-  re-runnable shutdown, §4.2). The `ctx.Done()` watcher goroutine runs, in order:
-  1. `Controller.Quit` — graceful server shutdown (DB close, lock release);
-     completes within `ShutdownTimeout`, independent of systray.
-  2. Best-effort loop release: `systray.Quit()`, then `PostThreadMessageW(WM_QUIT)`
-     to the message-loop thread id (§5).
-  3. After a small margin, `os.Exit(0)` — the **unconditional** bounded-exit
-     backstop, clean because the server is already down after step 1, so it only
-     tears down a possibly-stuck GUI loop (no persistent state);
-     `os.Exit`→`ExitProcess` ends even a thread stuck in `GetMessage`.
+- **Absolute watchdog FIRST, then best-effort graceful teardown (spike-proven,
+  Appendix A.2).** The Quit menu item and `systray` `onExit` simply **cancel the
+  root context**, so every shutdown — menu, external SIGINT/SIGTERM, onExit —
+  funnels into the single `ctx.Done()` watcher goroutine, which runs, in this
+  order:
+  1. **Arm the absolute watchdog before any cleanup.** A goroutine sleeps
+     `ShutdownTimeout + margin`, then `os.Exit`: code **0** if graceful shutdown
+     had completed (`shutdownDone` set), else a **non-zero** code (shutdown
+     itself hung). It waits on nothing that can hang; `os.Exit`→`ExitProcess`
+     ends even a goroutine stuck in `db.Close()` or a thread stuck in
+     `GetMessage`. This is the unconditional guarantee.
+  2. **Bounded graceful shutdown** — `Controller.Quit` runs `Server.Shutdown` in
+     a goroutine and `select`s it against `ShutdownTimeout`, tolerating a leaked
+     goroutine if it hangs. This wrapper is **required** because `Server.Shutdown`
+     (`internal/app/boot.go:86-98`) bounds **only** `http.Shutdown(ctx)`; its
+     `db.Close()` and `lock.Release()` are **unbounded**. On clean return, set
+     `shutdownDone`.
+  3. Best-effort loop release: `systray.Quit()`, then `PostThreadMessageW(WM_QUIT)`
+     to the captured loop thread id (§5).
+  4. Normal exit: `os.Exit(0)` if shutdown was clean, else the non-zero code —
+     racing (and almost always beating) the watchdog to the same outcome.
 
-  The Quit menu click and `systray` `onExit` funnel through the same once-guarded
-  `Controller.Quit`; `systray.Quit`'s own `sync.Once` composes cleanly, so
-  duplicate calls are harmless. Worst-case exit ≈ `ShutdownTimeout` + margin.
+  Worst-case exit ≈ `ShutdownTimeout + margin`, **guaranteed even if graceful
+  shutdown never returns**. Making `Server.Shutdown` internally bounded is a
+  possible future core change but is **out of P6-FND-001 scope** (boundaries:
+  `internal/tray`, `internal/cli`); the tray layer compensates here.
 
 ## 5. Windows specifics
 
@@ -251,8 +268,9 @@ focus-first-instance is out of scope (stub retained).
   `systray.Run` swallows internally — still leaves a running, dashboard-reachable
   server. Bare `venom` on a headless Linux host thus behaves like `venom serve`.
   A clear log line is written in the Windows `!ready` case. Process exit on `ctx`
-  cancel is guaranteed and bounded regardless of tray state by the §4.5 `os.Exit`
-  backstop (spike-proven, Appendix A).
+  cancel is guaranteed and bounded regardless of tray *or* shutdown state by the
+  §4.5 absolute watchdog (spike-proven, Appendix A.2), with a **non-zero exit
+  code** if graceful shutdown itself hung.
 - Boot failure inside Restart → `Error` state surfaced in `Status`; the tray does
   not crash; the underlying error is in the log file. Stale single-instance locks
   self-heal on the next Boot (`internal/app/lock.go:38-42`), so Restart is
@@ -267,14 +285,21 @@ focus-first-instance is out of scope (stub retained).
   the gate, so no `fmt.Print*`, no `panic`, and no `os.Getenv/LookupEnv` (config
   and data-dir come from `internal/config` / `internal/platform`). `os/exec` and
   `os.OpenFile` are not forbidden; the Windows browser/log open prefers
-  `ShellExecute` to avoid a console flash.
+  `ShellExecute` to avoid a console flash. `os.Exit` is **not** in the forbid
+  list (and `cmd/venom/main.go` already uses it) — §4.5's watchdog uses it
+  deliberately as the bounded-exit backstop, consistent with `app.Run`'s
+  documented "caller force-exits on timeout" contract (`internal/app/app.go:46`).
 - **Import layering** (`internal/staticgate`): new edges are `cli → tray → app`
   (cli already depends on app). Verify against the layering test before merge; no
   cycle is introduced.
 - **Tests:** `Controller`/`Opener`/`ServerLifecycle` unit tests run in CI on both
   OSes with fakes; the systray adapter is covered by Windows manual-evidence
-  recording (matches `P6-FND-001` "Evidence"). Existing headless cli/serve tests
-  must remain green (headless unaffected — the DoD's second half).
+  recording (matches `P6-FND-001` "Evidence"). **Bounded-exit child-process tests
+  (Appendix A.2) are a DoD requirement** — they re-exec the test binary with the
+  shutdown/UI deliberately hung and assert exit within `ShutdownTimeout + margin`
+  with the correct code; being systray-independent they run in CI on both OSes.
+  Existing headless cli/serve tests must remain green (headless unaffected — the
+  DoD's second half).
 
 ## 9. Supporting convenience (Taskfile only, not code)
 
@@ -286,15 +311,18 @@ the "commands are complicated" pain. It touches only `Taskfile.yml`, outside the
 
 ## 10. Risks / open questions
 
-1. **Resolved by the Appendix A spike.** Bounded process exit is guaranteed by
-   the §4.5 `os.Exit` backstop even if `systray.Run` never releases; in the
-   init-success case `systray.Quit()` and `PostThreadMessageW(WM_QUIT)` each
-   released `Run` in ~0 ms. Honest limitation: the spike host had a desktop
-   session, so the true init-*failure* path (windowless stuck loop) was not
-   reproduced — the backstop makes correctness independent of it; re-verify on a
-   session-0 / no-desktop host only if that path ever becomes load-bearing (it is
-   not). Still pin the `fyne.io/systray` version and confirm icon format +
-   disabled-item support at implementation start.
+1. **Bounded exit resolved and proven (Appendix A).** The absolute watchdog
+   (§4.5) guarantees process exit within `ShutdownTimeout + margin` even when
+   graceful shutdown *itself* hangs (`db.Close`/`lock.Release` unbounded) — proven
+   deterministically by child-process tests (A.2): `hang-shutdown`/`hang-both`
+   exit `2` at ~`ShutdownTimeout`, `hang-quit` (even the wrapper broken) exits `2`
+   at the watchdog deadline, `normal`/`hang-ui` exit `0` promptly. Loop release
+   (`systray.Quit`/`WM_QUIT`) is separately proven (A.1). Honest limitation: the
+   A.1 host had a desktop session so the true systray init-*failure* path was not
+   reproduced — the watchdog makes the exit guarantee independent of it. Remaining:
+   pin the `fyne.io/systray` version, confirm icon format + disabled-item support,
+   and **port the A.2 child-process tests into `internal/tray`/`internal/cli`** at
+   implementation start.
 2. Console-flash acceptability on double-click — accepted for v1; revisit with a
    shortcut if the owner dislikes it.
 3. Whether a suitable `.ico` exists in `Design_System/` or a placeholder is
@@ -302,11 +330,15 @@ the "commands are complicated" pain. It touches only `Taskfile.yml`, outside the
 
 ## Appendix A — Windows spike evidence (2026-07-25)
 
-Throwaway isolated module (`fyne.io/systray v1.12.2`, `go1.26.5`, its own
-`go.mod`, **not** committed to the repo). A watcher goroutine simulates a `ctx`
-cancel at t+3s, attempts a loop release per mode, then `os.Exit(0)` at a +2s
-margin. `main` calls `runtime.LockOSThread()` and captures its thread id via
-`windows.GetCurrentThreadId()` for `PostThreadMessageW`.
+Both spikes are throwaway isolated modules (`go1.26.5`, own `go.mod`, **not**
+committed to the repo).
+
+### A.1 — systray loop release (`fyne.io/systray v1.12.2`)
+
+A watcher goroutine simulates a `ctx` cancel at t+3s, attempts a loop release per
+mode, then `os.Exit(0)` at a +2s margin. `main` calls `runtime.LockOSThread()`
+and captures its thread id via `windows.GetCurrentThreadId()` for
+`PostThreadMessageW`.
 
 | Mode | Release attempt | Result | Exit |
 |---|---|---|---|
@@ -315,10 +347,31 @@ margin. `main` calls `runtime.LockOSThread()` and captures its thread id via
 | `both` | `Quit()` then `WM_QUIT` | `Run` returned | t+3.01s |
 | `exitguard` | none | loop not released | t+5.00s (`os.Exit` backstop) |
 
-Conclusions: (1) with the tray initialized, both `systray.Quit()` and
-`PostThreadMessageW(WM_QUIT)` (to the `LockOSThread`-captured id) release `Run`
-immediately; (2) the `os.Exit` backstop bounds process exit unconditionally, even
-with no release — `os.Exit`→`ExitProcess` ends even a thread stuck in
-`GetMessage`. Limitation: the host had a desktop session, so `onReady` always
-fired; the true init-*failure* path was not reproduced, but the backstop makes
-the exit guarantee independent of it.
+With the tray initialized, both `systray.Quit()` and `PostThreadMessageW(WM_QUIT)`
+(to the `LockOSThread`-captured id) release `Run` immediately. Limitation: the
+host had a desktop session, so `onReady` always fired; the true init-*failure*
+path was not reproduced — A.2's watchdog makes the exit guarantee independent of
+it.
+
+### A.2 — bounded exit when shutdown ITSELF hangs (stdlib only, deterministic)
+
+This spike closes r3's gap: it models `Server.Shutdown` genuinely hanging (not an
+instant fake) and proves exit via the watchdog-first design of §4.5. **Five
+child-process tests** re-exec the test binary (`SPIKE_SHUTDOWN=300ms`,
+`SPIKE_MARGIN=200ms`; deadline 500ms) and assert real exit code + wall time. All
+pass:
+
+| Test mode | What hangs | Exit code | Elapsed |
+|---|---|---|---|
+| `normal` | nothing | 0 | ~9 ms (watchdog cancelled — no deadline wait) |
+| `hang-ui` | tray UI only (shutdown clean) | 0 | ~7 ms |
+| `hang-shutdown` | `db.Close`/`lock.Release` | **2** | ~306 ms (bounded by `ShutdownTimeout`) |
+| `hang-both` | shutdown + UI | **2** | ~308 ms |
+| `hang-quit` | even `Controller.Quit`'s own bound | **2** | ~508 ms (absolute watchdog) |
+
+Conclusions: (1) exit is bounded under *every* hang, including graceful shutdown
+never returning; (2) the exit code is non-zero iff shutdown did not complete in
+time; (3) `hang-quit` proves the watchdog is an independent backstop armed
+**before** cleanup — not dependent on `Controller.Quit` returning; (4) `normal`
+proves the watchdog does not delay a clean exit. These tests are systray-
+independent and must be ported into `internal/tray`/`internal/cli` (DoD, §8).
