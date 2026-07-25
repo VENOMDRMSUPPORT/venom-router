@@ -10,6 +10,7 @@ tool (
 )
 
 require (
+	fyne.io/systray v1.12.2
 	github.com/pressly/goose/v3 v3.27.3
 	golang.org/x/crypto v0.54.0
 	golang.org/x/sys v0.47.0
@@ -49,6 +50,7 @@ require (
 	github.com/bytedance/sonic v1.15.1 // indirect
 	github.com/bytedance/sonic/loader v0.5.1 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
+	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/klauspost/compress v1.19.1 // indirect
