@@ -118,6 +118,106 @@ func TestOAuthService_Antigravity_FreeplanPersistsConfidence095(t *testing.T) {
 	assertNoFragment(t, fingerprint, "acc-tok-9f3kx2qw", "stored fingerprint_sha256")
 }
 
+// TestOAuthService_Antigravity_ProPlanPersistsPaidConfidence095 is
+// P2b-TEST-003 C.1's antigravity gap: the Pro-plan mirror of
+// TestOAuthService_Antigravity_FreeplanPersistsConfidence095 above — a
+// connected antigravity Pro-plan account persists funding=paid,
+// source=provider_evidence, confidence=0.95 (the adapter's own
+// antigravityConfidenceRecognizedPlan for a recognized "Pro" tier name,
+// not a hard-coded 1.0 and not the Free case's classification bleeding
+// into Pro).
+func TestOAuthService_Antigravity_ProPlanPersistsPaidConfidence095(t *testing.T) {
+	const canarySecret = "Pr9Km3Wx6Bt2Ny8Ld5Fc1Ha4Zs0Rw-pro-client-secret"
+
+	db := migratedDB(t)
+	seedProvider(t, db, "antigravity")
+
+	adapter := providers.NewAntigravityAdapter(
+		"antigravity-client-id", canarySecret,
+		fixtureAntigravityTokenProbeFn(canarySecret),
+		fixtureAntigravityUserInfoProbeFn("owner-pro@example.com"),
+		fixtureAntigravityLoadCodeAssistProbeFn("proj-pro-1", "tier-pro", "Pro"),
+	)
+
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	svc, _ := newOAuthTestService(t, db, func() time.Time { return now })
+
+	beginResult, err := svc.Begin(context.Background(), application.BeginOAuthParams{
+		ProviderID: "antigravity", Adapter: adapter, RedirectURI: "http://127.0.0.1:8081/api/control/v1/oauth/antigravity/callback",
+	})
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+
+	_, account, err := svc.Complete(context.Background(), application.CompleteOAuthParams{
+		ProviderID: "antigravity", Adapter: adapter, RawState: mustCaptureState(t, adapter, beginResult),
+		Code: "auth-code-from-google-pro", RedirectURI: "http://127.0.0.1:8081/api/control/v1/oauth/antigravity/callback",
+		FundingMode: domain.FundingModeProviderEvidence,
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	fund, ok, err := storage.NewFundingEvidenceRepo(db).CurrentForAccount(context.Background(), account.ID)
+	if err != nil || !ok {
+		t.Fatalf("CurrentForAccount: ok=%v err=%v", ok, err)
+	}
+	if fund.Funding != domain.FundingPaid {
+		t.Fatalf("Funding = %q, want paid", fund.Funding)
+	}
+	if fund.Source != domain.FundingSourceProviderEvidence {
+		t.Fatalf("Source = %q, want provider_evidence", fund.Source)
+	}
+	if fund.Confidence != 0.95 {
+		t.Fatalf("Confidence = %v, want 0.95 (the adapter's own confidence for a recognized Pro tier)", fund.Confidence)
+	}
+
+	assertNoFragmentAnywhere(t, db, "accounts", canarySecret)
+	assertNoFragmentAnywhere(t, db, "account_credentials", canarySecret)
+	assertNoFragmentAnywhere(t, db, "account_funding_evidence", canarySecret)
+}
+
+// TestAntigravityAdapter_IdentityShape_ExternalIDAndPlanFromProbeResponses
+// is P2b-TEST-003 C.1's other antigravity gap: an EXPLICIT assertion of
+// the identity shape 09/02 document — external_id = "email:project_id",
+// plan sourced verbatim from loadCodeAssist's currentTier.name — read
+// directly off providers.AntigravityAdapter.CompleteOAuth's own return
+// value (no OAuthEnrollmentService, no DB at all), using the exact same
+// fixtureAntigravity*ProbeFn seams the storage-level tests above reuse,
+// per the assignment's "reuse the existing seam pattern, don't build a
+// new fake HTTP server" instruction.
+func TestAntigravityAdapter_IdentityShape_ExternalIDAndPlanFromProbeResponses(t *testing.T) {
+	const clientSecret = "identity-shape-test-client-secret"
+	adapter := providers.NewAntigravityAdapter(
+		"client-id-identity-shape", clientSecret,
+		fixtureAntigravityTokenProbeFn(clientSecret),
+		fixtureAntigravityUserInfoProbeFn("shape-owner@example.com"),
+		fixtureAntigravityLoadCodeAssistProbeFn("proj-shape-1", "tier-pro", "Pro"),
+	)
+
+	identity, _, err := adapter.CompleteOAuth(context.Background(), "any-code", "any-pkce-verifier", "http://127.0.0.1:8081/callback")
+	if err != nil {
+		t.Fatalf("CompleteOAuth: %v", err)
+	}
+
+	const wantExternalID = "shape-owner@example.com:proj-shape-1"
+	if identity.ExternalID != wantExternalID {
+		t.Fatalf("ExternalID = %q, want %q (email:project_id)", identity.ExternalID, wantExternalID)
+	}
+	if identity.Email != "shape-owner@example.com" {
+		t.Fatalf("Email = %q, want the userinfo probe's email verbatim", identity.Email)
+	}
+	if identity.Plan != "Pro" {
+		t.Fatalf("Plan = %q, want %q (currentTier.name verbatim, not currentTier.id)", identity.Plan, "Pro")
+	}
+	if identity.Funding != "paid" {
+		t.Fatalf("Funding = %q, want paid (derived from Plan=Pro)", identity.Funding)
+	}
+	if identity.Confidence != 0.95 {
+		t.Fatalf("Confidence = %v, want 0.95", identity.Confidence)
+	}
+}
+
 // mustCaptureState re-derives the raw state Begin minted for this
 // transaction by exploiting the fact that antigravity's BeginOAuth
 // embeds it verbatim in the authorize URL's "state" query parameter —

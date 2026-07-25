@@ -59,3 +59,24 @@ func AntigravityOAuthClientCredentials() (clientID, clientSecret string, ok bool
 	}
 	return id, secret, true
 }
+
+// envE2EOpenCodeZenKey is the environment variable an opt-in, non-CI-
+// blocking real-account acceptance test (P2b-TEST-003 C.2) reads to
+// exercise the opencode-zen connect flow against the real, public
+// endpoint with a real free-tier API key. Absent (the default for every
+// normal CI run, which sets no such variable), that test skips itself
+// rather than failing. os.LookupEnv is called only within this package
+// (and internal/config), per forbidigo's rule; this narrow, single-
+// purpose accessor is the test-support seam that lets the test itself
+// stay outside the packages forbidigo permits to call os.Getenv/
+// os.LookupEnv directly.
+const envE2EOpenCodeZenKey = "VENOM_E2E_OPENCODE_ZEN_KEY"
+
+// OpenCodeZenE2ECredential returns the real opencode-zen API key an
+// owner has opted to run the real-account E2E harness with, and whether
+// it was set at all (present is true even for an empty value — the
+// caller decides how to treat "set but empty", exactly like
+// EncryptionKeyOverride above).
+func OpenCodeZenE2ECredential() (value string, present bool) {
+	return os.LookupEnv(envE2EOpenCodeZenKey)
+}

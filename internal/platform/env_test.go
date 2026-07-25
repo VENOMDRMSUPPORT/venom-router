@@ -105,3 +105,32 @@ func TestAntigravityOAuthClientCredentials_SetButEmptyTreatedAsMissing(t *testin
 		t.Fatalf("ok = true with an empty-string client id, want false")
 	}
 }
+
+// TestOpenCodeZenE2ECredential_Present and _Absent are the P2b-TEST-003
+// C.2 accessor's own unit tests, mirroring TestEncryptionKeyOverride_*
+// above exactly (same present/absent shape).
+func TestOpenCodeZenE2ECredential_Present(t *testing.T) {
+	t.Setenv("VENOM_E2E_OPENCODE_ZEN_KEY", "sk-real-free-tier-key")
+
+	value, present := OpenCodeZenE2ECredential()
+	if !present {
+		t.Fatalf("present = false, want true")
+	}
+	if value != "sk-real-free-tier-key" {
+		t.Fatalf("value = %q, want %q", value, "sk-real-free-tier-key")
+	}
+}
+
+func TestOpenCodeZenE2ECredential_Absent(t *testing.T) {
+	if orig, ok := os.LookupEnv("VENOM_E2E_OPENCODE_ZEN_KEY"); ok {
+		t.Cleanup(func() { _ = os.Setenv("VENOM_E2E_OPENCODE_ZEN_KEY", orig) })
+	}
+	if err := os.Unsetenv("VENOM_E2E_OPENCODE_ZEN_KEY"); err != nil {
+		t.Fatalf("unsetenv: %v", err)
+	}
+
+	_, present := OpenCodeZenE2ECredential()
+	if present {
+		t.Fatalf("present = true, want false")
+	}
+}
