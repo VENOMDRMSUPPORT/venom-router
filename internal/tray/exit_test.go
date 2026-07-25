@@ -32,11 +32,15 @@ func TestHelperChild(t *testing.T) {
 	if mode == "" {
 		return
 	}
+	uiStop := func() {}
+	if mode == "hang-ui" || mode == "hang-both" {
+		uiStop = func() { select {} } // stuck UI loop release
+	}
 	c := NewController(fakeLC{hangShutdown: mode == "hang-shutdown" || mode == "hang-both"}, noopOpener{}, Options{
 		ShutdownTimeout: 300 * time.Millisecond,
 		WatchdogMargin:  200 * time.Millisecond,
 		Exit:            os.Exit,
-		UIStop:          func() {}, // hang-ui/hang-both: UI stuck is irrelevant to exit
+		UIStop:          uiStop,
 	})
 	if mode == "hang-quit" {
 		c.hangAfterArm = true // test-only: block after the watchdog is armed

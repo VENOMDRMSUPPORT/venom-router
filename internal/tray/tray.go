@@ -252,7 +252,7 @@ func (c *Controller) ShutdownAndExit() {
 	c.mu.Lock()
 	stop := c.uiStop
 	c.mu.Unlock()
-	stop()
+	go stop() // best-effort loop release; must never block the exit path
 
 	if err != nil {
 		c.doExit(ExitShutdownHang)
