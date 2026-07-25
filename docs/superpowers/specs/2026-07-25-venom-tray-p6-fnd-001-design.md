@@ -14,6 +14,12 @@
   console window is hidden only when `GetConsoleProcessList` proves sole
   ownership, never blindly. (c) a single `sync.Once`-guarded bounded shutdown,
   entered **first** on `ctx.Done()`, then `systray.Quit()`. See §4.5.
+- **Revision r3 (2026-07-25):** boot-first kept the server alive but did not by
+  itself guarantee process *exit* if `systray.Run` hangs before creating its
+  window (`Quit` cannot release a windowless loop). Added a **spike-proven
+  bounded-exit backstop**: after graceful `Controller.Quit`, attempt
+  `systray.Quit` + `PostThreadMessageW(WM_QUIT)`, then `os.Exit(0)` after a
+  margin. Evidence in Appendix A.
 
 ## 1. Context and problem
 
@@ -173,20 +179,26 @@ message loop.
   tray never initializes, the server is still up — that *is* the headless
   fallback, so no caught-error path is required.
 - **Provable init signal.** Tray success is observed by `onReady` firing (sets
-  `ready`), not by timing anything. On Windows, if `Run` returns without `ready`
-  ever being set and no quit was requested, `RunUI` logs the failure and blocks
-  on `ctx.Done()` (continues headless).
-- **One idempotent final teardown.** A single `sync.Once`-guarded
-  `Controller.Quit` (bounded by `ShutdownTimeout`) is the only *exit* teardown
-  (distinct from `Restart`'s re-runnable shutdown, §4.2). Every exit path funnels
-  through it:
-  - `ctx.Done()` (external SIGINT/SIGTERM via `app.NotifyContext`) → a watcher
-    goroutine calls `Controller.Quit` **first**, then `systray.Quit()`.
-  - Quit menu click → `Controller.Quit`, then `systray.Quit()`.
-  - `systray` `onExit` → `Controller.Quit` (no-op if already run).
+  `ready`), not by timing anything. Both failure sub-cases are covered: if `Run`
+  *returns* without `ready` set, `RunUI` logs and blocks on `ctx.Done()`
+  (headless); if `Run` *never returns* (stuck windowless loop), the server still
+  runs and the exit backstop below bounds shutdown once `ctx` is canceled.
+- **One idempotent teardown, then a guaranteed bounded exit (spike-proven,
+  Appendix A).** A single `sync.Once`-guarded `Controller.Quit` (bounded by
+  `ShutdownTimeout`) is the only *exit* teardown (distinct from `Restart`'s
+  re-runnable shutdown, §4.2). The `ctx.Done()` watcher goroutine runs, in order:
+  1. `Controller.Quit` — graceful server shutdown (DB close, lock release);
+     completes within `ShutdownTimeout`, independent of systray.
+  2. Best-effort loop release: `systray.Quit()`, then `PostThreadMessageW(WM_QUIT)`
+     to the message-loop thread id (§5).
+  3. After a small margin, `os.Exit(0)` — the **unconditional** bounded-exit
+     backstop, clean because the server is already down after step 1, so it only
+     tears down a possibly-stuck GUI loop (no persistent state);
+     `os.Exit`→`ExitProcess` ends even a thread stuck in `GetMessage`.
 
-  `systray.Quit`'s own `sync.Once` composes cleanly with ours, so duplicate calls
-  from these paths are harmless.
+  The Quit menu click and `systray` `onExit` funnel through the same once-guarded
+  `Controller.Quit`; `systray.Quit`'s own `sync.Once` composes cleanly, so
+  duplicate calls are harmless. Worst-case exit ≈ `ShutdownTimeout` + margin.
 
 ## 5. Windows specifics
 
@@ -209,8 +221,10 @@ message loop.
 - **Threading & ordering:** `app.Boot` serves HTTP on a background goroutine
   (`internal/app/boot.go:267`) and returns immediately, so `runTrayLoop` boots
   first and then hands the **main goroutine** to `systray.Run` (required — it
-  owns the OS message loop). Shutdown routing on `ctx.Done()` is per §4.5 (bounded
-  `Controller.Shutdown` first, then `systray.Quit()`).
+  owns the OS message loop). That goroutine must `runtime.LockOSThread()` and
+  capture `windows.GetCurrentThreadId()` *before* `Run`, so §4.5's
+  `PostThreadMessageW(WM_QUIT)` targets the loop thread (spike: `ret=1`, `Run`
+  released). Shutdown routing on `ctx.Done()` is per §4.5.
 
 ## 6. Behavior table
 
@@ -236,7 +250,9 @@ focus-first-instance is out of scope (stub retained).
   platform (compile-time `!windows` stub) or a Windows init failure that
   `systray.Run` swallows internally — still leaves a running, dashboard-reachable
   server. Bare `venom` on a headless Linux host thus behaves like `venom serve`.
-  A clear log line is written in the Windows `!ready` case.
+  A clear log line is written in the Windows `!ready` case. Process exit on `ctx`
+  cancel is guaranteed and bounded regardless of tray state by the §4.5 `os.Exit`
+  backstop (spike-proven, Appendix A).
 - Boot failure inside Restart → `Error` state surfaced in `Status`; the tray does
   not crash; the underlying error is in the log file. Stale single-instance locks
   self-heal on the next Boot (`internal/app/lock.go:38-42`), so Restart is
@@ -270,13 +286,39 @@ the "commands are complicated" pain. It touches only `Taskfile.yml`, outside the
 
 ## 10. Risks / open questions
 
-1. `fyne.io/systray` API confirmed via docs: `Run` returns no error and blocks
-   until `Quit`; `Quit` is `sync.Once`-safe. Still to confirm at implementation
-   start: whether `Run` *returns* (vs. hangs) after a Windows init failure — the
-   design does not depend on it (the server runs regardless), it only decides
-   whether the `!ready` headless-fallback branch is reachable or moot. Also pin
-   the version and confirm icon format + disabled-item support.
+1. **Resolved by the Appendix A spike.** Bounded process exit is guaranteed by
+   the §4.5 `os.Exit` backstop even if `systray.Run` never releases; in the
+   init-success case `systray.Quit()` and `PostThreadMessageW(WM_QUIT)` each
+   released `Run` in ~0 ms. Honest limitation: the spike host had a desktop
+   session, so the true init-*failure* path (windowless stuck loop) was not
+   reproduced — the backstop makes correctness independent of it; re-verify on a
+   session-0 / no-desktop host only if that path ever becomes load-bearing (it is
+   not). Still pin the `fyne.io/systray` version and confirm icon format +
+   disabled-item support at implementation start.
 2. Console-flash acceptability on double-click — accepted for v1; revisit with a
    shortcut if the owner dislikes it.
 3. Whether a suitable `.ico` exists in `Design_System/` or a placeholder is
    needed for v1.
+
+## Appendix A — Windows spike evidence (2026-07-25)
+
+Throwaway isolated module (`fyne.io/systray v1.12.2`, `go1.26.5`, its own
+`go.mod`, **not** committed to the repo). A watcher goroutine simulates a `ctx`
+cancel at t+3s, attempts a loop release per mode, then `os.Exit(0)` at a +2s
+margin. `main` calls `runtime.LockOSThread()` and captures its thread id via
+`windows.GetCurrentThreadId()` for `PostThreadMessageW`.
+
+| Mode | Release attempt | Result | Exit |
+|---|---|---|---|
+| `quit` | `systray.Quit()` | `onExit` fired, `Run` returned | t+3.01s (clean release) |
+| `wmquit` | `PostThreadMessageW(WM_QUIT)` to captured tid | `ret=1`, `Run` returned | t+3.00s (clean release) |
+| `both` | `Quit()` then `WM_QUIT` | `Run` returned | t+3.01s |
+| `exitguard` | none | loop not released | t+5.00s (`os.Exit` backstop) |
+
+Conclusions: (1) with the tray initialized, both `systray.Quit()` and
+`PostThreadMessageW(WM_QUIT)` (to the `LockOSThread`-captured id) release `Run`
+immediately; (2) the `os.Exit` backstop bounds process exit unconditionally, even
+with no release — `os.Exit`→`ExitProcess` ends even a thread stuck in
+`GetMessage`. Limitation: the host had a desktop session, so `onReady` always
+fired; the true init-*failure* path was not reproduced, but the backstop makes
+the exit guarantee independent of it.
