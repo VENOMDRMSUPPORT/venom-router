@@ -6,6 +6,16 @@ tasks:
     cmds:
       - go build ./...
 
+  bundle:
+    desc: >
+      Build the single double-clickable venom.exe with the dashboard embedded:
+      dashboard:build-embed, then `go build`. Run it and double-click the exe —
+      bare `venom` starts the server + system tray (P6-FND-001).
+    cmds:
+      - task: dashboard:build-embed
+      - go build -o dist/venom.exe ./cmd/venom
+      - 'echo "built dist/venom.exe — double-click it to start Venom in the tray"'
+
   lint:
     desc: Run golangci-lint
     cmds:
