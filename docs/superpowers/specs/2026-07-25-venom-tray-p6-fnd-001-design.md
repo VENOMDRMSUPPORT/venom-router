@@ -27,6 +27,10 @@
   (§4.5), with a non-zero exit code when shutdown does not complete in time.
   Proven by deterministic child-process tests that hang shutdown and the UI on
   purpose (Appendix A.2) — the r3 instant-shutdown spike could not exercise this.
+- **Revision r5 (2026-07-25):** folded the owner's three start-conditions (§11):
+  port the A.2 tests into the repo (DoD); Restart skips the new Boot if its
+  pre-Boot Shutdown timed out/errored (§4.2); the log is append-only until
+  ownership can be proven without a core change (§4.3).
 
 ## 1. Context and problem
 
@@ -141,7 +145,11 @@ injected-seam / ports-and-adapters discipline.
   - `Restart()` — a **re-runnable** cycle: `ServerLifecycle.Shutdown`
     (`ShutdownTimeout`) then `ServerLifecycle.Boot`, guarded against concurrent
     invocation. Uses the lifecycle's shutdown, *not* the once-guarded `Quit`, so
-    the server can come back up.
+    the server can come back up. **If that Shutdown times out or errors, the new
+    Boot is skipped entirely** and the controller goes to `Error` — a dirty
+    shutdown must never be followed by a Boot that could race a still-held lock
+    or a still-open DB. Recovery is a later explicit Restart, whose Boot benefits
+    from the lock's stale-lock self-heal (`internal/app/lock.go:38-42`).
 
   Other methods: `OpenDashboard()`, `OpenLogs()`, `Status() StatusView`. No
   systray import; fully unit-tested in CI on both OSes.
@@ -163,9 +171,13 @@ injected-seam / ports-and-adapters discipline.
   (never hardcoded).
 - Build `observability.New(slog.NewJSONHandler(f, nil))` over that file and pass
   it as `app.BootConfig.Logger`. Headless mode still uses the stderr default.
-- Rotation: minimal — on tray startup, if `venom.log` exists rename it to
-  `venom.prev.log` (one backup kept). The same file/logger is reused across
-  Restart within one tray session (no per-restart rotation).
+- **Append-only, no rotation.** The log file is opened `O_APPEND|O_CREATE` and
+  never truncated or renamed. Rationale: the file must be opened *before* `Boot`,
+  but single-instance ownership is only proven *inside* `Boot` (the `acquire_lock`
+  stage) — rotating/truncating at open could clobber a running instance's log,
+  and proving ownership earlier would require a core change (out of scope).
+  Append-only sidesteps the ownership question entirely. A future core change
+  could expose ownership for size-based rotation; not v1.
 
 ### 4.4 Icon
 
@@ -327,6 +339,24 @@ the "commands are complicated" pain. It touches only `Taskfile.yml`, outside the
    shortcut if the owner dislikes it.
 3. Whether a suitable `.ico` exists in `Design_System/` or a placeholder is
    needed for v1.
+
+## 11. Owner-mandated acceptance conditions (r5)
+
+Binding on the implementation plan and its DoD:
+
+1. **Tests in the repo.** The five Appendix A.2 bounded-exit child-process tests
+   are ported into `internal/tray` / `internal/cli` and run under `task gate` on
+   both Windows and Linux (they are systray-independent). The spike proof does
+   not count as completion until these live in the repo and pass in CI.
+2. **Restart never boots after a dirty shutdown.** If the pre-Boot `Shutdown`
+   during `Restart` times out or errors, the new `Boot` is skipped and the
+   controller enters `Error` (§4.2).
+3. **Append-only log.** No rotation/truncation until instance ownership can be
+   proven without modifying the core (§4.3).
+
+**Completion gate (before any "done" claim):** `task gate` green on both OSes +
+existing headless cli/serve tests green + the Windows tray manual-evidence
+recording captured (per `P6-FND-001` "Evidence").
 
 ## Appendix A — Windows spike evidence (2026-07-25)
 
