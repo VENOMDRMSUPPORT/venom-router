@@ -7,6 +7,13 @@
   is handed to a separate implementer per the project's no-self-implement rule.
   This spec does not update the roadmap tracker; STATUS moves only after a
   verified implementation approval.
+- **Revision r2 (2026-07-25):** three correctness fixes after review. (a)
+  `fyne.io/systray.Run` returns no error (confirmed via library docs), so the
+  fallback is restructured to **boot-first / tray-additive** with an `onReady`
+  provable signal instead of a caught error or a loop-stopping timeout. (b) the
+  console window is hidden only when `GetConsoleProcessList` proves sole
+  ownership, never blindly. (c) a single `sync.Once`-guarded bounded shutdown,
+  entered **first** on `ctx.Done()`, then `systray.Quit()`. See §4.5.
 
 ## 1. Context and problem
 
@@ -91,10 +98,13 @@ SIGINT/SIGTERM). `runTrayLoop`:
 1. Resolves config via `config.Load(nil)` (bind, etc.) — no direct env reads.
 2. Builds a **file-backed** logger (§4.3) and a real `ServerLifecycle` (§4.2)
    bound to `app.Boot` with that logger.
-3. Calls `tray.Run(ctx, controller)` which either runs the tray UI (Windows) or,
-   on unsupported platforms / tray-init failure, returns a sentinel so
-   `runTrayLoop` **falls back to the headless loop** with a clear logged message
-   (satisfies the plan's failure/rollback).
+3. **Boots the server first** via `ServerLifecycle.Boot` — the headless core is
+   now running (dashboard reachable, logs to file) independently of any tray UI.
+   A Boot failure is a hard error returned to the caller (process exits non-zero
+   with a clear log), exactly like `venom serve`.
+4. Calls `tray.RunUI(ctx, controller)` on the **main goroutine**. The tray is
+   *additive UI on top of an already-running server*; the exact
+   startup/shutdown/fallback control flow is §4.5.
 
 ### 4.2 `internal/tray` — testable controller + platform adapter
 
@@ -110,18 +120,29 @@ injected-seam / ports-and-adapters discipline.
   and the log file. Real impl is a Windows `ShellExecute` adapter
   (`*_windows.go`); tests inject a recording fake.
 - **`Controller`** (pure Go): holds the current `*Server` behind a mutex and a
-  small state enum (`Stopped` / `Running` / `Error`). Methods:
-  `OpenDashboard()`, `Restart()`, `OpenLogs()`, `Quit()`, `Status() StatusView`.
-  `Restart()` = `Shutdown` then `Boot`, guarded against concurrent invocation.
-  This type has **no** systray import and is fully unit-tested in CI on both OSes.
+  small state enum (`Stopped` / `Running` / `Error`). Two distinct teardown
+  concepts, deliberately not conflated:
+  - `Quit()` — the single **`sync.Once`-guarded final teardown** (bounded
+    `ServerLifecycle.Shutdown`, then mark done). Every *exit* path funnels
+    through it (§4.5). Not re-startable.
+  - `Restart()` — a **re-runnable** cycle: `ServerLifecycle.Shutdown`
+    (`ShutdownTimeout`) then `ServerLifecycle.Boot`, guarded against concurrent
+    invocation. Uses the lifecycle's shutdown, *not* the once-guarded `Quit`, so
+    the server can come back up.
+
+  Other methods: `OpenDashboard()`, `OpenLogs()`, `Status() StatusView`. No
+  systray import; fully unit-tested in CI on both OSes.
 - **`tray_windows.go`** (`//go:build windows`): the only file importing
-  `fyne.io/systray`. Builds the menu, wires each item's click to a `Controller`
-  method (in a goroutine so the UI thread never blocks on `Shutdown`), runs a
-  ~2s status ticker that updates the `Status` item text + tooltip + icon, and
-  hides the console window (§5). Embeds the icon(s) via `//go:embed`.
-- **`tray_other.go`** (`//go:build !windows`): `Run` returns
-  `ErrTrayUnsupported` so `runTrayLoop` falls back to headless. Imports no
-  systray.
+  `fyne.io/systray`. Calls `systray.Run(onReady, onExit)`; `onReady` builds the
+  menu, sets a `ready` flag, and starts a ~2s status ticker (updates the
+  `Status` item text + tooltip + icon); each item's click runs its `Controller`
+  method in a goroutine so the event loop never blocks; `onExit` calls
+  `Controller.Quit`. Hides the console only per the §5 ownership check. Embeds
+  the icon(s) via `//go:embed`.
+- **`tray_other.go`** (`//go:build !windows`): `RunUI` logs "tray unsupported;
+  running headless" and blocks on `ctx.Done()` (the server is already running),
+  then returns. Imports no systray — this is the compile-time-provable fallback
+  that keeps `CGO_ENABLED=0` builds green on Linux.
 
 ### 4.3 Logging to file (tray mode only)
 
@@ -140,24 +161,56 @@ Embed a Venom `.ico` in `internal/tray` (reuse a brand asset from
 second "stopped/error" icon; if only one is provided, state is conveyed by the
 `Status` item text + tooltip.
 
+### 4.5 Startup, shutdown, and fallback control flow
+
+Grounded in the library's actual contract (verified via the systray docs):
+`systray.Run(onReady, onExit func())` **returns no error** and blocks until
+`Quit()`; `systray.Quit()` is `sync.Once`-guarded and safe from any goroutine.
+The design therefore never depends on a `Run` error, nor on a timeout to stop the
+message loop.
+
+- **Server independent of the UI.** `Boot` runs before `RunUI` (§4.1). If the
+  tray never initializes, the server is still up — that *is* the headless
+  fallback, so no caught-error path is required.
+- **Provable init signal.** Tray success is observed by `onReady` firing (sets
+  `ready`), not by timing anything. On Windows, if `Run` returns without `ready`
+  ever being set and no quit was requested, `RunUI` logs the failure and blocks
+  on `ctx.Done()` (continues headless).
+- **One idempotent final teardown.** A single `sync.Once`-guarded
+  `Controller.Quit` (bounded by `ShutdownTimeout`) is the only *exit* teardown
+  (distinct from `Restart`'s re-runnable shutdown, §4.2). Every exit path funnels
+  through it:
+  - `ctx.Done()` (external SIGINT/SIGTERM via `app.NotifyContext`) → a watcher
+    goroutine calls `Controller.Quit` **first**, then `systray.Quit()`.
+  - Quit menu click → `Controller.Quit`, then `systray.Quit()`.
+  - `systray` `onExit` → `Controller.Quit` (no-op if already run).
+
+  `systray.Quit`'s own `sync.Once` composes cleanly with ours, so duplicate calls
+  from these paths are harmless.
+
 ## 5. Windows specifics
 
-- **Console hiding:** the binary stays a console-subsystem build so `venom serve`
-  keeps a working stdout in a terminal. Tray mode hides its console window at
-  startup at runtime (`GetConsoleWindow` + `ShowWindow(SW_HIDE)` via
-  `golang.org/x/sys/windows`). A brief console flash on Explorer double-click is
-  accepted for v1; a Start-menu shortcut can minimize it later.
+- **Console hiding (ownership-checked, never blind):** the binary stays a
+  console-subsystem build so `venom serve` keeps a working stdout in a terminal.
+  Tray mode must **not** blindly hide `GetConsoleWindow()`: when launched from an
+  existing PowerShell/cmd the process *shares* that console, so hiding it would
+  hide the user's own terminal window. Instead call `GetConsoleProcessList`; hide
+  the window (`ShowWindow(SW_HIDE)` via `golang.org/x/sys/windows`) **only when
+  exactly one process is attached** — i.e. Windows gave us a private console, the
+  Explorer double-click case. When more than one process shares the console,
+  leave it untouched. A brief console flash on double-click is accepted for v1; a
+  shortcut can minimize it later.
 - **CGO / build isolation (critical for the gate):** `fyne.io/systray` is pure-Go
   on Windows (`golang.org/x/sys/windows`, no cgo) but needs cgo on Linux. Because
   the gate builds `CGO_ENABLED=0` on **both** OSes, systray must never be imported
   on non-Windows. The `//go:build windows` / `//go:build !windows` split
   guarantees `go build/vet/test ./...` on Linux never compiles the systray
   backend, keeping `task gate` green on Linux.
-- **Threading:** `systray.Run(onReady, onExit)` owns the OS message loop and is
-  called on the main goroutine from `runTrayLoop`. `app.Boot` already serves HTTP
-  on a background goroutine (`internal/app/boot.go:267`) and returns immediately,
-  so it does not block the UI thread. A goroutine watches `ctx.Done()` and calls
-  `systray.Quit()` so an external signal still shuts the tray down cleanly.
+- **Threading & ordering:** `app.Boot` serves HTTP on a background goroutine
+  (`internal/app/boot.go:267`) and returns immediately, so `runTrayLoop` boots
+  first and then hands the **main goroutine** to `systray.Run` (required — it
+  owns the OS message loop). Shutdown routing on `ctx.Done()` is per §4.5 (bounded
+  `Controller.Shutdown` first, then `systray.Quit()`).
 
 ## 6. Behavior table
 
@@ -165,9 +218,12 @@ second "stopped/error" icon; if only one is provided, state is conveyed by the
 |---|---|
 | `● Status` (disabled) | Live text: `Running — 127.0.0.1:8081` / `Stopped` / `Error (see Logs)`, refreshed ~2s; drives icon/tooltip. |
 | Open Dashboard | `Opener.Open("http://<bind>/")` via ShellExecute. |
-| Restart | `Controller.Restart()` = `Shutdown(ShutdownTimeout)` then `Boot`; on Boot failure → `Error` state, tray stays alive, logged to file. |
+| Restart | `Controller.Restart()` = re-runnable `ServerLifecycle.Shutdown(ShutdownTimeout)` then `Boot`; on Boot failure → `Error` state, tray stays alive, logged to file. |
 | View Logs | `Opener.Open("<dataDir>/logs/venom.log")` (default editor). |
-| Quit | `Shutdown(ShutdownTimeout)` then `systray.Quit()`; process exits 0. |
+| Quit | Once-guarded `Controller.Quit` (bounded `ShutdownTimeout`) then `systray.Quit()` (§4.5); process exits 0. |
+
+External SIGINT/SIGTERM (`ctx.Done()`) uses the same once-guarded `Controller.Quit`,
+entered **before** `systray.Quit()` (§4.5).
 
 Second-instance behavior: `app.Boot` fails at `acquire_lock` with
 `ErrAlreadyRunning`; tray mode logs "already running" and exits. Real
@@ -175,9 +231,12 @@ focus-first-instance is out of scope (stub retained).
 
 ## 7. Error handling & fallback
 
-- Tray unsupported (non-Windows) or `systray.Run` init failure → clear log line +
-  fall back to the headless run loop. Bare `venom` on a headless Linux host thus
-  behaves like `venom serve`.
+- **Fallback is structural, not a caught error** (§4.5): because the server boots
+  before and independently of the tray UI, any tray failure — an unsupported
+  platform (compile-time `!windows` stub) or a Windows init failure that
+  `systray.Run` swallows internally — still leaves a running, dashboard-reachable
+  server. Bare `venom` on a headless Linux host thus behaves like `venom serve`.
+  A clear log line is written in the Windows `!ready` case.
 - Boot failure inside Restart → `Error` state surfaced in `Status`; the tray does
   not crash; the underlying error is in the log file. Stale single-instance locks
   self-heal on the next Boot (`internal/app/lock.go:38-42`), so Restart is
@@ -211,8 +270,12 @@ the "commands are complicated" pain. It touches only `Taskfile.yml`, outside the
 
 ## 10. Risks / open questions
 
-1. `fyne.io/systray` version pin and its exact Windows behavior (icon format,
-   disabled-item support) to confirm at implementation start.
+1. `fyne.io/systray` API confirmed via docs: `Run` returns no error and blocks
+   until `Quit`; `Quit` is `sync.Once`-safe. Still to confirm at implementation
+   start: whether `Run` *returns* (vs. hangs) after a Windows init failure — the
+   design does not depend on it (the server runs regardless), it only decides
+   whether the `!ready` headless-fallback branch is reachable or moot. Also pin
+   the version and confirm icon format + disabled-item support.
 2. Console-flash acceptability on double-click — accepted for v1; revisit with a
    shortcut if the owner dislikes it.
 3. Whether a suitable `.ico` exists in `Design_System/` or a placeholder is
