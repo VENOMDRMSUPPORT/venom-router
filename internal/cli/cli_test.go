@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -295,51 +296,53 @@ func TestDispatch_Serve_BlocksThenShutsDownWithinBound(t *testing.T) {
 	}
 }
 
-func TestDispatch_Bare_BlocksThenShutsDownWithinBound(t *testing.T) {
-	setTestDataDir(t)
+// Owner condition 3: the tray log is append-only — reopening never truncates.
+func TestOpenAppendLog_AppendsNeverTruncates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "venom.log")
 
-	// Bare mode takes no subcommand word, so it has no flags of its own;
-	// override the bind via the env var config.Load already supports,
-	// using a known, pre-reserved address (not ":0") so the test can
-	// synchronize on the listener actually being up before cancelling —
-	// the same fixed-sleep race described in the serve test above would
-	// otherwise apply here too.
-	bind := freeLoopbackAddr(t)
-	t.Setenv("VENOM_BIND", bind)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	var stdout, stderr bytes.Buffer
-
-	done := make(chan error, 1)
-	go func() {
-		done <- Dispatch(ctx, nil, &stdout, &stderr)
-	}()
-
-	waitForListener(t, bind)
-
-	select {
-	case err := <-done:
-		t.Fatalf("Dispatch() returned before shutdown was requested, err = %v", err)
-	default:
-		// still running, as expected — the listener came up, so Boot
-		// succeeded and Dispatch is now blocked waiting for ctx.Done()
+	f1, err := openAppendLog(path)
+	if err != nil {
+		t.Fatalf("openAppendLog #1: %v", err)
 	}
+	if _, err := f1.WriteString("first\n"); err != nil {
+		t.Fatalf("write #1: %v", err)
+	}
+	_ = f1.Close()
 
-	begin := time.Now()
-	cancel()
+	f2, err := openAppendLog(path)
+	if err != nil {
+		t.Fatalf("openAppendLog #2: %v", err)
+	}
+	if _, err := f2.WriteString("second\n"); err != nil {
+		t.Fatalf("write #2: %v", err)
+	}
+	_ = f2.Close()
 
-	select {
-	case err := <-done:
-		elapsed := time.Since(begin)
-		if err != nil {
-			t.Fatalf("Dispatch() error = %v", err)
-		}
-		if elapsed > app.ShutdownTimeout {
-			t.Fatalf("shutdown took %v, want <= %v", elapsed, app.ShutdownTimeout)
-		}
-		t.Logf("bare mode shut down in %v (bound %v)", elapsed, app.ShutdownTimeout)
-	case <-time.After(app.ShutdownTimeout + time.Second):
-		t.Fatal("Dispatch() did not return within bound after cancel")
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != "first\nsecond\n" {
+		t.Fatalf("append-only violated: got %q, want %q", got, "first\nsecond\n")
+	}
+}
+
+// Bare mode routes to tray mode, not serve. The tray loop is indirected via
+// runTrayLoopFn so this asserts routing without entering the real UI/os.Exit path.
+func TestDispatch_BareMode_RoutesToTrayNotServe(t *testing.T) {
+	prev := runTrayLoopFn
+	t.Cleanup(func() { runTrayLoopFn = prev })
+	called := false
+	runTrayLoopFn = func(_ context.Context, _ io.Writer) error {
+		called = true
+		return nil
+	}
+	var stdout, stderr strings.Builder
+	if err := Dispatch(context.Background(), nil, &stdout, &stderr); err != nil {
+		t.Fatalf("Dispatch bare mode: %v", err)
+	}
+	if !called {
+		t.Fatal("bare mode did not route to the tray loop")
 	}
 }
 

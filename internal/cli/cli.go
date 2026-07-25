@@ -11,12 +11,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/app"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/config"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/tray"
 )
 
 // version is a placeholder build identifier. A real build-time version
@@ -59,13 +64,10 @@ func Dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 
 	switch mode {
 	case "":
-		// Bare mode is the tray entry point. This unit owns only the
-		// "starts the server" half of tray mode (the same run loop as
-		// serve); the tray icon, console-hiding, and OS-native UI are a
-		// stub deferred to P6-FND-001 — none of that is built here. Bare
-		// mode takes no subcommand word, so it has no flags of its own;
-		// config still resolves via defaults/env (e.g. VENOM_BIND).
-		return runServeLoop(ctx, nil, stdout)
+		// Bare mode is tray mode (P6-FND-001): tray UI on Windows, headless
+		// fallback elsewhere. Indirected via runTrayLoopFn so dispatch routing
+		// is testable without the desktop UI / os.Exit path.
+		return runTrayLoopFn(ctx, stdout)
 	case "serve":
 		// args[1:] (everything after "serve" itself) is what config.Load
 		// parses for flags, so `venom serve -bind host:port` works.
@@ -157,4 +159,77 @@ func runServeLoop(ctx context.Context, configArgs []string, stdout io.Writer) er
 
 	_, _ = fmt.Fprintln(stdout, "venom: shutdown complete")
 	return err
+}
+
+// runTrayLoop is bare-`venom` tray mode. It boots the in-process server with an
+// append-only file logger, starts the single ctx-cancel teardown watcher, then
+// hands the main goroutine to the native tray UI (Windows) or a headless block
+// (elsewhere). Guaranteed bounded exit is owned by tray.Controller.
+func runTrayLoop(parent context.Context, stdout io.Writer) error {
+	cfg, err := config.Load(nil)
+	if err != nil {
+		return fmt.Errorf("cli: load config: %w", err)
+	}
+
+	logger, logPath, closeLog, err := openTrayLog()
+	if err != nil {
+		return fmt.Errorf("cli: open tray log: %w", err)
+	}
+	defer closeLog()
+
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+
+	lc := tray.NewServerLifecycle(cfg.Bind, logger)
+	ctrl := tray.NewController(lc, tray.NewOpener(), tray.Options{
+		ShutdownTimeout: app.ShutdownTimeout,
+		Logger:          logger,
+		LogPath:         logPath,
+	})
+
+	if err := lc.Boot(ctx); err != nil {
+		return fmt.Errorf("cli: boot: %w", err)
+	}
+	ctrl.MarkRunning()
+	_, _ = fmt.Fprintf(stdout, "venom: tray mode serving on %s\n", cfg.Bind)
+
+	// Single teardown path: any ctx cancel (signal or Quit menu) runs the
+	// watchdog-first ShutdownAndExit.
+	go func() {
+		<-ctx.Done()
+		ctrl.ShutdownAndExit()
+	}()
+
+	return tray.RunNativeUI(ctx, cancel, ctrl)
+}
+
+// runTrayLoopFn indirects runTrayLoop so tests can assert bare-mode routing
+// without entering the real tray UI / bounded-exit path (mirrors bootFunc).
+var runTrayLoopFn = runTrayLoop
+
+// openTrayLog opens <dataDir>/logs/venom.log APPEND-ONLY (never truncated or
+// rotated — owner condition 3 / spec 4.3) and returns a JSON logger over it.
+func openTrayLog() (*observability.Logger, string, func(), error) {
+	dataDir, err := platform.EnsureDataDir()
+	if err != nil {
+		return nil, "", func() {}, err
+	}
+	logsDir := filepath.Join(dataDir, "logs")
+	if err := os.MkdirAll(logsDir, 0o700); err != nil {
+		return nil, "", func() {}, err
+	}
+	logPath := filepath.Join(logsDir, "venom.log")
+	f, err := openAppendLog(logPath)
+	if err != nil {
+		return nil, "", func() {}, err
+	}
+	logger := observability.New(slog.NewJSONHandler(f, nil))
+	return logger, logPath, func() { _ = f.Close() }, nil
+}
+
+// openAppendLog opens path append-only (O_APPEND|O_CREATE|O_WRONLY), never
+// truncating — owner condition 3 / spec 4.3. Factored out for a hermetic
+// append-only test against a temp path.
+func openAppendLog(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 }
