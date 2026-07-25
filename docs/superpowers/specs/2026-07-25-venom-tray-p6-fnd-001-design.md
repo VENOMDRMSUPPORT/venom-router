@@ -1,0 +1,219 @@
+# Design — System Tray (P6-FND-001), pulled forward
+
+- **Date:** 2026-07-25
+- **Roadmap task:** `P6-FND-001 — System tray` (see `docs/11-implementation-plan.md:2355`)
+- **Status:** design, pending owner review of this spec
+- **Governance:** this document is a governor deliverable (spec). Implementation
+  is handed to a separate implementer per the project's no-self-implement rule.
+  This spec does not update the roadmap tracker; STATUS moves only after a
+  verified implementation approval.
+
+## 1. Context and problem
+
+Today the control plane + embedded dashboard are reachable at
+`http://127.0.0.1:8081/` **only while a `venom` process is actively running**.
+The two ways to get there both hurt for a desktop owner:
+
+- `venom serve` is a foreground process that holds the terminal
+  (`internal/cli/cli.go:154` prints `serving on ... (waiting for shutdown
+  signal)`); closing the terminal or Ctrl+C kills port 8081.
+- There is no built, double-clickable entry point; standing the server up means
+  building the design system + dashboard, embedding, `go build`, then keeping a
+  terminal open.
+
+The approved architecture already anticipates the fix as **tray mode**:
+
+- `docs/01-architecture.md:39` — **"One process. One node. One SQLite writer.
+  One owner."** No separate gateway process.
+- `docs/01-architecture.md:46-53` — a **single executable** `cmd/venom` with two
+  run modes: bare `venom` → tray mode (starts the server, shows a tray icon,
+  hides the console); `venom serve` → headless.
+- `docs/11-implementation-plan.md:2355-2364` — `P6-FND-001`, boundaries
+  `internal/tray` + `internal/cli`, precondition `P0-FND-004`, failure/rollback
+  "tray failure falls back to headless with a clear log".
+
+`P0-FND-004` (CLI dispatch & graceful shutdown, `docs/11-implementation-plan.md:438`)
+is **complete** — bare→tray dispatch already exists as a documented stub
+(`internal/cli/cli.go:60-68`). So `P6-FND-001`'s only precondition is satisfied
+and this task is **dependency-unblocked**; pulling it forward from phase P6 is a
+sequencing decision the owner is making. The P6 gate itself (`P6-TEST-002`,
+operate-without-terminal) is **not** in scope here — only the standalone unit.
+
+## 2. Decision: single process, rejected alternative
+
+**Adopt the approved single-binary model.** Bare `venom` runs tray mode *and* the
+server in the same process; the tray menu operates the in-process server via
+direct `app.Boot` / `Server.Shutdown` calls.
+
+A separate supervisor executable (`venomtray.exe` in its own Go module, outside
+`task gate`, driving `venom serve` as a child) was considered and **rejected**: it
+violates the "one process / one executable" invariant (`01 §1`, `01 §2`) and would
+remove the tray from the static-invariants gate. It is also *more* complex, not
+less: driving graceful shutdown into a windowless child on Windows requires a
+console-control-event dance (`AllocConsole` + `CREATE_NEW_PROCESS_GROUP` +
+`GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT)`). In the single-process model that
+problem disappears entirely — **Restart = `Shutdown()` then `Boot()` in-process;
+Quit = `Shutdown()` then exit.** No child, no signals, no console events.
+
+Adopting a two-process model would require an explicit architecture-doc amendment
+first; this spec does not pursue it.
+
+## 3. Scope (owner-approved)
+
+Menu, in order: **Open Dashboard / Status / Restart / View Logs / Quit.**
+
+- The first four minus "View Logs" are exactly the `P6-FND-001` approved set
+  (*Open Dashboard / Status / Restart / Quit*).
+- **View Logs + log-to-file** is a small, justified addition the owner approved:
+  tray mode hides the console, which orphans the structured logs that
+  `observability.Default()` writes to `os.Stderr`
+  (`internal/observability/logger.go:57-60`). Routing logs to a file is nearly
+  free because the seam already exists — `observability.New(handler)` takes any
+  `slog.Handler` and `app.BootConfig.Logger` accepts an injected logger
+  (`internal/app/boot.go:46-48`).
+
+### Out of scope (v1)
+
+Explicit Start/Stop-as-separate-items; "Start with Windows" toggle; focus-first-
+instance IPC (the `app.FocusFirstInstance` stub at `internal/app/lock.go:96-104`
+stays a stub); Windows toast notifications; a live log-tailing window; Linux/macOS
+tray; anything in the P6 UI or the P6 gate.
+
+## 4. Component design
+
+### 4.1 `internal/cli` — dispatch change
+
+Bare mode (`case "":` in `internal/cli/cli.go:61`) changes from
+`runServeLoop(...)` to a new `runTrayLoop(...)`. `venom serve` and every other
+mode are **unchanged** (headless keeps logging to stderr and shutting down on
+SIGINT/SIGTERM). `runTrayLoop`:
+
+1. Resolves config via `config.Load(nil)` (bind, etc.) — no direct env reads.
+2. Builds a **file-backed** logger (§4.3) and a real `ServerLifecycle` (§4.2)
+   bound to `app.Boot` with that logger.
+3. Calls `tray.Run(ctx, controller)` which either runs the tray UI (Windows) or,
+   on unsupported platforms / tray-init failure, returns a sentinel so
+   `runTrayLoop` **falls back to the headless loop** with a clear logged message
+   (satisfies the plan's failure/rollback).
+
+### 4.2 `internal/tray` — testable controller + platform adapter
+
+The package separates lifecycle logic (CI-testable, pure Go, cross-platform) from
+the systray UI (Windows-only, manual-evidence tested), matching the repo's
+injected-seam / ports-and-adapters discipline.
+
+- **`ServerLifecycle` interface** (port):
+  `Boot(ctx) error`, `Shutdown(ctx) error`, `Healthy(ctx) bool`, `DashboardURL() string`.
+  Real implementation wraps `app.Boot` / `Server.Shutdown` (bounded by
+  `app.ShutdownTimeout`) and a loopback `GET /health`. Tests inject a fake.
+- **`Opener` interface** (port): `Open(target string) error` for the dashboard URL
+  and the log file. Real impl is a Windows `ShellExecute` adapter
+  (`*_windows.go`); tests inject a recording fake.
+- **`Controller`** (pure Go): holds the current `*Server` behind a mutex and a
+  small state enum (`Stopped` / `Running` / `Error`). Methods:
+  `OpenDashboard()`, `Restart()`, `OpenLogs()`, `Quit()`, `Status() StatusView`.
+  `Restart()` = `Shutdown` then `Boot`, guarded against concurrent invocation.
+  This type has **no** systray import and is fully unit-tested in CI on both OSes.
+- **`tray_windows.go`** (`//go:build windows`): the only file importing
+  `fyne.io/systray`. Builds the menu, wires each item's click to a `Controller`
+  method (in a goroutine so the UI thread never blocks on `Shutdown`), runs a
+  ~2s status ticker that updates the `Status` item text + tooltip + icon, and
+  hides the console window (§5). Embeds the icon(s) via `//go:embed`.
+- **`tray_other.go`** (`//go:build !windows`): `Run` returns
+  `ErrTrayUnsupported` so `runTrayLoop` falls back to headless. Imports no
+  systray.
+
+### 4.3 Logging to file (tray mode only)
+
+- Path: `<dataDir>/logs/venom.log`, `dataDir` from `platform.EnsureDataDir()`
+  (never hardcoded).
+- Build `observability.New(slog.NewJSONHandler(f, nil))` over that file and pass
+  it as `app.BootConfig.Logger`. Headless mode still uses the stderr default.
+- Rotation: minimal — on tray startup, if `venom.log` exists rename it to
+  `venom.prev.log` (one backup kept). The same file/logger is reused across
+  Restart within one tray session (no per-restart rotation).
+
+### 4.4 Icon
+
+Embed a Venom `.ico` in `internal/tray` (reuse a brand asset from
+`Design_System/` if a suitable one exists; otherwise a placeholder). Optionally a
+second "stopped/error" icon; if only one is provided, state is conveyed by the
+`Status` item text + tooltip.
+
+## 5. Windows specifics
+
+- **Console hiding:** the binary stays a console-subsystem build so `venom serve`
+  keeps a working stdout in a terminal. Tray mode hides its console window at
+  startup at runtime (`GetConsoleWindow` + `ShowWindow(SW_HIDE)` via
+  `golang.org/x/sys/windows`). A brief console flash on Explorer double-click is
+  accepted for v1; a Start-menu shortcut can minimize it later.
+- **CGO / build isolation (critical for the gate):** `fyne.io/systray` is pure-Go
+  on Windows (`golang.org/x/sys/windows`, no cgo) but needs cgo on Linux. Because
+  the gate builds `CGO_ENABLED=0` on **both** OSes, systray must never be imported
+  on non-Windows. The `//go:build windows` / `//go:build !windows` split
+  guarantees `go build/vet/test ./...` on Linux never compiles the systray
+  backend, keeping `task gate` green on Linux.
+- **Threading:** `systray.Run(onReady, onExit)` owns the OS message loop and is
+  called on the main goroutine from `runTrayLoop`. `app.Boot` already serves HTTP
+  on a background goroutine (`internal/app/boot.go:267`) and returns immediately,
+  so it does not block the UI thread. A goroutine watches `ctx.Done()` and calls
+  `systray.Quit()` so an external signal still shuts the tray down cleanly.
+
+## 6. Behavior table
+
+| Menu item | Action |
+|---|---|
+| `● Status` (disabled) | Live text: `Running — 127.0.0.1:8081` / `Stopped` / `Error (see Logs)`, refreshed ~2s; drives icon/tooltip. |
+| Open Dashboard | `Opener.Open("http://<bind>/")` via ShellExecute. |
+| Restart | `Controller.Restart()` = `Shutdown(ShutdownTimeout)` then `Boot`; on Boot failure → `Error` state, tray stays alive, logged to file. |
+| View Logs | `Opener.Open("<dataDir>/logs/venom.log")` (default editor). |
+| Quit | `Shutdown(ShutdownTimeout)` then `systray.Quit()`; process exits 0. |
+
+Second-instance behavior: `app.Boot` fails at `acquire_lock` with
+`ErrAlreadyRunning`; tray mode logs "already running" and exits. Real
+focus-first-instance is out of scope (stub retained).
+
+## 7. Error handling & fallback
+
+- Tray unsupported (non-Windows) or `systray.Run` init failure → clear log line +
+  fall back to the headless run loop. Bare `venom` on a headless Linux host thus
+  behaves like `venom serve`.
+- Boot failure inside Restart → `Error` state surfaced in `Status`; the tray does
+  not crash; the underlying error is in the log file. Stale single-instance locks
+  self-heal on the next Boot (`internal/app/lock.go:38-42`), so Restart is
+  reliable even after an abnormal prior exit.
+
+## 8. Gate & governance impact
+
+- **New dependency** `fyne.io/systray` (+ its `golang.org/x/sys` usage, already an
+  indirect dep) enters the **core** `go.mod` — expected, since `P6-FND-001` scope
+  says "pure-Go systray". Compiled on Windows only (§5).
+- **forbidigo** (`.golangci.yml`): `internal/tray` and `internal/cli` are inside
+  the gate, so no `fmt.Print*`, no `panic`, and no `os.Getenv/LookupEnv` (config
+  and data-dir come from `internal/config` / `internal/platform`). `os/exec` and
+  `os.OpenFile` are not forbidden; the Windows browser/log open prefers
+  `ShellExecute` to avoid a console flash.
+- **Import layering** (`internal/staticgate`): new edges are `cli → tray → app`
+  (cli already depends on app). Verify against the layering test before merge; no
+  cycle is introduced.
+- **Tests:** `Controller`/`Opener`/`ServerLifecycle` unit tests run in CI on both
+  OSes with fakes; the systray adapter is covered by Windows manual-evidence
+  recording (matches `P6-FND-001` "Evidence"). Existing headless cli/serve tests
+  must remain green (headless unaffected — the DoD's second half).
+
+## 9. Supporting convenience (Taskfile only, not code)
+
+Add a `Taskfile.yml` task (e.g. `bundle`) chaining
+`dashboard:build-embed` → `go build -o venom.exe ./cmd/venom`, producing a single
+double-clickable `venom.exe` with the dashboard embedded. This directly answers
+the "commands are complicated" pain. It touches only `Taskfile.yml`, outside the
+`P6-FND-001` code boundaries.
+
+## 10. Risks / open questions
+
+1. `fyne.io/systray` version pin and its exact Windows behavior (icon format,
+   disabled-item support) to confirm at implementation start.
+2. Console-flash acceptability on double-click — accepted for v1; revisit with a
+   shortcut if the owner dislikes it.
+3. Whether a suitable `.ico` exists in `Design_System/` or a placeholder is
+   needed for v1.
