@@ -43,10 +43,26 @@ func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller) 
 		mStatus.Disable()
 		systray.AddSeparator()
 		mOpen := systray.AddMenuItem("Open Dashboard", "Open the dashboard in your browser")
+		mStart := systray.AddMenuItem("Start", "Start the server")
+		mStop := systray.AddMenuItem("Stop", "Stop the server without exiting")
 		mRestart := systray.AddMenuItem("Restart", "Restart the server")
 		mLogs := systray.AddMenuItem("View Logs", "Open the log file")
+		mAutostart := systray.AddMenuItemCheckbox("Start with Windows", "Launch Venom Router automatically when you sign in", autostartEnabled())
 		systray.AddSeparator()
 		mQuit := systray.AddMenuItem("Quit", "Stop the server and exit")
+
+		// Reflects the current state onto Start/Stop's enabled-ness so the menu
+		// never offers a Start while already Running or a Stop while not.
+		syncStartStopEnabled := func() {
+			if c.Status().State == StateRunning {
+				mStop.Enable()
+				mStart.Disable()
+				return
+			}
+			mStart.Enable()
+			mStop.Disable()
+		}
+		syncStartStopEnabled()
 
 		go func() {
 			ticker := time.NewTicker(2 * time.Second)
@@ -57,10 +73,32 @@ func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller) 
 					return
 				case <-mOpen.ClickedCh:
 					c.OpenDashboard()
+				case <-mStart.ClickedCh:
+					go c.Start(ctx) // don't block the UI goroutine
+				case <-mStop.ClickedCh:
+					go c.Stop() // don't block the UI goroutine
 				case <-mRestart.ClickedCh:
 					go c.Restart(ctx) // don't block the UI goroutine
 				case <-mLogs.ClickedCh:
 					c.OpenLogs()
+				case <-mAutostart.ClickedCh:
+					go func() {
+						var err error
+						if mAutostart.Checked() {
+							err = disableAutostart()
+						} else {
+							err = enableAutostart()
+						}
+						if err != nil {
+							c.log.Error("tray: toggling start-with-Windows failed",
+								observability.String("err", err.Error()))
+						}
+						if autostartEnabled() {
+							mAutostart.Check()
+						} else {
+							mAutostart.Uncheck()
+						}
+					}()
 				case <-mQuit.ClickedCh:
 					cancel() // funnel into the single ctx.Done() watcher
 					return
@@ -68,6 +106,7 @@ func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller) 
 					c.Refresh(ctx)
 					mStatus.SetTitle(statusTitle(c.Status()))
 					systray.SetTooltip(statusTitle(c.Status()))
+					syncStartStopEnabled()
 				}
 			}
 		}()

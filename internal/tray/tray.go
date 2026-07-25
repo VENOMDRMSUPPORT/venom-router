@@ -88,7 +88,7 @@ type Controller struct {
 
 	shutdownClean int32 // atomic
 	exitOnce      sync.Once
-	restartMu     sync.Mutex
+	lifecycleMu   sync.Mutex
 
 	// hangAfterArm is test-only: when true, ShutdownAndExit blocks forever right
 	// after arming the watchdog, proving the watchdog is independent of cleanup.
@@ -179,23 +179,74 @@ func (c *Controller) OpenLogs() {
 	}
 }
 
+// Stop performs a re-runnable bounded ServerLifecycle.Shutdown. Unlike
+// ShutdownAndExit (the sync.Once-guarded Quit path), it NEVER terminates the
+// process — it only brings the in-process server down. Success -> StateStopped;
+// a timeout/error -> StateError. No-op if the state is already StateStopped.
+// Server.Shutdown releases the single-instance lock, so after Stop the lock is
+// free; a following Start re-acquires it via Boot.
+func (c *Controller) Stop() {
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+
+	if c.Status().State == StateStopped {
+		return
+	}
+	c.stopLocked()
+}
+
+// Start boots the server via ServerLifecycle.Boot if not already Running.
+// Success -> StateRunning; failure -> StateError. No-op if already Running.
+func (c *Controller) Start(ctx context.Context) {
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+
+	c.startLocked(ctx)
+}
+
 // Restart performs a re-runnable Shutdown-then-Boot. If Shutdown times out or
 // errors, the new Boot is SKIPPED and the controller enters Error (owner
 // condition 2 / spec 4.2): a dirty shutdown must not be followed by a Boot that
 // could race a still-held lock or open DB.
+//
+// This shares the stopLocked/startLocked cores with the public Stop/Start, but
+// deliberately does NOT go through Stop's "no-op if already Stopped" guard: the
+// coarse State defaults to StateStopped before the very first Boot ever runs,
+// so a guard keyed on that value would wrongly skip the shutdown attempt (and
+// the error/timeout it surfaces) on a controller that has never booted.
+// Restart's contract has always been "always attempt the shutdown, then only
+// boot if it came out clean" — unconditional on the prior coarse state.
 func (c *Controller) Restart(ctx context.Context) {
-	c.restartMu.Lock()
-	defer c.restartMu.Unlock()
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
 
+	c.stopLocked()
+	if c.Status().State != StateError {
+		c.startLocked(ctx)
+	}
+}
+
+// stopLocked runs the bounded shutdown unconditionally. Caller must hold
+// lifecycleMu.
+func (c *Controller) stopLocked() {
 	if err := c.boundedShutdown(); err != nil {
-		c.setState(StateError, "restart aborted: "+err.Error())
-		c.log.Error("tray: restart aborted; shutdown unclean, not re-booting",
+		c.setState(StateError, "stop aborted: "+err.Error())
+		c.log.Error("tray: shutdown did not complete cleanly, not re-booting",
 			observability.String("err", err.Error()))
+		return
+	}
+	c.setState(StateStopped, "")
+}
+
+// startLocked boots the server if not already Running. Caller must hold
+// lifecycleMu.
+func (c *Controller) startLocked(ctx context.Context) {
+	if c.Status().State == StateRunning {
 		return
 	}
 	if err := c.lc.Boot(ctx); err != nil {
 		c.setState(StateError, "boot failed: "+err.Error())
-		c.log.Error("tray: restart boot failed", observability.String("err", err.Error()))
+		c.log.Error("tray: boot failed", observability.String("err", err.Error()))
 		return
 	}
 	c.setState(StateRunning, c.lc.DashboardURL())

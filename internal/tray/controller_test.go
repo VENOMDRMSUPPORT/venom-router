@@ -68,3 +68,110 @@ func TestRestart_ShutdownHang_TimesOut_SkipsBoot(t *testing.T) {
 		t.Fatalf("state=%v want Error", c.Status().State)
 	}
 }
+
+func TestStart_FromStopped_Boots_EntersRunning(t *testing.T) {
+	lc := &scriptLC{}
+	c := newTestController(lc)
+	c.Start(context.Background())
+	if lc.bootCalled != 1 {
+		t.Fatalf("bootCalled=%d want 1", lc.bootCalled)
+	}
+	if c.Status().State != StateRunning {
+		t.Fatalf("state=%v want Running", c.Status().State)
+	}
+}
+
+func TestStart_AlreadyRunning_NoOp_DoesNotReboot(t *testing.T) {
+	lc := &scriptLC{}
+	c := newTestController(lc)
+	c.Start(context.Background())
+	if lc.bootCalled != 1 {
+		t.Fatalf("bootCalled=%d want 1 after first Start", lc.bootCalled)
+	}
+	c.Start(context.Background())
+	if lc.bootCalled != 1 {
+		t.Fatalf("bootCalled=%d want 1 (Start while Running must no-op)", lc.bootCalled)
+	}
+	if c.Status().State != StateRunning {
+		t.Fatalf("state=%v want Running", c.Status().State)
+	}
+}
+
+func TestStop_WhileRunning_ShutsDown_EntersStopped_NoExit(t *testing.T) {
+	lc := &scriptLC{}
+	exited := false
+	c := NewController(lc, noopOpener{}, Options{
+		ShutdownTimeout: 100 * time.Millisecond,
+		WatchdogMargin:  50 * time.Millisecond,
+		Exit:            func(int) { exited = true },
+		UIStop:          func() {},
+	})
+	c.Start(context.Background())
+	if c.Status().State != StateRunning {
+		t.Fatalf("state=%v want Running before Stop", c.Status().State)
+	}
+	c.Stop()
+	if c.Status().State != StateStopped {
+		t.Fatalf("state=%v want Stopped", c.Status().State)
+	}
+	if exited {
+		t.Fatal("Stop must never call the exiter")
+	}
+}
+
+func TestStop_AlreadyStopped_NoOp(t *testing.T) {
+	lc := &scriptLC{}
+	c := newTestController(lc)
+	if c.Status().State != StateStopped {
+		t.Fatalf("state=%v want Stopped initially", c.Status().State)
+	}
+	c.Stop() // must no-op: no Shutdown call needed to observe here directly,
+	// but state must remain Stopped and nothing must panic/hang.
+	if c.Status().State != StateStopped {
+		t.Fatalf("state=%v want Stopped", c.Status().State)
+	}
+}
+
+func TestStopThenStart_RoundTrip(t *testing.T) {
+	lc := &scriptLC{}
+	c := newTestController(lc)
+	c.Start(context.Background())
+	c.Stop()
+	c.Start(context.Background())
+	if lc.bootCalled != 2 {
+		t.Fatalf("bootCalled=%d want 2 (Start, Stop, Start)", lc.bootCalled)
+	}
+	if c.Status().State != StateRunning {
+		t.Fatalf("state=%v want Running", c.Status().State)
+	}
+}
+
+func TestStop_ShutdownError_EntersError_NoExit_ThenStartStillBoots(t *testing.T) {
+	lc := &scriptLC{shutdownErr: errors.New("db close failed")}
+	exited := false
+	c := NewController(lc, noopOpener{}, Options{
+		ShutdownTimeout: 100 * time.Millisecond,
+		WatchdogMargin:  50 * time.Millisecond,
+		Exit:            func(int) { exited = true },
+		UIStop:          func() {},
+	})
+	c.Start(context.Background())
+	if c.Status().State != StateRunning {
+		t.Fatalf("state=%v want Running before Stop", c.Status().State)
+	}
+	c.Stop()
+	if c.Status().State != StateError {
+		t.Fatalf("state=%v want Error after a dirty Stop", c.Status().State)
+	}
+	if exited {
+		t.Fatal("Stop must never call the exiter, even on shutdown error")
+	}
+	// A following Start must still work: Error != Running, so Start proceeds.
+	c.Start(context.Background())
+	if c.Status().State != StateRunning {
+		t.Fatalf("state=%v want Running after a following Start", c.Status().State)
+	}
+	if lc.bootCalled != 2 {
+		t.Fatalf("bootCalled=%d want 2", lc.bootCalled)
+	}
+}
