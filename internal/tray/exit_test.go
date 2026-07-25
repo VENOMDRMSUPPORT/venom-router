@@ -37,8 +37,8 @@ func TestHelperChild(t *testing.T) {
 		uiStop = func() { select {} } // stuck UI loop release
 	}
 	c := NewController(fakeLC{hangShutdown: mode == "hang-shutdown" || mode == "hang-both"}, noopOpener{}, Options{
-		ShutdownTimeout: 300 * time.Millisecond,
-		WatchdogMargin:  200 * time.Millisecond,
+		ShutdownTimeout: 3 * time.Second,
+		WatchdogMargin:  2 * time.Second, // absolute watchdog fires at 5s after ShutdownAndExit
 		Exit:            os.Exit,
 		UIStop:          uiStop,
 	})
@@ -86,39 +86,41 @@ func runChild(t *testing.T, mode string) (code int, elapsed time.Duration) {
 	return -1, elapsed
 }
 
-const hardBound = 2 * time.Second // deadline is 500ms; generous CI slack
+const hardBound = 20 * time.Second // generous ceiling for the -race-instrumented child
 
 func TestExit_Normal_PromptCleanExit(t *testing.T) {
 	code, el := runChild(t, "normal")
-	if code != ExitClean || el > 200*time.Millisecond {
-		t.Fatalf("code=%d elapsed=%v; want 0 and prompt (watchdog cancelled)", code, el)
+	if code != ExitClean || el >= 3*time.Second {
+		t.Fatalf("code=%d elapsed=%v; want exit 0 and prompt (< the 3s shutdown bound, i.e. it did not wait)", code, el)
 	}
 }
 
 func TestExit_HangUI_ShutdownClean_Exit0(t *testing.T) {
 	code, el := runChild(t, "hang-ui")
-	if code != ExitClean || el > 200*time.Millisecond {
-		t.Fatalf("code=%d elapsed=%v; want 0 despite stuck UI", code, el)
+	if code != ExitClean || el >= 3*time.Second {
+		t.Fatalf("code=%d elapsed=%v; want exit 0 promptly despite a stuck UI (< 3s)", code, el)
 	}
 }
 
 func TestExit_HangShutdown_BoundedNonZero(t *testing.T) {
 	code, el := runChild(t, "hang-shutdown")
-	if code != ExitShutdownHang || el < 250*time.Millisecond || el > hardBound {
-		t.Fatalf("code=%d elapsed=%v; want 2 within ~300ms..2s", code, el)
+	if code != ExitShutdownHang || el < 3*time.Second || el > hardBound {
+		t.Fatalf("code=%d elapsed=%v; want exit 2, bounded (waited ~the 3s shutdown timeout, under %v)", code, el, hardBound)
 	}
 }
 
 func TestExit_HangBoth_BoundedNonZero(t *testing.T) {
 	code, el := runChild(t, "hang-both")
-	if code != ExitShutdownHang || el < 250*time.Millisecond || el > hardBound {
-		t.Fatalf("code=%d elapsed=%v; want 2", code, el)
+	if code != ExitShutdownHang || el < 3*time.Second || el > hardBound {
+		t.Fatalf("code=%d elapsed=%v; want exit 2, bounded", code, el)
 	}
 }
 
 func TestExit_HangQuit_WatchdogIsIndependentBackstop(t *testing.T) {
 	code, el := runChild(t, "hang-quit")
-	if code != ExitShutdownHang || el < 450*time.Millisecond || el > hardBound {
-		t.Fatalf("code=%d elapsed=%v; watchdog should fire ~500ms", code, el)
+	// Only the absolute watchdog (5s) can end this — it must go PAST the 3s
+	// shutdown bound, proving the watchdog is armed before cleanup.
+	if code != ExitShutdownHang || el < 4500*time.Millisecond || el > hardBound {
+		t.Fatalf("code=%d elapsed=%v; want exit 2 via the watchdog (>= 4.5s, past the 3s shutdown bound)", code, el)
 	}
 }
