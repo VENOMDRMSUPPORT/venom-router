@@ -31,7 +31,7 @@ const version = "dev"
 const usage = `venom - Venom Router
 
 Usage:
-  venom              Tray mode: starts the server (tray icon is a stub, see P6-FND-001)
+  venom              Tray mode: system tray (status, open dashboard, restart, logs, quit)
   venom serve        Headless server mode with graceful shutdown
   venom reset-owner  Clear the owner login (first-run setup state) without
                       touching encrypted provider credentials. Requires
@@ -64,8 +64,9 @@ func Dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 
 	switch mode {
 	case "":
-		// Bare mode is tray mode (P6-FND-001): tray UI on Windows, headless
-		// fallback elsewhere. Indirected via runTrayLoopFn so dispatch routing
+		// Bare mode runs the real tray (P6-FND-001): the native system-tray
+		// UI on Windows, a headless fallback elsewhere, both backed by the
+		// in-process server. Indirected via runTrayLoopFn so dispatch routing
 		// is testable without the desktop UI / os.Exit path.
 		return runTrayLoopFn(ctx, stdout)
 	case "serve":
@@ -200,7 +201,14 @@ func runTrayLoop(parent context.Context, stdout io.Writer) error {
 		ctrl.ShutdownAndExit()
 	}()
 
-	return tray.RunNativeUI(ctx, cancel, ctrl)
+	if err := tray.RunNativeUI(ctx, cancel, ctrl); err != nil {
+		return err
+	}
+	// Termination is owned by the ctx.Done() watcher above (watchdog-first
+	// ShutdownAndExit -> os.Exit). Block so returning to main can never race —
+	// and skip — that graceful shutdown on the non-Windows fallback path. The
+	// watchdog guarantees os.Exit within ShutdownTimeout+margin.
+	select {}
 }
 
 // runTrayLoopFn indirects runTrayLoop so tests can assert bare-mode routing
