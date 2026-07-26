@@ -281,3 +281,52 @@ func scanCooldownRow(scanner cooldownScanner) (quota.Cooldown, error) {
 	}
 	return c, nil
 }
+
+// writeCooldownOnTx UPSERTs one cooldown from a quota.CooldownTrigger
+// through an ALREADY-OPEN transaction (tx) — never through
+// CooldownRepo's own pool-based SetCooldown, which would try to open a
+// SECOND connection and deadlock while the caller's transaction
+// (SyncQuotaWindows) still holds the pool's one connection
+// (SetMaxOpenConns(1)). Same UPSERT shape as SetCooldown: an existing
+// row for the trigger's (scope, scope ref) is updated in place; a
+// missing one is inserted new.
+func writeCooldownOnTx(ctx context.Context, tx *sql.Tx, epoch int64, trigger quota.CooldownTrigger) error {
+	column, err := columnForScope(trigger.Scope)
+	if err != nil {
+		return err
+	}
+
+	var existingID string
+	err = tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT id FROM cooldowns WHERE scope = ? AND %s = ?`, column), string(trigger.Scope), trigger.ScopeRef).Scan(&existingID)
+	switch {
+	case err == nil:
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE cooldowns SET reason_code = ?, until = ?, source = ?, updated_at = ? WHERE id = ?`,
+			trigger.ReasonCode, trigger.Until.Unix(), string(trigger.Source), epoch, existingID,
+		); err != nil {
+			return fmt.Errorf("storage: update cooldown %q: %w", existingID, err)
+		}
+		return nil
+	case errors.Is(err, sql.ErrNoRows):
+		id := randomQuotaID()
+		var accountArg, offeringArg, providerArg any
+		switch trigger.Scope {
+		case quota.CooldownScopeAccount:
+			accountArg = trigger.ScopeRef
+		case quota.CooldownScopeOffering:
+			offeringArg = trigger.ScopeRef
+		case quota.CooldownScopeProvider:
+			providerArg = trigger.ScopeRef
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO cooldowns (id, scope, account_id, offering_operation_id, provider_id, reason_code, until, source, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, string(trigger.Scope), accountArg, offeringArg, providerArg, trigger.ReasonCode, trigger.Until.Unix(), string(trigger.Source), epoch, epoch,
+		); err != nil {
+			return fmt.Errorf("storage: insert cooldown (%s,%s): %w", trigger.Scope, trigger.ScopeRef, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("storage: lookup cooldown (%s,%s): %w", trigger.Scope, trigger.ScopeRef, err)
+	}
+}

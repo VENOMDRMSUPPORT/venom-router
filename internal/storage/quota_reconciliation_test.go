@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
-	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 )
 
@@ -589,12 +589,29 @@ func TestPendingReservation_LoadAllocations(t *testing.T) {
 }
 
 func float64PtrRecon(v float64) *float64 { return &v }
-func intPtrRecon(v int) *int             { return &v }
 
-// TestSync_Upsert proves SyncQuotaWindows creates a provider_evidence
-// window on first sync, then UPDATES the SAME row (never a duplicate) on
-// a second sync with different values.
-func TestSync_Upsert(t *testing.T) {
+// providerSpec is a small test-local constructor for
+// quota.ProviderWindowSpec, since SyncQuotaWindows now consumes that
+// type directly rather than []providers.QuotaWindow.
+func providerSpec(unit quota.Unit, windowType, key string, remaining *float64, confidence float64, observedAt time.Time) quota.ProviderWindowSpec {
+	return quota.ProviderWindowSpec{
+		Source:     quota.SourceProviderEvidence,
+		Unit:       unit,
+		WindowType: windowType,
+		Key:        key,
+		Remaining:  remaining,
+		Confidence: confidence,
+		Freshness:  quota.FreshnessFresh,
+		ObservedAt: observedAt,
+	}
+}
+
+// TestSyncQuotaWindows_UpsertsAndMarksAbsentStale proves SyncQuotaWindows
+// creates a provider_evidence window on first sync, UPDATES the SAME row
+// (never a duplicate) on a second sync with different values, and marks
+// exactly the window missing from the second fetch as stale while
+// leaving the still-present one fresh.
+func TestSyncQuotaWindows_UpsertsAndMarksAbsentStale(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
 	defer cancel()
 
@@ -603,11 +620,13 @@ func TestSync_Upsert(t *testing.T) {
 	insertAccount(t, db, "acct-sync-upsert", "prov-sync-upsert")
 
 	repo := NewReconciliationRepo(db, fixedQuotaClock(1000), quota.DefaultReconciliationPolicy(), NewQuotaLifecycleRepo(db, fixedQuotaClock(1000), nil), nil)
+	observedAt := time.Unix(1000, 0)
 
-	first := []providers.QuotaWindow{
-		{Unit: "requests", WindowType: "rpm", WindowKey: "rpm", Used: float64PtrRecon(10), Remaining: float64PtrRecon(90), Total: float64PtrRecon(100), Confidence: 0.9},
+	first := []quota.ProviderWindowSpec{
+		providerSpec(quota.UnitRequests, "rpm", "provider:rpm", float64PtrRecon(90), 0.9, observedAt),
+		providerSpec(quota.UnitTokens, "tpm", "provider:tpm", float64PtrRecon(900), 0.9, observedAt),
 	}
-	if err := repo.SyncQuotaWindows(ctx, "acct-sync-upsert", first, nil, nil); err != nil {
+	if err := repo.SyncQuotaWindows(ctx, "acct-sync-upsert", first, nil); err != nil {
 		t.Fatalf("first SyncQuotaWindows: %v", err)
 	}
 
@@ -615,134 +634,188 @@ func TestSync_Upsert(t *testing.T) {
 	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM quota_windows WHERE account_id = ? AND source = 'provider_evidence'`, "acct-sync-upsert").Scan(&countAfterFirst); err != nil {
 		t.Fatalf("count after first sync: %v", err)
 	}
-	if countAfterFirst != 1 {
-		t.Fatalf("rows after first sync = %d, want 1", countAfterFirst)
+	if countAfterFirst != 2 {
+		t.Fatalf("rows after first sync = %d, want 2", countAfterFirst)
 	}
 
-	second := []providers.QuotaWindow{
-		{Unit: "requests", WindowType: "rpm", WindowKey: "rpm", Used: float64PtrRecon(20), Remaining: float64PtrRecon(80), Total: float64PtrRecon(100), Confidence: 0.95},
+	// Second fetch: rpm's numbers change, tpm is now missing entirely.
+	second := []quota.ProviderWindowSpec{
+		providerSpec(quota.UnitRequests, "rpm", "provider:rpm", float64PtrRecon(80), 0.95, observedAt),
 	}
-	if err := repo.SyncQuotaWindows(ctx, "acct-sync-upsert", second, nil, nil); err != nil {
+	if err := repo.SyncQuotaWindows(ctx, "acct-sync-upsert", second, nil); err != nil {
 		t.Fatalf("second SyncQuotaWindows: %v", err)
 	}
 
 	var countAfterSecond int
-	var used, remaining, confidence float64
-	var version int64
-	if err := db.Conn().QueryRow(
-		`SELECT used, remaining, confidence, version FROM quota_windows WHERE account_id = ? AND source = 'provider_evidence'`,
-		"acct-sync-upsert",
-	).Scan(&used, &remaining, &confidence, &version); err != nil {
-		t.Fatalf("read window after second sync: %v", err)
-	}
 	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM quota_windows WHERE account_id = ? AND source = 'provider_evidence'`, "acct-sync-upsert").Scan(&countAfterSecond); err != nil {
 		t.Fatalf("count after second sync: %v", err)
 	}
-	if countAfterSecond != 1 {
-		t.Fatalf("rows after second sync = %d, want still 1 (UPSERT, never a duplicate)", countAfterSecond)
+	if countAfterSecond != 2 {
+		t.Fatalf("rows after second sync = %d, want still 2 (UPSERT + stale, never a duplicate, never deleted)", countAfterSecond)
 	}
-	if used != 20 || remaining != 80 || confidence != 0.95 {
-		t.Fatalf("window after second sync = (used=%v remaining=%v confidence=%v), want (20,80,0.95) — the SECOND call's values", used, remaining, confidence)
+
+	var remaining, confidence float64
+	var version int64
+	var rpmFreshness string
+	if err := db.Conn().QueryRow(
+		`SELECT remaining, confidence, version, freshness_state FROM quota_windows WHERE account_id = ? AND window_type = 'rpm'`,
+		"acct-sync-upsert",
+	).Scan(&remaining, &confidence, &version, &rpmFreshness); err != nil {
+		t.Fatalf("read rpm window after second sync: %v", err)
+	}
+	if remaining != 80 || confidence != 0.95 || rpmFreshness != "fresh" {
+		t.Fatalf("rpm window = (remaining=%v confidence=%v freshness=%q), want (80,0.95,fresh) — the SECOND call's values", remaining, confidence, rpmFreshness)
 	}
 	if version != 2 {
-		t.Fatalf("version = %d, want 2 (incremented on update)", version)
-	}
-}
-
-// TestSync_Staleness proves a provider_evidence window that existed
-// before a sync but is NOT present in the new fetch result is marked
-// stale — never silently left as fresh, and never deleted.
-func TestSync_Staleness(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
-	defer cancel()
-
-	db := migratedCatalogRepoDB(t)
-	insertProvider(t, db, "prov-sync-stale")
-	insertAccount(t, db, "acct-sync-stale", "prov-sync-stale")
-
-	repo := NewReconciliationRepo(db, fixedQuotaClock(1000), quota.DefaultReconciliationPolicy(), NewQuotaLifecycleRepo(db, fixedQuotaClock(1000), nil), nil)
-
-	initial := []providers.QuotaWindow{
-		{Unit: "requests", WindowType: "rpm", WindowKey: "rpm", Remaining: float64PtrRecon(90), Confidence: 0.9},
-		{Unit: "tokens", WindowType: "tpm", WindowKey: "tpm", Remaining: float64PtrRecon(900), Confidence: 0.9},
-	}
-	if err := repo.SyncQuotaWindows(ctx, "acct-sync-stale", initial, nil, nil); err != nil {
-		t.Fatalf("initial SyncQuotaWindows: %v", err)
+		t.Fatalf("rpm version = %d, want 2 (incremented on update)", version)
 	}
 
-	// Second fetch reports only the rpm window; tpm is now missing.
-	onlyRPM := []providers.QuotaWindow{
-		{Unit: "requests", WindowType: "rpm", WindowKey: "rpm", Remaining: float64PtrRecon(85), Confidence: 0.9},
-	}
-	if err := repo.SyncQuotaWindows(ctx, "acct-sync-stale", onlyRPM, nil, nil); err != nil {
-		t.Fatalf("second SyncQuotaWindows: %v", err)
-	}
-
-	var rpmFreshness, tpmFreshness string
-	if err := db.Conn().QueryRow(`SELECT freshness_state FROM quota_windows WHERE account_id = ? AND window_type = 'rpm'`, "acct-sync-stale").Scan(&rpmFreshness); err != nil {
-		t.Fatalf("read rpm freshness: %v", err)
-	}
-	if err := db.Conn().QueryRow(`SELECT freshness_state FROM quota_windows WHERE account_id = ? AND window_type = 'tpm'`, "acct-sync-stale").Scan(&tpmFreshness); err != nil {
-		t.Fatalf("read tpm freshness: %v", err)
-	}
-	if rpmFreshness != "fresh" {
-		t.Fatalf("rpm freshness = %q, want fresh (present in the latest fetch)", rpmFreshness)
+	var tpmFreshness string
+	var tpmReserved float64
+	if err := db.Conn().QueryRow(`SELECT freshness_state, reserved FROM quota_windows WHERE account_id = ? AND window_type = 'tpm'`, "acct-sync-upsert").Scan(&tpmFreshness, &tpmReserved); err != nil {
+		t.Fatalf("read tpm window: %v", err)
 	}
 	if tpmFreshness != "stale" {
-		t.Fatalf("tpm freshness = %q, want stale (missing from the latest fetch)", tpmFreshness)
+		t.Fatalf("tpm freshness = %q, want stale (missing from the second fetch)", tpmFreshness)
 	}
-
-	var tpmCount int
-	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM quota_windows WHERE account_id = ? AND window_type = 'tpm'`, "acct-sync-stale").Scan(&tpmCount); err != nil {
-		t.Fatalf("count tpm rows: %v", err)
-	}
-	if tpmCount != 1 {
-		t.Fatalf("tpm rows = %d, want 1 (marked stale, never deleted)", tpmCount)
+	if tpmReserved != 0 {
+		t.Fatalf("tpm reserved = %v, want 0 (staleness never touches reserved)", tpmReserved)
 	}
 }
 
-// TestSync_RateLimitCallback proves a caller-supplied RateLimitSignal
-// invokes onRateLimit exactly once with the signal's own fields, and
-// that a sync with no signal never calls it.
-func TestSync_RateLimitCallback(t *testing.T) {
+// TestSyncQuotaWindows_RateLimitWritesCooldownAndNeverExhausts proves a
+// non-nil CooldownTrigger writes a cooldown row at the trigger's scope
+// with the expected until, and that NO window is marked exhausted or has
+// its numbers zeroed — both directions: a nil trigger writes no
+// cooldown.
+func TestSyncQuotaWindows_RateLimitWritesCooldownAndNeverExhausts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
 	defer cancel()
 
 	db := migratedCatalogRepoDB(t)
 	insertProvider(t, db, "prov-sync-429")
 	insertAccount(t, db, "acct-sync-429", "prov-sync-429")
+	seedWindowFull(t, db, "win-sync-429", "acct-sync-429", "provider_evidence", "requests", "rpm", "provider:rpm", float64Ptr(90), nil, 0, 1)
 
 	repo := NewReconciliationRepo(db, fixedQuotaClock(1000), quota.DefaultReconciliationPolicy(), NewQuotaLifecycleRepo(db, fixedQuotaClock(1000), nil), nil)
 
-	var calls int
-	var gotScope string
-	var gotAccountID *string
-	var gotRetryAfter *int
-	onRateLimit := func(scope string, accountID, offeringOperationID, providerID *string, retryAfter *int) {
-		calls++
-		gotScope = scope
-		gotAccountID = accountID
-		gotRetryAfter = retryAfter
+	trigger := &quota.CooldownTrigger{
+		Scope: quota.CooldownScopeAccount, ScopeRef: "acct-sync-429",
+		Until: time.Unix(1030, 0), Source: quota.CooldownSourceRetryAfter, ReasonCode: "rate_limited",
+	}
+	if err := repo.SyncQuotaWindows(ctx, "acct-sync-429", nil, trigger); err != nil {
+		t.Fatalf("SyncQuotaWindows with trigger: %v", err)
 	}
 
-	accountID := "acct-sync-429"
-	signal := &RateLimitSignal{Scope: "account", AccountID: &accountID, RetryAfter: intPtrRecon(30)}
-	if err := repo.SyncQuotaWindows(ctx, "acct-sync-429", nil, signal, onRateLimit); err != nil {
+	var until int64
+	var reasonCode, source string
+	if err := db.Conn().QueryRow(`SELECT until, reason_code, source FROM cooldowns WHERE scope = 'account' AND account_id = ?`, "acct-sync-429").Scan(&until, &reasonCode, &source); err != nil {
+		t.Fatalf("read cooldown: %v", err)
+	}
+	if until != 1030 || reasonCode != "rate_limited" || source != "retry_after" {
+		t.Fatalf("cooldown = (until=%d reason=%q source=%q), want (1030, rate_limited, retry_after)", until, reasonCode, source)
+	}
+
+	// The pre-existing window must be untouched: no exhausted marker
+	// exists on quota_windows, and reserved/remaining are unchanged.
+	var remaining, reserved float64
+	if err := db.Conn().QueryRow(`SELECT remaining, reserved FROM quota_windows WHERE id = ?`, "win-sync-429").Scan(&remaining, &reserved); err != nil {
+		t.Fatalf("read window: %v", err)
+	}
+	if remaining != 90 || reserved != 0 {
+		t.Fatalf("window = (remaining=%v reserved=%v), want (90,0) — untouched by the rate-limit trigger", remaining, reserved)
+	}
+
+	// No trigger -> no cooldown written.
+	insertAccount(t, db, "acct-sync-no429", "prov-sync-429")
+	if err := repo.SyncQuotaWindows(ctx, "acct-sync-no429", nil, nil); err != nil {
+		t.Fatalf("SyncQuotaWindows without trigger: %v", err)
+	}
+	var count int
+	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM cooldowns WHERE account_id = ?`, "acct-sync-no429").Scan(&count); err != nil {
+		t.Fatalf("count cooldowns: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("cooldowns for acct-sync-no429 = %d, want 0 (nil trigger writes nothing)", count)
+	}
+}
+
+// TestSyncQuotaWindows_ClearsRebaselineFlag proves a flagged account is
+// unflagged after a successful sync — this is what "re-baselined at the
+// next quota sync" means operationally.
+func TestSyncQuotaWindows_ClearsRebaselineFlag(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-sync-clearflag")
+	insertAccount(t, db, "acct-sync-clearflag", "prov-sync-clearflag")
+
+	repo := NewReconciliationRepo(db, fixedQuotaClock(1000), quota.DefaultReconciliationPolicy(), NewQuotaLifecycleRepo(db, fixedQuotaClock(1000), nil), nil)
+	if err := repo.FlagRebaseline(ctx, "acct-sync-clearflag", "usage_gap"); err != nil {
+		t.Fatalf("FlagRebaseline: %v", err)
+	}
+
+	if err := repo.SyncQuotaWindows(ctx, "acct-sync-clearflag", nil, nil); err != nil {
 		t.Fatalf("SyncQuotaWindows: %v", err)
 	}
-	if calls != 1 {
-		t.Fatalf("onRateLimit calls = %d, want 1", calls)
+
+	flagged, err := repo.RebaselineFlagged(ctx)
+	if err != nil {
+		t.Fatalf("RebaselineFlagged: %v", err)
 	}
-	if gotScope != "account" || gotAccountID == nil || *gotAccountID != accountID || gotRetryAfter == nil || *gotRetryAfter != 30 {
-		t.Fatalf("onRateLimit args = (scope=%q accountID=%v retryAfter=%v), want (account, %q, 30)", gotScope, gotAccountID, gotRetryAfter, accountID)
+	if len(flagged) != 0 {
+		t.Fatalf("RebaselineFlagged() = %v, want empty (cleared by the sync)", flagged)
+	}
+}
+
+// TestStaleAccounts_ReturnsOnlyStaleProviderWindows proves an account
+// owning a 20-minute-old provider_evidence window is returned, one owning
+// only a 1-minute-old window is not, and a stale-in-age local_safety
+// window never qualifies (local-safety windows are ours and never go
+// stale for lack of a provider fetch).
+func TestStaleAccounts_ReturnsOnlyStaleProviderWindows(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-stale-accounts")
+	insertAccount(t, db, "acct-stale-old", "prov-stale-accounts")
+	insertAccount(t, db, "acct-stale-fresh", "prov-stale-accounts")
+	insertAccount(t, db, "acct-stale-localsafety", "prov-stale-accounts")
+
+	now := int64(100000)
+	// 20 minutes old.
+	if _, err := db.Conn().Exec(
+		`INSERT INTO quota_windows (id, account_id, source, unit, window_type, window_key, reserved, version, confidence, freshness_state, observed_at, created_at, updated_at)
+		 VALUES (?, ?, 'provider_evidence', 'requests', 'rpm', 'provider:rpm', 0, 1, 0.9, 'fresh', ?, ?, ?)`,
+		"win-stale-old", "acct-stale-old", now-20*60, now-20*60, now-20*60,
+	); err != nil {
+		t.Fatalf("seed old provider window: %v", err)
+	}
+	// 1 minute old.
+	if _, err := db.Conn().Exec(
+		`INSERT INTO quota_windows (id, account_id, source, unit, window_type, window_key, reserved, version, confidence, freshness_state, observed_at, created_at, updated_at)
+		 VALUES (?, ?, 'provider_evidence', 'requests', 'rpm', 'provider:rpm', 0, 1, 0.9, 'fresh', ?, ?, ?)`,
+		"win-stale-fresh", "acct-stale-fresh", now-60, now-60, now-60,
+	); err != nil {
+		t.Fatalf("seed fresh provider window: %v", err)
+	}
+	// A 20-minute-old LOCAL_SAFETY window must never qualify.
+	if _, err := db.Conn().Exec(
+		`INSERT INTO quota_windows (id, account_id, source, unit, window_type, window_key, reserved, version, confidence, freshness_state, observed_at, created_at, updated_at)
+		 VALUES (?, ?, 'local_safety', 'concurrency', 'concurrency', 'local:concurrency', 0, 1, 1, 'fresh', ?, ?, ?)`,
+		"win-stale-localsafety", "acct-stale-localsafety", now-20*60, now-20*60, now-20*60,
+	); err != nil {
+		t.Fatalf("seed local-safety window: %v", err)
 	}
 
-	// No signal -> never called.
-	calls = 0
-	if err := repo.SyncQuotaWindows(ctx, "acct-sync-429", nil, nil, onRateLimit); err != nil {
-		t.Fatalf("SyncQuotaWindows (no signal): %v", err)
+	repo := NewReconciliationRepo(db, fixedQuotaClock(now), quota.DefaultReconciliationPolicy(), NewQuotaLifecycleRepo(db, fixedQuotaClock(now), nil), nil)
+	stale, err := repo.StaleAccounts(ctx, time.Unix(now, 0).Add(-quota.DefaultStalenessWindow))
+	if err != nil {
+		t.Fatalf("StaleAccounts: %v", err)
 	}
-	if calls != 0 {
-		t.Fatalf("onRateLimit calls = %d with no signal, want 0", calls)
+	if len(stale) != 1 || stale[0] != "acct-stale-old" {
+		t.Fatalf("StaleAccounts() = %v, want exactly [acct-stale-old]", stale)
 	}
 }

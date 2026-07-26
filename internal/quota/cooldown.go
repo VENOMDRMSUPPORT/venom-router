@@ -2,6 +2,7 @@ package quota
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -73,4 +74,46 @@ type Cooldown struct {
 // before Until, never inclusive of the boundary instant itself.
 func IsOnCooldown(c Cooldown, now time.Time) bool {
 	return now.Before(c.Until)
+}
+
+// CooldownTrigger is a scope-correct cooldown request in quota's OWN
+// vocabulary (05 §3 / 05 §4's 429 bullet). The mapping from
+// execution.TypedFailure to this type lives in P4-ROUTE-014, NOT here:
+// internal/execution transitively imports net/http (via the vendored
+// bifrost core), so importing it from internal/quota would break
+// TestLayering_DomainPackagesImportNoInfrastructure.
+type CooldownTrigger struct {
+	Scope      CooldownScope
+	ScopeRef   string
+	Until      time.Time
+	Source     CooldownSource
+	ReasonCode string
+}
+
+// ErrInvalidCooldownTrigger is returned by Validate for any structurally
+// invalid trigger.
+var ErrInvalidCooldownTrigger = errors.New("quota: invalid cooldown trigger")
+
+// Validate fails closed: a known Scope, a non-empty ScopeRef and
+// ReasonCode, a known Source, and a Until strictly after now. now is
+// taken as an explicit parameter — never time.Now() — matching every
+// other quota domain function that needs a clock (e.g. Window.State)
+// and this project's "no wall-clock in domain logic" rule.
+func (t CooldownTrigger) Validate(now time.Time) error {
+	if _, err := ParseCooldownScope(string(t.Scope)); err != nil {
+		return err
+	}
+	if t.ScopeRef == "" {
+		return fmt.Errorf("%w: scope ref required", ErrInvalidCooldownTrigger)
+	}
+	if t.ReasonCode == "" {
+		return fmt.Errorf("%w: reason code required", ErrInvalidCooldownTrigger)
+	}
+	if _, err := ParseCooldownSource(string(t.Source)); err != nil {
+		return err
+	}
+	if !t.Until.After(now) {
+		return fmt.Errorf("%w: until must be strictly after now", ErrInvalidCooldownTrigger)
+	}
+	return nil
 }
