@@ -109,6 +109,7 @@ func TestLayering_DomainPackagesImportNoInfrastructure(t *testing.T) {
 		modulePrefix + "providers",
 		modulePrefix + "models",
 		modulePrefix + "intelligence",
+		modulePrefix + "quota",
 	}
 	forbidden := []string{
 		modulePrefix + "storage",
@@ -162,6 +163,7 @@ func TestLayering_StorageDependencyIsOneDirectionOnly(t *testing.T) {
 		modulePrefix + "providers",
 		modulePrefix + "models",
 		modulePrefix + "intelligence",
+		modulePrefix + "quota",
 	}
 	const storage = modulePrefix + "storage"
 
