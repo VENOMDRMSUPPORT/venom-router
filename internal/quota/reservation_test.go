@@ -179,6 +179,73 @@ func TestApplicableDebits_EmptySetIsAnError(t *testing.T) {
 	})
 }
 
+// TestApplicableDebits_AggregatesRepeatedUnitsIntoOneDebitPerWindow pins
+// 02 §3's "one allocation per applicable window" (which M5 enforces with
+// PRIMARY KEY(reservation_id, window_id)). Two allocations sharing a unit
+// must collapse into ONE debit for that window carrying their summed cost.
+// Emitting two debits instead is not a cosmetic difference: both would
+// carry the same ExpectedVersion, so the second conditional UPDATE would
+// affect 0 rows once the first incremented the version, rejecting a
+// perfectly valid attempt forever — and the second allocation INSERT would
+// violate the primary key.
+func TestApplicableDebits_AggregatesRepeatedUnitsIntoOneDebitPerWindow(t *testing.T) {
+	windows := []Window{windowFixture("win-1", UnitRequests, nil, float64Ptr(100), 7)}
+	allocations := []Allocation{
+		{Unit: UnitRequests, Cost: 1, Source: EstimateSourceFromRequest},
+		{Unit: UnitRequests, Cost: 2, Source: EstimateSourceFromRequest},
+	}
+
+	got, err := ApplicableDebits(windows, allocations)
+	if err != nil {
+		t.Fatalf("ApplicableDebits(): %v", err)
+	}
+	want := []WindowDebit{{
+		WindowID:        "win-1",
+		Unit:            UnitRequests,
+		Cost:            3,
+		EstimateSource:  EstimateSourceFromRequest,
+		ExpectedVersion: 7,
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ApplicableDebits() = %+v, want exactly one aggregated debit %+v", got, want)
+	}
+}
+
+// TestApplicableDebits_AggregateTakesLeastCertainSource proves a summed
+// debit is only as trustworthy as its weakest contributor: mixing an exact
+// from_request cost with a conservative policy_default one must be tagged
+// policy_default, in either input order.
+func TestApplicableDebits_AggregateTakesLeastCertainSource(t *testing.T) {
+	windows := []Window{windowFixture("win-1", UnitRequests, nil, float64Ptr(100), 1)}
+
+	orders := [][]Allocation{
+		{
+			{Unit: UnitRequests, Cost: 1, Source: EstimateSourceFromRequest},
+			{Unit: UnitRequests, Cost: 2, Source: EstimateSourcePolicyDefault},
+		},
+		{
+			{Unit: UnitRequests, Cost: 2, Source: EstimateSourcePolicyDefault},
+			{Unit: UnitRequests, Cost: 1, Source: EstimateSourceFromRequest},
+		},
+	}
+	for i, allocations := range orders {
+		got, err := ApplicableDebits(windows, allocations)
+		if err != nil {
+			t.Fatalf("order %d: ApplicableDebits(): %v", i, err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("order %d: got %d debits, want exactly 1", i, len(got))
+		}
+		if got[0].Cost != 3 {
+			t.Fatalf("order %d: cost = %v, want 3 (summed)", i, got[0].Cost)
+		}
+		if got[0].EstimateSource != EstimateSourcePolicyDefault {
+			t.Fatalf("order %d: source = %q, want %q (least certain contributor wins)",
+				i, got[0].EstimateSource, EstimateSourcePolicyDefault)
+		}
+	}
+}
+
 func TestApplicableDebits_IsDeterministic(t *testing.T) {
 	windows := []Window{
 		windowFixture("win-c", UnitRequests, float64Ptr(10), nil, 1),

@@ -96,11 +96,28 @@ var ErrNoApplicableWindow = errors.New("quota: no applicable window to reserve a
 //   - A non-positive allocation cost contributes no debit (nothing to
 //     reserve), but does not by itself make the result empty-and-therefore-
 //     an-error if other debits exist.
+//   - Several allocations matching the SAME window are AGGREGATED into one
+//     debit whose Cost is their sum. 02 §3 states a reservation holds "one
+//     allocation per applicable window", and M5 enforces exactly that with
+//     PRIMARY KEY(reservation_id, window_id). Emitting one debit per
+//     allocation instead would break the reservation two ways: the second
+//     conditional UPDATE on that window would carry an ExpectedVersion the
+//     first UPDATE has already incremented, so it would affect 0 rows and
+//     reject the whole attempt, and the second allocation INSERT would
+//     violate the primary key. Callers other than Estimate (whose units are
+//     unique by construction) can legitimately supply repeated units, so
+//     aggregation is what makes this function safe for them.
+//   - An aggregated debit takes the LEAST certain contributing
+//     EstimateSource (from_request > provider_conversion > policy_default):
+//     a summed cost is only as trustworthy as its weakest input, and an
+//     unrecognized source is treated as least certain — fail closed.
 //   - An empty result is ErrNoApplicableWindow, never a silent success.
-//   - The output order is deterministic: grouped, then sorted by WindowID
-//     — built explicitly, never by ranging over a map.
+//   - The output order is deterministic: aggregated, then sorted by
+//     WindowID — the accumulator map is never ranged over to build output.
 func ApplicableDebits(windows []Window, allocations []Allocation) ([]WindowDebit, error) {
-	debits := make([]WindowDebit, 0, len(windows))
+	byWindow := make(map[string]*WindowDebit, len(windows))
+	order := make([]string, 0, len(windows))
+
 	for _, w := range windows {
 		if _, ok := w.Capacity(); !ok {
 			continue
@@ -109,19 +126,47 @@ func ApplicableDebits(windows []Window, allocations []Allocation) ([]WindowDebit
 			if a.Unit != w.Unit || a.Cost <= 0 {
 				continue
 			}
-			debits = append(debits, WindowDebit{
+			if existing, seen := byWindow[w.ID]; seen {
+				existing.Cost += a.Cost
+				if estimateCertaintyRank(a.Source) > estimateCertaintyRank(existing.EstimateSource) {
+					existing.EstimateSource = a.Source
+				}
+				continue
+			}
+			byWindow[w.ID] = &WindowDebit{
 				WindowID:        w.ID,
 				Unit:            w.Unit,
 				Cost:            a.Cost,
 				EstimateSource:  a.Source,
 				ExpectedVersion: w.Version,
-			})
+			}
+			order = append(order, w.ID)
 		}
 	}
-	if len(debits) == 0 {
+	if len(order) == 0 {
 		return nil, ErrNoApplicableWindow
 	}
 
-	sort.Slice(debits, func(i, j int) bool { return debits[i].WindowID < debits[j].WindowID })
+	sort.Strings(order)
+	debits := make([]WindowDebit, 0, len(order))
+	for _, id := range order {
+		debits = append(debits, *byWindow[id])
+	}
 	return debits, nil
+}
+
+// estimateCertaintyRank orders provenance from most to least certain, so
+// aggregating picks the weakest contributor. An unrecognized source ranks
+// as least certain rather than silently passing as exact.
+func estimateCertaintyRank(s EstimateSource) int {
+	switch s {
+	case EstimateSourceFromRequest:
+		return 0
+	case EstimateSourceProviderConversion:
+		return 1
+	case EstimateSourcePolicyDefault:
+		return 2
+	default:
+		return 3
+	}
 }

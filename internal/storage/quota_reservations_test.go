@@ -333,6 +333,51 @@ func TestReserve_NoWindowsAtAllIsRejected(t *testing.T) {
 	}
 }
 
+// TestReserve_RepeatedUnitAllocationsReserveTheSummedCostOnce is the
+// end-to-end consequence of quota.ApplicableDebits aggregating repeated
+// units. Without that aggregation this exact call fails two ways: the
+// second conditional UPDATE on the shared window carries an
+// ExpectedVersion the first already incremented, so it affects 0 rows and
+// the whole attempt is rejected; and if it somehow got past that, the
+// second allocation INSERT violates PRIMARY KEY(reservation_id,
+// window_id). Estimate's own units are unique, so only a caller that
+// merges estimates (P4-ROUTE-013) would hit this — which is precisely why
+// it must be pinned before that caller exists.
+func TestReserve_RepeatedUnitAllocationsReserveTheSummedCostOnce(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-dup")
+	insertAccount(t, db, "acct-dup", "prov-dup")
+	seedWindowFull(t, db, "win-dup", "acct-dup", "local_safety", "requests",
+		"estimated_consumption", "rolling:3600s", nil, float64Ptr(100), 0, 1)
+
+	allocations := []quota.Allocation{
+		{Unit: quota.UnitRequests, Cost: 1, Source: quota.EstimateSourceFromRequest},
+		{Unit: quota.UnitRequests, Cost: 2, Source: quota.EstimateSourceFromRequest},
+	}
+	repo := NewQuotaReservationRepo(db, fixedQuotaClock(1000))
+
+	res, err := repo.Reserve(ctx, ReserveParams{
+		AccountID: "acct-dup", RequestID: "req-dup", AttemptID: "attempt-1", Allocations: allocations,
+	})
+	if err != nil {
+		t.Fatalf("Reserve() = %v, want success (repeated units must aggregate, not self-conflict)", err)
+	}
+	if len(res.Debits) != 1 {
+		t.Fatalf("debits = %d, want exactly 1 (one allocation per applicable window, 02 §3)", len(res.Debits))
+	}
+
+	reserved, _ := readWindowReservedVersion(t, db, "win-dup")
+	if reserved != 3 {
+		t.Fatalf("window reserved = %v, want 3 (the SUMMED cost of both allocations)", reserved)
+	}
+	if n := countRows(t, db, "quota_reservation_allocations", "reservation_id", res.ReservationID); n != 1 {
+		t.Fatalf("allocation rows = %d, want exactly 1", n)
+	}
+}
+
 // TestReserveOnWindow_VersionGuardBites drives reserveOnWindow directly.
 // This is the only place the "AND version = ?" clause is independently
 // observable: with one pooled connection nothing can interleave inside
