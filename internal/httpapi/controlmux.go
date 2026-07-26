@@ -180,9 +180,26 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// GET /models and GET /offerings both read storage.CatalogRepo and
 	// render intelligence.Project's ONE shared projection — reads, so no
 	// audit event is emitted (mirrors GET /accounts and GET /settings).
-	modelsHandler := NewModelsHandler(storage.NewCatalogRepo(db), nil)
+	// catalogRepo is shared with the discovery/certification routes below
+	// rather than each building its own.
+	catalogRepo := storage.NewCatalogRepo(db)
+	modelsHandler := NewModelsHandler(catalogRepo, nil)
 	mux.Handle("/api/control/v1/models", gated(modelsHandler.ServeModels))
 	mux.Handle("/api/control/v1/offerings", gated(modelsHandler.ServeOfferings))
+
+	// Discovery + certification read (P3a-CAPI-002): POST
+	// /accounts/{id}/discover (async, 202 + the canonical shared job
+	// surface) and GET /offerings/{id}/certification. discoveryRepo
+	// implements BOTH intelligence.GenerationAllocator and
+	// intelligence.SnapshotApplier structurally; credentialService (already
+	// constructed above for reveal) is reused as the
+	// intelligence.CredentialLeaser via its Use method; idem is the SAME
+	// shared idempotency store enrollment already uses.
+	discoveryRepo := storage.NewDiscoveryRepo(db, newOAuthTransactionID)
+	jobRepo := storage.NewJobRepo(db)
+	discoveryHandler := NewDiscoveryHandler(accountRepo, credentialRepo, catalogRepo, jobRepo, discoveryRepo, reg, credentialService, audit, idem, newOAuthTransactionID, nil)
+	mux.Handle("/api/control/v1/accounts/{id}/discover", gated(discoveryHandler.ServeDiscover))
+	mux.Handle("/api/control/v1/offerings/{id}/certification", gated(discoveryHandler.ServeCertification))
 
 	mux.Handle("/", networkGate(allowedHost, spa))
 	return mux

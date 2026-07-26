@@ -29,6 +29,9 @@ const (
 	AuditActionAccountHealth     = "account_health"     // POST /accounts/{id}/health
 	AuditActionProviderSync      = "provider_sync"      // POST /providers/{id}/sync
 	AuditActionSettingsUpdate    = "settings_update"    // PUT /settings
+
+	// P3a-CAPI-002 discovery action code.
+	AuditActionAccountDiscover = "account_discover" // POST /accounts/{id}/discover
 )
 
 // Audit result codes.
@@ -42,6 +45,7 @@ const (
 	AuditResourceProvider = "provider"
 	AuditResourceAccount  = "account"
 	AuditResourceSettings = "settings"
+	AuditResourceOffering = "offering"
 )
 
 // auditEmitter records one audit_events row per mutating control call

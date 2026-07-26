@@ -1,0 +1,317 @@
+package httpapi
+
+import (
+	"context"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/domain"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
+)
+
+// discoverRoute is the fixed route key idempotencyStore.Execute keys
+// replays under (mirrors enrollmentRoute in enrollment.go).
+const discoverRoute = "POST /accounts/{id}/discover"
+
+// discoveryRunTimeout bounds the detached background discovery run this
+// handler spawns after responding 202 — a generous ceiling for a single
+// account-scoped provider call, never the request's own (already-returned)
+// context.
+const discoveryRunTimeout = 3 * time.Minute
+
+// discoveryResultRef is the ONE reference shape a discovery job's
+// result_ref ever takes (09 §3.12: "a reference... e.g. the affected
+// account_id + the read-model route"): the /models route filtered to the
+// account whose discovery just ran. It NEVER contains a model id, count,
+// credential, or provider error — those never leave this function's scope.
+func discoveryResultRef(accountID string) string {
+	return "/api/control/v1/models?account_id=" + url.QueryEscape(accountID)
+}
+
+// DiscoveryHandler serves the P3a-CAPI-002 discovery-trigger and
+// certification-read surface: POST /accounts/{id}/discover (async, 202 +
+// job) and GET /offerings/{id}/certification. Owner-session + CSRF gated
+// via ControlMux's `gated`.
+type DiscoveryHandler struct {
+	accounts    *storage.AccountRepo
+	credentials *storage.AccountCredentialRepo
+	catalog     *storage.CatalogRepo
+	jobs        *storage.JobRepo
+	discovery   *storage.DiscoveryRepo
+	reg         *providers.Registry
+	leaser      intelligence.CredentialLeaser
+	audit       *auditEmitter
+	idem        *idempotencyStore
+	newID       func() string
+	now         func() time.Time
+}
+
+// NewDiscoveryHandler builds the handler over every repo/service it needs.
+// idem is the SAME shared idempotencyStore ControlMux already constructs
+// for enrollment (never a second instance). now/newID default to time.Now /
+// newOAuthTransactionID when nil, exactly like every other injectable
+// clock/id-minter in this package.
+func NewDiscoveryHandler(
+	accounts *storage.AccountRepo,
+	credentials *storage.AccountCredentialRepo,
+	catalog *storage.CatalogRepo,
+	jobs *storage.JobRepo,
+	discovery *storage.DiscoveryRepo,
+	reg *providers.Registry,
+	leaser intelligence.CredentialLeaser,
+	audit *auditEmitter,
+	idem *idempotencyStore,
+	newID func() string,
+	now func() time.Time,
+) *DiscoveryHandler {
+	if newID == nil {
+		newID = newOAuthTransactionID
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return &DiscoveryHandler{
+		accounts:    accounts,
+		credentials: credentials,
+		catalog:     catalog,
+		jobs:        jobs,
+		discovery:   discovery,
+		reg:         reg,
+		leaser:      leaser,
+		audit:       audit,
+		idem:        idem,
+		newID:       newID,
+		now:         now,
+	}
+}
+
+// activeCredentialIDFor returns the id of accountID's one active
+// credential, or ok=false if it has none — mirrors
+// AccountsHandler.activeCredentialID (accounts.go), duplicated here rather
+// than exported from that unrelated handler, since both are small,
+// independent lookups over the same repo.
+func activeCredentialIDFor(ctx context.Context, credentials *storage.AccountCredentialRepo, accountID string) (string, bool) {
+	creds, err := credentials.ListForAccount(ctx, accountID)
+	if err != nil {
+		return "", false
+	}
+	for _, c := range creds {
+		if c.State == domain.CredentialActive {
+			return c.ID, true
+		}
+	}
+	return "", false
+}
+
+// discoverResponseJSON is POST .../discover's 202 success payload (09
+// §3.7/§3.12): a job id and the ONE canonical shared status route — never
+// a per-resource status endpoint, and never any inline discovery result.
+type discoverResponseJSON struct {
+	JobID     string `json:"job_id"`
+	StatusURL string `json:"status_url"`
+}
+
+// ServeDiscover implements POST /api/control/v1/accounts/{id}/discover (09
+// §3.7): validates the account/provider/credential preconditions, creates a
+// tracked "discovery" job, responds 202 {job_id, status_url}, and THEN runs
+// the actual discovery on a detached background context. The method check
+// happens outside idem.Execute so a wrong-method request is never captured
+// as a replayable response (mirrors enrollment.go's ServeConnect).
+func (h *DiscoveryHandler) ServeDiscover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAuthError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", false)
+		return
+	}
+	h.idem.Execute(w, r, discoverRoute, h.serveDiscover)
+}
+
+// serveDiscover is ServeDiscover's actual body, run at most once per
+// (route, Idempotency-Key) pair by idem.Execute.
+func (h *DiscoveryHandler) serveDiscover(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	// 1. Load the account; unknown -> 404 + failure audit. Nothing created.
+	account, ok, err := h.accounts.GetByID(ctx, id)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+	if !ok {
+		h.audit.Emit(ctx, AuditActionAccountDiscover, AuditResultFailure, AuditResourceAccount, id, "not_found")
+		writeAuthError(w, http.StatusNotFound, "not_found", "account not found", false)
+		return
+	}
+
+	// 2. The provider must have a registered discovery adapter; nothing
+	// created otherwise.
+	adapter, ok := h.reg.ModelDiscoveryAdapter(providers.ProviderID(account.ProviderID))
+	if !ok {
+		h.audit.Emit(ctx, AuditActionAccountDiscover, AuditResultFailure, AuditResourceAccount, id, "discovery_unsupported")
+		writeErrorDetails(w, http.StatusConflict, "discovery_unsupported", "this provider has no discovery capability", false, nil)
+		return
+	}
+
+	// 3. The account must have an active credential to lease; nothing
+	// created otherwise.
+	credentialID, ok := activeCredentialIDFor(ctx, h.credentials, account.ID)
+	if !ok {
+		h.audit.Emit(ctx, AuditActionAccountDiscover, AuditResultFailure, AuditResourceAccount, id, "credential_unavailable")
+		writeErrorDetails(w, http.StatusConflict, "credential_unavailable", "account has no active credential", false, nil)
+		return
+	}
+
+	// 4. Mint job/run ids and create the tracked job row.
+	jobID := h.newID()
+	runID := h.newID()
+	now := h.now()
+	if err := h.jobs.Create(ctx, jobID, string(storage.JobKindDiscovery), now); err != nil {
+		h.audit.Emit(ctx, AuditActionAccountDiscover, AuditResultFailure, AuditResourceAccount, id, "internal")
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+
+	// 5. Respond 202 with the canonical shared job surface, and audit
+	// success — BEFORE running the actual discovery.
+	h.audit.Emit(ctx, AuditActionAccountDiscover, AuditResultSuccess, AuditResourceAccount, id, "")
+	writeData(w, http.StatusAccepted, discoverResponseJSON{
+		JobID:     jobID,
+		StatusURL: "/api/control/v1/jobs/" + jobID,
+	})
+
+	// 6. Run discovery on a DETACHED context: the request's own context is
+	// cancelled the instant this handler returns (the response has already
+	// been written), so using r.Context() directly would abort every run.
+	// context.WithoutCancel strips the parent's cancellation/deadline while
+	// keeping its values; a bounded timeout is layered on top so a stuck
+	// provider call cannot run forever.
+	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), discoveryRunTimeout)
+	go func() {
+		defer cancel()
+		h.runDiscovery(runCtx, jobID, runID, account.ID, account.ProviderID, credentialID, adapter)
+	}()
+}
+
+// runDiscovery executes the actual discovery run and terminates jobID
+// accordingly. It is panic-safe: a recovered panic marks the job failed
+// with a generic internal code rather than crashing the process.
+func (h *DiscoveryHandler) runDiscovery(ctx context.Context, jobID, runID, accountID, providerID, credentialID string, adapter providers.ModelDiscoveryAdapter) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			_ = h.jobs.MarkTerminal(context.Background(), jobID, storage.JobFailed, h.now(), "",
+				&storage.JobError{Code: "internal", Message: "discovery run failed unexpectedly"},
+				storage.DefaultJobRetention)
+		}
+	}()
+
+	startedAt := h.now()
+	if err := h.jobs.MarkRunning(ctx, jobID, startedAt); err != nil {
+		_ = h.jobs.MarkTerminal(context.Background(), jobID, storage.JobFailed, h.now(), "",
+			&storage.JobError{Code: "internal", Message: "discovery run failed to start"},
+			storage.DefaultJobRetention)
+		return
+	}
+
+	svc := intelligence.NewDiscoveryService(adapter, h.leaser, h.discovery, h.discovery, h.now)
+	result, err := svc.Run(ctx, intelligence.RunParams{
+		AccountID:    accountID,
+		ProviderID:   providerID,
+		CredentialID: credentialID,
+		RunID:        runID,
+	})
+	finishedAt := h.now()
+
+	if err != nil {
+		_ = h.jobs.MarkTerminal(context.Background(), jobID, storage.JobFailed, finishedAt, "",
+			&storage.JobError{Code: "internal", Message: "discovery run failed"},
+			storage.DefaultJobRetention)
+		return
+	}
+
+	if result.Outcome == intelligence.OutcomeFailed {
+		reasonCode := result.ReasonCode
+		if reasonCode == "" {
+			reasonCode = "internal"
+		}
+		// result.ReasonCode is already one of intelligence's typed, safe
+		// reason codes (never a raw provider error, credential, or model
+		// content) — it is used verbatim as the job's typed error code.
+		_ = h.jobs.MarkTerminal(context.Background(), jobID, storage.JobFailed, finishedAt, "",
+			&storage.JobError{Code: reasonCode, Message: "discovery run failed"},
+			storage.DefaultJobRetention)
+		return
+	}
+
+	_ = h.jobs.MarkTerminal(context.Background(), jobID, storage.JobCompleted, finishedAt,
+		discoveryResultRef(accountID), nil, storage.DefaultJobRetention)
+}
+
+// --- GET /offerings/{id}/certification ---
+
+// certificationJSON is GET /offerings/{id}/certification's success payload
+// (09 §2 / 04 §5). {id} is an offering_operations.id — certification is
+// per offering-operation, and the frozen M4 certifications table's own
+// primary key IS offering_operation_id.
+type certificationJSON struct {
+	OfferingOperationID string  `json:"offering_operation_id"`
+	AccountID           string  `json:"account_id"`
+	ProviderModelID     string  `json:"provider_model_id"`
+	Operation           string  `json:"operation"`
+	State               string  `json:"state"`
+	CapabilityTruth     string  `json:"capability_truth"`
+	Version             int     `json:"version"`
+	CertifiedAt         *string `json:"certified_at"`
+	EvidenceRef         string  `json:"evidence_ref,omitempty"`
+	Routable            bool    `json:"routable"`
+}
+
+// ServeCertification implements GET /api/control/v1/offerings/{id}/certification
+// (09 §2 / 04 §5): certification state + capability truth for one
+// offering-operation. Unknown id -> 404. This is a read — no audit event.
+func (h *DiscoveryHandler) ServeCertification(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAuthError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", false)
+		return
+	}
+
+	id := r.PathValue("id")
+	op, ok, err := h.catalog.GetOperationCertification(r.Context(), id)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+	if !ok {
+		writeAuthError(w, http.StatusNotFound, "not_found", "offering operation not found", false)
+		return
+	}
+
+	state, err := models.ParseCertificationState(op.CertificationStatus)
+	if err != nil {
+		state = models.CertDiscovered
+	}
+	truth, err := models.ParseCapabilityTruth(op.CapabilityTruth)
+	if err != nil {
+		truth = models.TruthUnknown
+	}
+
+	resp := certificationJSON{
+		OfferingOperationID: op.ID,
+		AccountID:           op.AccountID,
+		ProviderModelID:     op.ProviderModelID,
+		Operation:           op.Operation,
+		State:               string(state),
+		CapabilityTruth:     string(truth),
+		Version:             op.CertificationVersion,
+		EvidenceRef:         op.EvidenceRef,
+		Routable:            models.Routable(state, truth),
+	}
+	if op.CertifiedAt != nil {
+		s := op.CertifiedAt.Format(time.RFC3339)
+		resp.CertifiedAt = &s
+	}
+	writeData(w, http.StatusOK, resp)
+}
