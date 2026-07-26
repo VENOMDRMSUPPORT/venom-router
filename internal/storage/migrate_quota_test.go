@@ -101,9 +101,9 @@ func TestQuotaReservations_StateCheck(t *testing.T) {
 }
 
 // TestQuotaWindows_WindowKeyNeverNullOrEmpty proves window_key is both
-// NOT NULL and non-empty (02 §3: "window_key is never NULL and never
-// ''"), in three subtests. A reviewer re-proves each half independently by
-// relaxing NOT NULL or dropping the `<> ''` CHECK.
+// NOT NULL and non-empty (02 §3: window_key is never NULL and never the
+// empty string), in three subtests. A reviewer re-proves each half
+// independently by relaxing NOT NULL or dropping the empty-string CHECK.
 func TestQuotaWindows_WindowKeyNeverNullOrEmpty(t *testing.T) {
 	db := migratedQuotaDB(t)
 	insertProvider(t, db, "prov-wk")
