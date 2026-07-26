@@ -141,9 +141,15 @@ func Restrictiveness(s WindowState) int {
 // an attempt's applicable windows (05 §4: "the attempt takes the most
 // restrictive"). An empty or nil set is never treated as available — no
 // windows to check is itself an unknown situation, so it fails closed to
-// StateUnknown. A [stale, unknown] tie (in either order) resolves to
+// StateUnknown. A tie between the two DIFFERENT states sharing
+// rankStaleOrUnknown (stale and unknown, in either order) resolves to
 // StateUnknown deterministically, since 05 §4 documents stale as treated
-// as unknown.
+// as unknown. A tie between windows in the SAME state reports that state
+// verbatim — an all-stale set is genuinely stale, and collapsing it to
+// unknown would discard true information about why the attempt is
+// blocked (both still rank equally and both still trigger a refresh via
+// NeedsRefresh, so this affects only the reported reason, never the
+// verdict).
 func MostRestrictive(states []WindowState) WindowState {
 	if len(states) == 0 {
 		return StateUnknown
@@ -156,7 +162,7 @@ func MostRestrictive(states []WindowState) WindowState {
 		switch {
 		case rank > worstRank:
 			worst, worstRank = s, rank
-		case rank == worstRank && worstRank == rankStaleOrUnknown:
+		case rank == worstRank && worstRank == rankStaleOrUnknown && s != worst:
 			worst = StateUnknown
 		}
 	}

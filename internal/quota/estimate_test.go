@@ -119,6 +119,32 @@ func TestEstimate_NoCreditConversionWithoutVerifiedRule(t *testing.T) {
 			t.Fatalf("credit source = %q, want %q", credits[0].Source, EstimateSourceProviderConversion)
 		}
 	})
+
+	// Even a fully valid, verified rule must NOT produce a credit
+	// allocation when the input token count is unknown: the cost formula is
+	// (input + output) * rate, so an uncounted input would have to be
+	// treated as 0 to evaluate it, fabricating a credit figure from a
+	// number Venom does not have. 02 §3 requires the opposite — an
+	// unsafely-estimable credit window defers to the local-safety budget
+	// and post-execution reconciliation. Without this case, dropping the
+	// `in.InputTokens != nil` conjunct from Estimate's credit guard is an
+	// undetectable regression.
+	t.Run("verified rule but unknown input tokens produces no credit allocation", func(t *testing.T) {
+		in := EstimateInput{
+			InputTokens:     nil,
+			MaxOutputTokens: intPtr(300),
+			Conversion:      &CreditConversionRule{Unit: UnitCredits, CreditsPerToken: 0.01, Verified: true, RuleID: "r-ok"},
+		}
+		got, err := Estimate(in, pol)
+		if err != nil {
+			t.Fatalf("Estimate(): %v", err)
+		}
+		for _, a := range got {
+			if a.Unit == UnitCredits || a.Unit == UnitBalance {
+				t.Fatalf("found a credit allocation %+v with InputTokens nil, want none (unknown input is never treated as 0)", a)
+			}
+		}
+	})
 }
 
 func TestEstimate_IsDeterministic(t *testing.T) {

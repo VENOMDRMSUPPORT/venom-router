@@ -315,6 +315,13 @@ func TestMostRestrictive_Table(t *testing.T) {
 		{"exhausted beats insufficient", []WindowState{StateInsufficient, StateExhausted}, StateExhausted},
 		{"stale then unknown resolves to unknown", []WindowState{StateStale, StateUnknown}, StateUnknown},
 		{"unknown then stale resolves to unknown (order independent)", []WindowState{StateUnknown, StateStale}, StateUnknown},
+		// An all-stale set is genuinely stale: only a tie between two
+		// DIFFERENT equally-ranked states collapses to unknown, so a
+		// same-state tie must not discard the real reason.
+		{"all stale stays stale, not unknown", []WindowState{StateStale, StateStale}, StateStale},
+		{"all unknown stays unknown", []WindowState{StateUnknown, StateUnknown}, StateUnknown},
+		{"stale, unknown, stale resolves to unknown in any order", []WindowState{StateStale, StateUnknown, StateStale}, StateUnknown},
+		{"unknown, stale, unknown resolves to unknown in any order", []WindowState{StateUnknown, StateStale, StateUnknown}, StateUnknown},
 		{"empty set fails closed to unknown", []WindowState{}, StateUnknown},
 		{"nil set fails closed to unknown", nil, StateUnknown},
 	}
