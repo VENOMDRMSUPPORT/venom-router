@@ -204,6 +204,42 @@ func TestDiagnosticsReconciliation_ListsPendingAndUnknown_OwnerGated(t *testing.
 	}
 }
 
+// TestDiagnosticsAction_IsOwnerGatedThroughTheRealMux covers the MUTATING
+// route's gating, which every other action test misses: they all drive a
+// local mux built from the handler alone, so replacing this route's gated()
+// wrapper with a bare networkGate leaves them all green. That is not a
+// cosmetic gap — this endpoint settles quota and rewrites reservation state,
+// so an ungated version would let any loopback caller do both without an
+// owner session or a CSRF token.
+func TestDiagnosticsAction_IsOwnerGatedThroughTheRealMux(t *testing.T) {
+	db := testControlDB(t)
+	realMux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
+
+	t.Run("no owner session is rejected", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := newAuthRequest(t, http.MethodPost,
+			"/api/control/v1/diagnostics/reconciliation/res-x",
+			bytes.NewBufferString(`{"action":"resync"}`))
+		realMux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("unauthenticated status = %d, want 401; body = %q", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("owner session without CSRF is rejected", func(t *testing.T) {
+		cookie, _ := setupOwnerWithCSRF(t, realMux)
+		rec := httptest.NewRecorder()
+		req := newAuthRequest(t, http.MethodPost,
+			"/api/control/v1/diagnostics/reconciliation/res-x",
+			bytes.NewBufferString(`{"action":"resync"}`))
+		req.AddCookie(cookie)
+		realMux.ServeHTTP(rec, req)
+		if rec.Code == http.StatusOK || rec.Code == http.StatusNotFound {
+			t.Fatalf("missing CSRF status = %d, want a CSRF rejection; body = %q", rec.Code, rec.Body.String())
+		}
+	})
+}
+
 // --- POST /diagnostics/reconciliation/{id} ---
 
 func TestDiagnosticsResync_ClearsLeaseAndResetsAttempts(t *testing.T) {

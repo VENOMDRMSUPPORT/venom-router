@@ -315,6 +315,22 @@ func TestQuotaRefresh_JobMessageIsAFixedSecretFreeConstant(t *testing.T) {
 		t.Fatalf("jobs.error column leaked the canary secret: %s", rawErrText)
 	}
 
+	// The WHOLE row, not just the error column. result_ref is the other
+	// free-form text column on jobs, and it is written on both the failure
+	// and success paths — checking only `error` leaves a leak path that no
+	// test can see: moving the provider's raw text into result_ref keeps
+	// every other assertion here green.
+	var rawRow string
+	if err := f.db.Conn().QueryRow(
+		`SELECT COALESCE(kind,'') || '|' || COALESCE(result_ref,'') || '|' || COALESCE(error,'')
+		   FROM jobs WHERE id = ?`, data.JobID,
+	).Scan(&rawRow); err != nil {
+		t.Fatalf("read whole jobs row: %v", err)
+	}
+	if strings.Contains(rawRow, canary) {
+		t.Fatalf("the jobs row leaked the canary secret somewhere outside error: %s", rawRow)
+	}
+
 	n := countRowsQuery(t, f.db, `SELECT COUNT(*) FROM audit_events WHERE reason_code LIKE '%' || ? || '%' OR entity_id LIKE '%' || ? || '%'`, canary, canary)
 	if n != 0 {
 		t.Fatalf("audit_events leaked the canary secret")
