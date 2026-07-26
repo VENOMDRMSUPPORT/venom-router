@@ -494,8 +494,8 @@ func TestP3aGate_ModelsReflectsCatalogAndCertification(t *testing.T) {
 		t.Fatalf("certification read state/truth = %s/%s, want /offerings' chat capability state/truth %s/%s", certEnv.Data.State, certEnv.Data.CapabilityTruth, aChatCap.State, aChatCap.Truth)
 	}
 	wantCertRoutable := models.Routable(models.CertificationState(certEnv.Data.State), models.CapabilityTruth(certEnv.Data.CapabilityTruth))
-	if certEnv.Data.Routable != wantCertRoutable {
-		t.Fatalf("certification Routable = %v, want models.Routable(state,truth) = %v (the certification-layer predicate alone)", certEnv.Data.Routable, wantCertRoutable)
+	if certEnv.Data.CertifiedAndSupported != wantCertRoutable {
+		t.Fatalf("certification certified_and_supported = %v, want models.Routable(state,truth) = %v (the certification-layer predicate alone)", certEnv.Data.CertifiedAndSupported, wantCertRoutable)
 	}
 	if aChatCap.Routable != (wantCertRoutable && aChatCap.Effective) {
 		t.Fatalf("/offerings chat Routable = %v, want models.Routable(state,truth) && effective = %v", aChatCap.Routable, wantCertRoutable && aChatCap.Effective)

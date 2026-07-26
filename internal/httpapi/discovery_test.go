@@ -485,7 +485,7 @@ func TestCertification_ReadsOfferingOperation(t *testing.T) {
 	if env.Data.OfferingOperationID != "op-cert-chat" || env.Data.Operation != "chat" {
 		t.Fatalf("data = %+v, want op-cert-chat/chat (not op-cert-vision, despite the shared provider_model_id)", env.Data)
 	}
-	if env.Data.State != "certified" || env.Data.CapabilityTruth != "supported" || !env.Data.Routable {
+	if env.Data.State != "certified" || env.Data.CapabilityTruth != "supported" || !env.Data.CertifiedAndSupported {
 		t.Fatalf("data = %+v, want certified/supported/routable=true", env.Data)
 	}
 	if env.Data.EvidenceRef != "ev-x" {
@@ -502,7 +502,7 @@ func TestCertification_ReadsOfferingOperation(t *testing.T) {
 	if err := json.Unmarshal(rec2.Body.Bytes(), &env2); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if env2.Data.State != "discovered" || env2.Data.Routable {
+	if env2.Data.State != "discovered" || env2.Data.CertifiedAndSupported {
 		t.Fatalf("data = %+v, want discovered/routable=false", env2.Data)
 	}
 

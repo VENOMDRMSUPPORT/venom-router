@@ -256,17 +256,26 @@ func (h *DiscoveryHandler) runDiscovery(ctx context.Context, jobID, runID, accou
 // (09 §2 / 04 §5). {id} is an offering_operations.id — certification is
 // per offering-operation, and the frozen M4 certifications table's own
 // primary key IS offering_operation_id.
+// CertifiedAndSupported is models.Routable(state, truth) — the
+// CERTIFICATION-LAYER predicate ONLY (04 §5: certified AND supported). It is
+// deliberately NOT named "routable": end-to-end routability additionally
+// requires the capability to be EFFECTIVE (native support AND provider
+// exposure AND transport support, 04 §3), which this per-operation
+// certification read has no access to. `GET /offerings` is the single
+// surface that answers routability, on its capability objects' `routable`
+// field; a consumer that treats this field as admission would route to an
+// offering whose capability was never proven effective.
 type certificationJSON struct {
-	OfferingOperationID string  `json:"offering_operation_id"`
-	AccountID           string  `json:"account_id"`
-	ProviderModelID     string  `json:"provider_model_id"`
-	Operation           string  `json:"operation"`
-	State               string  `json:"state"`
-	CapabilityTruth     string  `json:"capability_truth"`
-	Version             int     `json:"version"`
-	CertifiedAt         *string `json:"certified_at"`
-	EvidenceRef         string  `json:"evidence_ref,omitempty"`
-	Routable            bool    `json:"routable"`
+	OfferingOperationID   string  `json:"offering_operation_id"`
+	AccountID             string  `json:"account_id"`
+	ProviderModelID       string  `json:"provider_model_id"`
+	Operation             string  `json:"operation"`
+	State                 string  `json:"state"`
+	CapabilityTruth       string  `json:"capability_truth"`
+	Version               int     `json:"version"`
+	CertifiedAt           *string `json:"certified_at"`
+	EvidenceRef           string  `json:"evidence_ref,omitempty"`
+	CertifiedAndSupported bool    `json:"certified_and_supported"`
 }
 
 // ServeCertification implements GET /api/control/v1/offerings/{id}/certification
@@ -299,15 +308,15 @@ func (h *DiscoveryHandler) ServeCertification(w http.ResponseWriter, r *http.Req
 	}
 
 	resp := certificationJSON{
-		OfferingOperationID: op.ID,
-		AccountID:           op.AccountID,
-		ProviderModelID:     op.ProviderModelID,
-		Operation:           op.Operation,
-		State:               string(state),
-		CapabilityTruth:     string(truth),
-		Version:             op.CertificationVersion,
-		EvidenceRef:         op.EvidenceRef,
-		Routable:            models.Routable(state, truth),
+		OfferingOperationID:   op.ID,
+		AccountID:             op.AccountID,
+		ProviderModelID:       op.ProviderModelID,
+		Operation:             op.Operation,
+		State:                 string(state),
+		CapabilityTruth:       string(truth),
+		Version:               op.CertificationVersion,
+		EvidenceRef:           op.EvidenceRef,
+		CertifiedAndSupported: models.Routable(state, truth),
 	}
 	if op.CertifiedAt != nil {
 		s := op.CertifiedAt.Format(time.RFC3339)
