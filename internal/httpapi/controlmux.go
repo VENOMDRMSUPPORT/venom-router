@@ -220,6 +220,16 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	quotaHandler := NewQuotaHandler(accountRepo, credentialRepo, jobRepo, reconciliationRepo, reg, credentialService, audit, idem, newOAuthTransactionID, nil)
 	mux.Handle("/api/control/v1/accounts/{id}/quota", gated(quotaHandler.ServeQuotaRefresh))
 
+	// Reconciliation diagnostics (P3b-CAPI-002, 09 §2 / 05 §4 "Manual
+	// recovery"): GET /diagnostics/reconciliation (read model) and POST
+	// /diagnostics/reconciliation/{reservation_id} (resync /
+	// accept_estimate). Shares reconciliationRepo/quotaLifecycleRepo with
+	// the quota-refresh route above — both are the same underlying
+	// five-state reservation lifecycle.
+	diagnosticsHandler := NewDiagnosticsHandler(reconciliationRepo, quotaLifecycleRepo, audit)
+	mux.Handle("/api/control/v1/diagnostics/reconciliation", gated(diagnosticsHandler.ServeList))
+	mux.Handle("/api/control/v1/diagnostics/reconciliation/{reservation_id}", gated(diagnosticsHandler.ServeAction))
+
 	mux.Handle("/", networkGate(allowedHost, spa))
 	return mux
 }

@@ -35,6 +35,10 @@ const (
 
 	// P3b-CAPI-001 quota-refresh action code.
 	AuditActionAccountQuotaRefresh = "account_quota_refresh" // POST /accounts/{id}/quota
+
+	// P3b-CAPI-002 reconciliation diagnostics action codes.
+	AuditActionReconciliationResync         = "reconciliation_resync"          // POST /diagnostics/reconciliation/{id} {action:"resync"}
+	AuditActionReconciliationAcceptEstimate = "reconciliation_accept_estimate" // POST /diagnostics/reconciliation/{id} {action:"accept_estimate"}
 )
 
 // Audit result codes.
@@ -45,10 +49,11 @@ const (
 
 // Audit resource-type codes.
 const (
-	AuditResourceProvider = "provider"
-	AuditResourceAccount  = "account"
-	AuditResourceSettings = "settings"
-	AuditResourceOffering = "offering"
+	AuditResourceProvider    = "provider"
+	AuditResourceAccount     = "account"
+	AuditResourceSettings    = "settings"
+	AuditResourceOffering    = "offering"
+	AuditResourceReservation = "quota_reservation"
 )
 
 // auditEmitter records one audit_events row per mutating control call
