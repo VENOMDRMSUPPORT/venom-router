@@ -1,0 +1,370 @@
+package storage
+
+import (
+	"context"
+	"database/sql"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// defaultCatalogListLimit bounds a ListOfferings call that did not supply a
+// sane limit.
+const defaultCatalogListLimit = 50
+
+// CatalogOperationRow is one offering_operations row joined with its 1:1
+// certifications row (04 §3/§5). AccountID and ProviderModelID identify the
+// parent offering — GetOperationCertification's caller (P3a-CAPI-002's
+// certification read) needs them to render the full response without a
+// second lookup.
+type CatalogOperationRow struct {
+	ID                   string
+	AccountID            string
+	ProviderModelID      string
+	Operation            string
+	CertificationStatus  string
+	CapabilityTruth      string
+	CertificationVersion int
+	CertifiedAt          *time.Time
+	EvidenceRef          string
+}
+
+// CatalogOfferingRow is one account_model_offerings row joined with its
+// parent models row (04 §3's canonical-vs-offering split) plus every
+// offering_operations/certifications row scoped to it. Every nullable
+// column decodes to nil/empty-non-nil exactly as persisted — this repo
+// never fabricates a 0/false/empty value for an unknown fact (04 §2:
+// "absent ≠ false, absent ≠ zero").
+type CatalogOfferingRow struct {
+	AccountID       string
+	ProviderID      string
+	ProviderModelID string
+	ModelID         string
+	Availability    string
+	ContextLength   *int
+	MaxInputTokens  *int
+	MaxOutputTokens *int
+	Capabilities    []string
+	Pricing         map[string]any
+	FirstSeenAt     time.Time
+	LastSeenAt      time.Time
+
+	ModelDisplayName    string
+	NativeContextTokens *int
+	NativeModalities    []string
+	QualityRating       *float64
+
+	Operations []CatalogOperationRow
+}
+
+// CatalogListParams is ListOfferings' input. AccountID = "" lists every
+// account's offerings; a non-empty value restricts to that one account.
+type CatalogListParams struct {
+	AccountID string
+	Limit     int
+	Cursor    string
+}
+
+// CatalogRepo is a READ-ONLY repository over the frozen M4 catalog tables
+// (models, account_model_offerings, offering_operations, certifications).
+// It never writes — DiscoveryRepo (internal/storage/discovery.go) owns
+// every mutation to these tables. It returns plain storage rows; the
+// intelligence.Project projection is built by its httpapi caller
+// (P3a-CAPI-001's ModelsHandler), never re-derived here.
+type CatalogRepo struct {
+	db *DB
+}
+
+// NewCatalogRepo builds a repository over db's existing connection.
+func NewCatalogRepo(db *DB) *CatalogRepo {
+	return &CatalogRepo{db: db}
+}
+
+// ListOfferings returns up to params.Limit offerings ordered deterministically
+// by (account_id, provider_model_id) — the tie-breaker on provider_model_id
+// is what makes the order (and therefore the cursor) unambiguous when
+// listing across every account. nextCursor is "" on the last page.
+func (r *CatalogRepo) ListOfferings(ctx context.Context, params CatalogListParams) ([]CatalogOfferingRow, string, error) {
+	limit := params.Limit
+	if limit <= 0 {
+		limit = defaultCatalogListLimit
+	}
+
+	var (
+		query strings.Builder
+		args  []any
+		conds []string
+	)
+	query.WriteString(`SELECT amo.account_id, amo.provider_id, amo.provider_model_id, amo.model_id, amo.availability,
+		amo.context_length, amo.max_input_tokens, amo.max_output_tokens,
+		amo.capabilities_json, amo.pricing_json, amo.first_seen_at, amo.last_seen_at,
+		m.display_name, m.native_context_tokens, m.native_modalities_json, m.quality_rating
+	FROM account_model_offerings amo
+	JOIN models m ON amo.model_id = m.id`)
+
+	if params.AccountID != "" {
+		conds = append(conds, "amo.account_id = ?")
+		args = append(args, params.AccountID)
+	}
+	if params.Cursor != "" {
+		cursorAccountID, cursorProviderModelID, ok := decodeCatalogCursor(params.Cursor)
+		if ok {
+			conds = append(conds, "(amo.account_id > ? OR (amo.account_id = ? AND amo.provider_model_id > ?))")
+			args = append(args, cursorAccountID, cursorAccountID, cursorProviderModelID)
+		}
+	}
+	if len(conds) > 0 {
+		query.WriteString(" WHERE " + strings.Join(conds, " AND "))
+	}
+	query.WriteString(" ORDER BY amo.account_id ASC, amo.provider_model_id ASC LIMIT ?")
+	args = append(args, limit+1) // over-fetch by one to detect a next page
+
+	rows, err := r.db.Conn().QueryContext(ctx, query.String(), args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("storage: list offerings: %w", err)
+	}
+
+	var out []CatalogOfferingRow
+	overFetched := false
+	for rows.Next() {
+		row, err := scanCatalogOfferingRow(rows)
+		if err != nil {
+			_ = rows.Close()
+			return nil, "", fmt.Errorf("storage: list offerings: scan: %w", err)
+		}
+		if len(out) == limit {
+			// This is the limit+1'th row: it exists only to prove a next
+			// page follows. It is deliberately NOT included in out and NOT
+			// used as the cursor basis below — the cursor must resume
+			// strictly AFTER the last row actually returned (out's last
+			// element), not after this one, or the next page would skip it.
+			overFetched = true
+			break
+		}
+		out = append(out, row)
+	}
+	rowsErr := rows.Err()
+	// The connection pool is single-connection (storage.Open sets
+	// SetMaxOpenConns(1)): rows MUST be closed before operationsForOffering
+	// issues its own queries below, or the second query deadlocks waiting
+	// for the connection this still-open cursor holds.
+	if err := rows.Close(); err != nil {
+		return nil, "", fmt.Errorf("storage: list offerings: close: %w", err)
+	}
+	if rowsErr != nil {
+		return nil, "", fmt.Errorf("storage: list offerings: %w", rowsErr)
+	}
+
+	for i := range out {
+		ops, err := r.operationsForOffering(ctx, out[i].AccountID, out[i].ProviderModelID)
+		if err != nil {
+			return nil, "", err
+		}
+		out[i].Operations = ops
+	}
+
+	nextCursor := ""
+	if overFetched {
+		last := out[len(out)-1]
+		nextCursor = encodeCatalogCursor(last.AccountID, last.ProviderModelID)
+	}
+	return out, nextCursor, nil
+}
+
+// operationsForOffering reads every offering_operations row (joined with
+// its certifications row) for one (accountID, providerModelID) offering.
+func (r *CatalogRepo) operationsForOffering(ctx context.Context, accountID, providerModelID string) ([]CatalogOperationRow, error) {
+	rows, err := r.db.Conn().QueryContext(ctx,
+		`SELECT oo.id, oo.account_id, oo.provider_model_id, oo.operation, c.status, c.capability_truth, c.version, c.certified_at, c.evidence_ref
+		 FROM offering_operations oo
+		 LEFT JOIN certifications c ON c.offering_operation_id = oo.id
+		 WHERE oo.account_id = ? AND oo.provider_model_id = ?
+		 ORDER BY oo.operation ASC`,
+		accountID, providerModelID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("storage: list offering operations for (%q,%q): %w", accountID, providerModelID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []CatalogOperationRow
+	for rows.Next() {
+		op, err := scanCatalogOperationRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("storage: list offering operations for (%q,%q): scan: %w", accountID, providerModelID, err)
+		}
+		out = append(out, op)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: list offering operations for (%q,%q): %w", accountID, providerModelID, err)
+	}
+	return out, nil
+}
+
+// GetOperationCertification reads one offering_operations row joined with
+// its certification, by offering_operation_id — the identity
+// P3a-CAPI-002's `GET /offerings/{id}/certification` is keyed on (04 §5:
+// certification is per offering-operation, and the frozen M4
+// certifications table's own primary key IS offering_operation_id). ok is
+// false when no such offering_operations row exists.
+func (r *CatalogRepo) GetOperationCertification(ctx context.Context, offeringOperationID string) (CatalogOperationRow, bool, error) {
+	row := r.db.Conn().QueryRowContext(ctx,
+		`SELECT oo.id, oo.account_id, oo.provider_model_id, oo.operation, c.status, c.capability_truth, c.version, c.certified_at, c.evidence_ref
+		 FROM offering_operations oo
+		 LEFT JOIN certifications c ON c.offering_operation_id = oo.id
+		 WHERE oo.id = ?`,
+		offeringOperationID,
+	)
+	op, err := scanCatalogOperationRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CatalogOperationRow{}, false, nil
+	}
+	if err != nil {
+		return CatalogOperationRow{}, false, fmt.Errorf("storage: get operation certification %q: %w", offeringOperationID, err)
+	}
+	return op, true, nil
+}
+
+// catalogRowScanner is the shared shape of *sql.Row's and *sql.Rows' Scan
+// method (mirrors storage.scanner in accounts.go).
+type catalogRowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanCatalogOfferingRow(s catalogRowScanner) (CatalogOfferingRow, error) {
+	var (
+		out                                            CatalogOfferingRow
+		contextLength, maxInputTokens, maxOutputTokens sql.NullInt64
+		capabilitiesJSON, pricingJSON                  sql.NullString
+		firstSeenAt, lastSeenAt                        int64
+		displayName                                    sql.NullString
+		nativeContextTokens                            sql.NullInt64
+		nativeModalitiesJSON                           sql.NullString
+		qualityRating                                  sql.NullFloat64
+	)
+	if err := s.Scan(
+		&out.AccountID, &out.ProviderID, &out.ProviderModelID, &out.ModelID, &out.Availability,
+		&contextLength, &maxInputTokens, &maxOutputTokens,
+		&capabilitiesJSON, &pricingJSON, &firstSeenAt, &lastSeenAt,
+		&displayName, &nativeContextTokens, &nativeModalitiesJSON, &qualityRating,
+	); err != nil {
+		return CatalogOfferingRow{}, err
+	}
+
+	out.ContextLength = nullIntToPtr(contextLength)
+	out.MaxInputTokens = nullIntToPtr(maxInputTokens)
+	out.MaxOutputTokens = nullIntToPtr(maxOutputTokens)
+	out.Capabilities = decodeJSONStringSlice(capabilitiesJSON)
+	out.Pricing = decodeJSONStringMap(pricingJSON)
+	out.FirstSeenAt = time.Unix(firstSeenAt, 0).UTC()
+	out.LastSeenAt = time.Unix(lastSeenAt, 0).UTC()
+	out.ModelDisplayName = displayName.String
+	out.NativeContextTokens = nullIntToPtr(nativeContextTokens)
+	out.NativeModalities = decodeJSONStringSlice(nativeModalitiesJSON)
+	if qualityRating.Valid {
+		v := qualityRating.Float64
+		out.QualityRating = &v
+	}
+	return out, nil
+}
+
+func scanCatalogOperationRow(s catalogRowScanner) (CatalogOperationRow, error) {
+	var (
+		out           CatalogOperationRow
+		status, truth sql.NullString
+		version       sql.NullInt64
+		certifiedAt   sql.NullInt64
+		evidenceRef   sql.NullString
+	)
+	if err := s.Scan(&out.ID, &out.AccountID, &out.ProviderModelID, &out.Operation, &status, &truth, &version, &certifiedAt, &evidenceRef); err != nil {
+		return CatalogOperationRow{}, err
+	}
+
+	// A certifications row exists 1:1 for every offering_operations row
+	// this codebase creates (DiscoveryRepo.ensureOfferingOperation always
+	// inserts the baseline together with its parent) — the LEFT JOIN and
+	// these defaults are a defense-in-depth fallback, never the expected
+	// path, and fail closed to the "discovered/unknown" baseline rather
+	// than fabricating a certified/supported claim.
+	out.CertificationStatus = "discovered"
+	out.CapabilityTruth = "unknown"
+	out.CertificationVersion = 1
+	if status.Valid {
+		out.CertificationStatus = status.String
+	}
+	if truth.Valid {
+		out.CapabilityTruth = truth.String
+	}
+	if version.Valid {
+		out.CertificationVersion = int(version.Int64)
+	}
+	if certifiedAt.Valid {
+		t := time.Unix(certifiedAt.Int64, 0).UTC()
+		out.CertifiedAt = &t
+	}
+	out.EvidenceRef = evidenceRef.String
+	return out, nil
+}
+
+func nullIntToPtr(v sql.NullInt64) *int {
+	if !v.Valid {
+		return nil
+	}
+	n := int(v.Int64)
+	return &n
+}
+
+// decodeJSONStringSlice decodes a nullable JSON TEXT column into a []string,
+// resolving NULL and any malformed/non-array content to nil (unknown) —
+// never a partial or fabricated result, and never an error that would fail
+// the whole list (04 §2: unknown stays unknown).
+func decodeJSONStringSlice(s sql.NullString) []string {
+	if !s.Valid {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(s.String), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// decodeJSONStringMap decodes a nullable JSON TEXT column into a
+// map[string]any, resolving NULL and any malformed/non-object content to
+// nil (unknown) — same fail-closed contract as decodeJSONStringSlice.
+func decodeJSONStringMap(s sql.NullString) map[string]any {
+	if !s.Valid {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(s.String), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// catalogCursorSeparator joins the cursor's two components before
+// base64-encoding. NUL cannot appear in either an account id or a
+// provider_model_id in practice, but the encoding is opaque to the client
+// either way.
+const catalogCursorSeparator = "\x00"
+
+func encodeCatalogCursor(accountID, providerModelID string) string {
+	raw := accountID + catalogCursorSeparator + providerModelID
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+func decodeCatalogCursor(cursor string) (accountID, providerModelID string, ok bool) {
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", "", false
+	}
+	parts := strings.SplitN(string(raw), catalogCursorSeparator, 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}

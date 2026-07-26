@@ -176,6 +176,14 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// specific /providers/{id}/sync path first.
 	mux.Handle("/api/control/v1/providers/{id}/sync", gated(accountsHandler.ServeProviderSync))
 
+	// Effective-offering read model (P3a-CAPI-001, 09 §2 / 04 §3):
+	// GET /models and GET /offerings both read storage.CatalogRepo and
+	// render intelligence.Project's ONE shared projection — reads, so no
+	// audit event is emitted (mirrors GET /accounts and GET /settings).
+	modelsHandler := NewModelsHandler(storage.NewCatalogRepo(db), nil)
+	mux.Handle("/api/control/v1/models", gated(modelsHandler.ServeModels))
+	mux.Handle("/api/control/v1/offerings", gated(modelsHandler.ServeOfferings))
+
 	mux.Handle("/", networkGate(allowedHost, spa))
 	return mux
 }
