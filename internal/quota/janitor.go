@@ -1,14 +1,15 @@
 package quota
 
-import "time"
-
 // JanitorResult tallies how many reservations one janitor sweep moved
-// through each of its three discriminated branches (02 §3): reservations
-// released outright, reservations pended for reconciliation, and
-// reservations that hit the terminal unknown_consumption boundary.
+// through each of its four discriminated branches (02 §3): reservations
+// released outright, reservations pended for reconciliation, pending
+// reservations reclaimed from an expired-or-absent lease (branch C1,
+// re-enqueued, never terminalized), and pending reservations that hit
+// the terminal unknown_consumption boundary (branch C2).
 type JanitorResult struct {
 	Released           int
 	Pended             int
+	Reclaimed          int
 	UnknownConsumption int
 }
 
@@ -22,12 +23,12 @@ type JanitorResult struct {
 // the misuse at runtime, so nothing could ever return such an error, and
 // an exported error that is never returned is contract surface with no
 // behaviour behind it.
-
-// DefaultRetryDeadline is how long a reconciliation_pending reservation
-// may wait before the janitor gives up and transitions it to
-// unknown_consumption (02 §3 / 05 §4's retry boundary) — the terminal
-// backstop for a reservation whose provider outcome never arrives.
-const DefaultRetryDeadline = 30 * time.Minute
+//
+// DefaultRetryDeadline (the old wall-clock terminal boundary) is
+// deliberately GONE: it contradicted the reconciliation worker's own
+// MaxRetries x BaseBackoff boundary for the exact same transition. There
+// is now exactly one terminal-boundary predicate, RetryExhausted
+// (reconciliation.go), which both the janitor and the worker call.
 
 // DefaultJanitorBatchSize bounds how many reservations the janitor moves
 // per branch in one sweep, keeping its transaction short-held.

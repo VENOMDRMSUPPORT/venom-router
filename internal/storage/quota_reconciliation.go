@@ -35,7 +35,9 @@ func NewReconciliationRepo(db *DB, now func() time.Time, policy quota.Reconcilia
 }
 
 // PendingReservation is one reconciliation_pending reservation past its
-// processing deadline, as read by PendingReservations.
+// processing deadline, as read by PendingReservations or claimed by
+// ClaimPending. Attempts and LeaseOwner are only meaningful for a value
+// returned by ClaimPending (PendingReservations does not read them).
 type PendingReservation struct {
 	ReservationID string
 	AccountID     string
@@ -43,6 +45,8 @@ type PendingReservation struct {
 	AttemptID     string
 	CreatedAt     int64
 	ExpiresAt     int64
+	Attempts      int
+	LeaseOwner    string
 }
 
 // AllocationInfo is one reservation-allocation pairing: its window id and
@@ -129,35 +133,210 @@ func (r *ReconciliationRepo) emitUsageGap(ctx context.Context, reservationID str
 	})
 }
 
-// retryExhausted reports whether a reservation stuck in
-// reconciliation_pending since expiresAt has outlived this policy's
-// cumulative retry budget (MaxRetries attempts at BaseBackoff apart,
-// capped at MaxBackoff) as of now. There is no persisted retry counter
-// on the frozen M5 schema, so elapsed wall-clock time against this
-// budget is the retry-exhaustion signal, rather than a counted attempt
-// number.
-func retryExhausted(policy quota.ReconciliationPolicy, now, expiresAt int64) bool {
-	budget := policy.BaseBackoff * time.Duration(policy.MaxRetries)
-	if policy.MaxBackoff > 0 && budget > policy.MaxBackoff {
-		budget = policy.MaxBackoff
-	}
-	elapsed := time.Duration(now-expiresAt) * time.Second
-	return elapsed >= budget
-}
+// ErrClaimRequiresOwner is returned by ClaimPending for an empty owner.
+var ErrClaimRequiresOwner = errors.New("storage: claim pending: owner required")
 
-// ReconcileOne resolves a single pending reservation. With no
-// provider-usage API available at this layer, it always settles at the
-// estimate (actuals=nil) the first time it is called within the retry
-// budget; once the budget is exhausted it instead transitions to
-// unknown_consumption. Both paths route through QuotaLifecycleRepo's
-// already-idempotent Settle/Transition, so calling ReconcileOne twice
-// for the same reservation is itself idempotent — the second call finds
-// the reservation already in its target state and is a no-op.
-func (r *ReconciliationRepo) ReconcileOne(ctx context.Context, p PendingReservation) (quota.ReconciliationOutcome, error) {
+// ClaimPending atomically leases up to r.policy.BatchSize pending
+// reservations for owner, in ONE BEGIN IMMEDIATE transaction, skipping
+// any whose backoff (quota.BackoffFor) has not yet elapsed, whose lease
+// is still held by someone else, or that are already retry-exhausted
+// (those belong to the janitor's Branch C2, never to a live claim). The
+// per-candidate backoff duration involves 10^attempts, which SQL cannot
+// express, so candidates are selected broadly and filtered/limited here
+// in Go, exactly as this batch's spec requires. An empty result is not
+// an error — it simply means nothing is currently claimable.
+func (r *ReconciliationRepo) ClaimPending(ctx context.Context, owner string, ttl time.Duration) ([]PendingReservation, error) {
+	if owner == "" {
+		return nil, ErrClaimRequiresOwner
+	}
+
+	conn, err := r.db.Conn().Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("storage: acquire connection for claim-pending: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return nil, fmt.Errorf("storage: begin immediate claim-pending tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
+
 	now := r.now().Unix()
 
-	if retryExhausted(r.policy, now, p.ExpiresAt) {
+	rows, err := conn.QueryContext(ctx,
+		`SELECT id, account_id, request_id, attempt_id, created_at, expires_at, reconcile_attempts
+		   FROM quota_reservations
+		  WHERE state = 'reconciliation_pending'
+		    AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at < ?)
+		    AND reconcile_attempts < ?
+		  ORDER BY expires_at`,
+		now, r.policy.MaxRetries,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("storage: claim-pending select candidates: %w", err)
+	}
+	type candidate struct {
+		id, accountID, requestID, attemptID string
+		createdAt, expiresAt                int64
+		attempts                            int
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var c candidate
+		if scanErr := rows.Scan(&c.id, &c.accountID, &c.requestID, &c.attemptID, &c.createdAt, &c.expiresAt, &c.attempts); scanErr != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("storage: claim-pending scan candidate: %w", scanErr)
+		}
+		candidates = append(candidates, c)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("storage: claim-pending select candidates: %w", rowsErr)
+	}
+	_ = rows.Close()
+
+	var claimed []PendingReservation
+	for _, c := range candidates {
+		if len(claimed) >= r.policy.BatchSize {
+			break
+		}
+		backoff := quota.BackoffFor(r.policy, c.attempts)
+		if now < c.expiresAt+int64(backoff.Seconds()) {
+			continue // backoff has not elapsed yet
+		}
+
+		leaseExpiresAt := now + int64(ttl.Seconds())
+		if _, err := conn.ExecContext(ctx,
+			`UPDATE quota_reservations SET lease_owner = ?, lease_expires_at = ? WHERE id = ?`,
+			owner, leaseExpiresAt, c.id,
+		); err != nil {
+			return nil, fmt.Errorf("storage: claim-pending lease %q: %w", c.id, err)
+		}
+		claimed = append(claimed, PendingReservation{
+			ReservationID: c.id,
+			AccountID:     c.accountID,
+			RequestID:     c.requestID,
+			AttemptID:     c.attemptID,
+			CreatedAt:     c.createdAt,
+			ExpiresAt:     c.expiresAt,
+			Attempts:      c.attempts,
+			LeaseOwner:    owner,
+		})
+	}
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return nil, fmt.Errorf("storage: commit claim-pending: %w", err)
+	}
+	committed = true
+
+	return claimed, nil
+}
+
+// verifyLeaseAndIncrementAttempt is ReconcileOne's own short transaction:
+// re-read the reservation's CURRENT lease_owner inside the transaction
+// (never trusting the caller's stale PendingReservation snapshot),
+// reject with quota.ErrLeaseNotHeld if owner no longer matches, and
+// otherwise increment reconcile_attempts by exactly 1, returning the NEW
+// attempt count. This is deliberately its own transaction, separate from
+// the Settle/Transition call ReconcileOne makes next: those open their
+// OWN dedicated connection, and holding this one open across that call
+// would deadlock (SetMaxOpenConns(1)).
+func (r *ReconciliationRepo) verifyLeaseAndIncrementAttempt(ctx context.Context, owner, reservationID string) (int, error) {
+	conn, err := r.db.Conn().Conn(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("storage: acquire connection for lease check: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return 0, fmt.Errorf("storage: begin immediate lease-check tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
+
+	var currentOwner sql.NullString
+	var attempts int64
+	err = conn.QueryRowContext(ctx,
+		`SELECT lease_owner, reconcile_attempts FROM quota_reservations WHERE id = ?`, reservationID,
+	).Scan(&currentOwner, &attempts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrReservationNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("storage: lease-check load reservation %q: %w", reservationID, err)
+	}
+	if !currentOwner.Valid || currentOwner.String != owner {
+		return 0, quota.ErrLeaseNotHeld
+	}
+
+	newAttempts := attempts + 1
+	if _, err := conn.ExecContext(ctx,
+		`UPDATE quota_reservations SET reconcile_attempts = ? WHERE id = ?`,
+		newAttempts, reservationID,
+	); err != nil {
+		return 0, fmt.Errorf("storage: increment reconcile_attempts for %q: %w", reservationID, err)
+	}
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return 0, fmt.Errorf("storage: commit lease-check for %q: %w", reservationID, err)
+	}
+	committed = true
+
+	return int(newAttempts), nil
+}
+
+// clearLease frees a reservation's lease columns through the pool — a
+// single autocommitted statement, safe to call whenever the caller holds
+// no open transaction of its own.
+func (r *ReconciliationRepo) clearLease(ctx context.Context, reservationID string) error {
+	if _, err := r.db.Conn().ExecContext(ctx,
+		`UPDATE quota_reservations SET lease_owner = NULL, lease_expires_at = NULL WHERE id = ?`,
+		reservationID,
+	); err != nil {
+		return fmt.Errorf("storage: clear lease for %q: %w", reservationID, err)
+	}
+	return nil
+}
+
+// ReconcileOne resolves a single pending reservation claimed by owner
+// (via ClaimPending). It first verifies owner still holds the lease and
+// increments reconcile_attempts (its own short transaction) — a worker
+// whose lease expired gets quota.ErrLeaseNotHeld and writes nothing else.
+// It then decides with quota.RetryExhausted(policy, newAttempts) — THE
+// SAME predicate the janitor's Branch C2 uses, so the two can never
+// disagree:
+//
+//   - exhausted -> Transition to unknown_consumption + a usage_gap audit
+//     event, per reservation.
+//   - not exhausted -> settle at the estimate (actuals=nil) — with no
+//     provider-usage API available at this layer, there is nothing else
+//     to settle at.
+//
+// Either way the lease is cleared once the terminal storage call
+// succeeds. Both paths route through QuotaLifecycleRepo's
+// already-idempotent Settle/Transition, so calling ReconcileOne twice in
+// a row for the same reservation (same owner, lease not yet cleared by
+// anything else) is itself idempotent.
+func (r *ReconciliationRepo) ReconcileOne(ctx context.Context, owner string, p PendingReservation) (quota.ReconciliationOutcome, error) {
+	newAttempts, err := r.verifyLeaseAndIncrementAttempt(ctx, owner, p.ReservationID)
+	if err != nil {
+		return quota.ReconciliationOutcome{}, err
+	}
+
+	if quota.RetryExhausted(r.policy, newAttempts) {
 		if err := r.lifecycle.Transition(ctx, p.ReservationID, quota.ReservationUnknownConsumption); err != nil {
+			return quota.ReconciliationOutcome{}, err
+		}
+		if err := r.clearLease(ctx, p.ReservationID); err != nil {
 			return quota.ReconciliationOutcome{}, err
 		}
 		// 02 §3: reaching the terminal retry boundary "emits a usage_gap
@@ -170,6 +349,9 @@ func (r *ReconciliationRepo) ReconcileOne(ctx context.Context, p PendingReservat
 	}
 
 	if err := r.lifecycle.Settle(ctx, p.ReservationID, nil); err != nil {
+		return quota.ReconciliationOutcome{}, err
+	}
+	if err := r.clearLease(ctx, p.ReservationID); err != nil {
 		return quota.ReconciliationOutcome{}, err
 	}
 	return quota.ReconciliationOutcome{ReservationID: p.ReservationID, Outcome: quota.ReservationSettled}, nil

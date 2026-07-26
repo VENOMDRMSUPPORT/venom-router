@@ -2,6 +2,9 @@ package storage
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
@@ -17,6 +20,20 @@ func seedPendingReservation(t *testing.T, db *DB, id, accountID, windowID string
 	seedJanitorReservation(t, db, id, accountID, windowID, "reconciliation_pending", &dispatchedAt, expiresAt, createdAt, estimatedCost)
 }
 
+// NOTE (P3b-FIX-LEASE): TestReconcileOne_Idempotent (the old three-arg
+// ReconcileOne(ctx, pending) shape) was REMOVED, not just rewritten. Its
+// premise — calling ReconcileOne twice with the same hand-built
+// PendingReservation succeeds as a no-op both times — no longer holds
+// once ReconcileOne requires a held lease: the first call clears the
+// lease on its terminal outcome, so a second call with the same owner
+// and the SAME stale snapshot now correctly returns
+// quota.ErrLeaseNotHeld rather than silently no-oping. That is exactly
+// TestReconcileOne_RequiresTheLease's scenario below, and the real
+// "call it again for the same logical unit of work" path is
+// TestReconcileOne_IncrementsAttempts, which drives a full
+// claim/reconcile cycle twice. This is a disclosed removal, not a
+// silent narrowing.
+
 func TestReconcileOne_Settles(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
 	defer cancel()
@@ -25,15 +42,24 @@ func TestReconcileOne_Settles(t *testing.T) {
 	insertProvider(t, db, "prov-reconcile-settle")
 	insertAccount(t, db, "acct-reconcile-settle", "prov-reconcile-settle")
 	seedWindowFull(t, db, "win-reconcile-settle", "acct-reconcile-settle", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
-	// now=2000; expires_at=1000 -> 1000s elapsed, well under the default
-	// policy's retry-exhaustion boundary (5 * 30s = 150s).
+	// now=2000; expires_at=1900, first-attempt backoff (attempts=0) is
+	// 30s, so it is claimable (1900+30 <= 2000); reconcile_attempts=0 is
+	// far below the default policy's MaxRetries (5), so one attempt
+	// (->1) is not retry-exhausted.
 	seedPendingReservation(t, db, "res-reconcile-settle", "acct-reconcile-settle", "win-reconcile-settle", 950, 1900, 900, 5)
 
 	lifecycle := NewQuotaLifecycleRepo(db, fixedQuotaClock(2000), nil)
 	repo := NewReconciliationRepo(db, fixedQuotaClock(2000), quota.DefaultReconciliationPolicy(), lifecycle, nil)
 
-	pending := PendingReservation{ReservationID: "res-reconcile-settle", AccountID: "acct-reconcile-settle", ExpiresAt: 1900}
-	outcome, err := repo.ReconcileOne(ctx, pending)
+	claimed, err := repo.ClaimPending(ctx, "worker-settle", quota.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatalf("ClaimPending: %v", err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("len(claimed) = %d, want 1", len(claimed))
+	}
+
+	outcome, err := repo.ReconcileOne(ctx, "worker-settle", claimed[0])
 	if err != nil {
 		t.Fatalf("ReconcileOne: %v", err)
 	}
@@ -48,38 +74,13 @@ func TestReconcileOne_Settles(t *testing.T) {
 	if reserved != 0 {
 		t.Fatalf("window reserved = %v, want 0 (settled at its own estimate)", reserved)
 	}
-}
 
-func TestReconcileOne_Idempotent(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
-	defer cancel()
-
-	db := migratedCatalogRepoDB(t)
-	insertProvider(t, db, "prov-reconcile-idem")
-	insertAccount(t, db, "acct-reconcile-idem", "prov-reconcile-idem")
-	seedWindowFull(t, db, "win-reconcile-idem", "acct-reconcile-idem", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
-	seedPendingReservation(t, db, "res-reconcile-idem", "acct-reconcile-idem", "win-reconcile-idem", 950, 1900, 900, 5)
-
-	lifecycle := NewQuotaLifecycleRepo(db, fixedQuotaClock(2000), nil)
-	repo := NewReconciliationRepo(db, fixedQuotaClock(2000), quota.DefaultReconciliationPolicy(), lifecycle, nil)
-	pending := PendingReservation{ReservationID: "res-reconcile-idem", AccountID: "acct-reconcile-idem", ExpiresAt: 1900}
-
-	first, err := repo.ReconcileOne(ctx, pending)
-	if err != nil {
-		t.Fatalf("first ReconcileOne: %v", err)
+	var leaseOwner sql.NullString
+	if err := db.Conn().QueryRow(`SELECT lease_owner FROM quota_reservations WHERE id = ?`, "res-reconcile-settle").Scan(&leaseOwner); err != nil {
+		t.Fatalf("read lease_owner: %v", err)
 	}
-	before := snapshotWindow(t, db, "win-reconcile-idem")
-
-	second, err := repo.ReconcileOne(ctx, pending)
-	if err != nil {
-		t.Fatalf("second ReconcileOne: %v, want success (no-op)", err)
-	}
-	if second.Outcome != first.Outcome {
-		t.Fatalf("second outcome = %q, want %q (same as first)", second.Outcome, first.Outcome)
-	}
-	after := snapshotWindow(t, db, "win-reconcile-idem")
-	if !after.equal(before) {
-		t.Fatalf("second ReconcileOne changed the window: before=%+v after=%+v", before, after)
+	if leaseOwner.Valid {
+		t.Fatalf("lease_owner = %q, want NULL (cleared on terminal outcome)", leaseOwner.String)
 	}
 }
 
@@ -91,15 +92,27 @@ func TestReconcileOne_TerminalRetryBoundary(t *testing.T) {
 	insertProvider(t, db, "prov-reconcile-terminal")
 	insertAccount(t, db, "acct-reconcile-terminal", "prov-reconcile-terminal")
 	seedWindowFull(t, db, "win-reconcile-terminal", "acct-reconcile-terminal", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
-	// now=100000; expires_at=1000 -> 99000s elapsed, far past the default
-	// policy's retry-exhaustion boundary (5 * 30s = 150s).
 	seedPendingReservation(t, db, "res-reconcile-terminal", "acct-reconcile-terminal", "win-reconcile-terminal", 950, 1000, 900, 5)
 
-	lifecycle := NewQuotaLifecycleRepo(db, fixedQuotaClock(100000), nil)
-	repo := NewReconciliationRepo(db, fixedQuotaClock(100000), quota.DefaultReconciliationPolicy(), lifecycle, nil)
-	pending := PendingReservation{ReservationID: "res-reconcile-terminal", AccountID: "acct-reconcile-terminal", ExpiresAt: 1000}
+	policy := quota.DefaultReconciliationPolicy() // MaxRetries=5
+	// Force this reservation to its LAST retry: one more attempt (this
+	// one) crosses quota.RetryExhausted's boundary.
+	if _, err := db.Conn().Exec(`UPDATE quota_reservations SET reconcile_attempts = ? WHERE id = ?`, policy.MaxRetries-1, "res-reconcile-terminal"); err != nil {
+		t.Fatalf("seed reconcile_attempts: %v", err)
+	}
 
-	outcome, err := repo.ReconcileOne(ctx, pending)
+	lifecycle := NewQuotaLifecycleRepo(db, fixedQuotaClock(100000), nil)
+	repo := NewReconciliationRepo(db, fixedQuotaClock(100000), policy, lifecycle, nil)
+
+	claimed, err := repo.ClaimPending(ctx, "worker-terminal", quota.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatalf("ClaimPending: %v", err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("len(claimed) = %d, want 1", len(claimed))
+	}
+
+	outcome, err := repo.ReconcileOne(ctx, "worker-terminal", claimed[0])
 	if err != nil {
 		t.Fatalf("ReconcileOne: %v", err)
 	}
@@ -131,13 +144,24 @@ func TestReconcileOne_TerminalRetryBoundary_EmitsUsageGap(t *testing.T) {
 	seedWindowFull(t, db, "win-gap-worker", "acct-gap-worker", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
 	seedPendingReservation(t, db, "res-gap-worker", "acct-gap-worker", "win-gap-worker", 950, 1000, 900, 5)
 
+	policy := quota.DefaultReconciliationPolicy()
+	if _, err := db.Conn().Exec(`UPDATE quota_reservations SET reconcile_attempts = ? WHERE id = ?`, policy.MaxRetries-1, "res-gap-worker"); err != nil {
+		t.Fatalf("seed reconcile_attempts: %v", err)
+	}
+
 	audit := NewAuditEventRepo(db)
 	lifecycle := NewQuotaLifecycleRepo(db, fixedQuotaClock(100000), audit)
-	repo := NewReconciliationRepo(db, fixedQuotaClock(100000), quota.DefaultReconciliationPolicy(), lifecycle, audit)
+	repo := NewReconciliationRepo(db, fixedQuotaClock(100000), policy, lifecycle, audit)
 
-	outcome, err := repo.ReconcileOne(ctx, PendingReservation{
-		ReservationID: "res-gap-worker", AccountID: "acct-gap-worker", ExpiresAt: 1000,
-	})
+	claimed, err := repo.ClaimPending(ctx, "worker-gap", quota.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatalf("ClaimPending: %v", err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("len(claimed) = %d, want 1", len(claimed))
+	}
+
+	outcome, err := repo.ReconcileOne(ctx, "worker-gap", claimed[0])
 	if err != nil {
 		t.Fatalf("ReconcileOne: %v", err)
 	}
@@ -154,6 +178,299 @@ func TestReconcileOne_TerminalRetryBoundary_EmitsUsageGap(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("usage_gap rows = %d, want exactly 1", n)
+	}
+}
+
+// TestClaimPending_LeasesAndExcludesAlreadyLeased proves both directions
+// of the lease contract in one test: a second worker claiming
+// immediately after the first gets nothing, and the SAME worker (or any
+// worker) claims it again once the first lease has expired.
+func TestClaimPending_LeasesAndExcludesAlreadyLeased(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-claim-lease")
+	insertAccount(t, db, "acct-claim-lease", "prov-claim-lease")
+	seedWindowFull(t, db, "win-claim-lease", "acct-claim-lease", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
+	seedPendingReservation(t, db, "res-claim-lease", "acct-claim-lease", "win-claim-lease", 950, 1000, 900, 5)
+
+	policy := quota.DefaultReconciliationPolicy()
+	claimTime := int64(2000)
+	repo := NewReconciliationRepo(db, fixedQuotaClock(claimTime), policy, NewQuotaLifecycleRepo(db, fixedQuotaClock(claimTime), nil), nil)
+
+	claimedA, err := repo.ClaimPending(ctx, "worker-a", quota.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatalf("worker-a ClaimPending: %v", err)
+	}
+	if len(claimedA) != 1 {
+		t.Fatalf("worker-a claimed = %d, want 1", len(claimedA))
+	}
+
+	claimedB, err := repo.ClaimPending(ctx, "worker-b", quota.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatalf("worker-b ClaimPending: %v", err)
+	}
+	if len(claimedB) != 0 {
+		t.Fatalf("worker-b claimed = %d, want 0 (already leased by worker-a)", len(claimedB))
+	}
+
+	// Advance the clock past DefaultLeaseTTL (5m = 300s): lease_expires_at
+	// was claimTime+300=2300, so 2301 is past it.
+	afterLeaseExpiry := claimTime + int64(quota.DefaultLeaseTTL.Seconds()) + 1
+	repoLater := NewReconciliationRepo(db, fixedQuotaClock(afterLeaseExpiry), policy, NewQuotaLifecycleRepo(db, fixedQuotaClock(afterLeaseExpiry), nil), nil)
+	claimedC, err := repoLater.ClaimPending(ctx, "worker-c", quota.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatalf("worker-c ClaimPending: %v", err)
+	}
+	if len(claimedC) != 1 || claimedC[0].ReservationID != "res-claim-lease" {
+		t.Fatalf("worker-c claimed %+v, want exactly [res-claim-lease] (lease now expired)", claimedC)
+	}
+}
+
+// TestClaimPending_RespectsBackoff proves both sides of the backoff
+// boundary for a reservation on its second attempt (BackoffFor(...,1) =
+// 5m): invisible one second before expires_at+5m, visible at exactly
+// that instant.
+func TestClaimPending_RespectsBackoff(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-claim-backoff")
+	insertAccount(t, db, "acct-claim-backoff", "prov-claim-backoff")
+	seedWindowFull(t, db, "win-claim-backoff", "acct-claim-backoff", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
+	seedPendingReservation(t, db, "res-claim-backoff", "acct-claim-backoff", "win-claim-backoff", 950, 1000, 900, 5)
+	if _, err := db.Conn().Exec(`UPDATE quota_reservations SET reconcile_attempts = 1 WHERE id = ?`, "res-claim-backoff"); err != nil {
+		t.Fatalf("seed reconcile_attempts: %v", err)
+	}
+
+	policy := quota.DefaultReconciliationPolicy() // BackoffFor(policy, 1) = 5m = 300s
+
+	before := NewReconciliationRepo(db, fixedQuotaClock(1299), policy, NewQuotaLifecycleRepo(db, fixedQuotaClock(1299), nil), nil)
+	claimedBefore, err := before.ClaimPending(ctx, "worker-early", quota.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatalf("ClaimPending before backoff elapsed: %v", err)
+	}
+	if len(claimedBefore) != 0 {
+		t.Fatalf("claimed before backoff elapsed = %d, want 0", len(claimedBefore))
+	}
+
+	atBoundary := NewReconciliationRepo(db, fixedQuotaClock(1300), policy, NewQuotaLifecycleRepo(db, fixedQuotaClock(1300), nil), nil)
+	claimedAfter, err := atBoundary.ClaimPending(ctx, "worker-late", quota.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatalf("ClaimPending at backoff boundary: %v", err)
+	}
+	if len(claimedAfter) != 1 {
+		t.Fatalf("claimed at backoff boundary = %d, want 1", len(claimedAfter))
+	}
+}
+
+// TestClaimPending_SkipsRetryExhausted proves an item already at
+// reconcile_attempts = MaxRetries is never claimed by ClaimPending —
+// that item belongs exclusively to the janitor's Branch C2.
+func TestClaimPending_SkipsRetryExhausted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-claim-exhausted")
+	insertAccount(t, db, "acct-claim-exhausted", "prov-claim-exhausted")
+	seedWindowFull(t, db, "win-claim-exhausted", "acct-claim-exhausted", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
+	seedPendingReservation(t, db, "res-claim-exhausted", "acct-claim-exhausted", "win-claim-exhausted", 950, 1000, 900, 5)
+
+	policy := quota.DefaultReconciliationPolicy()
+	if _, err := db.Conn().Exec(`UPDATE quota_reservations SET reconcile_attempts = ? WHERE id = ?`, policy.MaxRetries, "res-claim-exhausted"); err != nil {
+		t.Fatalf("seed reconcile_attempts: %v", err)
+	}
+
+	// Far in the future so backoff elapsed is never the reason for
+	// exclusion — only the retry-exhaustion filter is being isolated here.
+	repo := NewReconciliationRepo(db, fixedQuotaClock(1000000), policy, NewQuotaLifecycleRepo(db, fixedQuotaClock(1000000), nil), nil)
+	claimed, err := repo.ClaimPending(ctx, "worker-exhausted", quota.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatalf("ClaimPending: %v", err)
+	}
+	if len(claimed) != 0 {
+		t.Fatalf("claimed = %d, want 0 (retry-exhausted; belongs to the janitor's Branch C2)", len(claimed))
+	}
+}
+
+// TestReconcileOne_RequiresTheLease proves calling ReconcileOne with the
+// WRONG owner is rejected with quota.ErrLeaseNotHeld and leaves state,
+// allocations, and reconcile_attempts completely unchanged — a worker
+// whose lease was reassigned must never settle.
+func TestReconcileOne_RequiresTheLease(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-wrong-owner")
+	insertAccount(t, db, "acct-wrong-owner", "prov-wrong-owner")
+	seedWindowFull(t, db, "win-wrong-owner", "acct-wrong-owner", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
+	seedPendingReservation(t, db, "res-wrong-owner", "acct-wrong-owner", "win-wrong-owner", 950, 1900, 900, 5)
+
+	policy := quota.DefaultReconciliationPolicy()
+	lifecycle := NewQuotaLifecycleRepo(db, fixedQuotaClock(2000), nil)
+	repo := NewReconciliationRepo(db, fixedQuotaClock(2000), policy, lifecycle, nil)
+
+	claimed, err := repo.ClaimPending(ctx, "worker-real", quota.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatalf("ClaimPending: %v", err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("len(claimed) = %d, want 1", len(claimed))
+	}
+
+	if _, err := repo.ReconcileOne(ctx, "worker-impostor", claimed[0]); !errors.Is(err, quota.ErrLeaseNotHeld) {
+		t.Fatalf("ReconcileOne with wrong owner error = %v, want quota.ErrLeaseNotHeld", err)
+	}
+
+	state, _ := readReservationState(t, db, "res-wrong-owner")
+	if state != "reconciliation_pending" {
+		t.Fatalf("state = %q, want reconciliation_pending (unchanged)", state)
+	}
+	allocState, _ := readAllocation(t, db, "res-wrong-owner", "win-wrong-owner")
+	if allocState != "reserved" {
+		t.Fatalf("allocation state = %q, want reserved (unchanged)", allocState)
+	}
+	var attempts int64
+	if err := db.Conn().QueryRow(`SELECT reconcile_attempts FROM quota_reservations WHERE id = ?`, "res-wrong-owner").Scan(&attempts); err != nil {
+		t.Fatalf("read reconcile_attempts: %v", err)
+	}
+	if attempts != 0 {
+		t.Fatalf("reconcile_attempts = %d, want 0 (unchanged)", attempts)
+	}
+}
+
+// TestReconcileOne_IncrementsAttempts drives an item that keeps failing
+// (re-pended by raw SQL after each settle, standing in for whatever
+// production mechanism would re-surface it) through two full
+// claim/reconcile cycles, proving reconcile_attempts accumulates 0->1->2
+// rather than resetting or staying fixed.
+func TestReconcileOne_IncrementsAttempts(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-attempts")
+	insertAccount(t, db, "acct-attempts", "prov-attempts")
+	seedWindowFull(t, db, "win-attempts", "acct-attempts", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
+	seedPendingReservation(t, db, "res-attempts", "acct-attempts", "win-attempts", 950, 1000, 900, 5)
+
+	policy := quota.DefaultReconciliationPolicy()
+	now := int64(1000000) // far past any backoff, for every round
+	lifecycle := NewQuotaLifecycleRepo(db, fixedQuotaClock(now), nil)
+	repo := NewReconciliationRepo(db, fixedQuotaClock(now), policy, lifecycle, nil)
+
+	for round := 0; round < 2; round++ {
+		wantAttempts := int64(round + 1)
+		owner := fmt.Sprintf("worker-round-%d", round)
+
+		claimed, err := repo.ClaimPending(ctx, owner, quota.DefaultLeaseTTL)
+		if err != nil {
+			t.Fatalf("round %d ClaimPending: %v", round, err)
+		}
+		if len(claimed) != 1 {
+			t.Fatalf("round %d claimed = %d, want 1", round, len(claimed))
+		}
+
+		if _, err := repo.ReconcileOne(ctx, owner, claimed[0]); err != nil {
+			t.Fatalf("round %d ReconcileOne: %v", round, err)
+		}
+
+		var attempts int64
+		if err := db.Conn().QueryRow(`SELECT reconcile_attempts FROM quota_reservations WHERE id = ?`, "res-attempts").Scan(&attempts); err != nil {
+			t.Fatalf("round %d read reconcile_attempts: %v", round, err)
+		}
+		if attempts != wantAttempts {
+			t.Fatalf("round %d reconcile_attempts = %d, want %d", round, attempts, wantAttempts)
+		}
+
+		if _, err := db.Conn().Exec(`UPDATE quota_reservations SET state = 'reconciliation_pending' WHERE id = ?`, "res-attempts"); err != nil {
+			t.Fatalf("round %d re-pend: %v", round, err)
+		}
+	}
+}
+
+// TestWorkerCrash_LeaseExpiryReclaims is the named card test for
+// P3b-QUOTA-006's lease requirement: a worker claims a reservation and
+// then crashes before ever calling ReconcileOne. Once the lease expires,
+// the janitor must reclaim it — clear the lease so the NEXT
+// ClaimPending can re-pick it — WITHOUT terminalizing it, without
+// touching its allocations or window headroom, and without moving
+// reconcile_attempts (reclaiming is not an attempt).
+func TestWorkerCrash_LeaseExpiryReclaims(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-crash")
+	insertAccount(t, db, "acct-crash", "prov-crash")
+	seedWindowFull(t, db, "win-crash", "acct-crash", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
+	seedPendingReservation(t, db, "res-crash", "acct-crash", "win-crash", 950, 1000, 900, 5)
+
+	policy := quota.DefaultReconciliationPolicy()
+	claimTime := int64(2000)
+	repo := NewReconciliationRepo(db, fixedQuotaClock(claimTime), policy, NewQuotaLifecycleRepo(db, fixedQuotaClock(claimTime), nil), nil)
+
+	claimed, err := repo.ClaimPending(ctx, "worker-crash", quota.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatalf("ClaimPending: %v", err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("claimed = %d, want 1", len(claimed))
+	}
+
+	beforeAllocState, _ := readAllocation(t, db, "res-crash", "win-crash")
+	beforeWindow := snapshotWindow(t, db, "win-crash")
+	var beforeAttempts int64
+	if err := db.Conn().QueryRow(`SELECT reconcile_attempts FROM quota_reservations WHERE id = ?`, "res-crash").Scan(&beforeAttempts); err != nil {
+		t.Fatalf("read reconcile_attempts before: %v", err)
+	}
+
+	// The worker crashes here — it never calls ReconcileOne. Advance the
+	// clock past DefaultLeaseTTL and run the janitor.
+	afterCrash := claimTime + int64(quota.DefaultLeaseTTL.Seconds()) + 1
+	lifecycle := NewQuotaLifecycleRepo(db, fixedQuotaClock(afterCrash), nil).WithPolicy(policy)
+	result, err := lifecycle.Janitor(ctx)
+	if err != nil {
+		t.Fatalf("Janitor: %v", err)
+	}
+	if result.Reclaimed != 1 {
+		t.Fatalf("Janitor().Reclaimed = %d, want 1", result.Reclaimed)
+	}
+	if result.UnknownConsumption != 0 {
+		t.Fatalf("Janitor().UnknownConsumption = %d, want 0 (not yet retry-exhausted)", result.UnknownConsumption)
+	}
+
+	var leaseOwner sql.NullString
+	var leaseExpiresAt sql.NullInt64
+	if err := db.Conn().QueryRow(`SELECT lease_owner, lease_expires_at FROM quota_reservations WHERE id = ?`, "res-crash").Scan(&leaseOwner, &leaseExpiresAt); err != nil {
+		t.Fatalf("read lease columns: %v", err)
+	}
+	if leaseOwner.Valid || leaseExpiresAt.Valid {
+		t.Fatalf("lease = (owner=%v expires=%v), want both NULL (cleared)", leaseOwner, leaseExpiresAt)
+	}
+
+	state, _ := readReservationState(t, db, "res-crash")
+	if state != "reconciliation_pending" {
+		t.Fatalf("state = %q, want STILL reconciliation_pending", state)
+	}
+	afterAllocState, _ := readAllocation(t, db, "res-crash", "win-crash")
+	if afterAllocState != beforeAllocState {
+		t.Fatalf("allocation state = %q, want unchanged %q", afterAllocState, beforeAllocState)
+	}
+	afterWindow := snapshotWindow(t, db, "win-crash")
+	if !afterWindow.equal(beforeWindow) {
+		t.Fatalf("window changed: before=%+v after=%+v, want byte-for-byte unchanged", beforeWindow, afterWindow)
+	}
+	var afterAttempts int64
+	if err := db.Conn().QueryRow(`SELECT reconcile_attempts FROM quota_reservations WHERE id = ?`, "res-crash").Scan(&afterAttempts); err != nil {
+		t.Fatalf("read reconcile_attempts after: %v", err)
+	}
+	if afterAttempts != beforeAttempts {
+		t.Fatalf("reconcile_attempts = %d, want unchanged %d", afterAttempts, beforeAttempts)
 	}
 }
 

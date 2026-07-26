@@ -15,9 +15,10 @@ import (
 // transition graph (02 §3, 05 §4) over the frozen M5 quota_reservations
 // / quota_reservation_allocations / quota_windows tables.
 type QuotaLifecycleRepo struct {
-	db    *DB
-	now   func() time.Time
-	audit *AuditEventRepo // may be nil: no audit sink
+	db     *DB
+	now    func() time.Time
+	audit  *AuditEventRepo // may be nil: no audit sink
+	policy quota.ReconciliationPolicy
 }
 
 // NewQuotaLifecycleRepo builds a repository over db's existing
@@ -28,12 +29,28 @@ type QuotaLifecycleRepo struct {
 // holds the pool's one connection would block forever) — and its failure
 // is swallowed (log-and-continue) so an audit-sink outage can never block
 // the primary state transition, mirroring the P2b auditEmitter
-// precedent.
+// precedent. The repo's reconciliation policy (used only by the
+// janitor's Branch C1/C2 split, via WithPolicy) defaults to
+// quota.DefaultReconciliationPolicy() until WithPolicy overrides it.
 func NewQuotaLifecycleRepo(db *DB, now func() time.Time, audit *AuditEventRepo) *QuotaLifecycleRepo {
 	if now == nil {
 		now = time.Now
 	}
-	return &QuotaLifecycleRepo{db: db, now: now, audit: audit}
+	return &QuotaLifecycleRepo{db: db, now: now, audit: audit, policy: quota.DefaultReconciliationPolicy()}
+}
+
+// WithPolicy sets the quota.ReconciliationPolicy this repo's Janitor uses
+// to evaluate quota.RetryExhausted (02 §3 janitor branch 3 / 05 §4) and
+// returns r for chaining. Chosen as an optional setter rather than a
+// required NewQuotaLifecycleRepo parameter: the vast majority of this
+// repo's callers (Settle/Release/Transition/MarkDispatched — the whole
+// five-state lifecycle) have nothing to do with the retry policy, and
+// forcing every one of those existing call sites (28 across this
+// package's tests) to thread a policy through would be pure noise for a
+// value only the janitor's reconciliation-pending branches consult.
+func (r *QuotaLifecycleRepo) WithPolicy(policy quota.ReconciliationPolicy) *QuotaLifecycleRepo {
+	r.policy = policy
+	return r
 }
 
 var (

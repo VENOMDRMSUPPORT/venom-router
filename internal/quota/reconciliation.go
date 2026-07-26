@@ -1,6 +1,9 @@
 package quota
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // ReconciliationPolicy bounds the reconciliation worker's retry behavior
 // over reconciliation_pending reservations (02 §3 / 05 §4): how many
@@ -38,3 +41,55 @@ type ReconciliationOutcome struct {
 // calling them from inside a transaction the caller already holds
 // deadlocks. As there, this is documentation rather than an exported
 // sentinel, because no runtime path can detect the misuse.
+
+// BackoffFor is 05 §4's retry schedule verbatim: 30s -> 5m -> 30m,
+// capped at policy.MaxBackoff. attempts <= 0 (a reservation's first
+// reconciliation attempt) yields policy.BaseBackoff outright — there is
+// no "0th power" step. A non-positive BaseBackoff yields MaxBackoff
+// rather than 0: a zero backoff would let the worker busy-loop on a
+// broken policy instead of failing slow.
+func BackoffFor(policy ReconciliationPolicy, attempts int) time.Duration {
+	if policy.BaseBackoff <= 0 {
+		return policy.MaxBackoff
+	}
+	if attempts <= 0 {
+		return policy.BaseBackoff
+	}
+
+	backoff := policy.BaseBackoff
+	for i := 0; i < attempts; i++ {
+		backoff *= 10
+		if policy.MaxBackoff > 0 && backoff >= policy.MaxBackoff {
+			return policy.MaxBackoff
+		}
+	}
+	return backoff
+}
+
+// RetryExhausted is THE single terminal-boundary predicate (05 §4's
+// "bounded number of attempts, default 5"): both the janitor
+// (storage.QuotaLifecycleRepo's reconciliation-pending sweep) and the
+// reconciliation worker (storage.ReconciliationRepo.ReconcileOne) call
+// THIS and nothing else, so the two can never disagree about when a
+// reservation becomes unknown_consumption — the exact contradiction this
+// remediation batch exists to close. attempts >= policy.MaxRetries is
+// exhausted; a non-positive MaxRetries is treated as ALWAYS exhausted —
+// fail closed, so a misconfigured policy never retries forever.
+func RetryExhausted(policy ReconciliationPolicy, attempts int) bool {
+	if policy.MaxRetries <= 0 {
+		return true
+	}
+	return attempts >= policy.MaxRetries
+}
+
+// DefaultLeaseTTL is how long a reconciliation worker's claim on a
+// pending reservation lasts before it is treated as abandoned (05 §4
+// "Lease / ownership": auto-expiring, so a crashed worker's item is
+// reclaimed).
+const DefaultLeaseTTL = 5 * time.Minute
+
+// ErrLeaseNotHeld is returned by ReconcileOne when the caller's owner
+// token no longer matches the reservation's current lease_owner (e.g.
+// the lease expired and another worker already reclaimed or re-claimed
+// it) — a worker whose lease expired must not settle.
+var ErrLeaseNotHeld = errors.New("quota: reconciliation lease not held by this worker")

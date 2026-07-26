@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
@@ -112,52 +113,114 @@ func TestBranchB_Dispatched(t *testing.T) {
 	}
 }
 
-// TestBranchC_RetryDeadline proves a reconciliation_pending reservation
-// past the retry deadline (now - DefaultRetryDeadline) moves to
-// unknown_consumption, terminal, headroom still debited.
-func TestBranchC_RetryDeadline(t *testing.T) {
+// TestBranchC1_ReclaimDoesNotTerminalize proves a reconciliation_pending
+// reservation with an EXPIRED lease and reconcile_attempts below
+// MaxRetries is reclaimed (lease cleared, Reclaimed counted) and NOT
+// terminalized — the janitor must never race ahead of the worker's own
+// retry budget just because a lease expired.
+func TestBranchC1_ReclaimDoesNotTerminalize(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
 	defer cancel()
 
 	db := migratedCatalogRepoDB(t)
-	insertProvider(t, db, "prov-janitor-c")
-	insertAccount(t, db, "acct-janitor-c", "prov-janitor-c")
-	seedWindowFull(t, db, "win-janitor-c", "acct-janitor-c", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
-	// now = 10000; retry deadline = now - 1800s = 8200. expires_at = 1000
-	// is well past it.
+	insertProvider(t, db, "prov-janitor-c1")
+	insertAccount(t, db, "acct-janitor-c1", "prov-janitor-c1")
+	seedWindowFull(t, db, "win-janitor-c1", "acct-janitor-c1", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
 	dispatchedAt := int64(500)
-	seedJanitorReservation(t, db, "res-c", "acct-janitor-c", "win-janitor-c", "reconciliation_pending", &dispatchedAt, 1000, 400, 5)
+	seedJanitorReservation(t, db, "res-c1", "acct-janitor-c1", "win-janitor-c1", "reconciliation_pending", &dispatchedAt, 1000, 400, 5)
+	// A lease from a crashed worker, already expired as of now=2000.
+	if _, err := db.Conn().Exec(`UPDATE quota_reservations SET lease_owner = ?, lease_expires_at = ? WHERE id = ?`, "worker-dead", 1500, "res-c1"); err != nil {
+		t.Fatalf("seed expired lease: %v", err)
+	}
 
-	repo := NewQuotaLifecycleRepo(db, fixedQuotaClock(10000), nil)
+	policy := quota.DefaultReconciliationPolicy() // reconcile_attempts=0 is well below MaxRetries=5
+	repo := NewQuotaLifecycleRepo(db, fixedQuotaClock(2000), nil).WithPolicy(policy)
 	result, err := repo.Janitor(ctx)
 	if err != nil {
 		t.Fatalf("Janitor: %v", err)
 	}
-	if result.UnknownConsumption != 1 || result.Released != 0 || result.Pended != 0 {
-		t.Fatalf("Janitor() = %+v, want {UnknownConsumption:1}", result)
+	if result.Reclaimed != 1 || result.UnknownConsumption != 0 {
+		t.Fatalf("Janitor() = %+v, want {Reclaimed:1, UnknownConsumption:0}", result)
 	}
 
-	state, settledAt := readReservationState(t, db, "res-c")
-	if state != "unknown_consumption" || !settledAt.Valid {
-		t.Fatalf("reservation (state=%s settledAt.Valid=%v), want (unknown_consumption, true)", state, settledAt.Valid)
+	state, _ := readReservationState(t, db, "res-c1")
+	if state != "reconciliation_pending" {
+		t.Fatalf("reservation state = %q, want reconciliation_pending (reclaimed, not terminalized)", state)
 	}
-	allocState, _ := readAllocation(t, db, "res-c", "win-janitor-c")
-	if allocState != "unknown_consumption" {
-		t.Fatalf("allocation state = %q, want unknown_consumption", allocState)
+	allocState, _ := readAllocation(t, db, "res-c1", "win-janitor-c1")
+	if allocState != "reserved" {
+		t.Fatalf("allocation state = %q, want reserved (untouched)", allocState)
 	}
-	_, _, reserved, _ := readWindowFull(t, db, "win-janitor-c")
-	if reserved != 5 {
-		t.Fatalf("window reserved = %v, want 5 (still debited — usage gap never silently discarded)", reserved)
+	var leaseOwner sql.NullString
+	var leaseExpiresAt sql.NullInt64
+	if err := db.Conn().QueryRow(`SELECT lease_owner, lease_expires_at FROM quota_reservations WHERE id = ?`, "res-c1").Scan(&leaseOwner, &leaseExpiresAt); err != nil {
+		t.Fatalf("read lease columns: %v", err)
+	}
+	if leaseOwner.Valid || leaseExpiresAt.Valid {
+		t.Fatalf("lease = (owner=%v expires=%v), want both NULL (reclaimed)", leaseOwner, leaseExpiresAt)
 	}
 }
 
-// TestBranchC_EmitsUsageGapPerReservation pins 02 §3's requirement that
-// reaching the terminal unknown_consumption boundary "emits a usage_gap
-// audit event". A summary count is not sufficient: 05 §4 requires the gap
-// to be surfaceable in diagnostics and re-baselined at the next
-// authoritative quota sync, both of which need the affected reservation
-// identified — so this asserts ONE row PER reservation, each carrying its
-// own entity_id.
+// TestBranchC2_TerminalOnlyAtRetryBoundary proves the SAME reservation
+// shape as TestBranchC1_ReclaimDoesNotTerminalize, but with
+// reconcile_attempts already AT MaxRetries, becomes unknown_consumption
+// with a per-reservation usage_gap audit row — a summary count is not
+// sufficient: 05 §4 requires the gap surfaceable in diagnostics and
+// re-baselined at the next authoritative quota sync, both of which need
+// the affected reservation identified.
+func TestBranchC2_TerminalOnlyAtRetryBoundary(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-janitor-c2")
+	insertAccount(t, db, "acct-janitor-c2", "prov-janitor-c2")
+	seedWindowFull(t, db, "win-janitor-c2", "acct-janitor-c2", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
+	dispatchedAt := int64(500)
+	seedJanitorReservation(t, db, "res-c2", "acct-janitor-c2", "win-janitor-c2", "reconciliation_pending", &dispatchedAt, 1000, 400, 5)
+
+	policy := quota.DefaultReconciliationPolicy()
+	if _, err := db.Conn().Exec(`UPDATE quota_reservations SET reconcile_attempts = ? WHERE id = ?`, policy.MaxRetries, "res-c2"); err != nil {
+		t.Fatalf("seed reconcile_attempts at the boundary: %v", err)
+	}
+
+	repo := NewQuotaLifecycleRepo(db, fixedQuotaClock(2000), NewAuditEventRepo(db)).WithPolicy(policy)
+	result, err := repo.Janitor(ctx)
+	if err != nil {
+		t.Fatalf("Janitor: %v", err)
+	}
+	if result.UnknownConsumption != 1 || result.Reclaimed != 0 {
+		t.Fatalf("Janitor() = %+v, want {UnknownConsumption:1, Reclaimed:0}", result)
+	}
+
+	state, settledAt := readReservationState(t, db, "res-c2")
+	if state != "unknown_consumption" || !settledAt.Valid {
+		t.Fatalf("reservation (state=%s settledAt.Valid=%v), want (unknown_consumption, true)", state, settledAt.Valid)
+	}
+	allocState, _ := readAllocation(t, db, "res-c2", "win-janitor-c2")
+	if allocState != "unknown_consumption" {
+		t.Fatalf("allocation state = %q, want unknown_consumption", allocState)
+	}
+	_, _, reserved, _ := readWindowFull(t, db, "win-janitor-c2")
+	if reserved != 5 {
+		t.Fatalf("window reserved = %v, want 5 (still debited — usage gap never silently discarded)", reserved)
+	}
+
+	var n int
+	if err := db.Conn().QueryRow(
+		`SELECT COUNT(*) FROM audit_events WHERE action = ? AND entity_id = ?`,
+		AuditActionUsageGap, "res-c2",
+	).Scan(&n); err != nil {
+		t.Fatalf("count usage_gap rows: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("usage_gap rows = %d, want exactly 1 (per-reservation, not a summary count)", n)
+	}
+}
+
+// TestBranchC_EmitsUsageGapPerReservation proves the per-reservation
+// (not a summary count) shape of Branch C2's usage_gap event across
+// MULTIPLE reservations reaching the boundary in the same sweep.
 func TestBranchC_EmitsUsageGapPerReservation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
 	defer cancel()
@@ -170,7 +233,14 @@ func TestBranchC_EmitsUsageGapPerReservation(t *testing.T) {
 	seedJanitorReservation(t, db, "res-gap-1", "acct-janitor-gap", "win-janitor-gap", "reconciliation_pending", &dispatchedAt, 1000, 400, 5)
 	seedJanitorReservation(t, db, "res-gap-2", "acct-janitor-gap", "win-janitor-gap", "reconciliation_pending", &dispatchedAt, 1001, 400, 5)
 
-	repo := NewQuotaLifecycleRepo(db, fixedQuotaClock(10000), NewAuditEventRepo(db))
+	policy := quota.DefaultReconciliationPolicy()
+	for _, id := range []string{"res-gap-1", "res-gap-2"} {
+		if _, err := db.Conn().Exec(`UPDATE quota_reservations SET reconcile_attempts = ? WHERE id = ?`, policy.MaxRetries, id); err != nil {
+			t.Fatalf("seed reconcile_attempts for %s: %v", id, err)
+		}
+	}
+
+	repo := NewQuotaLifecycleRepo(db, fixedQuotaClock(10000), NewAuditEventRepo(db)).WithPolicy(policy)
 	result, err := repo.Janitor(ctx)
 	if err != nil {
 		t.Fatalf("Janitor: %v", err)
@@ -193,34 +263,90 @@ func TestBranchC_EmitsUsageGapPerReservation(t *testing.T) {
 	}
 }
 
-// TestBranchC_WithinRetryDeadline_UntouchedByJanitor proves a
-// reconciliation_pending reservation that is past its processing
-// deadline but NOT yet past the retry deadline is left exactly as-is —
-// the janitor must not race ahead of the retry window.
-func TestBranchC_WithinRetryDeadline_UntouchedByJanitor(t *testing.T) {
+// TestJanitorAndWorkerShareOneTerminalBoundary proves the janitor and
+// the reconciliation worker can never disagree about the terminal
+// boundary, because both call quota.RetryExhausted and nothing else.
+// Below the boundary (attempts=MaxRetries-1), a janitor sweep leaves the
+// reservation as reconciliation_pending (refuses to terminalize); the
+// SAME reservation, reconciled by a worker whose own increment reaches
+// MaxRetries, DOES terminalize — proving it is the worker's increment
+// crossing the boundary, not a difference in how the two decide. A
+// SEPARATE reservation already AT the boundary (reconcile_attempts =
+// MaxRetries, unreachable by any future ClaimPending since its own
+// filter is reconcile_attempts < MaxRetries — only the janitor can act
+// on it again) is terminalized by the janitor too.
+func TestJanitorAndWorkerShareOneTerminalBoundary(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
 	defer cancel()
 
 	db := migratedCatalogRepoDB(t)
-	insertProvider(t, db, "prov-janitor-c2")
-	insertAccount(t, db, "acct-janitor-c2", "prov-janitor-c2")
-	seedWindowFull(t, db, "win-janitor-c2", "acct-janitor-c2", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
-	// now = 2000; retry deadline = 2000 - 1800 = 200. expires_at = 1000 is
-	// past the processing deadline but NOT past the retry deadline (1000 > 200).
-	dispatchedAt := int64(500)
-	seedJanitorReservation(t, db, "res-c2", "acct-janitor-c2", "win-janitor-c2", "reconciliation_pending", &dispatchedAt, 1000, 400, 5)
+	insertProvider(t, db, "prov-shared-boundary")
+	insertAccount(t, db, "acct-shared-boundary", "prov-shared-boundary")
+	seedWindowFull(t, db, "win-shared-boundary", "acct-shared-boundary", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 10, 1)
 
-	repo := NewQuotaLifecycleRepo(db, fixedQuotaClock(2000), nil)
-	result, err := repo.Janitor(ctx)
+	policy := quota.DefaultReconciliationPolicy() // MaxRetries=5
+	dispatchedAt := int64(500)
+
+	// --- Below the boundary: attempts = MaxRetries-1 = 4. ---
+	seedJanitorReservation(t, db, "res-below", "acct-shared-boundary", "win-shared-boundary", "reconciliation_pending", &dispatchedAt, 1000, 400, 5)
+	if _, err := db.Conn().Exec(`UPDATE quota_reservations SET reconcile_attempts = ? WHERE id = ?`, policy.MaxRetries-1, "res-below"); err != nil {
+		t.Fatalf("seed res-below attempts: %v", err)
+	}
+
+	// now must be past expires_at + BackoffFor(policy, MaxRetries-1) —
+	// MaxBackoff (30m=1800s) at attempts=4 — for either mechanism to act
+	// on it at all: 1000 + 1800 = 2800.
+	sharedNow := int64(3000)
+	janitor := NewQuotaLifecycleRepo(db, fixedQuotaClock(sharedNow), nil).WithPolicy(policy)
+	resultBelow, err := janitor.Janitor(ctx)
 	if err != nil {
-		t.Fatalf("Janitor: %v", err)
+		t.Fatalf("Janitor (below boundary): %v", err)
 	}
-	if result.UnknownConsumption != 0 {
-		t.Fatalf("Janitor() = %+v, want UnknownConsumption:0 (within retry deadline)", result)
+	if resultBelow.UnknownConsumption != 0 {
+		t.Fatalf("Janitor().UnknownConsumption = %d below the boundary, want 0 (janitor refuses)", resultBelow.UnknownConsumption)
 	}
-	state, _ := readReservationState(t, db, "res-c2")
+	state, _ := readReservationState(t, db, "res-below")
 	if state != "reconciliation_pending" {
-		t.Fatalf("reservation state = %q, want reconciliation_pending (untouched)", state)
+		t.Fatalf("res-below state = %q, want reconciliation_pending (janitor refused to terminalize)", state)
+	}
+
+	// The worker, on this SAME reservation, increments attempts to
+	// MaxRetries (5) and DOES terminalize.
+	repo := NewReconciliationRepo(db, fixedQuotaClock(sharedNow), policy, NewQuotaLifecycleRepo(db, fixedQuotaClock(sharedNow), nil), nil)
+	claimed, err := repo.ClaimPending(ctx, "worker-shared", quota.DefaultLeaseTTL)
+	if err != nil {
+		t.Fatalf("ClaimPending: %v", err)
+	}
+	if len(claimed) != 1 || claimed[0].ReservationID != "res-below" {
+		t.Fatalf("claimed = %+v, want exactly [res-below]", claimed)
+	}
+	outcome, err := repo.ReconcileOne(ctx, "worker-shared", claimed[0])
+	if err != nil {
+		t.Fatalf("ReconcileOne: %v", err)
+	}
+	if outcome.Outcome != quota.ReservationUnknownConsumption {
+		t.Fatalf("worker outcome = %q at the boundary, want unknown_consumption (worker terminalizes once its own increment crosses the boundary)", outcome.Outcome)
+	}
+
+	// --- At the boundary already: attempts = MaxRetries = 5, reached by
+	// some prior mechanism, and therefore unreachable by any future
+	// ClaimPending — only the janitor can act on it, and it must
+	// terminalize.
+	seedJanitorReservation(t, db, "res-at-boundary", "acct-shared-boundary", "win-shared-boundary", "reconciliation_pending", &dispatchedAt, 1001, 400, 5)
+	if _, err := db.Conn().Exec(`UPDATE quota_reservations SET reconcile_attempts = ? WHERE id = ?`, policy.MaxRetries, "res-at-boundary"); err != nil {
+		t.Fatalf("seed res-at-boundary attempts: %v", err)
+	}
+
+	resultAt, err := janitor.Janitor(ctx)
+	if err != nil {
+		t.Fatalf("Janitor (at boundary): %v", err)
+	}
+	if resultAt.UnknownConsumption != 1 {
+		t.Fatalf("Janitor().UnknownConsumption = %d at the boundary, want 1 (janitor terminalizes)", resultAt.UnknownConsumption)
+	}
+	stateAt, _ := readReservationState(t, db, "res-at-boundary")
+	if stateAt != "unknown_consumption" {
+		t.Fatalf("res-at-boundary state = %q, want unknown_consumption", stateAt)
 	}
 }
 

@@ -10,8 +10,10 @@ import (
 
 // Janitor recovers reservations stuck past their processing deadline
 // (02 §3) in ONE BEGIN IMMEDIATE transaction on a dedicated connection,
-// discriminating strictly on dispatched_at — never on state='reserved'
-// alone:
+// discriminating strictly on dispatched_at (branches A/B) and on
+// quota.RetryExhausted (branches C1/C2) — never on state='reserved'
+// alone, and never on a wall-clock deadline for the reconciliation_pending
+// branches:
 //
 //  1. Branch A: never dispatched, past its processing deadline ->
 //     released, with the SAME window arithmetic QuotaLifecycleRepo.Release
@@ -20,23 +22,28 @@ import (
 //     -> reconciliation_pending (the provider call was made but its
 //     result never landed, e.g. a crash mid-flight; headroom stays
 //     debited until reconciliation resolves it).
-//  3. Branch C: reconciliation_pending past the retry deadline
-//     (now - quota.DefaultRetryDeadline) -> unknown_consumption
-//     (terminal; headroom stays debited — the usage gap is never
-//     silently discarded).
+//  3. Branch C1: reconciliation_pending, NOT quota.RetryExhausted, and
+//     its lease is expired or absent -> the lease is cleared (RECLAIMED)
+//     so the next ReconciliationRepo.ClaimPending re-picks it. State,
+//     allocations, window arithmetic, and reconcile_attempts are all
+//     UNTOUCHED — reclaiming is not an attempt, only a hand-off. A
+//     reservation whose lease is still held by a live worker is left
+//     alone entirely (neither reclaimed nor terminalized).
+//  4. Branch C2: reconciliation_pending AND quota.RetryExhausted ->
+//     unknown_consumption (terminal; headroom stays debited — the usage
+//     gap is never silently discarded), regardless of lease state.
 //
-// All three branches run on the SAME connection inside the SAME
-// transaction — this method never acquires a second connection
-// (SetMaxOpenConns(1)) — so one sweep
-// is itself all-or-nothing. Audit rows (one per non-empty branch, when
-// an audit sink is configured) are emitted AFTER janitorSweep has fully
-// returned — i.e. after its deferred conn.Close() has already run —
-// never while the transaction's connection is still checked out. Emitting
-// them from INSIDE janitorSweep, before its own defer runs, would be
-// exactly the deadlock applyTransition's emitAudit-after-commit split
-// guards against: the pool's one connection would still be held, and
-// audit's own r.db.Conn() call would block forever waiting for a second
-// one that never comes.
+// All branches run on the SAME connection inside the SAME transaction —
+// this method never acquires a second connection (SetMaxOpenConns(1)) —
+// so one sweep is itself all-or-nothing. Audit rows (one per non-empty
+// branch, when an audit sink is configured) are emitted AFTER
+// janitorSweep has fully returned — i.e. after its deferred conn.Close()
+// has already run — never while the transaction's connection is still
+// checked out. Emitting them from INSIDE janitorSweep, before its own
+// defer runs, would be exactly the deadlock applyTransition's
+// emitAudit-after-commit split guards against: the pool's one connection
+// would still be held, and audit's own r.db.Conn() call would block
+// forever waiting for a second one that never comes.
 func (r *QuotaLifecycleRepo) Janitor(ctx context.Context) (quota.JanitorResult, error) {
 	result, usageGapIDs, err := r.janitorSweep(ctx)
 	if err != nil {
@@ -44,7 +51,8 @@ func (r *QuotaLifecycleRepo) Janitor(ctx context.Context) (quota.JanitorResult, 
 	}
 	r.emitJanitorAudit(ctx, "released", result.Released)
 	r.emitJanitorAudit(ctx, "pended", result.Pended)
-	// Branch C is the terminal retry boundary, which 02 §3 requires to
+	r.emitJanitorAudit(ctx, "reclaimed", result.Reclaimed)
+	// Branch C2 is the terminal retry boundary, which 02 §3 requires to
 	// record a usage_gap event PER RESERVATION — a summary count alone
 	// cannot tell the owner (or the reconciliation diagnostics surface,
 	// P3b-CAPI-002) WHICH reservations have an unaccounted-for cost.
@@ -72,7 +80,6 @@ func (r *QuotaLifecycleRepo) janitorSweep(ctx context.Context) (quota.JanitorRes
 	}()
 
 	now := r.now().Unix()
-	retryDeadline := now - int64(quota.DefaultRetryDeadline.Seconds())
 
 	released, err := janitorReleaseNeverDispatched(ctx, conn, now, quota.DefaultJanitorBatchSize)
 	if err != nil {
@@ -82,7 +89,7 @@ func (r *QuotaLifecycleRepo) janitorSweep(ctx context.Context) (quota.JanitorRes
 	if err != nil {
 		return quota.JanitorResult{}, nil, err
 	}
-	unknownIDs, err := janitorUnknownConsumption(ctx, conn, retryDeadline, now, quota.DefaultJanitorBatchSize)
+	reclaimed, unknownIDs, err := janitorProcessReconciliationPending(ctx, conn, now, r.policy, quota.DefaultJanitorBatchSize)
 	if err != nil {
 		return quota.JanitorResult{}, nil, err
 	}
@@ -92,7 +99,7 @@ func (r *QuotaLifecycleRepo) janitorSweep(ctx context.Context) (quota.JanitorRes
 	}
 	committed = true
 
-	return quota.JanitorResult{Released: released, Pended: pended, UnknownConsumption: len(unknownIDs)}, unknownIDs, nil
+	return quota.JanitorResult{Released: released, Pended: pended, Reclaimed: reclaimed, UnknownConsumption: len(unknownIDs)}, unknownIDs, nil
 }
 
 func janitorSelectIDs(ctx context.Context, conn *sql.Conn, query string, args ...any) ([]string, error) {
@@ -181,37 +188,92 @@ func janitorPendDispatched(ctx context.Context, conn *sql.Conn, now int64, limit
 	return len(ids), nil
 }
 
-// janitorUnknownConsumption is Branch C: reconciliation_pending past the
-// retry deadline -> unknown_consumption. Terminal; no window arithmetic
-// — headroom stays debited, the usage gap is never silently discarded. It
-// returns the affected reservation ids so the caller can record one
-// usage_gap audit event per reservation after the transaction commits
-// (02 §3), which a bare count could not support.
-func janitorUnknownConsumption(ctx context.Context, conn *sql.Conn, retryDeadline, now int64, limit int) ([]string, error) {
-	ids, err := janitorSelectIDs(ctx, conn,
-		`SELECT id FROM quota_reservations
-		  WHERE state = 'reconciliation_pending' AND expires_at < ?
+// pendingLease is one reconciliation_pending row's retry/lease state, as
+// needed to decide between Branch C1 (reclaim) and Branch C2 (terminal).
+type pendingLease struct {
+	id             string
+	attempts       int64
+	leaseOwner     sql.NullString
+	leaseExpiresAt sql.NullInt64
+}
+
+// janitorProcessReconciliationPending implements Branches C1 and C2
+// together, in ONE pass over every reconciliation_pending reservation,
+// because the two share the same selection base and are mutually
+// exclusive by construction:
+//
+//   - quota.RetryExhausted(policy, attempts) decides C2 (terminal)
+//     FIRST, regardless of lease state — an exhausted reservation is
+//     terminalized whether or not a worker currently holds its lease.
+//   - Otherwise, a lease that is absent or expired (lease_owner IS NULL,
+//     lease_expires_at IS NULL, or lease_expires_at < now) is Branch C1:
+//     cleared so the next ClaimPending re-picks it. Nothing else about
+//     the row changes.
+//   - Otherwise (not exhausted AND actively leased by a live worker) the
+//     row is left completely alone — a worker is presumably still
+//     working it.
+//
+// Returns the reclaimed count and the terminalized reservation ids (for
+// the caller's per-reservation usage_gap audit, after commit).
+func janitorProcessReconciliationPending(ctx context.Context, conn *sql.Conn, now int64, policy quota.ReconciliationPolicy, limit int) (reclaimed int, terminalIDs []string, err error) {
+	rows, err := conn.QueryContext(ctx,
+		`SELECT id, reconcile_attempts, lease_owner, lease_expires_at
+		   FROM quota_reservations
+		  WHERE state = 'reconciliation_pending'
 		  ORDER BY expires_at LIMIT ?`,
-		retryDeadline, limit,
+		limit,
 	)
 	if err != nil {
-		return nil, err
+		return 0, nil, fmt.Errorf("storage: janitor select reconciliation_pending: %w", err)
 	}
-	for _, id := range ids {
-		if _, err := conn.ExecContext(ctx,
-			`UPDATE quota_reservation_allocations SET state = ? WHERE reservation_id = ?`,
-			string(quota.AllocationUnknownConsumption), id,
-		); err != nil {
-			return nil, fmt.Errorf("storage: janitor unknown-consumption allocations %q: %w", id, err)
+	var pending []pendingLease
+	for rows.Next() {
+		var p pendingLease
+		if scanErr := rows.Scan(&p.id, &p.attempts, &p.leaseOwner, &p.leaseExpiresAt); scanErr != nil {
+			_ = rows.Close()
+			return 0, nil, fmt.Errorf("storage: janitor scan reconciliation_pending: %w", scanErr)
+		}
+		pending = append(pending, p)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		_ = rows.Close()
+		return 0, nil, fmt.Errorf("storage: janitor select reconciliation_pending: %w", rowsErr)
+	}
+	_ = rows.Close()
+
+	for _, p := range pending {
+		if quota.RetryExhausted(policy, int(p.attempts)) {
+			if _, err := conn.ExecContext(ctx,
+				`UPDATE quota_reservation_allocations SET state = ? WHERE reservation_id = ?`,
+				string(quota.AllocationUnknownConsumption), p.id,
+			); err != nil {
+				return 0, nil, fmt.Errorf("storage: janitor terminalize allocations %q: %w", p.id, err)
+			}
+			if _, err := conn.ExecContext(ctx,
+				`UPDATE quota_reservations
+				    SET state = 'unknown_consumption', settled_at = ?, lease_owner = NULL, lease_expires_at = NULL
+				  WHERE id = ?`,
+				now, p.id,
+			); err != nil {
+				return 0, nil, fmt.Errorf("storage: janitor terminalize reservation %q: %w", p.id, err)
+			}
+			terminalIDs = append(terminalIDs, p.id)
+			continue
+		}
+
+		leaseFree := !p.leaseOwner.Valid || !p.leaseExpiresAt.Valid || p.leaseExpiresAt.Int64 < now
+		if !leaseFree {
+			continue // actively leased by a live worker; leave entirely alone
 		}
 		if _, err := conn.ExecContext(ctx,
-			`UPDATE quota_reservations SET state = 'unknown_consumption', settled_at = ? WHERE id = ?`,
-			now, id,
+			`UPDATE quota_reservations SET lease_owner = NULL, lease_expires_at = NULL WHERE id = ?`,
+			p.id,
 		); err != nil {
-			return nil, fmt.Errorf("storage: janitor unknown-consumption reservation %q: %w", id, err)
+			return 0, nil, fmt.Errorf("storage: janitor reclaim %q: %w", p.id, err)
 		}
+		reclaimed++
 	}
-	return ids, nil
+	return reclaimed, terminalIDs, nil
 }
 
 // AuditActionUsageGap is the action recorded when a reservation reaches
