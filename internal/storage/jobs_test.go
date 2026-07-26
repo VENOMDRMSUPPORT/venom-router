@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -137,6 +139,141 @@ func TestJobRepo_MarkTerminal_RejectsNonTerminalStatus(t *testing.T) {
 	}
 	if err := repo.MarkTerminal(ctx, "job-4", JobRunning, now, "", nil, DefaultJobRetention); err == nil {
 		t.Fatalf("MarkTerminal(running) succeeded, want rejection")
+	}
+}
+
+// --- P3a-JOBS-001: the discovery job kind ---
+
+// TestJobKind_ParsesDiscoveryFailsClosed proves ParseJobKind accepts
+// exactly "discovery" and fails closed on everything else — including a
+// near-miss case variant and a trailing-space variant.
+func TestJobKind_ParsesDiscoveryFailsClosed(t *testing.T) {
+	if got, err := ParseJobKind("discovery"); err != nil || got != JobKindDiscovery {
+		t.Fatalf("ParseJobKind(discovery) = (%q, %v), want (discovery, nil)", got, err)
+	}
+	for _, bad := range []string{"", "Discovery", "probe ", "anything"} {
+		if _, err := ParseJobKind(bad); err == nil {
+			t.Fatalf("ParseJobKind(%q) succeeded, want ErrUnknownJobKind", bad)
+		}
+	}
+}
+
+// TestJobs_DiscoveryLifecycle proves a discovery-kind job progresses
+// pending -> running (started_at stamped) -> completed (retention_until
+// stamped), with kind == "discovery" preserved throughout.
+func TestJobs_DiscoveryLifecycle(t *testing.T) {
+	db := migratedAuditJobsDB(t)
+	repo := NewJobRepo(db)
+	ctx := context.Background()
+	created := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+
+	if err := repo.Create(ctx, "job-disc-1", string(JobKindDiscovery), created); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	row, ok, err := repo.GetByID(ctx, "job-disc-1")
+	if err != nil || !ok {
+		t.Fatalf("GetByID after Create: ok=%v err=%v", ok, err)
+	}
+	if row.Status != JobPending || row.Kind != string(JobKindDiscovery) {
+		t.Fatalf("row after Create = %+v, want pending/discovery", row)
+	}
+
+	startedAt := created.Add(time.Second)
+	if err := repo.MarkRunning(ctx, "job-disc-1", startedAt); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+	row, ok, err = repo.GetByID(ctx, "job-disc-1")
+	if err != nil || !ok {
+		t.Fatalf("GetByID after MarkRunning: ok=%v err=%v", ok, err)
+	}
+	if row.Status != JobRunning || row.StartedAt == nil || !row.StartedAt.Equal(startedAt) {
+		t.Fatalf("row after MarkRunning = %+v, want running with StartedAt=%v", row, startedAt)
+	}
+
+	finishedAt := startedAt.Add(2 * time.Second)
+	resultRef := "/api/control/v1/models?account_id=acct-disc-1"
+	if err := repo.MarkTerminal(ctx, "job-disc-1", JobCompleted, finishedAt, resultRef, nil, DefaultJobRetention); err != nil {
+		t.Fatalf("MarkTerminal: %v", err)
+	}
+	row, ok, err = repo.GetByID(ctx, "job-disc-1")
+	if err != nil || !ok {
+		t.Fatalf("GetByID after MarkTerminal: ok=%v err=%v", ok, err)
+	}
+	if row.Status != JobCompleted || row.Kind != string(JobKindDiscovery) {
+		t.Fatalf("row after MarkTerminal = %+v, want completed/discovery", row)
+	}
+	wantRetention := finishedAt.Add(DefaultJobRetention)
+	if row.RetentionUntil == nil || !row.RetentionUntil.Equal(wantRetention) {
+		t.Fatalf("RetentionUntil = %v, want %v", row.RetentionUntil, wantRetention)
+	}
+}
+
+// TestJobs_DiscoveryResultRefIsAReference proves a discovery job's
+// result_ref is stored and returned VERBATIM as a reference string: it
+// round-trips exactly, contains the affected account id, and — since a
+// reference never carries run content — contains none of a model id, the
+// string "sk-" (a planted canary secret shape), or a provider error
+// string. This proves the storage layer never mutates or enriches
+// result_ref; the dynamic guarantee that ServeDiscover only ever PASSES
+// such a reference (never inline model/secret content) is proven in
+// internal/httpapi/discovery_test.go against the real discoveryResultRef
+// helper and a live DiscoveryService.Run.
+func TestJobs_DiscoveryResultRefIsAReference(t *testing.T) {
+	db := migratedAuditJobsDB(t)
+	repo := NewJobRepo(db)
+	ctx := context.Background()
+	now := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+
+	if err := repo.Create(ctx, "job-disc-2", string(JobKindDiscovery), now); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	const accountID = "acct-canary-1"
+	resultRef := "/api/control/v1/models?account_id=" + accountID
+	if err := repo.MarkTerminal(ctx, "job-disc-2", JobCompleted, now, resultRef, nil, DefaultJobRetention); err != nil {
+		t.Fatalf("MarkTerminal: %v", err)
+	}
+
+	row, ok, err := repo.GetByID(ctx, "job-disc-2")
+	if err != nil || !ok {
+		t.Fatalf("GetByID: ok=%v err=%v", ok, err)
+	}
+	if row.ResultRef != resultRef {
+		t.Fatalf("ResultRef = %q, want the exact reference %q (stored verbatim)", row.ResultRef, resultRef)
+	}
+	if !strings.Contains(row.ResultRef, accountID) {
+		t.Fatalf("ResultRef = %q, want it to contain the affected account id %q", row.ResultRef, accountID)
+	}
+	for _, canary := range []string{"sk-", "model-", "provider error", "gpt-4", "claude-"} {
+		if strings.Contains(row.ResultRef, canary) {
+			t.Fatalf("ResultRef = %q contains canary %q — a reference must never carry run content", row.ResultRef, canary)
+		}
+	}
+}
+
+// TestJobs_ReadingAJobNeverMutatesIt proves 09 §3.12's "idempotent per
+// job_id; re-polling never mutates": two consecutive GetByID calls return
+// identical rows.
+func TestJobs_ReadingAJobNeverMutatesIt(t *testing.T) {
+	db := migratedAuditJobsDB(t)
+	repo := NewJobRepo(db)
+	ctx := context.Background()
+	now := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+
+	if err := repo.Create(ctx, "job-disc-3", string(JobKindDiscovery), now); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := repo.MarkTerminal(ctx, "job-disc-3", JobCompleted, now, "/api/control/v1/models?account_id=acct-x", nil, DefaultJobRetention); err != nil {
+		t.Fatalf("MarkTerminal: %v", err)
+	}
+
+	first, ok1, err1 := repo.GetByID(ctx, "job-disc-3")
+	second, ok2, err2 := repo.GetByID(ctx, "job-disc-3")
+	if err1 != nil || err2 != nil || !ok1 || !ok2 {
+		t.Fatalf("GetByID calls: ok1=%v err1=%v ok2=%v err2=%v", ok1, err1, ok2, err2)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("consecutive GetByID calls returned different rows:\nfirst  = %+v\nsecond = %+v", first, second)
 	}
 }
 

@@ -9,6 +9,36 @@ import (
 	"time"
 )
 
+// JobKind is the typed vocabulary for jobs.kind (09 §3.12): the job type a
+// caller passes to Create and a client reads back from GET /jobs/{job_id}.
+// This package's Create still takes a plain kind string (existing callers
+// depend on that signature) — JobKind is what a NEW caller passes, and
+// ParseJobKind is how a reader validates one it read back.
+type JobKind string
+
+// JobKindDiscovery is the P3a-JOBS-001 discovery job kind (09 §3.12's
+// documented kind vocabulary: discovery | probe | benchmark | backup |
+// restore — only discovery is wired this phase).
+const JobKindDiscovery JobKind = "discovery"
+
+// ErrUnknownJobKind is returned by ParseJobKind for any value outside the
+// registered vocabulary — fail closed, never silently accept an
+// unrecognized kind.
+var ErrUnknownJobKind = errors.New("storage: unrecognized job kind")
+
+// ParseJobKind fails closed on any value outside the exact registered
+// vocabulary — no case folding, no trimming. Only "discovery" is
+// registered this phase; probe/benchmark/backup/restore are later units'
+// concern.
+func ParseJobKind(s string) (JobKind, error) {
+	switch JobKind(s) {
+	case JobKindDiscovery:
+		return JobKind(s), nil
+	default:
+		return "", fmt.Errorf("%w: %q", ErrUnknownJobKind, s)
+	}
+}
+
 // JobStatus is one M4 jobs.status value (09 §3.12).
 type JobStatus string
 
