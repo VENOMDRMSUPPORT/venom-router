@@ -8,14 +8,16 @@ import (
 )
 
 type scriptLC struct {
-	shutdownErr  error
-	shutdownHang bool
-	bootErr      error
-	bootCalled   int
+	shutdownErr    error
+	shutdownHang   bool
+	bootErr        error
+	bootCalled     int
+	shutdownCalled int
 }
 
 func (s *scriptLC) Boot(context.Context) error { s.bootCalled++; return s.bootErr }
 func (s *scriptLC) Shutdown(context.Context) error {
+	s.shutdownCalled++
 	if s.shutdownHang {
 		select {}
 	}
@@ -125,8 +127,32 @@ func TestStop_AlreadyStopped_NoOp(t *testing.T) {
 	if c.Status().State != StateStopped {
 		t.Fatalf("state=%v want Stopped initially", c.Status().State)
 	}
-	c.Stop() // must no-op: no Shutdown call needed to observe here directly,
-	// but state must remain Stopped and nothing must panic/hang.
+	c.Stop()
+	if lc.shutdownCalled != 0 {
+		t.Fatalf("shutdownCalled=%d want 0 (Stop while already Stopped must no-op, not call Shutdown)", lc.shutdownCalled)
+	}
+	if c.Status().State != StateStopped {
+		t.Fatalf("state=%v want Stopped", c.Status().State)
+	}
+
+	// Second guard: bring the controller genuinely through a real Stop first
+	// (Running -> Stopped via an actual Shutdown call), then prove a further
+	// Stop() while already Stopped performs no additional Shutdown call.
+	c.Start(context.Background())
+	if c.Status().State != StateRunning {
+		t.Fatalf("state=%v want Running before the real Stop", c.Status().State)
+	}
+	c.Stop()
+	if c.Status().State != StateStopped {
+		t.Fatalf("state=%v want Stopped after the real Stop", c.Status().State)
+	}
+	if lc.shutdownCalled != 1 {
+		t.Fatalf("shutdownCalled=%d want 1 after the real Stop", lc.shutdownCalled)
+	}
+	c.Stop() // already Stopped now: must no-op again
+	if lc.shutdownCalled != 1 {
+		t.Fatalf("shutdownCalled=%d want still 1 (no-op Stop must not call Shutdown again)", lc.shutdownCalled)
+	}
 	if c.Status().State != StateStopped {
 		t.Fatalf("state=%v want Stopped", c.Status().State)
 	}
