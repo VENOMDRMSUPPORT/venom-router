@@ -20,8 +20,10 @@ const (
 // ProjectionInput is everything Project needs to build one offering's
 // EffectiveOffering. Canonical is consumed as-is — Project never adds
 // fields to models.CanonicalModel/Offering/Certification, it only reads
-// them. NativeCapabilities/TransportOperations being nil is a distinct,
-// meaningful input (unknown), never equivalent to an empty-but-known set.
+// them. A nil NativeCapabilities/TransportOperations means UNKNOWN and a
+// non-nil empty slice means KNOWN-NONE; both fail closed to "no operation
+// is effective", so Project treats them identically by design — unproven
+// support is never routable, exactly as an absence of support is not.
 type ProjectionInput struct {
 	ProviderID          string
 	Canonical           models.CanonicalModel

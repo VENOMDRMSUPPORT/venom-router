@@ -101,8 +101,9 @@ func (s *EnrichmentService) resolveQuality(ctx context.Context, providerID, prov
 
 // validMetadataEntry fails closed on any field that is present but
 // malformed (04 §2b's schema-validation requirement). validText is
-// freesafety.go's UTF-8/control-character check, reused here rather than
-// duplicated.
+// discovery.go's UTF-8/control-character check (04 §1 step 4), reused here
+// rather than duplicated; an empty string is valid text, so an absent
+// Family or DatasetVersion never fails an otherwise-sound entry.
 func validMetadataEntry(e MetadataEntry) bool {
 	if e.NativeContextTokens != nil && *e.NativeContextTokens <= 0 {
 		return false

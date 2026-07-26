@@ -268,8 +268,6 @@ func TestProject_CapabilityIntersection(t *testing.T) {
 // Effective. MUTATION: dropping the && Effective conjunct turns this RED.
 func TestProject_RoutableRequiresCertifiedSupportedAndEffective(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	opID := "op-chat"
-	_ = opID
 
 	cases := []struct {
 		name         string
