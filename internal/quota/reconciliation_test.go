@@ -24,12 +24,3 @@ func TestReconciliationOutcome_ZeroValue(t *testing.T) {
 		t.Fatalf("zero ReconciliationOutcome = %+v, want all zero", o)
 	}
 }
-
-func TestErrReconciliationWouldDeadlock_IsADistinctSentinel(t *testing.T) {
-	if ErrReconciliationWouldDeadlock == nil {
-		t.Fatal("ErrReconciliationWouldDeadlock is nil")
-	}
-	if ErrReconciliationWouldDeadlock.Error() == ErrJanitorWouldDeadlock.Error() {
-		t.Fatal("ErrReconciliationWouldDeadlock must not alias ErrJanitorWouldDeadlock's message")
-	}
-}

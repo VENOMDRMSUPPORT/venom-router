@@ -151,6 +151,48 @@ func TestBranchC_RetryDeadline(t *testing.T) {
 	}
 }
 
+// TestBranchC_EmitsUsageGapPerReservation pins 02 §3's requirement that
+// reaching the terminal unknown_consumption boundary "emits a usage_gap
+// audit event". A summary count is not sufficient: 05 §4 requires the gap
+// to be surfaceable in diagnostics and re-baselined at the next
+// authoritative quota sync, both of which need the affected reservation
+// identified — so this asserts ONE row PER reservation, each carrying its
+// own entity_id.
+func TestBranchC_EmitsUsageGapPerReservation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-janitor-gap")
+	insertAccount(t, db, "acct-janitor-gap", "prov-janitor-gap")
+	seedWindowFull(t, db, "win-janitor-gap", "acct-janitor-gap", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 10, 1)
+	dispatchedAt := int64(500)
+	seedJanitorReservation(t, db, "res-gap-1", "acct-janitor-gap", "win-janitor-gap", "reconciliation_pending", &dispatchedAt, 1000, 400, 5)
+	seedJanitorReservation(t, db, "res-gap-2", "acct-janitor-gap", "win-janitor-gap", "reconciliation_pending", &dispatchedAt, 1001, 400, 5)
+
+	repo := NewQuotaLifecycleRepo(db, fixedQuotaClock(10000), NewAuditEventRepo(db))
+	result, err := repo.Janitor(ctx)
+	if err != nil {
+		t.Fatalf("Janitor: %v", err)
+	}
+	if result.UnknownConsumption != 2 {
+		t.Fatalf("UnknownConsumption = %d, want 2", result.UnknownConsumption)
+	}
+
+	for _, id := range []string{"res-gap-1", "res-gap-2"} {
+		var n int
+		if err := db.Conn().QueryRow(
+			`SELECT COUNT(*) FROM audit_events WHERE action = ? AND entity_id = ?`,
+			AuditActionUsageGap, id,
+		).Scan(&n); err != nil {
+			t.Fatalf("count usage_gap rows for %s: %v", id, err)
+		}
+		if n != 1 {
+			t.Fatalf("usage_gap rows for %s = %d, want exactly 1 (per-reservation, not a summary count)", id, n)
+		}
+	}
+}
+
 // TestBranchC_WithinRetryDeadline_UntouchedByJanitor proves a
 // reconciliation_pending reservation that is past its processing
 // deadline but NOT yet past the retry deadline is left exactly as-is —

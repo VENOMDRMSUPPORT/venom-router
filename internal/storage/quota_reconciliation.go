@@ -111,6 +111,24 @@ func (r *ReconciliationRepo) PendingReservations(ctx context.Context) ([]Pending
 	return out, nil
 }
 
+// emitUsageGap records one usage_gap event (AuditActionUsageGap) for a
+// reservation whose cost is terminally unaccounted for, after its
+// transition has already committed. Mirrors QuotaLifecycleRepo.emitUsageGap
+// — the worker has its own audit sink, so it cannot reuse that method.
+func (r *ReconciliationRepo) emitUsageGap(ctx context.Context, reservationID string) {
+	if r.audit == nil {
+		return
+	}
+	_ = r.audit.Append(ctx, AuditEventRow{
+		Action:     AuditActionUsageGap,
+		EntityType: "quota_reservation",
+		EntityID:   reservationID,
+		Result:     "success",
+		ReasonCode: "retry_budget_exhausted",
+		At:         r.now(),
+	})
+}
+
 // retryExhausted reports whether a reservation stuck in
 // reconciliation_pending since expiresAt has outlived this policy's
 // cumulative retry budget (MaxRetries attempts at BaseBackoff apart,
@@ -142,6 +160,12 @@ func (r *ReconciliationRepo) ReconcileOne(ctx context.Context, p PendingReservat
 		if err := r.lifecycle.Transition(ctx, p.ReservationID, quota.ReservationUnknownConsumption); err != nil {
 			return quota.ReconciliationOutcome{}, err
 		}
+		// 02 §3: reaching the terminal retry boundary "emits a usage_gap
+		// audit event"; 05 §4 additionally requires the gap to be visible in
+		// diagnostics and re-baselined at the next authoritative quota sync.
+		// Emitted here, after Transition has committed, so the event is never
+		// recorded for a transition that did not actually happen.
+		r.emitUsageGap(ctx, p.ReservationID)
 		return quota.ReconciliationOutcome{ReservationID: p.ReservationID, Outcome: quota.ReservationUnknownConsumption}, nil
 	}
 

@@ -116,6 +116,47 @@ func TestReconcileOne_TerminalRetryBoundary(t *testing.T) {
 	}
 }
 
+// TestReconcileOne_TerminalRetryBoundary_EmitsUsageGap pins the other half
+// of 02 §3's usage_gap requirement: the WORKER's terminal path must record
+// it too, not just the janitor's. Without this, a reservation whose retry
+// budget the worker exhausts would reach unknown_consumption with no
+// record of the gap anywhere.
+func TestReconcileOne_TerminalRetryBoundary_EmitsUsageGap(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-gap-worker")
+	insertAccount(t, db, "acct-gap-worker", "prov-gap-worker")
+	seedWindowFull(t, db, "win-gap-worker", "acct-gap-worker", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
+	seedPendingReservation(t, db, "res-gap-worker", "acct-gap-worker", "win-gap-worker", 950, 1000, 900, 5)
+
+	audit := NewAuditEventRepo(db)
+	lifecycle := NewQuotaLifecycleRepo(db, fixedQuotaClock(100000), audit)
+	repo := NewReconciliationRepo(db, fixedQuotaClock(100000), quota.DefaultReconciliationPolicy(), lifecycle, audit)
+
+	outcome, err := repo.ReconcileOne(ctx, PendingReservation{
+		ReservationID: "res-gap-worker", AccountID: "acct-gap-worker", ExpiresAt: 1000,
+	})
+	if err != nil {
+		t.Fatalf("ReconcileOne: %v", err)
+	}
+	if outcome.Outcome != quota.ReservationUnknownConsumption {
+		t.Fatalf("outcome = %q, want unknown_consumption", outcome.Outcome)
+	}
+
+	var n int
+	if err := db.Conn().QueryRow(
+		`SELECT COUNT(*) FROM audit_events WHERE action = ? AND entity_id = ?`,
+		AuditActionUsageGap, "res-gap-worker",
+	).Scan(&n); err != nil {
+		t.Fatalf("count usage_gap rows: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("usage_gap rows = %d, want exactly 1", n)
+	}
+}
+
 func TestPendingReservations_ReturnsOnlyPendingPastDeadlineOrderedAndBatched(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
 	defer cancel()

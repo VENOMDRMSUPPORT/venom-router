@@ -1,9 +1,6 @@
 package quota
 
-import (
-	"errors"
-	"time"
-)
+import "time"
 
 // ReconciliationPolicy bounds the reconciliation worker's retry behavior
 // over reconciliation_pending reservations (02 §3 / 05 §4): how many
@@ -35,10 +32,9 @@ type ReconciliationOutcome struct {
 	Actuals       map[string]float64
 }
 
-// ErrReconciliationWouldDeadlock documents the same SetMaxOpenConns(1)
-// hazard as ErrJanitorWouldDeadlock: the reconciliation worker's storage
-// methods each acquire their own connection (via QuotaLifecycleRepo's
-// Settle/Release/Transition), so calling them from inside a transaction
-// the caller already holds would deadlock. Reserved for a future caller
-// to guard against and document by.
-var ErrReconciliationWouldDeadlock = errors.New("quota: reconciliation would deadlock: must never be called from within an already-open transaction")
+// The reconciliation worker inherits the same SetMaxOpenConns(1) hazard
+// documented on the janitor: its storage methods each acquire their own
+// connection (via QuotaLifecycleRepo's Settle/Release/Transition), so
+// calling them from inside a transaction the caller already holds
+// deadlocks. As there, this is documentation rather than an exported
+// sentinel, because no runtime path can detect the misuse.

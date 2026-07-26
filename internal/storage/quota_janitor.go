@@ -27,7 +27,7 @@ import (
 //
 // All three branches run on the SAME connection inside the SAME
 // transaction — this method never acquires a second connection
-// (SetMaxOpenConns(1); see quota.ErrJanitorWouldDeadlock) — so one sweep
+// (SetMaxOpenConns(1)) — so one sweep
 // is itself all-or-nothing. Audit rows (one per non-empty branch, when
 // an audit sink is configured) are emitted AFTER janitorSweep has fully
 // returned — i.e. after its deferred conn.Close() has already run —
@@ -38,25 +38,31 @@ import (
 // audit's own r.db.Conn() call would block forever waiting for a second
 // one that never comes.
 func (r *QuotaLifecycleRepo) Janitor(ctx context.Context) (quota.JanitorResult, error) {
-	result, err := r.janitorSweep(ctx)
+	result, usageGapIDs, err := r.janitorSweep(ctx)
 	if err != nil {
 		return quota.JanitorResult{}, err
 	}
 	r.emitJanitorAudit(ctx, "released", result.Released)
 	r.emitJanitorAudit(ctx, "pended", result.Pended)
-	r.emitJanitorAudit(ctx, "unknown_consumption", result.UnknownConsumption)
+	// Branch C is the terminal retry boundary, which 02 §3 requires to
+	// record a usage_gap event PER RESERVATION — a summary count alone
+	// cannot tell the owner (or the reconciliation diagnostics surface,
+	// P3b-CAPI-002) WHICH reservations have an unaccounted-for cost.
+	for _, id := range usageGapIDs {
+		r.emitUsageGap(ctx, id)
+	}
 	return result, nil
 }
 
-func (r *QuotaLifecycleRepo) janitorSweep(ctx context.Context) (quota.JanitorResult, error) {
+func (r *QuotaLifecycleRepo) janitorSweep(ctx context.Context) (quota.JanitorResult, []string, error) {
 	conn, err := r.db.Conn().Conn(ctx)
 	if err != nil {
-		return quota.JanitorResult{}, fmt.Errorf("storage: acquire connection for janitor: %w", err)
+		return quota.JanitorResult{}, nil, fmt.Errorf("storage: acquire connection for janitor: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
 
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return quota.JanitorResult{}, fmt.Errorf("storage: begin immediate janitor tx: %w", err)
+		return quota.JanitorResult{}, nil, fmt.Errorf("storage: begin immediate janitor tx: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -70,23 +76,23 @@ func (r *QuotaLifecycleRepo) janitorSweep(ctx context.Context) (quota.JanitorRes
 
 	released, err := janitorReleaseNeverDispatched(ctx, conn, now, quota.DefaultJanitorBatchSize)
 	if err != nil {
-		return quota.JanitorResult{}, err
+		return quota.JanitorResult{}, nil, err
 	}
 	pended, err := janitorPendDispatched(ctx, conn, now, quota.DefaultJanitorBatchSize)
 	if err != nil {
-		return quota.JanitorResult{}, err
+		return quota.JanitorResult{}, nil, err
 	}
-	unknown, err := janitorUnknownConsumption(ctx, conn, retryDeadline, now, quota.DefaultJanitorBatchSize)
+	unknownIDs, err := janitorUnknownConsumption(ctx, conn, retryDeadline, now, quota.DefaultJanitorBatchSize)
 	if err != nil {
-		return quota.JanitorResult{}, err
+		return quota.JanitorResult{}, nil, err
 	}
 
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return quota.JanitorResult{}, fmt.Errorf("storage: commit janitor sweep: %w", err)
+		return quota.JanitorResult{}, nil, fmt.Errorf("storage: commit janitor sweep: %w", err)
 	}
 	committed = true
 
-	return quota.JanitorResult{Released: released, Pended: pended, UnknownConsumption: unknown}, nil
+	return quota.JanitorResult{Released: released, Pended: pended, UnknownConsumption: len(unknownIDs)}, unknownIDs, nil
 }
 
 func janitorSelectIDs(ctx context.Context, conn *sql.Conn, query string, args ...any) ([]string, error) {
@@ -177,8 +183,11 @@ func janitorPendDispatched(ctx context.Context, conn *sql.Conn, now int64, limit
 
 // janitorUnknownConsumption is Branch C: reconciliation_pending past the
 // retry deadline -> unknown_consumption. Terminal; no window arithmetic
-// — headroom stays debited, the usage gap is never silently discarded.
-func janitorUnknownConsumption(ctx context.Context, conn *sql.Conn, retryDeadline, now int64, limit int) (int, error) {
+// — headroom stays debited, the usage gap is never silently discarded. It
+// returns the affected reservation ids so the caller can record one
+// usage_gap audit event per reservation after the transaction commits
+// (02 §3), which a bare count could not support.
+func janitorUnknownConsumption(ctx context.Context, conn *sql.Conn, retryDeadline, now int64, limit int) ([]string, error) {
 	ids, err := janitorSelectIDs(ctx, conn,
 		`SELECT id FROM quota_reservations
 		  WHERE state = 'reconciliation_pending' AND expires_at < ?
@@ -186,23 +195,50 @@ func janitorUnknownConsumption(ctx context.Context, conn *sql.Conn, retryDeadlin
 		retryDeadline, limit,
 	)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	for _, id := range ids {
 		if _, err := conn.ExecContext(ctx,
 			`UPDATE quota_reservation_allocations SET state = ? WHERE reservation_id = ?`,
 			string(quota.AllocationUnknownConsumption), id,
 		); err != nil {
-			return 0, fmt.Errorf("storage: janitor unknown-consumption allocations %q: %w", id, err)
+			return nil, fmt.Errorf("storage: janitor unknown-consumption allocations %q: %w", id, err)
 		}
 		if _, err := conn.ExecContext(ctx,
 			`UPDATE quota_reservations SET state = 'unknown_consumption', settled_at = ? WHERE id = ?`,
 			now, id,
 		); err != nil {
-			return 0, fmt.Errorf("storage: janitor unknown-consumption reservation %q: %w", id, err)
+			return nil, fmt.Errorf("storage: janitor unknown-consumption reservation %q: %w", id, err)
 		}
 	}
-	return len(ids), nil
+	return ids, nil
+}
+
+// AuditActionUsageGap is the action recorded when a reservation reaches
+// the terminal unknown_consumption boundary with its cost unaccounted
+// for. 02 §3 requires this event by name ("emits a usage_gap audit
+// event"), and 05 §4 requires the gap to be surfaceable in diagnostics
+// and re-baselined at the next authoritative quota sync — both of which
+// need the affected reservation identified, so the row always carries its
+// EntityID. Ids and codes only, never content.
+const AuditActionUsageGap = "quota_usage_gap"
+
+// emitUsageGap records one usage_gap event for a single reservation,
+// AFTER its transaction has committed (the SetMaxOpenConns(1) hazard). A
+// nil sink or an append failure are tolerated: audit is best-effort and
+// must never block or undo the state transition it describes.
+func (r *QuotaLifecycleRepo) emitUsageGap(ctx context.Context, reservationID string) {
+	if r.audit == nil {
+		return
+	}
+	_ = r.audit.Append(ctx, AuditEventRow{
+		Action:     AuditActionUsageGap,
+		EntityType: "quota_reservation",
+		EntityID:   reservationID,
+		Result:     "success",
+		ReasonCode: "reconciliation_pending->unknown_consumption",
+		At:         r.now(),
+	})
 }
 
 // emitJanitorAudit appends one summary audit row for a branch AFTER the

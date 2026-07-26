@@ -1,9 +1,6 @@
 package quota
 
-import (
-	"errors"
-	"time"
-)
+import "time"
 
 // JanitorResult tallies how many reservations one janitor sweep moved
 // through each of its three discriminated branches (02 §3): reservations
@@ -15,18 +12,16 @@ type JanitorResult struct {
 	UnknownConsumption int
 }
 
-// ErrJanitorWouldDeadlock documents the SetMaxOpenConns(1) hazard: the
-// janitor acquires its own dedicated connection and holds it for the
-// whole sweep (exactly like QuotaReservationRepo.Reserve and
-// QuotaLifecycleRepo.applyTransition do), so a caller that invokes the
-// janitor from inside a transaction it already holds would deadlock
-// waiting for a second connection the pool will never hand out. The
-// janitor itself takes no connection parameter and so cannot detect or
-// recover from this misuse — this sentinel exists purely so a future
-// caller (e.g. the composition-root startup hook, P3b-JOBS-001) has a
-// named hazard to guard against and document by, mirroring how
-// listWindowsOnConn documents the same hazard without runtime detection.
-var ErrJanitorWouldDeadlock = errors.New("quota: janitor would deadlock: must never be called from within an already-open transaction")
+// SetMaxOpenConns(1) hazard: the janitor acquires its own dedicated
+// connection and holds it for the whole sweep (exactly like
+// QuotaReservationRepo.Reserve and QuotaLifecycleRepo.applyTransition do),
+// so a caller that invokes the janitor from inside a transaction it
+// already holds deadlocks waiting for a second connection the pool will
+// never hand out. This is documented here and on storage.listWindowsOnConn
+// rather than expressed as an exported sentinel: no code path can detect
+// the misuse at runtime, so nothing could ever return such an error, and
+// an exported error that is never returned is contract surface with no
+// behaviour behind it.
 
 // DefaultRetryDeadline is how long a reconciliation_pending reservation
 // may wait before the janitor gives up and transitions it to
