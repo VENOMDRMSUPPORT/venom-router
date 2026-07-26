@@ -2,9 +2,12 @@ package storage
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 )
 
@@ -146,4 +149,154 @@ func (r *ReconciliationRepo) ReconcileOne(ctx context.Context, p PendingReservat
 		return quota.ReconciliationOutcome{}, err
 	}
 	return quota.ReconciliationOutcome{ReservationID: p.ReservationID, Outcome: quota.ReservationSettled}, nil
+}
+
+// RateLimitSignal is a caller-detected 429/rate-limit condition to
+// forward to SyncQuotaWindows' onRateLimit callback. SyncQuotaWindows
+// never calls a QuotaAdapter itself and so cannot detect a rate limit on
+// its own — the caller (whoever DID call QuotaAdapter.FetchQuota and saw
+// its error) supplies this instead.
+type RateLimitSignal struct {
+	Scope               string
+	AccountID           *string
+	OfferingOperationID *string
+	ProviderID          *string
+	RetryAfter          *int // seconds; nil = provider gave no Retry-After
+}
+
+// SyncQuotaWindows UPSERTs accountID's provider-evidence quota windows
+// from providerWindows (03 §1 / 02 §3): a window matching an existing
+// (account_id, unit, window_type, window_key) is updated in place
+// (used/remaining/total/reset_at/confidence refreshed, version
+// incremented, freshness_state stamped 'fresh'); a window with no match
+// is inserted new. Any EXISTING provider_evidence window for accountID
+// that providerWindows does NOT mention this round is marked
+// freshness_state='stale' — never deleted, never left silently fresh —
+// so a dropped or narrowed fetch result surfaces as staleness rather
+// than as a false "still current" signal.
+//
+// SyncQuotaWindows never calls a QuotaAdapter — it only maps an
+// already-fetched result. When rateLimit is non-nil and onRateLimit is
+// non-nil, onRateLimit is invoked exactly once with rateLimit's fields;
+// a nil rateLimit never invokes it. The window sync and the rate-limit
+// callback are independent — a caller may supply either, both, or
+// neither in a single call.
+func (r *ReconciliationRepo) SyncQuotaWindows(ctx context.Context, accountID string, providerWindows []providers.QuotaWindow, rateLimit *RateLimitSignal, onRateLimit func(scope string, accountID, offeringOperationID, providerID *string, retryAfter *int)) error {
+	if rateLimit != nil && onRateLimit != nil {
+		onRateLimit(rateLimit.Scope, rateLimit.AccountID, rateLimit.OfferingOperationID, rateLimit.ProviderID, rateLimit.RetryAfter)
+	}
+
+	tx, err := r.db.Conn().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("storage: begin sync-quota-windows tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once Commit has succeeded
+
+	epoch := r.now().Unix()
+	seen := make(map[[3]string]bool, len(providerWindows))
+
+	for _, w := range providerWindows {
+		unit, err := quota.ParseUnit(w.Unit)
+		if err != nil {
+			return fmt.Errorf("storage: sync quota window: %w", err)
+		}
+		key, err := quota.NormalizeWindowKey(quota.WindowKeyInput{ProviderKey: w.WindowKey, DurationSeconds: w.DurationSeconds, Unit: unit})
+		if err != nil {
+			return fmt.Errorf("storage: sync quota window: %w", err)
+		}
+		seen[[3]string{string(unit), w.WindowType, key}] = true
+
+		existingID, found, err := lookupSyncedWindow(ctx, tx, accountID, unit, w.WindowType, key)
+		if err != nil {
+			return err
+		}
+		if found {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE quota_windows
+				    SET used = ?, remaining = ?, total = ?, reset_at = ?, confidence = ?,
+				        freshness_state = 'fresh', version = version + 1, observed_at = ?, updated_at = ?
+				  WHERE id = ?`,
+				w.Used, w.Remaining, w.Total, w.ResetAt, w.Confidence, epoch, epoch, existingID,
+			); err != nil {
+				return fmt.Errorf("storage: update synced window %q: %w", existingID, err)
+			}
+			continue
+		}
+
+		id := randomQuotaID()
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO quota_windows
+			    (id, account_id, source, unit, window_type, window_key, duration_seconds,
+			     used, remaining, total, reserved, limit_value, reset_at, version, confidence,
+			     freshness_state, observed_at, created_at, updated_at)
+			 VALUES (?, ?, 'provider_evidence', ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, 1, ?, 'fresh', ?, ?, ?)`,
+			id, accountID, string(unit), w.WindowType, key, intPtrArg(w.DurationSeconds),
+			w.Used, w.Remaining, w.Total, w.ResetAt, w.Confidence, epoch, epoch, epoch,
+		); err != nil {
+			return fmt.Errorf("storage: insert synced window (%q,%q): %w", accountID, key, err)
+		}
+	}
+
+	if err := staleUnseenProviderWindows(ctx, tx, accountID, seen, epoch); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("storage: commit sync-quota-windows for %q: %w", accountID, err)
+	}
+	return nil
+}
+
+func lookupSyncedWindow(ctx context.Context, tx *sql.Tx, accountID string, unit quota.Unit, windowType, key string) (id string, found bool, err error) {
+	err = tx.QueryRowContext(ctx,
+		`SELECT id FROM quota_windows WHERE account_id = ? AND source = 'provider_evidence' AND unit = ? AND window_type = ? AND window_key = ?`,
+		accountID, string(unit), windowType, key,
+	).Scan(&id)
+	if err == nil {
+		return id, true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("storage: lookup synced window (%q,%q,%q,%q): %w", accountID, unit, windowType, key, err)
+}
+
+// staleUnseenProviderWindows marks every provider_evidence window for
+// accountID whose (unit, window_type, window_key) is NOT in seen as
+// freshness_state='stale' — the window's own data (used/remaining/etc.)
+// is left untouched; only its freshness verdict changes.
+func staleUnseenProviderWindows(ctx context.Context, tx *sql.Tx, accountID string, seen map[[3]string]bool, epoch int64) error {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id, unit, window_type, window_key FROM quota_windows WHERE account_id = ? AND source = 'provider_evidence'`,
+		accountID,
+	)
+	if err != nil {
+		return fmt.Errorf("storage: list provider-evidence windows for %q: %w", accountID, err)
+	}
+	var staleIDs []string
+	for rows.Next() {
+		var id, unit, windowType, key string
+		if err := rows.Scan(&id, &unit, &windowType, &key); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("storage: scan provider-evidence window for %q: %w", accountID, err)
+		}
+		if !seen[[3]string{unit, windowType, key}] {
+			staleIDs = append(staleIDs, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("storage: list provider-evidence windows for %q: %w", accountID, err)
+	}
+	_ = rows.Close()
+
+	for _, id := range staleIDs {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE quota_windows SET freshness_state = 'stale', updated_at = ? WHERE id = ?`,
+			epoch, id,
+		); err != nil {
+			return fmt.Errorf("storage: mark window %q stale: %w", id, err)
+		}
+	}
+	return nil
 }
