@@ -20,6 +20,7 @@ import (
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/application"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/domain"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
@@ -248,6 +249,14 @@ func TestDiscover_Returns202WithJobAndStatusURL(t *testing.T) {
 	if row.Kind != "discovery" {
 		t.Fatalf("Kind = %q, want discovery", row.Kind)
 	}
+
+	// Wait for the detached background run to finish before returning. The
+	// goroutine ServeDiscover spawns outlives this handler call, and this
+	// test's DB is a real file under t.TempDir(): letting the goroutine run
+	// past the test would leave it querying a DB that t.Cleanup is closing
+	// while TempDir's own cleanup tries to delete the still-open file — a
+	// Windows-only teardown failure that surfaces on CI, not here.
+	waitForJobTerminal(t, f.jobs, data.JobID, 2*time.Second)
 }
 
 func TestDiscover_RunsToCompletionAndSetsResultRef(t *testing.T) {
@@ -277,9 +286,41 @@ func TestDiscover_RunsToCompletionAndSetsResultRef(t *testing.T) {
 	if row.Status != storage.JobCompleted {
 		t.Fatalf("Status = %q, want completed (error = %+v)", row.Status, row.Error)
 	}
-	wantRef := discoveryResultRef(f.accountID)
+	// The expected reference is written out LITERALLY rather than computed by
+	// calling discoveryResultRef: deriving the expectation from the very
+	// function under test would make this assertion tautological, so any
+	// change to the reference's shape (e.g. appending run content to it)
+	// would pass unnoticed.
+	const wantRef = "/api/control/v1/models?account_id=acct-disc"
 	if row.ResultRef != wantRef {
-		t.Fatalf("ResultRef = %q, want %q", row.ResultRef, wantRef)
+		t.Fatalf("ResultRef = %q, want the exact reference %q", row.ResultRef, wantRef)
+	}
+	// The two model ids this run actually discovered are the sharpest
+	// available canaries for 09 §3.12's "a reference, never inline content".
+	for _, canary := range []string{"model-a", "model-b", "Model A", "Model B"} {
+		if strings.Contains(row.ResultRef, canary) {
+			t.Fatalf("ResultRef = %q leaked discovered run content %q", row.ResultRef, canary)
+		}
+	}
+	// started_at is set ONLY by MarkRunning: asserting it here is what proves
+	// the production run really transitions pending -> running -> terminal
+	// (09 §3.12) rather than jumping straight to a terminal status. The
+	// storage-level lifecycle test drives the repo directly, so it cannot
+	// prove the HANDLER performs that transition.
+	if row.StartedAt == nil {
+		t.Fatalf("StartedAt = nil, want the pending -> running transition to have been recorded")
+	}
+	// MarkTerminal always stores finishedAt+TTL, so a zero TTL still yields a
+	// non-nil timestamp — only asserting the actual VALUE pins 09 §3.12's
+	// bounded-retention contract at the production call site.
+	if row.RetentionUntil == nil {
+		t.Fatalf("RetentionUntil = nil, want the terminal write to carry the default retention TTL")
+	}
+	if row.FinishedAt == nil {
+		t.Fatalf("FinishedAt = nil, want a terminal timestamp")
+	}
+	if got := row.RetentionUntil.Sub(*row.FinishedAt); got != storage.DefaultJobRetention {
+		t.Fatalf("retention_until - finished_at = %v, want storage.DefaultJobRetention (%v)", got, storage.DefaultJobRetention)
 	}
 
 	offerings, _, err := f.catalog.ListOfferings(context.Background(), storage.CatalogListParams{AccountID: f.accountID, Limit: 10})
@@ -308,6 +349,17 @@ func TestDiscover_AdapterFailureMarksJobFailedWithTypedError(t *testing.T) {
 	}
 	if row.Error == nil || row.Error.Code == "" {
 		t.Fatalf("Error = %+v, want a typed non-empty code", row.Error)
+	}
+	// Pin BOTH halves of the typed error, not just "no canary": the code must
+	// be intelligence's own reason vocabulary and the message must be a fixed
+	// constant. This is what would catch a future edit that starts
+	// interpolating an error value into either field (09 §3.12: the job error
+	// is "a typed, user-safe {code, message}").
+	if row.Error.Code != intelligence.ReasonDiscoveryFailed {
+		t.Fatalf("Error.Code = %q, want the typed %q", row.Error.Code, intelligence.ReasonDiscoveryFailed)
+	}
+	if row.Error.Message != "discovery run failed" {
+		t.Fatalf("Error.Message = %q, want the fixed secret-free constant", row.Error.Message)
 	}
 	if strings.Contains(row.Error.Code, canary) || strings.Contains(row.Error.Message, canary) {
 		t.Fatalf("job error leaked the canary secret: %+v", row.Error)

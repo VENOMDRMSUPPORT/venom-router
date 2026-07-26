@@ -154,6 +154,90 @@ func TestModels_UnknownContextSerializesNull(t *testing.T) {
 	}
 }
 
+// TestModels_RenderedTiersComeFromProject closes the gap that
+// TestModels_MatchesProjectExactly leaves open: that test compares the
+// in-memory EffectiveOffering, so a re-derivation introduced in the JSON
+// RENDERER — the only thing a consumer actually reads — would slip past it.
+// The seeded offering is deliberately free-cost (so 04 §2b's cost table
+// alone would make every tier eligible) but has UNKNOWN context, which
+// 04 §3's gate turns into ineligible-for-all-tiers. Any renderer that
+// recomputes eligibility from the cost fact instead of copying Project's
+// Tiers therefore renders lite as eligible, and this test goes RED.
+func TestModels_RenderedTiersComeFromProject(t *testing.T) {
+	clock := fixedModelsClock()
+	h, db := newTestModelsHandler(t, func() time.Time { return clock })
+
+	modelsSeedOffering(t, db, offeringSeed{
+		AccountID: "acct-rt", ProviderID: "prov-rt", ProviderModelID: "model-rt", ModelID: "cm-rt",
+		CapabilitiesJSON: modelsStrPtr(`["chat"]`),
+		PricingJSON:      modelsStrPtr(`{"cost":{"input":0,"output":0}}`),
+		Operations:       []offeringOpSeed{{Operation: "chat", Status: "certified", Truth: "supported"}},
+	})
+
+	ctx := context.Background()
+	rows, _, err := storage.NewCatalogRepo(db).ListOfferings(ctx, storage.CatalogListParams{AccountID: "acct-rt", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListOfferings: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("len(rows) = %d, want 1", len(rows))
+	}
+	projected := h.buildProjection(ctx, rows[0])
+
+	// Precondition: the cost fact really is verified-free, so cost alone
+	// would admit every tier and only the context gate can exclude them.
+	if projected.Cost.IsFree == nil || !*projected.Cost.IsFree {
+		t.Fatalf("seeded cost fact = %+v, want verified free (the test is vacuous otherwise)", projected.Cost)
+	}
+	if projected.EffectiveContextTokens != nil {
+		t.Fatalf("seeded effective context = %v, want unknown (the test is vacuous otherwise)", *projected.EffectiveContextTokens)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeOfferings(rec, modelsRequest(http.MethodGet, "/api/control/v1/offerings?account_id=acct-rt"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data []effectiveOfferingJSON `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v; body = %q", err, rec.Body.String())
+	}
+	if len(env.Data) != 1 {
+		t.Fatalf("len(data) = %d, want 1", len(env.Data))
+	}
+
+	for _, tier := range []intelligence.Tier{intelligence.TierLite, intelligence.TierPro, intelligence.TierMax} {
+		want := projected.Tiers[tier]
+		got, ok := env.Data[0].Tiers[string(tier)]
+		if !ok {
+			t.Fatalf("rendered tiers missing %q: %+v", tier, env.Data[0].Tiers)
+		}
+		if got.Eligible != want.Eligible || got.Stale != want.Stale || got.Penalty != want.Penalty {
+			t.Fatalf("rendered tier %q = %+v, want Project's %+v (the renderer must copy, never re-derive)", tier, got, want)
+		}
+		if !reflect.DeepEqual(got.Reasons, want.Reasons) {
+			t.Fatalf("rendered tier %q reasons = %v, want Project's %v", tier, got.Reasons, want.Reasons)
+		}
+		if got.Eligible {
+			t.Fatalf("rendered tier %q is eligible despite unknown context (04 §3 fails closed)", tier)
+		}
+		if !containsString(got.Reasons, intelligence.ReasonContextUnknown) {
+			t.Fatalf("rendered tier %q reasons = %v, want to include %s", tier, got.Reasons, intelligence.ReasonContextUnknown)
+		}
+	}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
+
 // --- TestModels_MatchesProjectExactly ---
 
 // TestModels_MatchesProjectExactly proves buildProjection's assembled

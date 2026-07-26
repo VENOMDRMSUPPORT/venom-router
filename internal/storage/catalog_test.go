@@ -248,7 +248,13 @@ func TestCatalogRepo_ListOfferings_CursorPagination(t *testing.T) {
 	insertProvider(t, db, "prov-page")
 	insertAccount(t, db, "acct-page", "prov-page")
 	insertModelFull(t, db, "model-page", "ck-page", "Page Model", nil, nil, nil)
-	for _, pmID := range []string{"m-a", "m-b", "m-c"} {
+	// Inserted in REVERSE lexical order deliberately: every offering here
+	// shares one account, so provider_model_id is the ONLY discriminator, and
+	// physical (rowid) order is the opposite of the required sort order. A
+	// query that ordered by account_id alone would return rows in insertion
+	// order and silently repeat/skip rows across page boundaries — with rows
+	// inserted pre-sorted, SQLite's incidental rowid order would mask that.
+	for _, pmID := range []string{"m-c", "m-b", "m-a"} {
 		insertOfferingFull(t, db, "acct-page", "prov-page", pmID, "model-page", nil, nil, nil, nil, nil, 0, 0)
 	}
 

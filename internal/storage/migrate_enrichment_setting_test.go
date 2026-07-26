@@ -11,7 +11,7 @@ import (
 // migration (00007_enrichment_setting.sql).
 const enrichmentSettingVersion = 7
 
-// TestEnrichmentSetting_UpAddsColumnDefaultOff proves M7 adds
+// TestEnrichmentSetting_UpAddsColumnDefaultOff proves 00007 adds
 // owner_settings.enrichment_enabled with a schema-level default of 0 (off):
 // a freshly-inserted row that never mentions the column still reads back
 // enrichment_enabled = 0 — the off-by-default rule lives in the schema, not
@@ -34,10 +34,10 @@ func TestEnrichmentSetting_UpAddsColumnDefaultOff(t *testing.T) {
 	}
 }
 
-// TestEnrichmentSetting_DownRemovesColumn proves M7's down path drops
+// TestEnrichmentSetting_DownRemovesColumn proves 00007's down path drops
 // enrichment_enabled while leaving owner_settings (and every lower table)
 // intact. The rollback loop is count-agnostic: it rolls back every
-// migration at or above enrichmentSettingVersion, so a later M8 lands
+// migration at or above enrichmentSettingVersion, so a later migration lands
 // without silently breaking this test (mirrors the M4/M5 up/down tests'
 // robustness shape).
 func TestEnrichmentSetting_DownRemovesColumn(t *testing.T) {
@@ -62,7 +62,7 @@ func TestEnrichmentSetting_DownRemovesColumn(t *testing.T) {
 	}
 	assertTableExists(t, db, "owner_settings", true)
 	assertColumnExists(t, db, "owner_settings", "enrichment_enabled", false)
-	// Every lower table must survive rolling back only M7.
+	// Every lower table must survive rolling back only 00007.
 	assertTableExists(t, db, "models", true)
 	assertTableExists(t, db, "discovery_runs", true)
 	assertTableExists(t, db, "audit_events", true)

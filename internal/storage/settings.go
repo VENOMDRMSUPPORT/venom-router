@@ -14,7 +14,7 @@ import (
 // Design_System/src/density.ts). A fresh DB has no row yet; Get resolves
 // that to the defaults below rather than erroring. EnrichmentEnabled is the
 // P3a-CAPI-003 optional-metadata-enrichment toggle (04 §2b): off by
-// default, both at this Go-layer default AND at the M7 schema's own
+// default, both at this Go-layer default AND at the 00007 migration's own
 // column default — the routing-critical free-safety pipeline never reads
 // this field and is never affected by it.
 type SettingsRow struct {
@@ -64,7 +64,7 @@ func (r *SettingsRepo) Get(ctx context.Context) (SettingsRow, error) {
 		`SELECT theme, density, enrichment_enabled, updated_at FROM owner_settings WHERE id = 1`,
 	).Scan(&theme, &density, &enrichmentEnabled, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		// enrichment_enabled defaults to false here too — matching the M7
+		// enrichment_enabled defaults to false here too — matching the 00007
 		// schema's own column default, not a Go-layer-only assumption.
 		return SettingsRow{Theme: DefaultTheme, Density: DefaultDensity}, nil
 	}
