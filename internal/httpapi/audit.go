@@ -32,6 +32,9 @@ const (
 
 	// P3a-CAPI-002 discovery action code.
 	AuditActionAccountDiscover = "account_discover" // POST /accounts/{id}/discover
+
+	// P3b-CAPI-001 quota-refresh action code.
+	AuditActionAccountQuotaRefresh = "account_quota_refresh" // POST /accounts/{id}/quota
 )
 
 // Audit result codes.

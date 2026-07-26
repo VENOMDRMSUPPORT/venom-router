@@ -5,6 +5,7 @@ import (
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/application"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
@@ -205,6 +206,19 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	discoveryHandler := NewDiscoveryHandler(accountRepo, credentialRepo, catalogRepo, jobRepo, discoveryRepo, reg, credentialService, audit, idem, newOAuthTransactionID, nil)
 	mux.Handle("/api/control/v1/accounts/{id}/discover", gated(discoveryHandler.ServeDiscover))
 	mux.Handle("/api/control/v1/offerings/{id}/certification", gated(discoveryHandler.ServeCertification))
+
+	// Quota refresh (P3b-CAPI-001, 09 §2 "Refresh quota snapshot"): POST
+	// /accounts/{id}/quota, async (202 + the canonical shared job
+	// surface) exactly like discovery above. quotaLifecycleRepo backs
+	// reconciliationRepo's SyncQuotaWindows call (the ONLY write path this
+	// handler drives); reconciliationRepo has no audit sink here (the
+	// handler's own auditEmitter covers the refresh call itself, and
+	// SyncQuotaWindows's transition-audit vocabulary belongs to the
+	// worker paths in quotaworkers.go, not this synchronous trigger).
+	quotaLifecycleRepo := storage.NewQuotaLifecycleRepo(db, nil, nil)
+	reconciliationRepo := storage.NewReconciliationRepo(db, nil, quota.DefaultReconciliationPolicy(), quotaLifecycleRepo, nil)
+	quotaHandler := NewQuotaHandler(accountRepo, credentialRepo, jobRepo, reconciliationRepo, reg, credentialService, audit, idem, newOAuthTransactionID, nil)
+	mux.Handle("/api/control/v1/accounts/{id}/quota", gated(quotaHandler.ServeQuotaRefresh))
 
 	mux.Handle("/", networkGate(allowedHost, spa))
 	return mux
