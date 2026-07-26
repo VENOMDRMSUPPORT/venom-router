@@ -400,6 +400,70 @@ func TestReconcileOne_IncrementsAttempts(t *testing.T) {
 // ClaimPending can re-pick it — WITHOUT terminalizing it, without
 // touching its allocations or window headroom, and without moving
 // reconcile_attempts (reclaiming is not an attempt).
+// TestReconcileOne_FlagsRebaselineOnBothPaths proves both of ReconcileOne's
+// outcomes leave the account flagged for re-baseline (05 §4: "flag the
+// account for re-baseline at the next quota sync"), each with its own
+// distinct reason code: estimate_settled_low_confidence for the
+// low-confidence settle path, usage_gap for the terminal path.
+func TestReconcileOne_FlagsRebaselineOnBothPaths(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	policy := quota.DefaultReconciliationPolicy()
+
+	t.Run("low-confidence settle path", func(t *testing.T) {
+		insertProvider(t, db, "prov-flag-settle")
+		insertAccount(t, db, "acct-flag-settle", "prov-flag-settle")
+		seedWindowFull(t, db, "win-flag-settle", "acct-flag-settle", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
+		seedPendingReservation(t, db, "res-flag-settle", "acct-flag-settle", "win-flag-settle", 950, 1900, 900, 5)
+
+		repo := NewReconciliationRepo(db, fixedQuotaClock(2000), policy, NewQuotaLifecycleRepo(db, fixedQuotaClock(2000), nil), nil)
+		claimed, err := repo.ClaimPending(ctx, "worker-flag-settle", quota.DefaultLeaseTTL)
+		if err != nil || len(claimed) != 1 {
+			t.Fatalf("ClaimPending: claimed=%v err=%v", claimed, err)
+		}
+		if _, err := repo.ReconcileOne(ctx, "worker-flag-settle", claimed[0]); err != nil {
+			t.Fatalf("ReconcileOne: %v", err)
+		}
+
+		var reasonCode string
+		if err := db.Conn().QueryRow(`SELECT reason_code FROM quota_rebaseline_flags WHERE account_id = ?`, "acct-flag-settle").Scan(&reasonCode); err != nil {
+			t.Fatalf("read rebaseline flag: %v", err)
+		}
+		if reasonCode != "estimate_settled_low_confidence" {
+			t.Fatalf("reason_code = %q, want estimate_settled_low_confidence", reasonCode)
+		}
+	})
+
+	t.Run("terminal path", func(t *testing.T) {
+		insertProvider(t, db, "prov-flag-terminal")
+		insertAccount(t, db, "acct-flag-terminal", "prov-flag-terminal")
+		seedWindowFull(t, db, "win-flag-terminal", "acct-flag-terminal", "local_safety", "requests", "estimated_consumption", "rolling:3600s", nil, float64Ptr(50), 5, 1)
+		seedPendingReservation(t, db, "res-flag-terminal", "acct-flag-terminal", "win-flag-terminal", 950, 1000, 900, 5)
+		if _, err := db.Conn().Exec(`UPDATE quota_reservations SET reconcile_attempts = ? WHERE id = ?`, policy.MaxRetries-1, "res-flag-terminal"); err != nil {
+			t.Fatalf("seed reconcile_attempts: %v", err)
+		}
+
+		repo := NewReconciliationRepo(db, fixedQuotaClock(100000), policy, NewQuotaLifecycleRepo(db, fixedQuotaClock(100000), nil), nil)
+		claimed, err := repo.ClaimPending(ctx, "worker-flag-terminal", quota.DefaultLeaseTTL)
+		if err != nil || len(claimed) != 1 {
+			t.Fatalf("ClaimPending: claimed=%v err=%v", claimed, err)
+		}
+		if _, err := repo.ReconcileOne(ctx, "worker-flag-terminal", claimed[0]); err != nil {
+			t.Fatalf("ReconcileOne: %v", err)
+		}
+
+		var reasonCode string
+		if err := db.Conn().QueryRow(`SELECT reason_code FROM quota_rebaseline_flags WHERE account_id = ?`, "acct-flag-terminal").Scan(&reasonCode); err != nil {
+			t.Fatalf("read rebaseline flag: %v", err)
+		}
+		if reasonCode != "usage_gap" {
+			t.Fatalf("reason_code = %q, want usage_gap", reasonCode)
+		}
+	})
+}
+
 func TestWorkerCrash_LeaseExpiryReclaims(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
 	defer cancel()

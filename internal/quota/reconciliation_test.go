@@ -1,6 +1,7 @@
 package quota
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -84,6 +85,28 @@ func TestRetryExhausted_BoundaryAndFailClosed(t *testing.T) {
 	for _, attempts := range []int{-1, 0, 1, 100} {
 		if !RetryExhausted(zeroPolicy, attempts) {
 			t.Fatalf("RetryExhausted(attempts=%d, MaxRetries=0) = false, want true (fail closed)", attempts)
+		}
+	}
+}
+
+// TestParseConfidence_FailClosed proves the two legal confidence tokens
+// parse, and anything else — including an unknown token, the empty
+// string, and a wrong-case variant — is rejected with the typed error
+// and the zero value.
+func TestParseConfidence_FailClosed(t *testing.T) {
+	for _, good := range []Confidence{ConfidenceHigh, ConfidenceLow} {
+		got, err := ParseConfidence(string(good))
+		if err != nil || got != good {
+			t.Fatalf("ParseConfidence(%q) = (%q, %v), want (%q, nil)", good, got, err, good)
+		}
+	}
+	for _, bad := range []string{"", "medium", "High", "LOW"} {
+		got, err := ParseConfidence(bad)
+		if !errors.Is(err, ErrUnknownConfidence) {
+			t.Fatalf("ParseConfidence(%q) error = %v, want ErrUnknownConfidence", bad, err)
+		}
+		if got != "" {
+			t.Fatalf("ParseConfidence(%q) = %q, want the zero value on error", bad, got)
 		}
 	}
 }

@@ -93,3 +93,35 @@ const DefaultLeaseTTL = 5 * time.Minute
 // the lease expired and another worker already reclaimed or re-claimed
 // it) — a worker whose lease expired must not settle.
 var ErrLeaseNotHeld = errors.New("quota: reconciliation lease not held by this worker")
+
+// Confidence marks the provenance of a settled allocation's actual_cost
+// (05 §4's "Final outcomes"): settle(actual) and
+// settle(estimate, confidence=low) are DISTINCT outcomes — a guess must
+// never be byte-identical, in the database, to a provider-confirmed
+// cost.
+type Confidence string
+
+const (
+	// ConfidenceHigh marks an actual_cost the caller asserts is
+	// provider-confirmed.
+	ConfidenceHigh Confidence = "high"
+	// ConfidenceLow marks an actual_cost that is a conservative estimate
+	// standing in for a provider-confirmed value that was never obtained.
+	ConfidenceLow Confidence = "low"
+)
+
+// ErrUnknownConfidence is returned by ParseConfidence for any token
+// outside the two canonical confidence values.
+var ErrUnknownConfidence = errors.New("quota: unknown confidence")
+
+// ParseConfidence fails closed: an unrecognized token — including a
+// wrong-case variant or an empty string — is rejected rather than
+// silently accepted or defaulted to a particular confidence.
+func ParseConfidence(s string) (Confidence, error) {
+	switch Confidence(s) {
+	case ConfidenceHigh, ConfidenceLow:
+		return Confidence(s), nil
+	default:
+		return "", ErrUnknownConfidence
+	}
+}

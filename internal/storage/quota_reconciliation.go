@@ -316,16 +316,17 @@ func (r *ReconciliationRepo) clearLease(ctx context.Context, reservationID strin
 // disagree:
 //
 //   - exhausted -> Transition to unknown_consumption + a usage_gap audit
-//     event, per reservation.
-//   - not exhausted -> settle at the estimate (actuals=nil) — with no
+//     event, per reservation, + a "usage_gap" re-baseline flag.
+//   - not exhausted -> SettleEstimate (confidence=low) — with no
 //     provider-usage API available at this layer, there is nothing else
-//     to settle at.
+//     to settle at — + an "estimate_settled_low_confidence" re-baseline
+//     flag.
 //
 // Either way the lease is cleared once the terminal storage call
 // succeeds. Both paths route through QuotaLifecycleRepo's
-// already-idempotent Settle/Transition, so calling ReconcileOne twice in
-// a row for the same reservation (same owner, lease not yet cleared by
-// anything else) is itself idempotent.
+// already-idempotent SettleEstimate/Transition, so calling ReconcileOne
+// twice in a row for the same reservation (same owner, lease not yet
+// cleared by anything else) is itself idempotent.
 func (r *ReconciliationRepo) ReconcileOne(ctx context.Context, owner string, p PendingReservation) (quota.ReconciliationOutcome, error) {
 	newAttempts, err := r.verifyLeaseAndIncrementAttempt(ctx, owner, p.ReservationID)
 	if err != nil {
@@ -345,13 +346,22 @@ func (r *ReconciliationRepo) ReconcileOne(ctx context.Context, owner string, p P
 		// Emitted here, after Transition has committed, so the event is never
 		// recorded for a transition that did not actually happen.
 		r.emitUsageGap(ctx, p.ReservationID)
+		if err := r.FlagRebaseline(ctx, p.AccountID, "usage_gap"); err != nil {
+			return quota.ReconciliationOutcome{}, err
+		}
 		return quota.ReconciliationOutcome{ReservationID: p.ReservationID, Outcome: quota.ReservationUnknownConsumption}, nil
 	}
 
-	if err := r.lifecycle.Settle(ctx, p.ReservationID, nil); err != nil {
+	// 05 §4's no-provider-API path: settle at the estimate with LOW
+	// confidence, never Settle(..., nil) — that method is reserved for
+	// confirmed costs (P3b-FIX-CONF).
+	if err := r.lifecycle.SettleEstimate(ctx, p.ReservationID); err != nil {
 		return quota.ReconciliationOutcome{}, err
 	}
 	if err := r.clearLease(ctx, p.ReservationID); err != nil {
+		return quota.ReconciliationOutcome{}, err
+	}
+	if err := r.FlagRebaseline(ctx, p.AccountID, "estimate_settled_low_confidence"); err != nil {
 		return quota.ReconciliationOutcome{}, err
 	}
 	return quota.ReconciliationOutcome{ReservationID: p.ReservationID, Outcome: quota.ReservationSettled}, nil

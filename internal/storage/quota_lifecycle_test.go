@@ -571,3 +571,93 @@ func TestLifecycle_AuditEmittedAfterCommitWithoutDeadlock(t *testing.T) {
 		t.Fatalf("success audit rows = %d, want 1", auditCount)
 	}
 }
+
+// readAllocationConfidence reads actual_confidence alongside actual_cost
+// for one reservation/window allocation.
+func readAllocationConfidence(t *testing.T, db *DB, reservationID, windowID string) (actualCost *float64, confidence *string) {
+	t.Helper()
+	var ac sql.NullString
+	var cost sql.NullFloat64
+	if err := db.Conn().QueryRow(
+		`SELECT actual_cost, actual_confidence FROM quota_reservation_allocations WHERE reservation_id = ? AND window_id = ?`,
+		reservationID, windowID,
+	).Scan(&cost, &ac); err != nil {
+		t.Fatalf("read allocation confidence (%s,%s): %v", reservationID, windowID, err)
+	}
+	if cost.Valid {
+		v := cost.Float64
+		actualCost = &v
+	}
+	if ac.Valid {
+		v := ac.String
+		confidence = &v
+	}
+	return actualCost, confidence
+}
+
+// TestSettleEstimate_StampsLowConfidence proves SettleEstimate always
+// settles at the allocation's own estimated_cost and stamps
+// actual_confidence='low', while Settle (with a real actuals map)
+// stamps 'high' — the two outcomes must be distinguishable in the
+// database, which is exactly what this unit exists to fix (previously
+// neither path recorded any confidence marker at all, so a guess was
+// byte-identical to a provider-confirmed cost).
+func TestSettleEstimate_StampsLowConfidence(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	lifecycle := NewQuotaLifecycleRepo(db, fixedQuotaClock(2000), nil)
+
+	t.Run("SettleEstimate stamps low", func(t *testing.T) {
+		reservationID, providerWindowID, concurrencyWindowID := reserveFixture(t, ctx, db, "acct-conf-low", "req-conf-low", "attempt-1")
+		if err := lifecycle.SettleEstimate(ctx, reservationID); err != nil {
+			t.Fatalf("SettleEstimate: %v", err)
+		}
+		for _, windowID := range []string{providerWindowID, concurrencyWindowID} {
+			actualCost, confidence := readAllocationConfidence(t, db, reservationID, windowID)
+			if actualCost == nil || confidence == nil || *confidence != "low" {
+				t.Fatalf("window %s (actualCost=%v confidence=%v), want (non-nil, low)", windowID, actualCost, confidence)
+			}
+		}
+		_, _, reserved, _ := readWindowFull(t, db, providerWindowID)
+		if reserved != 0 {
+			t.Fatalf("provider window reserved = %v, want 0 (dropped by its estimate)", reserved)
+		}
+	})
+
+	t.Run("Settle with real actuals stamps high", func(t *testing.T) {
+		reservationID, providerWindowID, _ := reserveFixture(t, ctx, db, "acct-conf-high", "req-conf-high", "attempt-1")
+		if err := lifecycle.Settle(ctx, reservationID, map[string]float64{providerWindowID: 3}); err != nil {
+			t.Fatalf("Settle: %v", err)
+		}
+		actualCost, confidence := readAllocationConfidence(t, db, reservationID, providerWindowID)
+		if actualCost == nil || *actualCost != 3 || confidence == nil || *confidence != "high" {
+			t.Fatalf("window %s (actualCost=%v confidence=%v), want (3, high)", providerWindowID, actualCost, confidence)
+		}
+	})
+}
+
+// TestSettleEstimate_IsIdempotent proves calling SettleEstimate twice is
+// a no-op the second time — mirrors TestLifecycle_IsIdempotent's Settle
+// case.
+func TestSettleEstimate_IsIdempotent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTestTimeout)
+	defer cancel()
+
+	db := migratedCatalogRepoDB(t)
+	reservationID, providerWindowID, _ := reserveFixture(t, ctx, db, "acct-conf-idem", "req-conf-idem", "attempt-1")
+
+	lifecycle := NewQuotaLifecycleRepo(db, fixedQuotaClock(2000), nil)
+	if err := lifecycle.SettleEstimate(ctx, reservationID); err != nil {
+		t.Fatalf("first SettleEstimate: %v", err)
+	}
+	before := snapshotWindow(t, db, providerWindowID)
+
+	if err := lifecycle.SettleEstimate(ctx, reservationID); err != nil {
+		t.Fatalf("second SettleEstimate: %v, want success (no-op)", err)
+	}
+	if got := snapshotWindow(t, db, providerWindowID); !got.equal(before) {
+		t.Fatalf("second SettleEstimate changed the window: before=%v after=%v", before, got)
+	}
+}

@@ -120,9 +120,25 @@ func (r *QuotaLifecycleRepo) MarkDispatched(ctx context.Context, reservationID s
 
 // Settle converts each allocation's hold into consumption. actuals maps
 // window_id to the actual cost; a window absent from actuals (or when
-// actuals is nil) settles at its estimate.
+// actuals is nil) settles at its estimate. Settle is ONLY ever called
+// with confirmed costs (05 §4's settle(actual)) — every allocation it
+// settles is stamped actual_confidence='high'. A caller with no
+// provider-confirmed cost must call SettleEstimate instead, never
+// Settle(..., nil).
 func (r *QuotaLifecycleRepo) Settle(ctx context.Context, reservationID string, actuals map[string]float64) error {
-	outcome, err := r.applyTransition(ctx, reservationID, quota.ReservationSettled, actuals)
+	outcome, err := r.applyTransition(ctx, reservationID, quota.ReservationSettled, actuals, quota.ConfidenceHigh)
+	r.auditOutcome(ctx, reservationID, outcome)
+	return err
+}
+
+// SettleEstimate settles every allocation at its own estimated_cost —
+// the 05 §4 "no-provider-API path": settle(estimate, confidence=low).
+// Same window arithmetic, same idempotency, and same audit as Settle,
+// but every allocation is stamped actual_confidence='low' instead of
+// 'high' — a guess must never be indistinguishable, in the database,
+// from a provider-confirmed cost.
+func (r *QuotaLifecycleRepo) SettleEstimate(ctx context.Context, reservationID string) error {
+	outcome, err := r.applyTransition(ctx, reservationID, quota.ReservationSettled, nil, quota.ConfidenceLow)
 	r.auditOutcome(ctx, reservationID, outcome)
 	return err
 }
@@ -132,7 +148,7 @@ func (r *QuotaLifecycleRepo) Settle(ctx context.Context, reservationID string, a
 // or from `reconciliation_pending` with provider evidence — the caller
 // owns that judgement; this method enforces only the state graph.
 func (r *QuotaLifecycleRepo) Release(ctx context.Context, reservationID string) error {
-	outcome, err := r.applyTransition(ctx, reservationID, quota.ReservationReleased, nil)
+	outcome, err := r.applyTransition(ctx, reservationID, quota.ReservationReleased, nil, "")
 	r.auditOutcome(ctx, reservationID, outcome)
 	return err
 }
@@ -141,7 +157,7 @@ func (r *QuotaLifecycleRepo) Release(ctx context.Context, reservationID string) 
 // reserved -> reconciliation_pending and
 // reconciliation_pending -> unknown_consumption).
 func (r *QuotaLifecycleRepo) Transition(ctx context.Context, reservationID string, to quota.ReservationState) error {
-	outcome, err := r.applyTransition(ctx, reservationID, to, nil)
+	outcome, err := r.applyTransition(ctx, reservationID, to, nil, "")
 	r.auditOutcome(ctx, reservationID, outcome)
 	return err
 }
@@ -195,7 +211,7 @@ type allocationRow struct {
 //     apply the window arithmetic for that target state (see the switch
 //     below), then update the reservation's own state (and settled_at
 //     for a terminal target), commit, and (after commit) audit success.
-func (r *QuotaLifecycleRepo) applyTransition(ctx context.Context, reservationID string, to quota.ReservationState, actuals map[string]float64) (transitionOutcome, error) {
+func (r *QuotaLifecycleRepo) applyTransition(ctx context.Context, reservationID string, to quota.ReservationState, actuals map[string]float64, confidence quota.Confidence) (transitionOutcome, error) {
 	conn, err := r.db.Conn().Conn(ctx)
 	if err != nil {
 		return transitionOutcome{}, fmt.Errorf("storage: acquire connection for transition: %w", err)
@@ -261,7 +277,7 @@ func (r *QuotaLifecycleRepo) applyTransition(ctx context.Context, reservationID 
 	epoch := r.now().Unix()
 	switch to {
 	case quota.ReservationSettled:
-		if err := settleAllocations(ctx, conn, reservationID, allocs, actuals, string(allocState), epoch); err != nil {
+		if err := settleAllocations(ctx, conn, reservationID, allocs, actuals, string(allocState), string(confidence), epoch); err != nil {
 			return transitionOutcome{}, err
 		}
 	case quota.ReservationReleased:
@@ -348,8 +364,10 @@ func validateActuals(allocs []allocationRow, actuals map[string]float64, reserva
 // adjusted by the ACTUAL only where already known (nullable numerics
 // mean unknown — 02 §3 — so a NULL column is never seeded from a locally
 // derived delta, which would present local arithmetic as provider
-// evidence).
-func settleAllocations(ctx context.Context, conn *sql.Conn, reservationID string, allocs []allocationRow, actuals map[string]float64, allocState string, epoch int64) error {
+// evidence). confidence is stamped on actual_confidence verbatim —
+// 'high' from Settle, 'low' from SettleEstimate — so a guess is never
+// indistinguishable from a provider-confirmed cost.
+func settleAllocations(ctx context.Context, conn *sql.Conn, reservationID string, allocs []allocationRow, actuals map[string]float64, allocState, confidence string, epoch int64) error {
 	for _, a := range allocs {
 		actual := a.estimated
 		if actuals != nil {
@@ -370,8 +388,8 @@ func settleAllocations(ctx context.Context, conn *sql.Conn, reservationID string
 			return fmt.Errorf("storage: settle window %q for %q: %w", a.windowID, reservationID, err)
 		}
 		if _, err := conn.ExecContext(ctx,
-			`UPDATE quota_reservation_allocations SET state = ?, actual_cost = ? WHERE reservation_id = ? AND window_id = ?`,
-			allocState, actual, reservationID, a.windowID,
+			`UPDATE quota_reservation_allocations SET state = ?, actual_cost = ?, actual_confidence = ? WHERE reservation_id = ? AND window_id = ?`,
+			allocState, actual, confidence, reservationID, a.windowID,
 		); err != nil {
 			return fmt.Errorf("storage: update allocation %q for %q: %w", a.windowID, reservationID, err)
 		}
