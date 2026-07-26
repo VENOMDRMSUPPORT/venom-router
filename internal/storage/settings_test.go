@@ -100,6 +100,93 @@ func TestSettings_SecondPut_UpdatesSameSingleRow(t *testing.T) {
 	}
 }
 
+// --- P3a-CAPI-003: the enrichment toggle ---
+
+// TestSettings_EnrichmentOffByDefault proves Get on a fresh migrated DB
+// resolves EnrichmentEnabled to false (04 §2b: "off by default").
+func TestSettings_EnrichmentOffByDefault(t *testing.T) {
+	db := migratedOwnerSettingsDB(t)
+	repo := NewSettingsRepo(db)
+
+	row, err := repo.Get(context.Background())
+	if err != nil {
+		t.Fatalf("Get on fresh DB: error = %v", err)
+	}
+	if row.EnrichmentEnabled {
+		t.Fatalf("EnrichmentEnabled = true on a fresh DB, want false (off by default)")
+	}
+}
+
+// TestSettings_PutEnrichmentPersistsAndPreservesThemeDensity proves
+// PutEnrichment persists the toggle without disturbing theme/density, and
+// that a later Put(theme, density) does not reset enrichment back to off.
+func TestSettings_PutEnrichmentPersistsAndPreservesThemeDensity(t *testing.T) {
+	db := migratedOwnerSettingsDB(t)
+	repo := NewSettingsRepo(db)
+	ctx := context.Background()
+	t0 := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+	t2 := t1.Add(time.Hour)
+
+	if err := repo.Put(ctx, "venom-light", "compact", t0); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := repo.PutEnrichment(ctx, true, t1); err != nil {
+		t.Fatalf("PutEnrichment(true): %v", err)
+	}
+
+	row, err := repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get after PutEnrichment: %v", err)
+	}
+	if !row.EnrichmentEnabled {
+		t.Fatalf("EnrichmentEnabled = false after PutEnrichment(true), want true")
+	}
+	if row.Theme != "venom-light" || row.Density != "compact" {
+		t.Fatalf("theme/density after PutEnrichment = %s/%s, want venom-light/compact (unchanged)", row.Theme, row.Density)
+	}
+
+	// A later theme/density Put must NOT reset enrichment back to off.
+	if err := repo.Put(ctx, "venom-hc", "comfortable", t2); err != nil {
+		t.Fatalf("second Put: %v", err)
+	}
+	row, err = repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get after second Put: %v", err)
+	}
+	if !row.EnrichmentEnabled {
+		t.Fatalf("EnrichmentEnabled = false after a theme/density Put, want true (still enabled)")
+	}
+	if row.Theme != "venom-hc" || row.Density != "comfortable" {
+		t.Fatalf("theme/density after second Put = %s/%s, want venom-hc/comfortable", row.Theme, row.Density)
+	}
+}
+
+// TestSettings_PutEnrichmentOnFreshDB_SeedsFrozenDefaults proves
+// PutEnrichment on a completely fresh DB (no row yet) inserts the frozen
+// design-system defaults alongside the enrichment value, rather than
+// leaving theme/density at a zero value.
+func TestSettings_PutEnrichmentOnFreshDB_SeedsFrozenDefaults(t *testing.T) {
+	db := migratedOwnerSettingsDB(t)
+	repo := NewSettingsRepo(db)
+	ctx := context.Background()
+
+	if err := repo.PutEnrichment(ctx, true, time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("PutEnrichment on fresh DB: %v", err)
+	}
+
+	row, err := repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if row.Theme != DefaultTheme || row.Density != DefaultDensity {
+		t.Fatalf("theme/density after fresh PutEnrichment = %s/%s, want frozen defaults %s/%s", row.Theme, row.Density, DefaultTheme, DefaultDensity)
+	}
+	if !row.EnrichmentEnabled {
+		t.Fatalf("EnrichmentEnabled = false, want true")
+	}
+}
+
 // TestSettings_Put_InvalidValue_RejectedByDBCheck proves the owner_settings
 // CHECK constraint is the defense-in-depth backstop: an invalid value that
 // somehow bypasses the httpapi handler's validation is rejected at the DB

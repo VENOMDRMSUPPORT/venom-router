@@ -232,7 +232,238 @@ func TestSettings_OtherMethod_405(t *testing.T) {
 	}
 }
 
+// --- P3a-CAPI-003: PUT /settings/enrichment ---
+
+// enrichmentRequest builds a loopback, allowed-Host request to
+// /settings/enrichment with the given method and raw JSON body (nil body
+// omits the request body entirely).
+func enrichmentRequest(method string, body []byte) *http.Request {
+	var req *http.Request
+	if body != nil {
+		req = httptest.NewRequest(method, "/api/control/v1/settings/enrichment", bytes.NewReader(body))
+	} else {
+		req = httptest.NewRequest(method, "/api/control/v1/settings/enrichment", nil)
+	}
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Host = testAllowedHost
+	return req
+}
+
+func decodeSettingsFull(t *testing.T, body []byte) (theme, density string, enrichmentEnabled bool) {
+	t.Helper()
+	var got struct {
+		Data struct {
+			Theme             string `json:"theme"`
+			Density           string `json:"density"`
+			EnrichmentEnabled bool   `json:"enrichment_enabled"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode settings response: %v; body = %q", err, body)
+	}
+	return got.Data.Theme, got.Data.Density, got.Data.EnrichmentEnabled
+}
+
+// TestSettings_EnrichmentOffByDefault_HTTP proves GET /settings renders
+// "enrichment_enabled": false on a fresh DB.
+func TestSettings_EnrichmentOffByDefault_HTTP(t *testing.T) {
+	h, _ := newTestSettingsHandler(t, nil)
+
+	rec := httptest.NewRecorder()
+	h.ServeSettings(rec, settingsRequest(http.MethodGet, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200", rec.Code)
+	}
+	_, _, enrichmentEnabled := decodeSettingsFull(t, rec.Body.Bytes())
+	if enrichmentEnabled {
+		t.Fatalf("enrichment_enabled = true on a fresh DB, want false")
+	}
+}
+
+// TestSettings_PutEnrichmentValidation proves a missing, null, or
+// non-boolean `enabled` is rejected 400 validation_error, with no audit
+// row and no write.
+func TestSettings_PutEnrichmentValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body []byte
+	}{
+		{"missing field", []byte(`{}`)},
+		{"null", []byte(`{"enabled":null}`)},
+		{"string", []byte(`{"enabled":"true"}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, db := newTestSettingsHandler(t, nil)
+
+			rec := httptest.NewRecorder()
+			h.ServeEnrichment(rec, enrichmentRequest(http.MethodPut, tc.body))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %q", rec.Code, rec.Body.String())
+			}
+			if code := decodeErrorCode(t, rec.Body.Bytes()); code != "validation_error" {
+				t.Fatalf("error code = %q, want validation_error", code)
+			}
+
+			var n int
+			if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM audit_events WHERE action = ?`, AuditActionSettingsUpdate).Scan(&n); err != nil {
+				t.Fatalf("count audit: %v", err)
+			}
+			if n != 0 {
+				t.Fatalf("audit rows = %d, want 0 (validation failure)", n)
+			}
+			if n := countRows(t, db, "owner_settings"); n != 0 {
+				t.Fatalf("owner_settings rows = %d, want 0 (no write on validation failure)", n)
+			}
+		})
+	}
+}
+
+// TestSettings_PutEnrichmentEmitsExactlyOneAudit proves exactly one
+// settings_update/success audit row is recorded on a successful toggle.
+func TestSettings_PutEnrichmentEmitsExactlyOneAudit(t *testing.T) {
+	h, db := newTestSettingsHandler(t, nil)
+
+	rec := httptest.NewRecorder()
+	h.ServeEnrichment(rec, enrichmentRequest(http.MethodPut, []byte(`{"enabled":true}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+
+	var n int
+	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM audit_events WHERE action = ? AND result = ?`, AuditActionSettingsUpdate, AuditResultSuccess).Scan(&n); err != nil {
+		t.Fatalf("count audit: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("settings_update success audit rows = %d, want 1", n)
+	}
+}
+
+// TestSettings_PutEnrichmentPersistsAndPreservesThemeDensity_HTTP proves
+// toggling enrichment via the handler persists and a subsequent GET
+// /settings still returns the earlier-set theme/density unchanged.
+func TestSettings_PutEnrichmentPersistsAndPreservesThemeDensity_HTTP(t *testing.T) {
+	h, _ := newTestSettingsHandler(t, nil)
+
+	putRec := httptest.NewRecorder()
+	h.ServeSettings(putRec, settingsRequest(http.MethodPut, map[string]string{"theme": "venom-hc", "density": "compact"}))
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT /settings status = %d, want 200", putRec.Code)
+	}
+
+	enRec := httptest.NewRecorder()
+	h.ServeEnrichment(enRec, enrichmentRequest(http.MethodPut, []byte(`{"enabled":true}`)))
+	if enRec.Code != http.StatusOK {
+		t.Fatalf("PUT /settings/enrichment status = %d, want 200; body = %q", enRec.Code, enRec.Body.String())
+	}
+	theme, density, enrichmentEnabled := decodeSettingsFull(t, enRec.Body.Bytes())
+	if theme != "venom-hc" || density != "compact" {
+		t.Fatalf("theme/density after enrichment toggle = %s/%s, want venom-hc/compact (unchanged)", theme, density)
+	}
+	if !enrichmentEnabled {
+		t.Fatalf("enrichment_enabled = false, want true")
+	}
+
+	getRec := httptest.NewRecorder()
+	h.ServeSettings(getRec, settingsRequest(http.MethodGet, nil))
+	theme, density, enrichmentEnabled = decodeSettingsFull(t, getRec.Body.Bytes())
+	if theme != "venom-hc" || density != "compact" || !enrichmentEnabled {
+		t.Fatalf("GET /settings after enrichment toggle = %s/%s/%v, want venom-hc/compact/true", theme, density, enrichmentEnabled)
+	}
+}
+
+// TestSettings_EnrichmentToggleDoesNotAffectFreeSafety proves the card's
+// mandated cross-check (04 §2b): toggling enrichment never changes a
+// single offering's resolved cost fact — the routing-critical free-safety
+// pipeline (FreeSafetyResolver) reads nothing this setting controls.
+func TestSettings_EnrichmentToggleDoesNotAffectFreeSafety(t *testing.T) {
+	settingsHandler, db := newTestSettingsHandler(t, nil)
+	modelsHandler := NewModelsHandler(storage.NewCatalogRepo(db), nil)
+
+	modelsSeedOffering(t, db, offeringSeed{
+		AccountID: "acct-enrich", ProviderID: "prov-enrich", ProviderModelID: "model-enrich", ModelID: "cm-enrich",
+		PricingJSON: modelsStrPtr(`{"cost":{"input":0,"output":0}}`),
+	})
+
+	before := httptest.NewRecorder()
+	modelsHandler.ServeOfferings(before, modelsRequest(http.MethodGet, "/api/control/v1/offerings?account_id=acct-enrich"))
+	if before.Code != http.StatusOK {
+		t.Fatalf("before: status = %d, want 200", before.Code)
+	}
+
+	enRec := httptest.NewRecorder()
+	settingsHandler.ServeEnrichment(enRec, enrichmentRequest(http.MethodPut, []byte(`{"enabled":true}`)))
+	if enRec.Code != http.StatusOK {
+		t.Fatalf("toggle enrichment: status = %d, want 200", enRec.Code)
+	}
+
+	after := httptest.NewRecorder()
+	modelsHandler.ServeOfferings(after, modelsRequest(http.MethodGet, "/api/control/v1/offerings?account_id=acct-enrich"))
+	if after.Code != http.StatusOK {
+		t.Fatalf("after: status = %d, want 200", after.Code)
+	}
+
+	type costOnly struct {
+		Cost json.RawMessage `json:"cost"`
+	}
+	var beforeEnv, afterEnv struct {
+		Data []costOnly `json:"data"`
+	}
+	if err := json.Unmarshal(before.Body.Bytes(), &beforeEnv); err != nil {
+		t.Fatalf("decode before: %v", err)
+	}
+	if err := json.Unmarshal(after.Body.Bytes(), &afterEnv); err != nil {
+		t.Fatalf("decode after: %v", err)
+	}
+	if len(beforeEnv.Data) != 1 || len(afterEnv.Data) != 1 {
+		t.Fatalf("expected exactly one offering before/after, got %d/%d", len(beforeEnv.Data), len(afterEnv.Data))
+	}
+	if string(beforeEnv.Data[0].Cost) != string(afterEnv.Data[0].Cost) {
+		t.Fatalf("cost changed after toggling enrichment:\nbefore = %s\nafter  = %s", beforeEnv.Data[0].Cost, afterEnv.Data[0].Cost)
+	}
+}
+
 // --- Gating (ControlMux composition) ---
+
+// TestControlMux_SettingsEnrichment_IsOwnerGatedAndPutOnly proves: no
+// session -> 401; GET /settings/enrichment -> 405 (PUT only); a valid
+// session + CSRF -> 200; and GET /settings still works (no route
+// shadowing between /settings and /settings/enrichment).
+func TestControlMux_SettingsEnrichment_IsOwnerGatedAndPutOnly(t *testing.T) {
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodPut, "/api/control/v1/settings/enrichment", bytes.NewBufferString(`{"enabled":true}`)))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated PUT status = %d, want 401", rec.Code)
+	}
+
+	cookie, csrfToken := setupOwnerWithCSRF(t, mux)
+
+	getRec := httptest.NewRecorder()
+	getReq := newAuthRequest(t, http.MethodGet, "/api/control/v1/settings/enrichment", nil)
+	getReq.AddCookie(cookie)
+	mux.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /settings/enrichment status = %d, want 405", getRec.Code)
+	}
+
+	putReq := newAuthRequest(t, http.MethodPut, "/api/control/v1/settings/enrichment", bytes.NewBufferString(`{"enabled":true}`))
+	putReq.AddCookie(cookie)
+	putReq.Header.Set("X-CSRF-Token", csrfToken)
+	putRec := httptest.NewRecorder()
+	mux.ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT /settings/enrichment status = %d, want 200; body = %q", putRec.Code, putRec.Body.String())
+	}
+
+	settingsGetReq := newAuthRequest(t, http.MethodGet, "/api/control/v1/settings", nil)
+	settingsGetReq.AddCookie(cookie)
+	settingsRec := httptest.NewRecorder()
+	mux.ServeHTTP(settingsRec, settingsGetReq)
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("GET /settings status = %d, want 200 (no route shadowing)", settingsRec.Code)
+	}
+}
 
 // TestControlMux_Settings_UnauthenticatedRejected proves the real
 // ControlMux composition rejects an unauthenticated GET /settings with 401.

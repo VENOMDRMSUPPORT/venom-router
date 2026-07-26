@@ -54,16 +54,30 @@ func NewSettingsHandler(settings *storage.SettingsRepo, audit *auditEmitter, now
 }
 
 // settingsJSON is the GET/PUT success payload (09 §1 envelope under "data"):
-// {"data":{"theme":...,"density":...}}. No secret ever appears here.
+// {"data":{"theme":...,"density":...,"enrichment_enabled":...}}. No secret
+// ever appears here.
 type settingsJSON struct {
-	Theme   string `json:"theme"`
-	Density string `json:"density"`
+	Theme             string `json:"theme"`
+	Density           string `json:"density"`
+	EnrichmentEnabled bool   `json:"enrichment_enabled"`
+}
+
+func toSettingsJSON(row storage.SettingsRow) settingsJSON {
+	return settingsJSON{Theme: row.Theme, Density: row.Density, EnrichmentEnabled: row.EnrichmentEnabled}
 }
 
 // settingsUpdateRequest is PUT /settings' body.
 type settingsUpdateRequest struct {
 	Theme   string `json:"theme"`
 	Density string `json:"density"`
+}
+
+// enrichmentUpdateRequest is PUT /settings/enrichment's body (P3a-CAPI-003).
+// Enabled is a pointer so a missing field, a JSON null, and a non-boolean
+// value are all distinguishable from an explicit true/false — every one of
+// those three fails validation, never silently coerced.
+type enrichmentUpdateRequest struct {
+	Enabled *bool `json:"enabled"`
 }
 
 // ServeSettings implements GET and PUT /api/control/v1/settings. ONE
@@ -89,7 +103,7 @@ func (h *SettingsHandler) serveGet(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
 		return
 	}
-	writeData(w, http.StatusOK, settingsJSON{Theme: row.Theme, Density: row.Density})
+	writeData(w, http.StatusOK, toSettingsJSON(row))
 }
 
 // servePut implements PUT /settings: validate theme/density against the
@@ -132,11 +146,56 @@ func (h *SettingsHandler) servePut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.audit.Emit(ctx, AuditActionSettingsUpdate, AuditResultSuccess, AuditResourceSettings, "", "")
-	// Echo the validated values back as the success payload. settingsJSON
-	// and settingsUpdateRequest are intentionally separate types (request
-	// input vs. response envelope) that happen to share the same two
-	// fields; the values are copied field-by-field rather than converting
-	// the structs, to keep the two types decoupled.
-	resp := settingsJSON{Theme: req.Theme, Density: req.Density} //nolint:staticcheck // intentionally separate in/out types
-	writeData(w, http.StatusOK, resp)
+	// Re-read rather than echo req.Theme/req.Density directly: this PUT
+	// never touches enrichment_enabled (P3a-CAPI-003 owns that field via
+	// its own PUT /settings/enrichment), so the response must reflect
+	// whatever that field currently holds, not a zero value.
+	row, err := h.settings.Get(ctx)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+	writeData(w, http.StatusOK, toSettingsJSON(row))
+}
+
+// ServeEnrichment implements PUT /api/control/v1/settings/enrichment
+// (P3a-CAPI-003, 04 §2b): the owner toggle for optional, off-by-default
+// metadata enrichment — a routing-NON-critical pipeline entirely separate
+// from the always-on free-safety resolution (internal/intelligence's
+// FreeSafetyResolver never reads this setting). Any method other than PUT
+// is 405. Emits exactly one audit_event on success; none on a validation
+// failure or a failed write.
+func (h *SettingsHandler) ServeEnrichment(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		writeAuthError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", false)
+		return
+	}
+
+	ctx := r.Context()
+
+	var req enrichmentUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAuthError(w, http.StatusBadRequest, "validation_error", "invalid request body", false)
+		return
+	}
+	if req.Enabled == nil {
+		writeAuthError(w, http.StatusBadRequest, "validation_error", "enabled is required and must be a boolean", false)
+		return
+	}
+
+	if err := h.settings.PutEnrichment(ctx, *req.Enabled, h.now()); err != nil {
+		// A failed write emits no success audit row, mirroring servePut's
+		// own failure-write posture.
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+
+	h.audit.Emit(ctx, AuditActionSettingsUpdate, AuditResultSuccess, AuditResourceSettings, "", "")
+
+	row, err := h.settings.Get(ctx)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+	writeData(w, http.StatusOK, toSettingsJSON(row))
 }

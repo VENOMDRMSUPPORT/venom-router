@@ -107,6 +107,11 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// authenticated control route.
 	settingsHandler := NewSettingsHandler(storage.NewSettingsRepo(db), audit, nil)
 	mux.Handle("/api/control/v1/settings", gated(settingsHandler.ServeSettings))
+	// PUT /settings/enrichment (P3a-CAPI-003): a distinct, more-specific
+	// pattern than the method-less "/settings" above — Go 1.22's ServeMux
+	// matches the more specific literal path first, so this does not
+	// shadow (or get shadowed by) the settings route above.
+	mux.Handle("/api/control/v1/settings/enrichment", gated(settingsHandler.ServeEnrichment))
 
 	// OAuth enrollment framework (P2b-PROV-006) + reauthentication
 	// staging (P2b-PROV-008): begin/reauth-begin are owner-session +
