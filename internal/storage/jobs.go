@@ -21,18 +21,26 @@ type JobKind string
 // restore — only discovery is wired this phase).
 const JobKindDiscovery JobKind = "discovery"
 
+// JobKindReconciliation is the P3b-QUOTA-007 background job kind: the
+// worker sweep that resolves reconciliation_pending reservations.
+const JobKindReconciliation JobKind = "reconciliation"
+
+// JobKindQuotaSync is the P3b-QUOTA-008 background job kind: the worker
+// sweep that ingests provider-evidence quota windows.
+const JobKindQuotaSync JobKind = "quota_sync"
+
 // ErrUnknownJobKind is returned by ParseJobKind for any value outside the
 // registered vocabulary — fail closed, never silently accept an
 // unrecognized kind.
 var ErrUnknownJobKind = errors.New("storage: unrecognized job kind")
 
 // ParseJobKind fails closed on any value outside the exact registered
-// vocabulary — no case folding, no trimming. Only "discovery" is
-// registered this phase; probe/benchmark/backup/restore are later units'
-// concern.
+// vocabulary — no case folding, no trimming. "discovery", "reconciliation",
+// and "quota_sync" are registered; probe/benchmark/backup/restore are
+// later units' concern.
 func ParseJobKind(s string) (JobKind, error) {
 	switch JobKind(s) {
-	case JobKindDiscovery:
+	case JobKindDiscovery, JobKindReconciliation, JobKindQuotaSync:
 		return JobKind(s), nil
 	default:
 		return "", fmt.Errorf("%w: %q", ErrUnknownJobKind, s)

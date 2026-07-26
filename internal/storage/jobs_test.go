@@ -158,6 +158,23 @@ func TestJobKind_ParsesDiscoveryFailsClosed(t *testing.T) {
 	}
 }
 
+// TestJobKind_ParsesReconciliationAndQuotaSync proves P3b-QUOTA-007/008
+// registered exactly "reconciliation" and "quota_sync" alongside the
+// existing "discovery" kind.
+func TestJobKind_ParsesReconciliationAndQuotaSync(t *testing.T) {
+	if got, err := ParseJobKind("reconciliation"); err != nil || got != JobKindReconciliation {
+		t.Fatalf("ParseJobKind(reconciliation) = (%q, %v), want (reconciliation, nil)", got, err)
+	}
+	if got, err := ParseJobKind("quota_sync"); err != nil || got != JobKindQuotaSync {
+		t.Fatalf("ParseJobKind(quota_sync) = (%q, %v), want (quota_sync, nil)", got, err)
+	}
+	for _, bad := range []string{"Reconciliation", "quota-sync", "quotasync"} {
+		if _, err := ParseJobKind(bad); err == nil {
+			t.Fatalf("ParseJobKind(%q) succeeded, want ErrUnknownJobKind", bad)
+		}
+	}
+}
+
 // TestJobs_DiscoveryLifecycle proves a discovery-kind job progresses
 // pending -> running (started_at stamped) -> completed (retention_until
 // stamped), with kind == "discovery" preserved throughout.
