@@ -184,6 +184,41 @@ func (r *ProbeRunRepo) InFlightProbes(ctx context.Context, providerID string) (i
 	return count, nil
 }
 
+// InFlightProbesExcluding is InFlightProbes minus one run id. It exists
+// because the concurrency cap can only be real if the in-flight row is
+// written BEFORE the transport call, not after it — and a run that has
+// already claimed its own slot must not then count itself out of
+// admission (with the default cap of 1, self-counting would make every
+// probe refuse itself). The caller wraps this to satisfy
+// intelligence.ProbeInFlightReader; the port's own signature is untouched.
+func (r *ProbeRunRepo) InFlightProbesExcluding(ctx context.Context, providerID, excludeRunID string) (int, error) {
+	var count int
+	if err := r.db.Conn().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM probe_runs WHERE provider_id = ? AND id <> ? AND execution IN ('pending', 'running') AND finished_at IS NULL`,
+		providerID, excludeRunID,
+	).Scan(&count); err != nil {
+		return 0, fmt.Errorf("storage: in-flight probes for %q excluding %q: %w", providerID, excludeRunID, err)
+	}
+	return count, nil
+}
+
+// AttachReservation records the reservation a run obtained. The run row is
+// inserted before admission (so it can hold the in-flight slot across the
+// transport call), which is why the reservation id arrives afterwards
+// rather than at Start.
+func (r *ProbeRunRepo) AttachReservation(ctx context.Context, runID, reservationID string) error {
+	if runID == "" || reservationID == "" {
+		return fmt.Errorf("%w: run id and reservation id are both required", ErrInvalidProbeRunParams)
+	}
+	if _, err := r.db.Conn().ExecContext(ctx,
+		`UPDATE probe_runs SET reservation_id = ? WHERE id = ? AND reservation_id IS NULL`,
+		reservationID, runID,
+	); err != nil {
+		return fmt.Errorf("storage: attach reservation to probe run %q: %w", runID, err)
+	}
+	return nil
+}
+
 // ProbeCooldownUntil implements intelligence.ProbeCooldownReader: the
 // most recent SUCCEEDED context-window probe run for
 // offeringOperationID, plus r.contextProbeCooldown, or nil if none.

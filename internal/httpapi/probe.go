@@ -107,6 +107,21 @@ func (noCooldownReader) ProbeCooldownUntil(_ context.Context, _ string) (*time.T
 	return nil, nil
 }
 
+// inFlightExcluding adapts ProbeRunRepo to intelligence.ProbeInFlightReader
+// for one specific run: the run has already inserted its own 'running' row
+// (so that the row exists ACROSS the transport call, which is the only way
+// the per-provider cap in 04 §2 can actually bound anything), and must not
+// then count itself. With the default cap of 1, a self-counting reader
+// would make every probe refuse itself.
+type inFlightExcluding struct {
+	runs       *storage.ProbeRunRepo
+	excludeRun string
+}
+
+func (f inFlightExcluding) InFlightProbes(ctx context.Context, providerID string) (int, error) {
+	return f.runs.InFlightProbesExcluding(ctx, providerID, f.excludeRun)
+}
+
 // ProbeHandler serves the P3c-CAPI-001 probe-trigger surface: POST
 // /offerings/{id}/probe (async, 202 + job). Owner-session + CSRF gated
 // via ControlMux's `gated`.
@@ -420,7 +435,33 @@ func (h *ProbeHandler) runProbe(ctx context.Context, jobID, offeringOperationID,
 		// enforced regardless of force.
 		cooldown = noCooldownReader{}
 	}
-	guard, err := intelligence.NewProbeGuard(h.policy, h.reserver, h.probeRuns, h.probeRuns, cooldown, h.now)
+	// Claim the in-flight slot BEFORE admission and the transport call, not
+	// after: InFlightProbes counts unfinished probe_runs rows, so a row
+	// written only once the probe has already returned would mean the
+	// per-provider cap (04 §2) never bounds anything — two concurrent
+	// probes to one provider would each read zero and both proceed. The
+	// guard's in-flight reader excludes this run so it cannot refuse
+	// itself, and the deferred Finish below always frees the slot.
+	runID := h.newID()
+	class := intelligence.ProbeStandard
+	if op == models.OperationContextWindow {
+		class = intelligence.ProbeExpensive
+	}
+	if err := h.probeRuns.Start(ctx, storage.ProbeRunParams{
+		ID: runID, OfferingOperationID: offeringOperationID, AccountID: accountID, ProviderID: providerID,
+		Operation: string(op), Class: class, Allocations: probeEstimateAllocations(op), StartedAt: h.now(),
+	}); err != nil {
+		h.failJob(jobID, "internal", "probe run recording failed")
+		return
+	}
+	runExecution := intelligence.ProbeTerminalFailure
+	defer func() {
+		// Whatever path this function leaves by — success, refusal, or a
+		// recovered panic — the slot is released exactly once.
+		_ = h.probeRuns.Finish(context.WithoutCancel(ctx), runID, runExecution, h.now())
+	}()
+
+	guard, err := intelligence.NewProbeGuard(h.policy, h.reserver, h.probeRuns, inFlightExcluding{runs: h.probeRuns, excludeRun: runID}, cooldown, h.now)
 	if err != nil {
 		h.failJob(jobID, "internal", "probe guard construction failed")
 		return
@@ -434,10 +475,8 @@ func (h *ProbeHandler) runProbe(ctx context.Context, jobID, offeringOperationID,
 	var outcome intelligence.ProbeOutcome
 	var reservationID string
 	var runErr error
-	class := intelligence.ProbeStandard
 
 	if op == models.OperationContextWindow {
-		class = intelligence.ProbeExpensive
 		cp, cpErr := intelligence.NewContextProbe(h.transport, guard, nil, h.now)
 		if cpErr != nil {
 			h.failJob(jobID, "internal", "context probe construction failed")
@@ -460,18 +499,13 @@ func (h *ProbeHandler) runProbe(ctx context.Context, jobID, offeringOperationID,
 		return
 	}
 
-	// A real attempt reached (or was attempted against) the transport:
-	// record it, whatever its outcome.
-	runID := h.newID()
-	if err := h.probeRuns.Start(ctx, storage.ProbeRunParams{
-		ID: runID, OfferingOperationID: offeringOperationID, AccountID: accountID, ProviderID: providerID,
-		Operation: string(op), Class: class, ReservationID: reservationID,
-		Allocations: probeEstimateAllocations(op), StartedAt: h.now(),
-	}); err != nil {
-		h.failJob(jobID, "internal", "probe run recording failed")
-		return
+	// The attempt reached the transport and produced an outcome: stamp the
+	// reservation it obtained onto the already-open run row, and let the
+	// deferred Finish close it with this outcome's execution.
+	runExecution = outcome.Execution
+	if reservationID != "" {
+		_ = h.probeRuns.AttachReservation(ctx, runID, reservationID)
 	}
-	_ = h.probeRuns.Finish(ctx, runID, outcome.Execution, h.now())
 
 	if _, err := h.driver.RecordAttempt(ctx, offeringOperationID, outcome, attempts); err != nil {
 		h.failJob(jobID, "probe_failed", "certification transition failed")

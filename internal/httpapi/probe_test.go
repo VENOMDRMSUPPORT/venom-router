@@ -36,6 +36,10 @@ type fakeProbeTransport struct {
 	result    intelligence.ProbeResult
 	err       error
 	calls     int
+	// onProbe, when set, runs INSIDE Probe — i.e. at the one instant a
+	// probe is genuinely in flight — so a test can interrogate live state
+	// that only holds for the duration of the transport call.
+	onProbe func()
 }
 
 func (f *fakeProbeTransport) Available(_ string) bool {
@@ -46,9 +50,14 @@ func (f *fakeProbeTransport) Available(_ string) bool {
 
 func (f *fakeProbeTransport) Probe(_ context.Context, _ intelligence.ProbeRequest) (intelligence.ProbeResult, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
+	hook := f.onProbe
 	f.calls++
-	return f.result, f.err
+	result, err := f.result, f.err
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return result, err
 }
 
 func (f *fakeProbeTransport) callCount() int {
@@ -316,6 +325,90 @@ func TestProbe_NoCredentialIsAPrecondition(t *testing.T) {
 }
 
 // --- TestProbe_Returns202WithJobAndStatusURL ---
+
+// TestProbe_InFlightSlotIsHeldAcrossTheTransportCall pins the ONE thing
+// that makes 04 §2's "max 1 in-flight probe per provider" cap real: the
+// probe_runs row must exist, unfinished, WHILE the transport call is in
+// progress. A row written only after the probe returns would leave
+// InFlightProbes reading zero for the entire duration of every probe, so
+// two concurrent probes to one provider would both be admitted and the
+// cap would bound nothing at all. The fake transport interrogates the
+// live repository from inside Probe(), which is the only moment that
+// question can be asked honestly.
+func TestProbe_InFlightSlotIsHeldAcrossTheTransportCall(t *testing.T) {
+	f := newProbeFixture(t, probeFixtureOpts{TransportAvailable: true})
+	f.transport.result = intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}
+
+	var seenInFlight int
+	var seenErr error
+	f.transport.onProbe = func() {
+		seenInFlight, seenErr = f.probeRuns.InFlightProbes(context.Background(), f.providerID)
+	}
+
+	mux := newTestProbeMux(f.handler)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, probeRequest(http.MethodPost, "/api/control/v1/offerings/"+f.opID+"/probe", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %q", rec.Code, rec.Body.String())
+	}
+	data := decodeProbeResponse(t, rec.Body.Bytes())
+	row := waitForJobTerminal(t, f.jobs, data.JobID, 2*time.Second)
+	if row.Status != storage.JobCompleted {
+		t.Fatalf("job Status = %q, want completed (error = %+v)", row.Status, row.Error)
+	}
+
+	if seenErr != nil {
+		t.Fatalf("InFlightProbes from inside the transport call: %v", seenErr)
+	}
+	if seenInFlight != 1 {
+		t.Fatalf("in-flight probes DURING the transport call = %d, want 1 — the run row must be open across the call or the per-provider cap bounds nothing", seenInFlight)
+	}
+
+	// Positive control on the other side: once the probe is done the slot
+	// is released, so a later probe is never blocked by a ghost row.
+	after, err := f.probeRuns.InFlightProbes(context.Background(), f.providerID)
+	if err != nil {
+		t.Fatalf("InFlightProbes after: %v", err)
+	}
+	if after != 0 {
+		t.Fatalf("in-flight probes after completion = %d, want 0", after)
+	}
+}
+
+// TestProbe_ConcurrentProbeOnTheSameProviderIsRefused drives the composed
+// path with another provider-scoped run already open: gate 5 must refuse
+// this one with probe_concurrency, and the transport must never be called.
+func TestProbe_ConcurrentProbeOnTheSameProviderIsRefused(t *testing.T) {
+	f := newProbeFixture(t, probeFixtureOpts{TransportAvailable: true})
+	f.transport.result = intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}
+
+	// An unfinished run for the SAME provider, as a crashed or concurrent
+	// process would leave behind.
+	if err := f.probeRuns.Start(context.Background(), storage.ProbeRunParams{
+		ID: "other-run", OfferingOperationID: f.opID, AccountID: f.accountID, ProviderID: f.providerID,
+		Operation: "tools", Class: intelligence.ProbeStandard,
+		Allocations: []quota.Allocation{{Unit: quota.UnitRequests, Cost: 1, Source: quota.EstimateSourceFromRequest}},
+		StartedAt:   f.clockNow,
+	}); err != nil {
+		t.Fatalf("seed in-flight run: %v", err)
+	}
+
+	mux := newTestProbeMux(f.handler)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, probeRequest(http.MethodPost, "/api/control/v1/offerings/"+f.opID+"/probe", nil))
+	data := decodeProbeResponse(t, rec.Body.Bytes())
+	row := waitForJobTerminal(t, f.jobs, data.JobID, 2*time.Second)
+
+	if row.Status != storage.JobFailed {
+		t.Fatalf("job Status = %q, want failed", row.Status)
+	}
+	if row.Error == nil || row.Error.Code != "probe_concurrency" {
+		t.Fatalf("job error = %+v, want probe_concurrency", row.Error)
+	}
+	if f.transport.callCount() != 0 {
+		t.Fatalf("transport called %d times, want 0 — a concurrency refusal must never reach the provider", f.transport.callCount())
+	}
+}
 
 func TestProbe_Returns202WithJobAndStatusURL(t *testing.T) {
 	f := newProbeFixture(t, probeFixtureOpts{TransportAvailable: true})
