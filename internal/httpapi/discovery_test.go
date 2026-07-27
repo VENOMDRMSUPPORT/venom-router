@@ -514,6 +514,57 @@ func TestCertification_ReadsOfferingOperation(t *testing.T) {
 	}
 }
 
+// TestCertificationRead_ReviewReasonsAreComputedNotFabricated proves
+// review_reasons reports EXACTLY intelligence.AdmissionCapabilityNotCertified
+// for a non-routable row, an empty (never null) array for a routable
+// row, and never any of the OTHER admission reasons (funding/health/
+// quota/cooldown) this read has no basis to assert (P3c-CAPI-001
+// GOVERNOR DECISION).
+func TestCertificationRead_ReviewReasonsAreComputedNotFabricated(t *testing.T) {
+	f := newDiscoveryFixture(t, nil, discoveryFixtureOpts{WithDiscovery: true, WithCredential: true})
+	mux := newTestDiscoveryMux(f.handler)
+
+	seedModelForCert(t, f.db, "cert-model-reasons")
+	seedOfferingForCert(t, f.db, f.accountID, f.providerID, "cert-model-reasons", "cert-model-reasons")
+	seedOfferingOperationForCert(t, f.db, "op-reasons-routable", f.accountID, f.providerID, "cert-model-reasons", "chat", "certified", "supported", 3, "")
+	seedOfferingOperationForCert(t, f.db, "op-reasons-blocked", f.accountID, f.providerID, "cert-model-reasons", "vision", "discovered", "unknown", 1, "")
+
+	readReasons := func(id string) []string {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, discoveryRequest(http.MethodGet, "/api/control/v1/offerings/"+id+"/certification"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+		}
+		var env struct {
+			Data certificationJSON `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+			t.Fatalf("decode: %v; body = %q", err, rec.Body.String())
+		}
+		if env.Data.ReviewReasons == nil {
+			t.Fatalf("review_reasons for %q = nil, want a non-nil (possibly empty) slice", id)
+		}
+		return env.Data.ReviewReasons
+	}
+
+	routable := readReasons("op-reasons-routable")
+	if len(routable) != 0 {
+		t.Fatalf("review_reasons for a routable row = %v, want []", routable)
+	}
+
+	blocked := readReasons("op-reasons-blocked")
+	if len(blocked) != 1 || blocked[0] != string(intelligence.AdmissionCapabilityNotCertified) {
+		t.Fatalf("review_reasons for a non-routable row = %v, want exactly [%q]", blocked, intelligence.AdmissionCapabilityNotCertified)
+	}
+	for _, forbidden := range []string{"funding_unknown", "no_healthy_account", "quota_exhausted", "quota_insufficient", "cooling_down"} {
+		for _, got := range blocked {
+			if got == forbidden {
+				t.Fatalf("review_reasons contains fabricated reason %q — this read has no basis to assert it", forbidden)
+			}
+		}
+	}
+}
+
 func seedModelForCert(t *testing.T, db *storage.DB, modelID string) {
 	t.Helper()
 	if _, err := db.Conn().Exec(

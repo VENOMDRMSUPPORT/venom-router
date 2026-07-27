@@ -48,6 +48,15 @@ type DiscoveryHandler struct {
 	idem        *idempotencyStore
 	newID       func() string
 	now         func() time.Time
+
+	// probeRuns is P3c-CAPI-001's ADDITIVE dependency for the
+	// certification read's probe-execution dimension — nil unless
+	// WithProbeRuns is called. Adding it as a constructor parameter would
+	// break every existing NewDiscoveryHandler call site across this
+	// package's test files (none of which is in this batch's touchable
+	// list), so it is wired via the WithProbeRuns method below instead;
+	// every pre-existing caller/test is completely unaffected.
+	probeRuns *storage.ProbeRunRepo
 }
 
 // NewDiscoveryHandler builds the handler over every repo/service it needs.
@@ -87,6 +96,16 @@ func NewDiscoveryHandler(
 		newID:       newID,
 		now:         now,
 	}
+}
+
+// WithProbeRuns returns a shallow copy of h with probeRuns wired in, so
+// ServeCertification can additionally report the probe-execution
+// dimension (P3c-CAPI-001) — see the field's own doc comment for why
+// this is a copy-returning method rather than a constructor parameter.
+func (h *DiscoveryHandler) WithProbeRuns(probeRuns *storage.ProbeRunRepo) *DiscoveryHandler {
+	clone := *h
+	clone.probeRuns = probeRuns
+	return &clone
 }
 
 // activeCredentialIDFor returns the id of accountID's one active
@@ -276,6 +295,22 @@ type certificationJSON struct {
 	CertifiedAt           *string `json:"certified_at"`
 	EvidenceRef           string  `json:"evidence_ref,omitempty"`
 	CertifiedAndSupported bool    `json:"certified_and_supported"`
+	// ProbeExecution (P3c-CAPI-001, 04 §2's "probe execution" layer,
+	// deliberately reported as a dimension SEPARATE from State/
+	// CapabilityTruth above) is nil when unknown — no probe has ever run
+	// for this offering-operation, or this handler was built without
+	// WithProbeRuns (every pre-existing test/call site).
+	ProbeExecution *string `json:"probe_execution,omitempty"`
+	// ReviewReasons (P3c-CAPI-001 GOVERNOR DECISION) reports ONLY the
+	// reasons this read surface actually computes from the inputs it
+	// owns (certification state + capability truth) — today that is
+	// capability_not_certified, and NOTHING else. Funding, health, quota,
+	// and cooldown reasons need inputs this endpoint has no access to;
+	// fabricating them here would be dishonest. This array grows once a
+	// later phase (P4) supplies those inputs to this read. Always
+	// present (never omitted, never null) — an empty array for a
+	// routable row, never a missing key.
+	ReviewReasons []string `json:"review_reasons"`
 }
 
 // ServeCertification implements GET /api/control/v1/offerings/{id}/certification
@@ -317,10 +352,43 @@ func (h *DiscoveryHandler) ServeCertification(w http.ResponseWriter, r *http.Req
 		Version:               op.CertificationVersion,
 		EvidenceRef:           op.EvidenceRef,
 		CertifiedAndSupported: models.Routable(state, truth),
+		ReviewReasons:         certificationReviewReasons(state, truth),
 	}
 	if op.CertifiedAt != nil {
 		s := op.CertifiedAt.Format(time.RFC3339)
 		resp.CertifiedAt = &s
 	}
+	if h.probeRuns != nil {
+		if execution, ok, err := h.probeRuns.LatestExecution(r.Context(), op.ID); err == nil && ok {
+			e := string(execution)
+			resp.ProbeExecution = &e
+		}
+	}
 	writeData(w, http.StatusOK, resp)
+}
+
+// certificationReviewReasons computes GET .../certification's
+// review_reasons array (P3c-CAPI-001 GOVERNOR DECISION): every
+// non-certification admission gate is fed as passing, so
+// intelligence.Admit's conjunction can only ever surface the ONE reason
+// this endpoint actually owns the inputs for —
+// intelligence.AdmissionCapabilityNotCertified — never funding_unknown,
+// no_healthy_account, quota_exhausted, quota_insufficient, or
+// cooling_down, none of which this read has any basis to assert. Always
+// returns a non-nil slice (possibly empty), so the JSON field is never
+// null.
+func certificationReviewReasons(state models.CertificationState, truth models.CapabilityTruth) []string {
+	verdict := intelligence.Admit(intelligence.AdmissionInput{
+		State:            state,
+		Truth:            truth,
+		IdentityResolved: true,
+		ContextVerified:  true,
+		FundingKnown:     true,
+		HealthyAccount:   true,
+	})
+	out := make([]string, 0, len(verdict.Reasons))
+	for _, reason := range verdict.Reasons {
+		out = append(out, string(reason))
+	}
+	return out
 }

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/application"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
@@ -210,7 +211,41 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	jobRepo := storage.NewJobRepo(db)
 	discoveryHandler := NewDiscoveryHandler(accountRepo, credentialRepo, catalogRepo, jobRepo, discoveryRepo, reg, credentialService, audit, idem, newOAuthTransactionID, nil)
 	mux.Handle("/api/control/v1/accounts/{id}/discover", gated(discoveryHandler.ServeDiscover))
-	mux.Handle("/api/control/v1/offerings/{id}/certification", gated(discoveryHandler.ServeCertification))
+
+	// Probe (P3c-DB-EXTRA/CAPI-001, 09 §3.8): POST /offerings/{id}/probe,
+	// async 202 + the canonical shared job surface, exactly like
+	// discovery/quota-refresh above. certRepo/probeRunRepo are shared with
+	// the certification-read route (DiscoveryHandler.WithProbeRuns)
+	// immediately below, rather than each building its own.
+	//
+	// DISCLOSED, HONEST LIMITATION: the production transport is
+	// probeTransportAdapter (probeadapters.go) — a stub that reports every
+	// provider unavailable, so every request here is refused with 409
+	// probe_unsupported before any job is created. internal/execution's
+	// frozen NormalizedRequest/NormalizedResponse seam cannot express a
+	// probe request or classify a probe response yet (no max_tokens field,
+	// no HTTP-status/provider-code passthrough, no witness classification)
+	// — reshaping that seam is out of this batch's scope. The full
+	// admission -> transport -> certification-driver pipeline below is
+	// real and gate-tested; only the transport call itself is stubbed.
+	certRepo := storage.NewCertificationRepo(db, nil)
+	probeRunRepo := storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown)
+	certAuditor := newCertificationAuditorAdapter(audit)
+	certDriver, _ := intelligence.NewCertificationDriver(certRepo, certAuditor, intelligence.DefaultProbeRetryBudget, nil)
+	probeReserver := newProbeReserverAdapter(storage.NewQuotaReservationRepo(db, nil))
+	probeHandler := NewProbeHandler(
+		accountRepo, credentialRepo, catalogRepo, jobRepo, certRepo, probeRunRepo,
+		probeReserver, newProbeTransportAdapter(), certDriver, intelligence.DefaultProbeSafetyPolicy(),
+		audit, idem, newOAuthTransactionID, nil,
+	)
+	mux.Handle("/api/control/v1/offerings/{id}/probe", gated(probeHandler.ServeProbe))
+
+	// GET /offerings/{id}/certification additionally reports the
+	// probe-execution dimension once probeRunRepo is wired in (see
+	// DiscoveryHandler.WithProbeRuns's own doc comment for why this is a
+	// copy-returning method rather than a NewDiscoveryHandler parameter).
+	discoveryHandlerWithProbes := discoveryHandler.WithProbeRuns(probeRunRepo)
+	mux.Handle("/api/control/v1/offerings/{id}/certification", gated(discoveryHandlerWithProbes.ServeCertification))
 
 	// Quota refresh (P3b-CAPI-001, 09 §2 "Refresh quota snapshot"): POST
 	// /accounts/{id}/quota, async (202 + the canonical shared job

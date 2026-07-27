@@ -29,18 +29,23 @@ const JobKindReconciliation JobKind = "reconciliation"
 // sweep that ingests provider-evidence quota windows.
 const JobKindQuotaSync JobKind = "quota_sync"
 
+// JobKindProbe is the P3c-CAPI-001/JOBS-001 background job kind: a
+// capability/context probe attempt (09 §3.8/§3.12's documented kind
+// vocabulary: discovery | probe | benchmark | backup | restore).
+const JobKindProbe JobKind = "probe"
+
 // ErrUnknownJobKind is returned by ParseJobKind for any value outside the
 // registered vocabulary — fail closed, never silently accept an
 // unrecognized kind.
 var ErrUnknownJobKind = errors.New("storage: unrecognized job kind")
 
 // ParseJobKind fails closed on any value outside the exact registered
-// vocabulary — no case folding, no trimming. "discovery", "reconciliation",
-// and "quota_sync" are registered; probe/benchmark/backup/restore are
-// later units' concern.
+// vocabulary — no case folding, no trimming. "discovery",
+// "reconciliation", "quota_sync", and "probe" are registered;
+// benchmark/backup/restore are later units' concern.
 func ParseJobKind(s string) (JobKind, error) {
 	switch JobKind(s) {
-	case JobKindDiscovery, JobKindReconciliation, JobKindQuotaSync:
+	case JobKindDiscovery, JobKindReconciliation, JobKindQuotaSync, JobKindProbe:
 		return JobKind(s), nil
 	default:
 		return "", fmt.Errorf("%w: %q", ErrUnknownJobKind, s)

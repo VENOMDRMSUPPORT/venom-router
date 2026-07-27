@@ -215,6 +215,45 @@ func (r *ProbeRunRepo) ProbeCooldownUntil(ctx context.Context, offeringOperation
 	return &until, nil
 }
 
+// LatestExecution returns the most recent probe_runs row's execution
+// value for offeringOperationID (04 §2's "probe execution" dimension,
+// surfaced by P3c-CAPI-001's certification read) — ok is false when no
+// probe has ever run for this offering-operation.
+func (r *ProbeRunRepo) LatestExecution(ctx context.Context, offeringOperationID string) (intelligence.ProbeExecution, bool, error) {
+	var execution string
+	err := r.db.Conn().QueryRowContext(ctx,
+		`SELECT execution FROM probe_runs WHERE offering_operation_id = ? ORDER BY started_at DESC LIMIT 1`,
+		offeringOperationID,
+	).Scan(&execution)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("storage: latest probe execution for %q: %w", offeringOperationID, err)
+	}
+	out, err := intelligence.ParseProbeExecution(execution)
+	if err != nil {
+		return "", false, fmt.Errorf("storage: latest probe execution for %q: %w", offeringOperationID, err)
+	}
+	return out, true, nil
+}
+
+// CountAttempts returns how many probe_runs rows already exist for
+// offeringOperationID — the basis P3c-CAPI-001's handler uses to derive
+// intelligence.CertificationDriver.RecordAttempt's `attempts` parameter
+// (that attempt's own ordinal is this count plus one, computed by the
+// caller BEFORE calling Start for the current attempt).
+func (r *ProbeRunRepo) CountAttempts(ctx context.Context, offeringOperationID string) (int, error) {
+	var count int
+	if err := r.db.Conn().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM probe_runs WHERE offering_operation_id = ?`,
+		offeringOperationID,
+	).Scan(&count); err != nil {
+		return 0, fmt.Errorf("storage: count probe attempts for %q: %w", offeringOperationID, err)
+	}
+	return count, nil
+}
+
 // intelligenceOperationContextWindow mirrors models.OperationContextWindow's
 // wire value ("context_window") without importing internal/models into
 // this file's query-building path just for one string constant that this

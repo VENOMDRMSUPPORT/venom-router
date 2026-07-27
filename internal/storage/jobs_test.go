@@ -175,6 +175,20 @@ func TestJobKind_ParsesReconciliationAndQuotaSync(t *testing.T) {
 	}
 }
 
+// TestParseJobKind_ProbeRoundTripsAndUnknownStillFails proves
+// P3c-CAPI-001/JOBS-001 registered exactly "probe" alongside the existing
+// three kinds, and that an unregistered kind still fails closed.
+func TestParseJobKind_ProbeRoundTripsAndUnknownStillFails(t *testing.T) {
+	if got, err := ParseJobKind("probe"); err != nil || got != JobKindProbe {
+		t.Fatalf("ParseJobKind(probe) = (%q, %v), want (probe, nil)", got, err)
+	}
+	for _, bad := range []string{"Probe", "probes", "benchmark", "backup", "restore", ""} {
+		if _, err := ParseJobKind(bad); err == nil {
+			t.Fatalf("ParseJobKind(%q) succeeded, want ErrUnknownJobKind", bad)
+		}
+	}
+}
+
 // TestJobs_DiscoveryLifecycle proves a discovery-kind job progresses
 // pending -> running (started_at stamped) -> completed (retention_until
 // stamped), with kind == "discovery" preserved throughout.
