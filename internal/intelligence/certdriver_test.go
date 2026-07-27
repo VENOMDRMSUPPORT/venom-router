@@ -114,193 +114,232 @@ func (a *orderedAuditor) CertificationTransitioned(ctx context.Context, rec Cert
 	return a.fakeAuditor.CertificationTransitioned(ctx, rec)
 }
 
+// newLegalTransitionDriver builds a CertificationDriver seeded with cert,
+// for TestCertificationDriver_EachLegalTransition's per-edge subtests.
+func newLegalTransitionDriver(t *testing.T, now time.Time, cert models.Certification) (*CertificationDriver, *fakeCertStore, *fakeAuditor) {
+	t.Helper()
+	store := newFakeCertStore(cert)
+	auditor := &fakeAuditor{}
+	d, err := NewCertificationDriver(store, auditor, 3, clockAt(now))
+	if err != nil {
+		t.Fatalf("NewCertificationDriver error = %v", err)
+	}
+	return d, store, auditor
+}
+
+// TestCertificationDriver_EachLegalTransition covers all ten 04 §5 edges,
+// one per subtest. Each edge's body is its own top-level function (rather
+// than inlined here) purely to keep this test's own cyclomatic
+// complexity within golangci-lint's gocyclo threshold — the edges remain
+// grouped under one test name and run as its subtests.
 func TestCertificationDriver_EachLegalTransition(t *testing.T) {
 	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
 
-	newDriver := func(cert models.Certification) (*CertificationDriver, *fakeCertStore, *fakeAuditor) {
-		store := newFakeCertStore(cert)
-		auditor := &fakeAuditor{}
-		d, err := NewCertificationDriver(store, auditor, 3, clockAt(now))
-		if err != nil {
-			t.Fatalf("NewCertificationDriver error = %v", err)
-		}
-		return d, store, auditor
+	t.Run("edge 1: discovered -> observed (out of this driver's scope, driven directly)", func(t *testing.T) {
+		testEdge1DiscoveredToObserved(t, now)
+	})
+	t.Run("edge 2: observed -> probing via StartProbe", func(t *testing.T) {
+		testEdge2ObservedToProbing(t, now)
+	})
+	t.Run("edge 3: probing -> probing via RecordAttempt (retryable)", func(t *testing.T) {
+		testEdge3ProbingToProbing(t, now)
+	})
+	t.Run("edge 4: probing -> certified via RecordAttempt (definitive)", func(t *testing.T) {
+		testEdge4ProbingToCertified(t, now)
+	})
+	t.Run("edge 5: probing -> suspended via RecordAttempt (terminal failure)", func(t *testing.T) {
+		testEdge5ProbingToSuspended(t, now)
+	})
+	t.Run("edge 6: certified -> suspended via Suspend", func(t *testing.T) {
+		testEdge6CertifiedToSuspended(t, now)
+	})
+	t.Run("edge 7: suspended -> certified via Resume", func(t *testing.T) {
+		testEdge7SuspendedToCertified(t, now)
+	})
+	t.Run("edge 8: suspended -> probing via ReProbe", func(t *testing.T) {
+		testEdge8SuspendedToProbing(t, now)
+	})
+	t.Run("edge 9: certified -> expired via Expire", func(t *testing.T) {
+		testEdge9CertifiedToExpired(t, now)
+	})
+	t.Run("edge 10: expired -> probing via ReProbe", func(t *testing.T) {
+		testEdge10ExpiredToProbing(t, now)
+	})
+}
+
+func testEdge1DiscoveredToObserved(t *testing.T, now time.Time) {
+	c := models.Certification{OfferingOperationID: "oo-1", State: models.CertDiscovered, Truth: models.TruthUnknown}
+	next, err := c.Transition(models.CertObserved, models.TruthUnknown, models.RetryPolicy{}, now)
+	if err != nil {
+		t.Fatalf("Transition error = %v", err)
+	}
+	if next.State != models.CertObserved {
+		t.Fatalf("state = %q, want observed", next.State)
+	}
+}
+
+func testEdge2ObservedToProbing(t *testing.T, now time.Time) {
+	log := &callLog{}
+	base := newFakeCertStore(models.Certification{OfferingOperationID: "oo-2", State: models.CertObserved})
+	store := &orderedStore{fakeCertStore: base, log: log}
+	auditor := &orderedAuditor{fakeAuditor: &fakeAuditor{}, log: log}
+	d, err := NewCertificationDriver(store, auditor, 3, clockAt(now))
+	if err != nil {
+		t.Fatalf("NewCertificationDriver error = %v", err)
 	}
 
-	t.Run("edge 1: discovered -> observed (out of this driver's scope, driven directly)", func(t *testing.T) {
-		c := models.Certification{OfferingOperationID: "oo-1", State: models.CertDiscovered, Truth: models.TruthUnknown}
-		next, err := c.Transition(models.CertObserved, models.TruthUnknown, models.RetryPolicy{}, now)
-		if err != nil {
-			t.Fatalf("Transition error = %v", err)
-		}
-		if next.State != models.CertObserved {
-			t.Fatalf("state = %q, want observed", next.State)
-		}
-	})
+	got, err := d.StartProbe(context.Background(), "oo-2")
+	if err != nil {
+		t.Fatalf("StartProbe error = %v", err)
+	}
+	if got.State != models.CertProbing {
+		t.Errorf("state = %q, want probing", got.State)
+	}
+	if len(base.casCalls) != 1 || base.casCalls[0].previous.State != models.CertObserved {
+		t.Errorf("CAS previous = %+v, want State=observed", base.casCalls[0].previous)
+	}
+	if len(auditor.records) != 1 || auditor.records[0].Reason != AuditProbeStarted {
+		t.Errorf("audit = %+v, want reason probe_started", auditor.records)
+	}
+	if !reflect.DeepEqual(log.events, []string{"cas", "audit"}) {
+		t.Errorf("call order = %v, want [cas audit] (CAS must commit before the audit call)", log.events)
+	}
+}
 
-	t.Run("edge 2: observed -> probing via StartProbe", func(t *testing.T) {
-		log := &callLog{}
-		base := newFakeCertStore(models.Certification{OfferingOperationID: "oo-2", State: models.CertObserved})
-		store := &orderedStore{fakeCertStore: base, log: log}
-		auditor := &orderedAuditor{fakeAuditor: &fakeAuditor{}, log: log}
-		d, err := NewCertificationDriver(store, auditor, 3, clockAt(now))
-		if err != nil {
-			t.Fatalf("NewCertificationDriver error = %v", err)
-		}
+func testEdge3ProbingToProbing(t *testing.T, now time.Time) {
+	d, store, auditor := newLegalTransitionDriver(t, now, models.Certification{OfferingOperationID: "oo-3", State: models.CertProbing, Truth: models.TruthUnknown})
+	outcome, err := ClassifyProbeSignal(SignalTimeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.RecordAttempt(context.Background(), "oo-3", outcome, 1)
+	if err != nil {
+		t.Fatalf("RecordAttempt error = %v", err)
+	}
+	if got.State != models.CertProbing {
+		t.Errorf("state = %q, want probing", got.State)
+	}
+	if store.casCalls[len(store.casCalls)-1].previous.State != models.CertProbing {
+		t.Errorf("CAS previous state = %q, want probing", store.casCalls[len(store.casCalls)-1].previous.State)
+	}
+	if auditor.records[len(auditor.records)-1].Reason != AuditProbeRetry {
+		t.Errorf("audit reason = %q, want probe_retry", auditor.records[len(auditor.records)-1].Reason)
+	}
+}
 
-		got, err := d.StartProbe(context.Background(), "oo-2")
-		if err != nil {
-			t.Fatalf("StartProbe error = %v", err)
-		}
-		if got.State != models.CertProbing {
-			t.Errorf("state = %q, want probing", got.State)
-		}
-		if len(base.casCalls) != 1 || base.casCalls[0].previous.State != models.CertObserved {
-			t.Errorf("CAS previous = %+v, want State=observed", base.casCalls[0].previous)
-		}
-		if len(auditor.records) != 1 || auditor.records[0].Reason != AuditProbeStarted {
-			t.Errorf("audit = %+v, want reason probe_started", auditor.records)
-		}
-		if !reflect.DeepEqual(log.events, []string{"cas", "audit"}) {
-			t.Errorf("call order = %v, want [cas audit] (CAS must commit before the audit call)", log.events)
-		}
-	})
+func testEdge4ProbingToCertified(t *testing.T, now time.Time) {
+	d, store, auditor := newLegalTransitionDriver(t, now, models.Certification{OfferingOperationID: "oo-4", State: models.CertProbing, Truth: models.TruthUnknown})
+	outcome, err := ClassifyProbeSignal(SignalCapabilityResponse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.RecordAttempt(context.Background(), "oo-4", outcome, 1)
+	if err != nil {
+		t.Fatalf("RecordAttempt error = %v", err)
+	}
+	if got.State != models.CertCertified || got.Truth != models.TruthSupported {
+		t.Errorf("got state=%q truth=%q, want certified/supported", got.State, got.Truth)
+	}
+	if store.casCalls[len(store.casCalls)-1].previous.State != models.CertProbing {
+		t.Errorf("CAS previous state = %q, want probing", store.casCalls[len(store.casCalls)-1].previous.State)
+	}
+	if auditor.records[len(auditor.records)-1].Reason != AuditVerdictRecorded {
+		t.Errorf("audit reason = %q, want verdict_recorded", auditor.records[len(auditor.records)-1].Reason)
+	}
+}
 
-	t.Run("edge 3: probing -> probing via RecordAttempt (retryable)", func(t *testing.T) {
-		d, store, auditor := newDriver(models.Certification{OfferingOperationID: "oo-3", State: models.CertProbing, Truth: models.TruthUnknown})
-		outcome, err := ClassifyProbeSignal(SignalTimeout)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := d.RecordAttempt(context.Background(), "oo-3", outcome, 1)
-		if err != nil {
-			t.Fatalf("RecordAttempt error = %v", err)
-		}
-		if got.State != models.CertProbing {
-			t.Errorf("state = %q, want probing", got.State)
-		}
-		if store.casCalls[len(store.casCalls)-1].previous.State != models.CertProbing {
-			t.Errorf("CAS previous state = %q, want probing", store.casCalls[len(store.casCalls)-1].previous.State)
-		}
-		if auditor.records[len(auditor.records)-1].Reason != AuditProbeRetry {
-			t.Errorf("audit reason = %q, want probe_retry", auditor.records[len(auditor.records)-1].Reason)
-		}
-	})
+func testEdge5ProbingToSuspended(t *testing.T, now time.Time) {
+	d, _, auditor := newLegalTransitionDriver(t, now, models.Certification{OfferingOperationID: "oo-5", State: models.CertProbing, Truth: models.TruthUnknown})
+	outcome, err := ClassifyProbeSignal(SignalUnauthorized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.RecordAttempt(context.Background(), "oo-5", outcome, 1)
+	if err != nil {
+		t.Fatalf("RecordAttempt error = %v", err)
+	}
+	if got.State != models.CertSuspended {
+		t.Errorf("state = %q, want suspended", got.State)
+	}
+	last := auditor.records[len(auditor.records)-1]
+	if last.Reason != AuditSuspended || last.Suspension != SuspensionCredentialBlocked {
+		t.Errorf("audit = %+v, want suspended/credential_blocked", last)
+	}
+}
 
-	t.Run("edge 4: probing -> certified via RecordAttempt (definitive)", func(t *testing.T) {
-		d, store, auditor := newDriver(models.Certification{OfferingOperationID: "oo-4", State: models.CertProbing, Truth: models.TruthUnknown})
-		outcome, err := ClassifyProbeSignal(SignalCapabilityResponse)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := d.RecordAttempt(context.Background(), "oo-4", outcome, 1)
-		if err != nil {
-			t.Fatalf("RecordAttempt error = %v", err)
-		}
-		if got.State != models.CertCertified || got.Truth != models.TruthSupported {
-			t.Errorf("got state=%q truth=%q, want certified/supported", got.State, got.Truth)
-		}
-		if store.casCalls[len(store.casCalls)-1].previous.State != models.CertProbing {
-			t.Errorf("CAS previous state = %q, want probing", store.casCalls[len(store.casCalls)-1].previous.State)
-		}
-		if auditor.records[len(auditor.records)-1].Reason != AuditVerdictRecorded {
-			t.Errorf("audit reason = %q, want verdict_recorded", auditor.records[len(auditor.records)-1].Reason)
-		}
-	})
+func testEdge6CertifiedToSuspended(t *testing.T, now time.Time) {
+	d, _, auditor := newLegalTransitionDriver(t, now, models.Certification{OfferingOperationID: "oo-6", State: models.CertCertified, Truth: models.TruthSupported})
+	got, err := d.Suspend(context.Background(), "oo-6", SuspensionQuotaExhausted)
+	if err != nil {
+		t.Fatalf("Suspend error = %v", err)
+	}
+	if got.State != models.CertSuspended {
+		t.Errorf("state = %q, want suspended", got.State)
+	}
+	last := auditor.records[len(auditor.records)-1]
+	if last.Reason != AuditSuspended || last.Suspension != SuspensionQuotaExhausted {
+		t.Errorf("audit = %+v, want suspended/quota_exhausted", last)
+	}
+}
 
-	t.Run("edge 5: probing -> suspended via RecordAttempt (terminal failure)", func(t *testing.T) {
-		d, _, auditor := newDriver(models.Certification{OfferingOperationID: "oo-5", State: models.CertProbing, Truth: models.TruthUnknown})
-		outcome, err := ClassifyProbeSignal(SignalUnauthorized)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := d.RecordAttempt(context.Background(), "oo-5", outcome, 1)
-		if err != nil {
-			t.Fatalf("RecordAttempt error = %v", err)
-		}
-		if got.State != models.CertSuspended {
-			t.Errorf("state = %q, want suspended", got.State)
-		}
-		last := auditor.records[len(auditor.records)-1]
-		if last.Reason != AuditSuspended || last.Suspension != SuspensionCredentialBlocked {
-			t.Errorf("audit = %+v, want suspended/credential_blocked", last)
-		}
-	})
+func testEdge7SuspendedToCertified(t *testing.T, now time.Time) {
+	d, _, auditor := newLegalTransitionDriver(t, now, models.Certification{OfferingOperationID: "oo-7", State: models.CertSuspended, Truth: models.TruthSupported})
+	got, err := d.Resume(context.Background(), "oo-7")
+	if err != nil {
+		t.Fatalf("Resume error = %v", err)
+	}
+	if got.State != models.CertCertified || got.Truth != models.TruthSupported {
+		t.Errorf("got = %+v, want certified/supported", got)
+	}
+	if auditor.records[len(auditor.records)-1].Reason != AuditResumed {
+		t.Errorf("audit reason = %q, want resumed", auditor.records[len(auditor.records)-1].Reason)
+	}
+}
 
-	t.Run("edge 6: certified -> suspended via Suspend", func(t *testing.T) {
-		d, _, auditor := newDriver(models.Certification{OfferingOperationID: "oo-6", State: models.CertCertified, Truth: models.TruthSupported})
-		got, err := d.Suspend(context.Background(), "oo-6", SuspensionQuotaExhausted)
-		if err != nil {
-			t.Fatalf("Suspend error = %v", err)
-		}
-		if got.State != models.CertSuspended {
-			t.Errorf("state = %q, want suspended", got.State)
-		}
-		last := auditor.records[len(auditor.records)-1]
-		if last.Reason != AuditSuspended || last.Suspension != SuspensionQuotaExhausted {
-			t.Errorf("audit = %+v, want suspended/quota_exhausted", last)
-		}
-	})
+func testEdge8SuspendedToProbing(t *testing.T, now time.Time) {
+	d, _, auditor := newLegalTransitionDriver(t, now, models.Certification{OfferingOperationID: "oo-8", State: models.CertSuspended, Truth: models.TruthUnsupported})
+	got, err := d.ReProbe(context.Background(), "oo-8")
+	if err != nil {
+		t.Fatalf("ReProbe error = %v", err)
+	}
+	if got.State != models.CertProbing || got.Truth != models.TruthUnknown {
+		t.Errorf("got = %+v, want probing/unknown (truth reset)", got)
+	}
+	if auditor.records[len(auditor.records)-1].Reason != AuditReProbeScheduled {
+		t.Errorf("audit reason = %q, want re_probe_scheduled", auditor.records[len(auditor.records)-1].Reason)
+	}
+}
 
-	t.Run("edge 7: suspended -> certified via Resume", func(t *testing.T) {
-		d, _, auditor := newDriver(models.Certification{OfferingOperationID: "oo-7", State: models.CertSuspended, Truth: models.TruthSupported})
-		got, err := d.Resume(context.Background(), "oo-7")
-		if err != nil {
-			t.Fatalf("Resume error = %v", err)
-		}
-		if got.State != models.CertCertified || got.Truth != models.TruthSupported {
-			t.Errorf("got = %+v, want certified/supported", got)
-		}
-		if auditor.records[len(auditor.records)-1].Reason != AuditResumed {
-			t.Errorf("audit reason = %q, want resumed", auditor.records[len(auditor.records)-1].Reason)
-		}
-	})
+func testEdge9CertifiedToExpired(t *testing.T, now time.Time) {
+	d, _, auditor := newLegalTransitionDriver(t, now, models.Certification{OfferingOperationID: "oo-9", State: models.CertCertified, Truth: models.TruthSupported})
+	got, err := d.Expire(context.Background(), "oo-9")
+	if err != nil {
+		t.Fatalf("Expire error = %v", err)
+	}
+	if got.State != models.CertExpired {
+		t.Errorf("state = %q, want expired", got.State)
+	}
+	if auditor.records[len(auditor.records)-1].Reason != AuditExpired {
+		t.Errorf("audit reason = %q, want expired", auditor.records[len(auditor.records)-1].Reason)
+	}
+}
 
-	t.Run("edge 8: suspended -> probing via ReProbe", func(t *testing.T) {
-		d, _, auditor := newDriver(models.Certification{OfferingOperationID: "oo-8", State: models.CertSuspended, Truth: models.TruthUnsupported})
-		got, err := d.ReProbe(context.Background(), "oo-8")
-		if err != nil {
-			t.Fatalf("ReProbe error = %v", err)
-		}
-		if got.State != models.CertProbing || got.Truth != models.TruthUnknown {
-			t.Errorf("got = %+v, want probing/unknown (truth reset)", got)
-		}
-		if auditor.records[len(auditor.records)-1].Reason != AuditReProbeScheduled {
-			t.Errorf("audit reason = %q, want re_probe_scheduled", auditor.records[len(auditor.records)-1].Reason)
-		}
-	})
-
-	t.Run("edge 9: certified -> expired via Expire", func(t *testing.T) {
-		d, _, auditor := newDriver(models.Certification{OfferingOperationID: "oo-9", State: models.CertCertified, Truth: models.TruthSupported})
-		got, err := d.Expire(context.Background(), "oo-9")
-		if err != nil {
-			t.Fatalf("Expire error = %v", err)
-		}
-		if got.State != models.CertExpired {
-			t.Errorf("state = %q, want expired", got.State)
-		}
-		if auditor.records[len(auditor.records)-1].Reason != AuditExpired {
-			t.Errorf("audit reason = %q, want expired", auditor.records[len(auditor.records)-1].Reason)
-		}
-	})
-
-	t.Run("edge 10: expired -> probing via ReProbe", func(t *testing.T) {
-		// Unlike edge 8 (suspended -> probing), the frozen Transition's
-		// default branch for expired -> probing does NOT reset Truth — the
-		// prior verdict carries forward as stale evidence (04 §5: "a prior
-		// truth is stale evidence, §4"), not wiped to unknown.
-		d, _, auditor := newDriver(models.Certification{OfferingOperationID: "oo-10", State: models.CertExpired, Truth: models.TruthSupported})
-		got, err := d.ReProbe(context.Background(), "oo-10")
-		if err != nil {
-			t.Fatalf("ReProbe error = %v", err)
-		}
-		if got.State != models.CertProbing || got.Truth != models.TruthSupported {
-			t.Errorf("got = %+v, want probing/supported (prior truth carried forward, not reset)", got)
-		}
-		if auditor.records[len(auditor.records)-1].Reason != AuditReProbeScheduled {
-			t.Errorf("audit reason = %q, want re_probe_scheduled", auditor.records[len(auditor.records)-1].Reason)
-		}
-	})
+func testEdge10ExpiredToProbing(t *testing.T, now time.Time) {
+	// Unlike edge 8 (suspended -> probing), the frozen Transition's
+	// default branch for expired -> probing does NOT reset Truth — the
+	// prior verdict carries forward as stale evidence (04 §5: "a prior
+	// truth is stale evidence, §4"), not wiped to unknown.
+	d, _, auditor := newLegalTransitionDriver(t, now, models.Certification{OfferingOperationID: "oo-10", State: models.CertExpired, Truth: models.TruthSupported})
+	got, err := d.ReProbe(context.Background(), "oo-10")
+	if err != nil {
+		t.Fatalf("ReProbe error = %v", err)
+	}
+	if got.State != models.CertProbing || got.Truth != models.TruthSupported {
+		t.Errorf("got = %+v, want probing/supported (prior truth carried forward, not reset)", got)
+	}
+	if auditor.records[len(auditor.records)-1].Reason != AuditReProbeScheduled {
+		t.Errorf("audit reason = %q, want re_probe_scheduled", auditor.records[len(auditor.records)-1].Reason)
+	}
 }
 
 func TestCertificationDriver_RecordAttemptDrivesFromOutcome(t *testing.T) {
