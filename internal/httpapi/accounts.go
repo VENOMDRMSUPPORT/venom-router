@@ -10,6 +10,7 @@ import (
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/application"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/domain"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
@@ -37,6 +38,7 @@ type AccountsHandler struct {
 	accounts     *storage.AccountRepo
 	credentials  *storage.AccountCredentialRepo
 	funding      *storage.FundingEvidenceRepo
+	quotaWindows *storage.QuotaWindowRepo
 	credService  *application.CredentialService
 	audit        *auditEmitter
 	revealLimit  *fixedWindowLimiter
@@ -45,14 +47,16 @@ type AccountsHandler struct {
 }
 
 // NewAccountsHandler builds the handler over the shared account/credential/
-// funding repositories, the credential service (the only decrypt-for-
-// reveal path), the audit emitter, and an injectable clock + funding-id
-// minter. now and newFundingID default to time.Now / a fresh random id
-// when nil, exactly like every other injectable clock in this package.
+// funding/quota-window repositories, the credential service (the only
+// decrypt-for-reveal path), the audit emitter, and an injectable clock +
+// funding-id minter. now and newFundingID default to time.Now / a fresh
+// random id when nil, exactly like every other injectable clock in this
+// package.
 func NewAccountsHandler(
 	accounts *storage.AccountRepo,
 	credentials *storage.AccountCredentialRepo,
 	funding *storage.FundingEvidenceRepo,
+	quotaWindows *storage.QuotaWindowRepo,
 	credService *application.CredentialService,
 	audit *auditEmitter,
 	now func() time.Time,
@@ -68,6 +72,7 @@ func NewAccountsHandler(
 		accounts:     accounts,
 		credentials:  credentials,
 		funding:      funding,
+		quotaWindows: quotaWindows,
 		credService:  credService,
 		audit:        audit,
 		revealLimit:  newFixedWindowLimiter(revealLimiterMaxPerWindow, revealLimiterWindow),
@@ -96,22 +101,81 @@ func fundingEvidenceVersionToken(e domain.FundingEvidence) string {
 // display_status + eligibility. It NEVER carries any credential material
 // — no key, token, ciphertext, nonce, or fingerprint.
 type accountProjectionJSON struct {
-	ID                string              `json:"id"`
-	ProviderID        string              `json:"provider"`
-	ExternalID        string              `json:"external_id"`
-	DisplayName       string              `json:"display_name,omitempty"`
-	AuthType          string              `json:"auth_type"`
-	ConnectionState   string              `json:"connection_state"`
-	HealthState       string              `json:"health_state"`
-	ReauthInProgress  bool                `json:"reauth_in_progress"`
-	Identity          accountIdentityJSON `json:"identity"`
-	Funding           *fundingJSON        `json:"funding"`
-	DisplayStatus     string              `json:"display_status"`
-	Eligibility       eligibilityJSON     `json:"eligibility"`
-	LastHealthCheckAt string              `json:"last_health_check_at,omitempty"`
-	LastHealthError   string              `json:"last_health_error,omitempty"`
-	CreatedAt         string              `json:"created_at"`
-	UpdatedAt         string              `json:"updated_at"`
+	ID               string              `json:"id"`
+	ProviderID       string              `json:"provider"`
+	ExternalID       string              `json:"external_id"`
+	DisplayName      string              `json:"display_name,omitempty"`
+	AuthType         string              `json:"auth_type"`
+	ConnectionState  string              `json:"connection_state"`
+	HealthState      string              `json:"health_state"`
+	ReauthInProgress bool                `json:"reauth_in_progress"`
+	Identity         accountIdentityJSON `json:"identity"`
+	Funding          *fundingJSON        `json:"funding"`
+	DisplayStatus    string              `json:"display_status"`
+	Eligibility      eligibilityJSON     `json:"eligibility"`
+	// Quota is the enabling extra for P3b-UI-001 (docs/11 P3b-UI-001,
+	// docs/05 §4): every quota window tracked for this account, in the
+	// canonical (source, unit, window_type, window_key) order. Always a
+	// (possibly empty) array, never null — an account with no windows
+	// yet is a legitimate, honestly-reported state, not an error.
+	Quota             []quotaWindowJSON `json:"quota"`
+	LastHealthCheckAt string            `json:"last_health_check_at,omitempty"`
+	LastHealthError   string            `json:"last_health_error,omitempty"`
+	CreatedAt         string            `json:"created_at"`
+	UpdatedAt         string            `json:"updated_at"`
+}
+
+// quotaWindowJSON is one quota.Window projected for the wire (P3b-UI-001).
+// Source/State/Freshness are emitted EXACTLY as the internal/quota
+// vocabularies — byte-identical to the frozen Design System's
+// QuotaEvidenceSource/QuotaWindowState/QuotaFreshness unions — so the
+// dashboard passes them straight through without remapping. Used/
+// Remaining/Total/LimitValue/ResetAt are nullable pointers: nil means
+// unknown and is ALWAYS serialized as JSON null, never 0 (02 §3 "nullable
+// numerics mean unknown — never store 0 to mean we don't know").
+type quotaWindowJSON struct {
+	Source     string   `json:"source"`
+	Unit       string   `json:"unit"`
+	WindowType string   `json:"window_type"`
+	WindowKey  string   `json:"window_key"`
+	State      string   `json:"state"`
+	Freshness  string   `json:"freshness"`
+	Used       *float64 `json:"used"`
+	Remaining  *float64 `json:"remaining"`
+	Total      *float64 `json:"total"`
+	LimitValue *float64 `json:"limit_value"`
+	Reserved   float64  `json:"reserved"`
+	ResetAt    *int64   `json:"reset_at"`
+	ObservedAt string   `json:"observed_at"`
+}
+
+// quotaWindowsToJSON projects windows for the wire. State is computed HERE,
+// on the server, via w.State(0, now, quota.DefaultStalenessWindow) — need
+// is 0 because this is a display projection (05 §4's "does this window
+// have room for N units" admission question does not apply to rendering a
+// meter), never an admission decision; the client renders the state it is
+// given and never recomputes it. Always returns a non-nil slice (possibly
+// empty) so the JSON field serializes as [], never null.
+func quotaWindowsToJSON(windows []quota.Window, now time.Time) []quotaWindowJSON {
+	out := make([]quotaWindowJSON, 0, len(windows))
+	for _, w := range windows {
+		out = append(out, quotaWindowJSON{
+			Source:     string(w.Source),
+			Unit:       string(w.Unit),
+			WindowType: w.WindowType,
+			WindowKey:  w.Key,
+			State:      string(w.State(0, now, quota.DefaultStalenessWindow)),
+			Freshness:  string(w.Freshness),
+			Used:       w.Used,
+			Remaining:  w.Remaining,
+			Total:      w.Total,
+			LimitValue: w.LimitValue,
+			Reserved:   w.Reserved,
+			ResetAt:    w.ResetAt,
+			ObservedAt: w.ObservedAt.Format(time.RFC3339),
+		})
+	}
+	return out
 }
 
 type accountIdentityJSON struct {
@@ -152,12 +216,28 @@ func (h *AccountsHandler) resolveCredentialStatus(ctx context.Context, accountID
 }
 
 // projectAccount builds the multi-axis projection for one account, reading
-// its funding and resolving its credential status. includeFundingVersion
-// selects whether the funding row's version token is included (true for
-// the single-account GET, where a client may want to round-trip it through
-// the PUT; the list view omits it for size). cooldownActive is always
-// false this phase — no cooldown table exists until P3b.
+// its funding, its quota windows, and resolving its credential status.
+// includeFundingVersion selects whether the funding row's version token is
+// included (true for the single-account GET, where a client may want to
+// round-trip it through the PUT; the list view omits it for size).
+// cooldownActive is always false this phase — no cooldown table exists
+// until P3b. This single-account path issues its own ListByAccount call
+// (fine here — every caller already operates on exactly one account, unlike
+// ServeList's whole-page loop, which MUST use the batch projectAccounts
+// below instead to avoid the per-row-query-under-an-open-cursor deadlock).
 func (h *AccountsHandler) projectAccount(ctx context.Context, a domain.Account, now time.Time, includeFundingVersion bool) accountProjectionJSON {
+	windows, err := h.quotaWindows.ListByAccount(ctx, a.ID)
+	if err != nil {
+		windows = nil
+	}
+	return h.projectAccountWithWindows(ctx, a, now, includeFundingVersion, windows)
+}
+
+// projectAccountWithWindows is projectAccount's shared body, taking the
+// account's quota windows as an already-fetched parameter so ServeList can
+// supply them from ONE batched ListByAccounts call across the whole page
+// instead of querying per row.
+func (h *AccountsHandler) projectAccountWithWindows(ctx context.Context, a domain.Account, now time.Time, includeFundingVersion bool, windows []quota.Window) accountProjectionJSON {
 	const cooldownActive = false // P3b introduces cooldowns; none exists this phase.
 
 	credStatus := h.resolveCredentialStatus(ctx, a.ID, now)
@@ -177,6 +257,7 @@ func (h *AccountsHandler) projectAccount(ctx context.Context, a domain.Account, 
 		},
 		DisplayStatus: string(domain.DeriveDisplayStatus(a, cooldownActive)),
 		Eligibility:   eligibilityFromDomain(domain.ProjectEligibility(a, credStatus, cooldownActive)),
+		Quota:         quotaWindowsToJSON(windows, now),
 		CreatedAt:     a.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:     a.UpdatedAt.Format(time.RFC3339),
 	}
@@ -224,10 +305,25 @@ func (h *AccountsHandler) ServeList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Batch-load every window for the WHOLE page in one query (constraint:
+	// a per-row query issued while the accounts cursor is still open
+	// deadlocks under SetMaxOpenConns(1)). windowsByAccount's absence of a
+	// key (rather than an error) means "no windows for this account" — see
+	// ListByAccounts's own doc comment.
+	ids := make([]string, len(accounts))
+	for i, a := range accounts {
+		ids[i] = a.ID
+	}
+	windowsByAccount, err := h.quotaWindows.ListByAccounts(ctx, ids)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+
 	now := h.now()
 	items := make([]accountProjectionJSON, 0, len(accounts))
 	for _, a := range accounts {
-		items = append(items, h.projectAccount(ctx, a, now, false))
+		items = append(items, h.projectAccountWithWindows(ctx, a, now, false, windowsByAccount[a.ID]))
 	}
 
 	writeDataMeta(w, http.StatusOK, map[string]any{"accounts": items}, paginationMeta(nextCursor))

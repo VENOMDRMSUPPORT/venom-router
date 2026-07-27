@@ -274,3 +274,211 @@ func TestQuotaWindowRepo_ListByAccount_IsDeterministicAndScoped(t *testing.T) {
 		}
 	}
 }
+
+// rawQuotaWindowSpec is the full column set a test needs to control when
+// seeding a quota_windows row directly (bypassing EnsureLocalSafetyWindows,
+// which only ever writes local_safety rows). Pointer fields are nullable,
+// mirroring quota.Window's own nullable-numeric fields.
+type rawQuotaWindowSpec struct {
+	id         string
+	accountID  string
+	source     string
+	unit       string
+	windowType string
+	windowKey  string
+	used       *float64
+	remaining  *float64
+	total      *float64
+	reserved   float64
+	limitValue *float64
+	resetAt    *int64
+	confidence float64
+	freshness  string
+	observedAt int64
+}
+
+func insertRawQuotaWindow(t *testing.T, db *DB, spec rawQuotaWindowSpec) {
+	t.Helper()
+	confidence := spec.confidence
+	if confidence == 0 {
+		confidence = 1.0
+	}
+	freshness := spec.freshness
+	if freshness == "" {
+		freshness = "fresh"
+	}
+	if _, err := db.Conn().Exec(
+		`INSERT INTO quota_windows
+		    (id, account_id, source, unit, window_type, window_key, duration_seconds,
+		     used, remaining, total, reserved, limit_value, reset_at, version, confidence,
+		     freshness_state, observed_at, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+		spec.id, spec.accountID, spec.source, spec.unit, spec.windowType, spec.windowKey,
+		spec.used, spec.remaining, spec.total, spec.reserved, spec.limitValue, spec.resetAt,
+		confidence, freshness, spec.observedAt, spec.observedAt, spec.observedAt,
+	); err != nil {
+		t.Fatalf("insert raw quota window %s: %v", spec.id, err)
+	}
+}
+
+// TestListByAccounts_BatchesAndScopes proves ONE ListByAccounts call
+// returns every requested account's windows, correctly keyed, with no
+// cross-account leakage: a third account with zero windows is simply
+// absent from the returned map.
+func TestListByAccounts_BatchesAndScopes(t *testing.T) {
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-batch")
+	insertAccount(t, db, "acct-batch-a", "prov-batch")
+	insertAccount(t, db, "acct-batch-b", "prov-batch")
+	insertAccount(t, db, "acct-batch-c", "prov-batch")
+	// acct-batch-other is NEVER passed to ListByAccounts below — its window
+	// exists purely to prove the account filter is real: a mutation that
+	// drops/bypasses the WHERE account_id IN (...) clause (e.g. "OR 1=1")
+	// would leak this window into the result set even though the DB
+	// otherwise contains nothing outside the requested three accounts.
+	insertAccount(t, db, "acct-batch-other", "prov-batch")
+
+	insertRawQuotaWindow(t, db, rawQuotaWindowSpec{
+		id: "w-a-1", accountID: "acct-batch-a", source: "provider_evidence", unit: "requests",
+		windowType: "rolling", windowKey: "provider:daily", reserved: 0, observedAt: 1000,
+	})
+	insertRawQuotaWindow(t, db, rawQuotaWindowSpec{
+		id: "w-b-1", accountID: "acct-batch-b", source: "local_safety", unit: "concurrency",
+		windowType: "concurrency", windowKey: "local:concurrency", reserved: 0, observedAt: 1000,
+	})
+	insertRawQuotaWindow(t, db, rawQuotaWindowSpec{
+		id: "w-other-1", accountID: "acct-batch-other", source: "provider_evidence", unit: "requests",
+		windowType: "rolling", windowKey: "provider:daily", reserved: 0, observedAt: 1000,
+	})
+	// acct-batch-c intentionally has zero windows.
+
+	repo := NewQuotaWindowRepo(db, nil, fixedQuotaClock(2000))
+	got, err := repo.ListByAccounts(context.Background(), []string{"acct-batch-a", "acct-batch-b", "acct-batch-c"})
+	if err != nil {
+		t.Fatalf("ListByAccounts: %v", err)
+	}
+
+	if len(got["acct-batch-a"]) != 1 || got["acct-batch-a"][0].AccountID != "acct-batch-a" {
+		t.Fatalf("acct-batch-a windows = %+v, want exactly 1 window scoped to acct-batch-a", got["acct-batch-a"])
+	}
+	if len(got["acct-batch-b"]) != 1 || got["acct-batch-b"][0].AccountID != "acct-batch-b" {
+		t.Fatalf("acct-batch-b windows = %+v, want exactly 1 window scoped to acct-batch-b", got["acct-batch-b"])
+	}
+	if windows, ok := got["acct-batch-c"]; ok && len(windows) != 0 {
+		t.Fatalf("acct-batch-c windows = %+v, want absent or empty (no windows leaked in)", windows)
+	}
+	if windows, ok := got["acct-batch-other"]; ok && len(windows) != 0 {
+		t.Fatalf("acct-batch-other windows = %+v, want absent (it was never requested; the account filter must be real)", windows)
+	}
+	if len(got) != 2 {
+		t.Fatalf("map has %d keys = %+v, want exactly 2 (only requested accounts with windows)", len(got), got)
+	}
+}
+
+// TestListByAccounts_EmptyInput proves an empty accountIDs slice returns an
+// empty map and nil error, with no query issued.
+func TestListByAccounts_EmptyInput(t *testing.T) {
+	db := migratedCatalogRepoDB(t)
+	repo := NewQuotaWindowRepo(db, nil, fixedQuotaClock(1000))
+
+	got, err := repo.ListByAccounts(context.Background(), []string{})
+	if err != nil {
+		t.Fatalf("ListByAccounts(empty): %v, want nil error", err)
+	}
+	if got == nil {
+		t.Fatalf("ListByAccounts(empty) = nil map, want an empty non-nil map")
+	}
+	if len(got) != 0 {
+		t.Fatalf("ListByAccounts(empty) = %+v, want empty map", got)
+	}
+}
+
+// TestListByAccounts_OrdersCanonicallyWithinAnAccount seeds one account's
+// windows in REVERSE of the canonical (source, unit, window_type,
+// window_key) order and proves ListByAccounts still returns them in
+// canonical order — SQLite's incidental insertion-order has masked a
+// missing ORDER BY before in this project (see
+// TestQuotaWindowRepo_ListByAccount_IsDeterministicAndScoped's own doc
+// comment), so this test seeds deliberately out of order rather than
+// relying on natural insertion order to coincide with canonical order.
+func TestListByAccounts_OrdersCanonicallyWithinAnAccount(t *testing.T) {
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-order")
+	insertAccount(t, db, "acct-order", "prov-order")
+
+	// Canonical order by (source, unit, window_type, window_key):
+	// local_safety < owner_override < provider_evidence (lexical), and
+	// within local_safety, "concurrency" < "requests" by unit. Seed in the
+	// reverse of that.
+	insertRawQuotaWindow(t, db, rawQuotaWindowSpec{
+		id: "w-order-3", accountID: "acct-order", source: "provider_evidence", unit: "tokens",
+		windowType: "rolling", windowKey: "provider:z", reserved: 0, observedAt: 1000,
+	})
+	insertRawQuotaWindow(t, db, rawQuotaWindowSpec{
+		id: "w-order-2", accountID: "acct-order", source: "owner_override", unit: "requests",
+		windowType: "rolling", windowKey: "owner:override", reserved: 0, observedAt: 1000,
+	})
+	insertRawQuotaWindow(t, db, rawQuotaWindowSpec{
+		id: "w-order-1a", accountID: "acct-order", source: "local_safety", unit: "requests",
+		windowType: "estimated_consumption", windowKey: "local:requests", reserved: 0, observedAt: 1000,
+	})
+	insertRawQuotaWindow(t, db, rawQuotaWindowSpec{
+		id: "w-order-1b", accountID: "acct-order", source: "local_safety", unit: "concurrency",
+		windowType: "concurrency", windowKey: "local:concurrency", reserved: 0, observedAt: 1000,
+	})
+
+	repo := NewQuotaWindowRepo(db, nil, fixedQuotaClock(2000))
+	got, err := repo.ListByAccounts(context.Background(), []string{"acct-order"})
+	if err != nil {
+		t.Fatalf("ListByAccounts: %v", err)
+	}
+	windows := got["acct-order"]
+	if len(windows) != 4 {
+		t.Fatalf("len(windows) = %d, want 4", len(windows))
+	}
+	wantOrder := []string{"w-order-1b", "w-order-1a", "w-order-2", "w-order-3"}
+	for i, w := range windows {
+		if w.ID != wantOrder[i] {
+			gotIDs := make([]string, len(windows))
+			for j, ww := range windows {
+				gotIDs[j] = ww.ID
+			}
+			t.Fatalf("order = %v, want %v (canonical source,unit,window_type,window_key order)", gotIDs, wantOrder)
+		}
+	}
+}
+
+// TestListByAccounts_PreservesUnknowns proves a window with NULL
+// used/remaining/total comes back with nil pointers, not zeros — the
+// "unknown is never zero" invariant (02 §3) at the storage layer.
+func TestListByAccounts_PreservesUnknowns(t *testing.T) {
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-unknown")
+	insertAccount(t, db, "acct-unknown", "prov-unknown")
+
+	insertRawQuotaWindow(t, db, rawQuotaWindowSpec{
+		id: "w-unknown-1", accountID: "acct-unknown", source: "provider_evidence", unit: "requests",
+		windowType: "rolling", windowKey: "provider:daily",
+		used: nil, remaining: nil, total: nil, reserved: 0, freshness: "unknown", observedAt: 1000,
+	})
+
+	repo := NewQuotaWindowRepo(db, nil, fixedQuotaClock(2000))
+	got, err := repo.ListByAccounts(context.Background(), []string{"acct-unknown"})
+	if err != nil {
+		t.Fatalf("ListByAccounts: %v", err)
+	}
+	windows := got["acct-unknown"]
+	if len(windows) != 1 {
+		t.Fatalf("len(windows) = %d, want 1", len(windows))
+	}
+	w := windows[0]
+	if w.Used != nil {
+		t.Fatalf("Used = %v, want nil (unknown, never 0)", *w.Used)
+	}
+	if w.Remaining != nil {
+		t.Fatalf("Remaining = %v, want nil (unknown, never 0)", *w.Remaining)
+	}
+	if w.Total != nil {
+		t.Fatalf("Total = %v, want nil (unknown, never 0)", *w.Total)
+	}
+}

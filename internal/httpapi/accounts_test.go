@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -97,7 +98,8 @@ func newTestAccountsHandlerV2(t *testing.T, clock *time.Time, canaryKey string) 
 	}
 
 	audit := newAuditEmitter(db, nil)
-	h := NewAccountsHandler(accountRepo, credRepo, fundingRepo, credSvc, audit, func() time.Time { return *clock }, fundingIDCounter())
+	quotaWindowRepo := storage.NewQuotaWindowRepo(db, nil, func() time.Time { return *clock })
+	h := NewAccountsHandler(accountRepo, credRepo, fundingRepo, quotaWindowRepo, credSvc, audit, func() time.Time { return *clock }, fundingIDCounter())
 	return h, db, accountID, credID
 }
 
@@ -790,6 +792,334 @@ func TestControlMux_AccountReveal_SessionWithoutCSRFRejected(t *testing.T) {
 	}
 	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "csrf_failed" {
 		t.Fatalf("error code = %q, want csrf_failed", code)
+	}
+}
+
+// ============================================================================
+// Quota windows in the accounts projection (P3b-CAPI-QUOTAREAD, enables
+// P3b-UI-001)
+// ============================================================================
+
+// quotaWindowSeed is the column set a test needs to control when seeding a
+// quota_windows row directly for the accounts-projection tests below.
+type quotaWindowSeed struct {
+	id, accountID, source, unit, windowType, windowKey string
+	used, remaining, total, limitValue                 *float64
+	reserved                                           float64
+	resetAt                                            *int64
+	freshness                                          string
+	observedAt                                         int64
+}
+
+func seedQuotaWindow(t *testing.T, db *storage.DB, s quotaWindowSeed) {
+	t.Helper()
+	freshness := s.freshness
+	if freshness == "" {
+		freshness = "fresh"
+	}
+	if _, err := db.Conn().Exec(
+		`INSERT INTO quota_windows
+		    (id, account_id, source, unit, window_type, window_key, duration_seconds,
+		     used, remaining, total, reserved, limit_value, reset_at, version, confidence,
+		     freshness_state, observed_at, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 1, 1.0, ?, ?, ?, ?)`,
+		s.id, s.accountID, s.source, s.unit, s.windowType, s.windowKey,
+		s.used, s.remaining, s.total, s.reserved, s.limitValue, s.resetAt,
+		freshness, s.observedAt, s.observedAt, s.observedAt,
+	); err != nil {
+		t.Fatalf("seed quota window %s: %v", s.id, err)
+	}
+}
+
+func f64(v float64) *float64 { return &v }
+
+// TestAccountsList_IncludesQuotaWindows proves GET /accounts, exercised
+// through the REAL ControlMux, serializes an account's provider-evidence
+// window and its two local-safety windows, each with the server-derived
+// state and the exact vocabularies (byte-identical to the frozen Design
+// System's unions).
+func TestAccountsList_IncludesQuotaWindows(t *testing.T) {
+	db := testControlDB(t)
+	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
+	cookie, _ := setupOwnerWithCSRF(t, mux)
+
+	if _, err := db.Conn().Exec(
+		`INSERT INTO providers (id, display_name, auth_mode, funding_mode, funding_locked, created_at, updated_at) VALUES (?, ?, 'api_key', 'owner_policy', 0, 0, 0)`,
+		"prov-q1", "prov-q1",
+	); err != nil {
+		t.Fatalf("seed provider: %v", err)
+	}
+	now := time.Now().Unix()
+	if _, err := db.Conn().Exec(
+		`INSERT INTO accounts (id, provider_id, external_id, auth_type, connection_state, health_state, created_at, updated_at)
+		 VALUES (?, ?, ?, 'api_key', 'connected', 'healthy', ?, ?)`,
+		"acct-q1", "prov-q1", "ext-q1", now, now,
+	); err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+
+	seedQuotaWindow(t, db, quotaWindowSeed{
+		id: "w-q1-provider", accountID: "acct-q1", source: "provider_evidence", unit: "requests",
+		windowType: "rolling", windowKey: "provider:daily",
+		used: f64(10), remaining: f64(90), total: f64(100), observedAt: now,
+	})
+	seedQuotaWindow(t, db, quotaWindowSeed{
+		id: "w-q1-ls-concurrency", accountID: "acct-q1", source: "local_safety", unit: "concurrency",
+		windowType: "concurrency", windowKey: "local:concurrency",
+		limitValue: f64(5), observedAt: now,
+	})
+	seedQuotaWindow(t, db, quotaWindowSeed{
+		id: "w-q1-ls-consumption", accountID: "acct-q1", source: "local_safety", unit: "requests",
+		windowType: "estimated_consumption", windowKey: "local:requests",
+		limitValue: f64(1000), observedAt: now,
+	})
+
+	req := newAuthRequest(t, http.MethodGet, "/api/control/v1/accounts", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /accounts status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Data struct {
+			Accounts []struct {
+				ID    string            `json:"id"`
+				Quota []quotaWindowJSON `json:"quota"`
+			} `json:"accounts"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v; body = %q", err, rec.Body.String())
+	}
+
+	var acct *struct {
+		ID    string            `json:"id"`
+		Quota []quotaWindowJSON `json:"quota"`
+	}
+	for i := range body.Data.Accounts {
+		if body.Data.Accounts[i].ID == "acct-q1" {
+			acct = &body.Data.Accounts[i]
+		}
+	}
+	if acct == nil {
+		t.Fatalf("acct-q1 not found in accounts list: %+v", body.Data.Accounts)
+	}
+	if len(acct.Quota) != 3 {
+		t.Fatalf("len(quota) = %d, want 3; got %+v", len(acct.Quota), acct.Quota)
+	}
+
+	bySource := map[string]quotaWindowJSON{}
+	for _, w := range acct.Quota {
+		bySource[w.Source] = w
+	}
+	pe, ok := bySource["provider_evidence"]
+	if !ok {
+		t.Fatalf("no provider_evidence window in %+v", acct.Quota)
+	}
+	if pe.State != "available" || pe.Freshness != "fresh" || pe.Unit != "requests" {
+		t.Fatalf("provider_evidence window = %+v, want state=available freshness=fresh unit=requests", pe)
+	}
+	if pe.Used == nil || *pe.Used != 10 || pe.Total == nil || *pe.Total != 100 {
+		t.Fatalf("provider_evidence window numerics = %+v, want used=10 total=100", pe)
+	}
+	if _, ok := bySource["local_safety"]; !ok {
+		t.Fatalf("no local_safety window in %+v", acct.Quota)
+	}
+}
+
+// TestAccountsList_UnknownNumericsSerializeAsNull proves a window with
+// unknown used/remaining/total emits JSON null for each — the "never a
+// fabricated number" contract at the wire level. Asserted on the raw JSON,
+// not just the decoded struct, so a stray 0-default cannot hide behind
+// Go's own zero-value decoding.
+func TestAccountsList_UnknownNumericsSerializeAsNull(t *testing.T) {
+	clock := fixedAccountTestClock()
+	h, db, accountID, _ := newTestAccountsHandlerV2(t, clock, "irrelevant-key")
+
+	seedQuotaWindow(t, db, quotaWindowSeed{
+		id: "w-unknown", accountID: accountID, source: "provider_evidence", unit: "requests",
+		windowType: "rolling", windowKey: "provider:daily",
+		used: nil, remaining: nil, total: nil, freshness: "unknown", observedAt: clock.Unix(),
+	})
+
+	req := newAccountsRequest(http.MethodGet, "/api/control/v1/accounts", "", nil)
+	rec := httptest.NewRecorder()
+	h.ServeList(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /accounts status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+	raw := rec.Body.String()
+	if strings.Contains(raw, `"used":0`) || strings.Contains(raw, `"remaining":0`) || strings.Contains(raw, `"total":0`) {
+		t.Fatalf("raw body fabricated a 0 for an unknown numeric: %q", raw)
+	}
+
+	var body struct {
+		Data struct {
+			Accounts []struct {
+				Quota []quotaWindowJSON `json:"quota"`
+			} `json:"accounts"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v; body = %q", err, raw)
+	}
+	if len(body.Data.Accounts) != 1 || len(body.Data.Accounts[0].Quota) != 1 {
+		t.Fatalf("unexpected shape: %+v", body.Data)
+	}
+	w := body.Data.Accounts[0].Quota[0]
+	if w.Used != nil || w.Remaining != nil || w.Total != nil {
+		t.Fatalf("window numerics = %+v, want all nil (unknown)", w)
+	}
+}
+
+// TestAccountsList_StaleWindowIsStateStale proves a window observed 20
+// minutes ago serializes state:stale even though its numbers look healthy,
+// while a fresh window with the SAME numbers serializes state:available —
+// state is derived from server-side staleness, never inferred from the
+// numbers alone. Both directions are asserted.
+func TestAccountsList_StaleWindowIsStateStale(t *testing.T) {
+	clock := fixedAccountTestClock()
+	h, db, accountID, _ := newTestAccountsHandlerV2(t, clock, "irrelevant-key")
+
+	seedQuotaWindow(t, db, quotaWindowSeed{
+		id: "w-fresh", accountID: accountID, source: "provider_evidence", unit: "requests",
+		windowType: "rolling", windowKey: "provider:fresh-window",
+		used: f64(10), remaining: f64(90), total: f64(100),
+		freshness: "fresh", observedAt: clock.Unix(),
+	})
+	seedQuotaWindow(t, db, quotaWindowSeed{
+		id: "w-stale", accountID: accountID, source: "provider_evidence", unit: "requests",
+		windowType: "rolling", windowKey: "provider:stale-window",
+		used: f64(10), remaining: f64(90), total: f64(100),
+		freshness: "fresh", observedAt: clock.Add(-20 * time.Minute).Unix(),
+	})
+
+	req := newAccountsRequest(http.MethodGet, "/api/control/v1/accounts", "", nil)
+	rec := httptest.NewRecorder()
+	h.ServeList(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /accounts status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Data struct {
+			Accounts []struct {
+				Quota []quotaWindowJSON `json:"quota"`
+			} `json:"accounts"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v; body = %q", err, rec.Body.String())
+	}
+	if len(body.Data.Accounts) != 1 {
+		t.Fatalf("unexpected account count: %+v", body.Data)
+	}
+	byKey := map[string]quotaWindowJSON{}
+	for _, w := range body.Data.Accounts[0].Quota {
+		byKey[w.WindowKey] = w
+	}
+	fresh, ok := byKey["provider:fresh-window"]
+	if !ok || fresh.State != "available" {
+		t.Fatalf("fresh window = %+v, want state=available", fresh)
+	}
+	stale, ok := byKey["provider:stale-window"]
+	if !ok || stale.State != "stale" {
+		t.Fatalf("stale window (observed 20m ago) = %+v, want state=stale even though numbers look healthy", stale)
+	}
+}
+
+// TestAccountsList_QuotaIsEmptyArrayNotNull proves an account with no quota
+// windows serializes "quota":[], never null.
+func TestAccountsList_QuotaIsEmptyArrayNotNull(t *testing.T) {
+	clock := fixedAccountTestClock()
+	h, _, _, _ := newTestAccountsHandlerV2(t, clock, "irrelevant-key")
+
+	req := newAccountsRequest(http.MethodGet, "/api/control/v1/accounts", "", nil)
+	rec := httptest.NewRecorder()
+	h.ServeList(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /accounts status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"quota":null`) {
+		t.Fatalf("quota serialized as null: %q", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"quota":[]`) {
+		t.Fatalf("quota did not serialize as an empty array: %q", rec.Body.String())
+	}
+}
+
+// TestAccountsList_DoesNotDeadlockWithManyAccounts is the N+1/deadlock
+// regression test (constraint: a per-account query issued while the
+// accounts cursor is still open deadlocks under SetMaxOpenConns(1)): 25
+// accounts, each with a quota window, listed in ONE call under a 10s
+// context timeout.
+func TestAccountsList_DoesNotDeadlockWithManyAccounts(t *testing.T) {
+	db := testControlDB(t)
+	if _, err := db.Conn().Exec(
+		`INSERT INTO providers (id, display_name, auth_mode, funding_mode, funding_locked, created_at, updated_at) VALUES (?, ?, 'api_key', 'owner_policy', 0, 0, 0)`,
+		"prov-many", "prov-many",
+	); err != nil {
+		t.Fatalf("seed provider: %v", err)
+	}
+	now := time.Now().Unix()
+	for i := 0; i < 25; i++ {
+		id := "acct-many-" + itoaAccountTest(i)
+		if _, err := db.Conn().Exec(
+			`INSERT INTO accounts (id, provider_id, external_id, auth_type, connection_state, health_state, created_at, updated_at)
+			 VALUES (?, ?, ?, 'api_key', 'connected', 'healthy', ?, ?)`,
+			id, "prov-many", id, now, now,
+		); err != nil {
+			t.Fatalf("seed account %d: %v", i, err)
+		}
+		seedQuotaWindow(t, db, quotaWindowSeed{
+			id: "w-many-" + itoaAccountTest(i), accountID: id, source: "provider_evidence", unit: "requests",
+			windowType: "rolling", windowKey: "provider:daily",
+			used: f64(1), remaining: f64(99), total: f64(100), observedAt: now,
+		})
+	}
+
+	accountRepo := storage.NewAccountRepo(db)
+	credRepo := storage.NewAccountCredentialRepo(db)
+	fundingRepo := storage.NewFundingEvidenceRepo(db)
+	quotaWindowRepo := storage.NewQuotaWindowRepo(db, nil, nil)
+	kr := testKeyring(t)
+	credSvc := application.NewCredentialService(credRepo, kr, nil)
+	audit := newAuditEmitter(db, nil)
+	h := NewAccountsHandler(accountRepo, credRepo, fundingRepo, quotaWindowRepo, credSvc, audit, nil, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req := newAccountsRequest(http.MethodGet, "/api/control/v1/accounts", "", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	h.ServeList(rec, req)
+
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("context error after ServeList = %v, want nil (no deadlock/timeout)", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /accounts status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Data struct {
+			Accounts []struct {
+				Quota []quotaWindowJSON `json:"quota"`
+			} `json:"accounts"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v; body = %q", err, rec.Body.String())
+	}
+	if len(body.Data.Accounts) != 25 {
+		t.Fatalf("account count = %d, want 25", len(body.Data.Accounts))
+	}
+	for _, a := range body.Data.Accounts {
+		if len(a.Quota) != 1 {
+			t.Fatalf("account quota count = %d, want 1: %+v", len(a.Quota), a)
+		}
 	}
 }
 

@@ -159,7 +159,12 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// `gated`, exactly like every other authenticated control route.
 	credentialRepo := storage.NewAccountCredentialRepo(db)
 	credentialService := application.NewCredentialService(credentialRepo, kr, nil)
-	accountsHandler := NewAccountsHandler(accountRepo, credentialRepo, fundingRepo, credentialService, audit, nil, newOAuthTransactionID)
+	// quotaWindowRepo (P3b-CAPI-QUOTAREAD, enables P3b-UI-001) is shared
+	// with the quota-refresh route further below rather than each building
+	// its own — same one-repo-per-underlying-table pattern as accountRepo/
+	// fundingRepo/credentialRepo above.
+	quotaWindowRepo := storage.NewQuotaWindowRepo(db, nil, nil)
+	accountsHandler := NewAccountsHandler(accountRepo, credentialRepo, fundingRepo, quotaWindowRepo, credentialService, audit, nil, newOAuthTransactionID)
 	mux.Handle("/api/control/v1/accounts", gated(accountsHandler.ServeList))
 	mux.Handle("/api/control/v1/accounts/{id}", gated(accountsHandler.ServeGet))
 	// DELETE /accounts/{id} is the soft-disconnect route (09 §2). It is

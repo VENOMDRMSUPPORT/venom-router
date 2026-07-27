@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
@@ -176,6 +177,57 @@ func (r *QuotaWindowRepo) ListByAccount(ctx context.Context, accountID string) (
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("storage: list quota windows for %q: %w", accountID, err)
+	}
+	return out, nil
+}
+
+// ListByAccounts loads every quota window for a whole page of accounts in
+// ONE query, keyed by account id. The list path MUST use this instead of
+// calling ListByAccount per row: a per-row query issued while the accounts
+// cursor is still open deadlocks under SetMaxOpenConns(1).
+//
+// An empty accountIDs returns an empty (non-nil) map and no error — no
+// query is issued. Each account's windows are ordered deterministically by
+// (source, unit, window_type, window_key), the same canonical order
+// ListByAccount uses; an account with no windows is simply absent from the
+// returned map (callers must not treat a missing key as an error).
+func (r *QuotaWindowRepo) ListByAccounts(ctx context.Context, accountIDs []string) (map[string][]quota.Window, error) {
+	out := make(map[string][]quota.Window)
+	if len(accountIDs) == 0 {
+		return out, nil
+	}
+
+	placeholders := make([]string, len(accountIDs))
+	args := make([]any, len(accountIDs))
+	for i, id := range accountIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf(
+		`SELECT id, account_id, source, unit, window_type, window_key, duration_seconds,
+		        used, remaining, total, reserved, limit_value, reset_at, version, confidence,
+		        freshness_state, observed_at
+		 FROM quota_windows
+		 WHERE account_id IN (%s)
+		 ORDER BY account_id, source, unit, window_type, window_key`,
+		strings.Join(placeholders, ","),
+	)
+
+	rows, err := r.db.Conn().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("storage: list quota windows for %d accounts: %w", len(accountIDs), err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		w, err := scanQuotaWindow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("storage: scan quota window: %w", err)
+		}
+		out[w.AccountID] = append(out[w.AccountID], w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: list quota windows for %d accounts: %w", len(accountIDs), err)
 	}
 	return out, nil
 }
