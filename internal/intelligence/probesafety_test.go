@@ -305,6 +305,49 @@ func TestProbeGuard_RefusalNeverReserves(t *testing.T) {
 	})
 }
 
+// TestProbeGuard_ReservationRejectionIsTyped pins gate 7, the last gate and
+// the one 04 §2 / the P3c-QUOTA-001 card care about most: "every probe
+// obtains a reservation before execution". A reservation failure must be a
+// typed probe_quota_rejected refusal, never a silent admission — an Admit
+// that returned success here would hand the caller an empty reservation id
+// and let the probe reach the provider with nothing reserved.
+func TestProbeGuard_ReservationRejectionIsTyped(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+
+	t.Run("reserver error is a typed refusal", func(t *testing.T) {
+		reserver := &fakeProbeReserver{err: errors.New("insufficient headroom")}
+		g, err := NewProbeGuard(DefaultProbeSafetyPolicy(), reserver, &fakeSpendReader{}, &fakeInFlightReader{}, &fakeCooldownReader{}, clockAt(now))
+		if err != nil {
+			t.Fatalf("NewProbeGuard error = %v", err)
+		}
+		got, err := g.Admit(context.Background(), baseRequest())
+		if !errors.Is(err, ErrProbeRefused) {
+			t.Fatalf("err = %v, want it to wrap ErrProbeRefused", err)
+		}
+		if reason, ok := RefusalOf(err); !ok || reason != RefusalQuotaRejected {
+			t.Fatalf("refusal = %v (ok=%v), want probe_quota_rejected", reason, ok)
+		}
+		if got.ReservationID != "" || len(got.Allocations) != 0 {
+			t.Fatalf("admission = %+v, want the zero value on a refusal", got)
+		}
+	})
+
+	t.Run("positive control: a succeeding reserver admits", func(t *testing.T) {
+		reserver := &fakeProbeReserver{reservationID: "rsv-ok"}
+		g, err := NewProbeGuard(DefaultProbeSafetyPolicy(), reserver, &fakeSpendReader{}, &fakeInFlightReader{}, &fakeCooldownReader{}, clockAt(now))
+		if err != nil {
+			t.Fatalf("NewProbeGuard error = %v", err)
+		}
+		got, err := g.Admit(context.Background(), baseRequest())
+		if err != nil {
+			t.Fatalf("Admit error = %v", err)
+		}
+		if got.ReservationID != "rsv-ok" {
+			t.Fatalf("ReservationID = %q, want %q", got.ReservationID, "rsv-ok")
+		}
+	})
+}
+
 func TestProbeGuard_UncappedUnitIsRefused(t *testing.T) {
 	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	policy := ProbeSafetyPolicy{

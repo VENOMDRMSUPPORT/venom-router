@@ -373,6 +373,26 @@ func TestContextProbe_SnippetIsRedacted(t *testing.T) {
 	}
 }
 
+// TestContextProbe_ReportCarriesTheReservation pins the only handle a caller
+// has on the quota this probe reserved: without it nothing can settle or
+// release the reservation, and a probe's headroom would stay debited until
+// the janitor reclaims it at the processing deadline.
+func TestContextProbe_ReportCarriesTheReservation(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	transport := &fakeProbeTransport{result: ProbeResult{HTTPStatus: 400, ProviderCode: "context_length_exceeded", Message: "maximum context length is 128000 tokens"}}
+	probe, err := NewContextProbe(transport, admittingContextGuard(t, now), nil, clockAt(now))
+	if err != nil {
+		t.Fatalf("NewContextProbe error = %v", err)
+	}
+	report, err := probe.Run(context.Background(), baseProbeRequest())
+	if err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if report.ReservationID != "rsv-ctx" {
+		t.Fatalf("ReservationID = %q, want the guard's reservation id %q", report.ReservationID, "rsv-ctx")
+	}
+}
+
 func TestContextProbe_SnippetTruncated(t *testing.T) {
 	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	longMsg := strings.Repeat("日本語テキスト", 50)

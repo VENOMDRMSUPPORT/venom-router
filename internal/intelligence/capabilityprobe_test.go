@@ -204,6 +204,83 @@ func TestCapabilityProbe_EvidenceIsPerOperationOnly(t *testing.T) {
 	}
 }
 
+// TestRequiredWitness_MappingIsLiteral pins the operation -> witness mapping
+// to literal expected values. Every other test in this file derives the
+// transport's witness from RequiredWitness itself, so the two sides move
+// together and a swapped mapping stays invisible: a tools probe could then
+// certify on a structured-JSON response, which is the very "chat success
+// does not certify tools" rule (04 §5) inverted. The cross-witness rows
+// below prove the mismatch direction too.
+func TestRequiredWitness_MappingIsLiteral(t *testing.T) {
+	want := map[models.Operation]ProbeWitness{
+		models.OperationTools:            WitnessToolCall,
+		models.OperationStructuredOutput: WitnessStructuredJSON,
+		models.OperationVision:           WitnessVisionAnswer,
+	}
+	for op, expected := range want {
+		t.Run(string(op), func(t *testing.T) {
+			got, err := RequiredWitness(op)
+			if err != nil {
+				t.Fatalf("RequiredWitness(%q) error = %v", op, err)
+			}
+			if got != expected {
+				t.Fatalf("RequiredWitness(%q) = %q, want %q", op, got, expected)
+			}
+		})
+	}
+
+	for _, op := range models.Operations() {
+		if _, ok := want[op]; ok {
+			continue
+		}
+		t.Run("unsupported/"+string(op), func(t *testing.T) {
+			if _, err := RequiredWitness(op); !errors.Is(err, ErrNoCapabilityFixture) {
+				t.Fatalf("RequiredWitness(%q) error = %v, want ErrNoCapabilityFixture", op, err)
+			}
+		})
+	}
+}
+
+// TestCapabilityProbe_ForeignWitnessNeverCertifies is the behavioural half of
+// the mapping invariant: a 2xx carrying another operation's witness is
+// inconclusive, never supported.
+func TestCapabilityProbe_ForeignWitnessNeverCertifies(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	rows := []struct {
+		op      models.Operation
+		witness ProbeWitness
+	}{
+		{models.OperationTools, WitnessStructuredJSON},
+		{models.OperationTools, WitnessVisionAnswer},
+		{models.OperationStructuredOutput, WitnessToolCall},
+		{models.OperationVision, WitnessToolCall},
+	}
+	for _, row := range rows {
+		t.Run(string(row.op)+"/"+string(row.witness), func(t *testing.T) {
+			transport := &fakeProbeTransport{result: ProbeResult{HTTPStatus: 200, Witness: row.witness}}
+			probe, err := NewCapabilityProbe(transport, admittingCapabilityGuard(t, now), clockAt(now))
+			if err != nil {
+				t.Fatalf("NewCapabilityProbe error = %v", err)
+			}
+			req := baseProbeRequest()
+			req.Operation = row.op
+			report, err := probe.Run(context.Background(), req)
+			if err != nil {
+				t.Fatalf("Run error = %v", err)
+			}
+			if report.Outcome.Truth != models.TruthUnknown || report.Outcome.Execution != ProbeInconclusive {
+				t.Fatalf("Truth=%q Execution=%q, want unknown/inconclusive", report.Outcome.Truth, report.Outcome.Execution)
+			}
+			if len(report.Evidence) != 0 {
+				t.Fatalf("Evidence len = %d, want 0", len(report.Evidence))
+			}
+			if report.ReservationID != "rsv-cap" {
+				t.Fatalf("ReservationID = %q, want the guard's reservation id", report.ReservationID)
+			}
+		})
+	}
+}
+
 func TestCapabilityProbe_ProvenNegativeSurvivesResolve(t *testing.T) {
 	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	field := CapabilityField(models.OperationTools)
