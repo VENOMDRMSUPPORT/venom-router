@@ -415,14 +415,14 @@ func TestP3bGate_PostDispatchAmbiguityKeepsHeadroomDebited(t *testing.T) {
 	if sweep1.Released != 0 || sweep1.UnknownConsumption != 0 {
 		t.Fatalf("sweep 1 = %+v, want Released=0 and UnknownConsumption=0 — a dispatched reservation must NEVER be released", sweep1)
 	}
-	// Reclaimed=1 alongside Pended=1 in the SAME sweep is expected, not a
-	// bug: branches run in order within ONE transaction, so branch C1's
-	// own SELECT (state = 'reconciliation_pending') sees the row branch B
-	// JUST moved there in this same transaction, and legitimately
-	// reclaims its (never-held) lease too — harmless, since reclaiming
-	// touches no window arithmetic and is not an attempt.
-	if sweep1.Reclaimed != 1 {
-		t.Fatalf("sweep 1 Reclaimed = %d, want 1 (branch C1 sees the row branch B just pended, within the same transaction)", sweep1.Reclaimed)
+	// Branch C1's SELECT does see the row branch B just moved to
+	// reconciliation_pending in this same transaction, but it must NOT be
+	// counted as reclaimed: reclaiming means taking back an ABANDONED
+	// LEASE (02 §3 branch 3), and this row never held one. Reclaimed is
+	// reported in a tracked job's result_ref, so counting a never-leased
+	// row there would be a dishonest metric.
+	if sweep1.Reclaimed != 0 {
+		t.Fatalf("sweep 1 Reclaimed = %d, want 0 — a row that never held a lease has nothing to reclaim", sweep1.Reclaimed)
 	}
 	if state := f.reservationState(result.ReservationID); state != string(quota.ReservationReconciliationPending) {
 		t.Fatalf("state after sweep 1 = %q, want reconciliation_pending", state)
@@ -450,8 +450,8 @@ func TestP3bGate_PostDispatchAmbiguityKeepsHeadroomDebited(t *testing.T) {
 		if sweep.Released != 0 || sweep.Pended != 0 || sweep.UnknownConsumption != 0 {
 			t.Fatalf("sweep %d = %+v, want NEVER released/pended/terminalized", sweepNum, sweep)
 		}
-		if sweep.Reclaimed != 1 {
-			t.Fatalf("sweep %d Reclaimed = %d, want 1 (the lease is free every sweep — reclaiming is not an attempt)", sweepNum, sweep.Reclaimed)
+		if sweep.Reclaimed != 0 {
+			t.Fatalf("sweep %d Reclaimed = %d, want 0 — this reservation never held a lease, so there is nothing to reclaim", sweepNum, sweep.Reclaimed)
 		}
 
 		if state := f.reservationState(result.ReservationID); state != string(quota.ReservationReconciliationPending) {

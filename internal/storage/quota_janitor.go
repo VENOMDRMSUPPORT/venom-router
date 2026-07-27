@@ -261,8 +261,20 @@ func janitorProcessReconciliationPending(ctx context.Context, conn *sql.Conn, no
 			continue
 		}
 
-		leaseFree := !p.leaseOwner.Valid || !p.leaseExpiresAt.Valid || p.leaseExpiresAt.Int64 < now
-		if !leaseFree {
+		// Reclaiming means TAKING BACK AN ABANDONED LEASE (02 §3 branch 3:
+		// "reconciliation_pending whose retry deadline / lease expired ->
+		// reclaim and re-enqueue"). A pending row that was never leased has
+		// nothing to reclaim: ClaimPending's own predicate already accepts
+		// lease_owner IS NULL, so it is claimable as it stands. Skipping it
+		// here keeps Reclaimed meaning what the doc says — it is reported in
+		// a tracked job's result_ref, so an inflated count is a dishonest
+		// metric — and avoids issuing a redundant NULL -> NULL write for
+		// every never-leased pending row on every sweep, inside the
+		// transaction that holds the pool's one connection.
+		if !p.leaseOwner.Valid {
+			continue
+		}
+		if p.leaseExpiresAt.Valid && p.leaseExpiresAt.Int64 >= now {
 			continue // actively leased by a live worker; leave entirely alone
 		}
 		if _, err := conn.ExecContext(ctx,
