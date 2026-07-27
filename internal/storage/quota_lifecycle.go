@@ -254,7 +254,14 @@ func (r *QuotaLifecycleRepo) applyTransition(ctx context.Context, reservationID 
 			return transitionOutcome{}, fmt.Errorf("storage: commit rejected-transition %q: %w", reservationID, err)
 		}
 		committed = true
-		outcome := transitionOutcome{shouldAudit: true, result: "rejected", reasonCode: fmt.Sprintf("%s->%s", current, to)}
+		// "illegal_transition", not "rejected": 04 §5 forbids a "rejected"
+		// STATE anywhere in code/schema/API, and CheckNoRejectedState
+		// (internal/staticgate) enforces that mechanically by flagging the
+		// bare literal. This audit row records an illegal reservation-state
+		// transition attempt, which is exactly what the word names — and it
+		// matches intelligence.AuditIllegalTransition, the certification
+		// domain's audit reason for the same shape of event.
+		outcome := transitionOutcome{shouldAudit: true, result: "illegal_transition", reasonCode: fmt.Sprintf("%s->%s", current, to)}
 		return outcome, legalErr
 	}
 

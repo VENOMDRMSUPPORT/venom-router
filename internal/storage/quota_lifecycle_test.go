@@ -371,7 +371,7 @@ func TestTransition_IllegalIsRejectedAuditedAndLeavesStateUnchanged(t *testing.T
 
 	var auditCount int
 	if err := db.Conn().QueryRow(
-		`SELECT COUNT(*) FROM audit_events WHERE entity_id = ? AND result = 'rejected'`, reservationID,
+		`SELECT COUNT(*) FROM audit_events WHERE entity_id = ? AND result = 'illegal_transition'`, reservationID,
 	).Scan(&auditCount); err != nil {
 		t.Fatalf("count audit rows: %v", err)
 	}

@@ -3,7 +3,6 @@ package staticgate
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -68,20 +67,14 @@ func TestCheckNoRejectedState_RealRepoRoot(t *testing.T) {
 	for _, v := range violations {
 		t.Logf("violation: %s", v)
 	}
-	// internal/storage/quota_lifecycle.go stamps a QUOTA RESERVATION audit
-	// outcome as "rejected" (quota.ReservationState is a wholly different
-	// vocabulary from models.CertificationState — see
-	// internal/quota/lifecycle.go). It is not a certification "rejected"
-	// state (04 §5's rule is about CertificationState specifically), and
-	// internal/storage is frozen this batch so it cannot be renamed here.
-	// This is the one known, reviewed, non-certification exception to an
-	// otherwise-zero repo; ANY OTHER violation is a real regression and
-	// fails this test.
-	if len(violations) != 1 {
-		t.Fatalf("got %d violations, want exactly 1 (the known quota-lifecycle exception)", len(violations))
-	}
-	v := violations[0]
-	if !strings.HasSuffix(filepath.ToSlash(v.File), "internal/storage/quota_lifecycle.go") {
-		t.Fatalf("unexpected violation location: %+v", v)
+	// ZERO, with no allowlist and no known exception. A static check whose
+	// healthy state is "exactly one violation" cannot be used as a gate by
+	// anything else, and the natural response to the next drift is to bump
+	// the expected count — which is how these checks die. The one real
+	// occurrence this check found (a quota-reservation audit outcome in
+	// internal/storage/quota_lifecycle.go) was therefore fixed at the
+	// source, renamed to "illegal_transition", rather than exempted here.
+	if len(violations) != 0 {
+		t.Fatalf("got %d violations, want 0 — no \"%s\" state may exist anywhere in code or schema (04 §5)", len(violations), "reject"+"ed")
 	}
 }
