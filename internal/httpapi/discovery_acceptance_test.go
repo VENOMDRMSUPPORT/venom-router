@@ -198,6 +198,31 @@ func p3aAssertNoCanaryInCatalog(t *testing.T, db *storage.DB, canary string) {
 	}
 }
 
+// p3aStableOffering blanks cost.observed_at so two offerings fetched by two
+// SEPARATE HTTP calls can be compared for projection equality.
+//
+// cost.observed_at is not catalog data: FreeSafetyResolver stamps it with
+// the instant the cost was RESOLVED (ObservedAt: now), and ModelsHandler
+// formats it to RFC3339 second precision. GET /offerings and GET /models
+// each resolve independently, so the field is equal only when both calls
+// happen to land inside the same wall-clock second. Requiring that was a
+// latent real-clock race in this gate test: it passes constantly on a fast
+// run and fails when the package is slow enough for the two calls to
+// straddle a second boundary — which is exactly what happened on
+// windows-latest under -race (CI run 30232020817, package time 161s) once
+// P3b-TEST-001 roughly doubled this package's runtime.
+//
+// The invariant this test actually exists to prove is that /models renders
+// the SAME projection as /offerings (grouping is presentation, never a
+// second derivation). Normalizing the one field whose value is by
+// construction a different instant per call keeps that invariant intact and
+// removes a false-failure mode; every other field, including the whole cost
+// provenance tuple, is still compared verbatim.
+func p3aStableOffering(o effectiveOfferingJSON) effectiveOfferingJSON {
+	o.Cost.ObservedAt = ""
+	return o
+}
+
 func p3aFindOffering(t *testing.T, offerings []effectiveOfferingJSON, providerModelID string) effectiveOfferingJSON {
 	t.Helper()
 	for _, o := range offerings {
@@ -460,10 +485,10 @@ func TestP3aGate_ModelsReflectsCatalogAndCertification(t *testing.T) {
 	}
 	groupedA := p3aFindOffering(t, sharedGroup.Offerings, "model-a")
 	groupedC := p3aFindOffering(t, sharedGroup.Offerings, "model-c")
-	if !jsonEqual(t, groupedA, a) {
+	if !jsonEqual(t, p3aStableOffering(groupedA), p3aStableOffering(a)) {
 		t.Fatalf("grouped model-a differs from /offerings' model-a:\ngrouped = %+v\noffering = %+v", groupedA, a)
 	}
-	if !jsonEqual(t, groupedC, c) {
+	if !jsonEqual(t, p3aStableOffering(groupedC), p3aStableOffering(c)) {
 		t.Fatalf("grouped model-c differs from /offerings' model-c:\ngrouped = %+v\noffering = %+v", groupedC, c)
 	}
 
