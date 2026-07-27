@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/httpapi"
@@ -63,6 +64,114 @@ type BootConfig struct {
 	// and exercised in CI once the dashboard build is wired in (P2a-DS-004).
 	// Production (cmd/venom) leaves this nil, so behavior there is unchanged.
 	SPAHandler http.Handler
+	// SchedulerInterval is the background scheduler's tick interval
+	// (P3c-JOBS-001 GOVERNOR DECISION: "a constructor parameter with a
+	// documented default is the whole contract" — no config-file surface).
+	// <= 0 uses DefaultSchedulerInterval.
+	SchedulerInterval time.Duration
+}
+
+// DefaultSchedulerInterval is the background scheduler's default tick
+// interval (P3c-JOBS-001 GOVERNOR DECISION).
+const DefaultSchedulerInterval = 30 * time.Second
+
+// SchedulerTick is one named background sweep the Scheduler drives.
+type SchedulerTick struct {
+	Name string
+	Run  func(ctx context.Context) error
+}
+
+// tickerSource abstracts time.NewTicker so tests can inject a fake,
+// channel-driven ticker instead of depending on real wall-clock sleeps.
+type tickerSource interface {
+	C() <-chan time.Time
+	Stop()
+}
+
+type realTicker struct{ t *time.Ticker }
+
+func (r realTicker) C() <-chan time.Time { return r.t.C }
+func (r realTicker) Stop()               { r.t.Stop() }
+
+func newRealTicker(d time.Duration) tickerSource { return realTicker{t: time.NewTicker(d)} }
+
+// Scheduler runs a fixed set of named background ticks: once immediately
+// (crash recovery — any tick left mid-work by a prior crash gets a fresh
+// pass right away) and then on a fixed interval, until its context is
+// cancelled. A single tick's error is logged and never aborts the other
+// ticks in the same pass; a tick that panics is recovered and logged
+// rather than crashing the process.
+type Scheduler struct {
+	ticks     []SchedulerTick
+	interval  time.Duration
+	logger    *observability.Logger
+	newTicker func(time.Duration) tickerSource
+	wg        sync.WaitGroup
+}
+
+// NewScheduler builds a Scheduler. interval <= 0 uses
+// DefaultSchedulerInterval; logger nil uses observability.Default().
+func NewScheduler(interval time.Duration, logger *observability.Logger, ticks ...SchedulerTick) *Scheduler {
+	if interval <= 0 {
+		interval = DefaultSchedulerInterval
+	}
+	if logger == nil {
+		logger = observability.Default()
+	}
+	return &Scheduler{ticks: ticks, interval: interval, logger: logger, newTicker: newRealTicker}
+}
+
+// Start runs every tick once immediately, then launches a background
+// goroutine that re-runs every tick on s.interval until ctx is
+// cancelled. Start itself never blocks on the boot-time pass — it runs
+// inside the same background goroutine, so a slow tick never delays the
+// rest of startup.
+func (s *Scheduler) Start(ctx context.Context) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runAllOnce(ctx)
+
+		ticker := s.newTicker(s.interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C():
+				s.runAllOnce(ctx)
+			}
+		}
+	}()
+}
+
+// Wait blocks until the background goroutine Start launched has fully
+// exited. Callers cancel the context passed to Start first.
+func (s *Scheduler) Wait() {
+	s.wg.Wait()
+}
+
+func (s *Scheduler) runAllOnce(ctx context.Context) {
+	for _, tick := range s.ticks {
+		s.runOne(ctx, tick)
+	}
+}
+
+func (s *Scheduler) runOne(ctx context.Context, tick SchedulerTick) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			s.logger.Error("scheduler tick panicked",
+				observability.String("tick", tick.Name),
+				observability.String("panic", fmt.Sprintf("%v", rec)),
+			)
+		}
+	}()
+	if err := tick.Run(ctx); err != nil {
+		s.logger.Error("scheduler tick failed",
+			observability.String("tick", tick.Name),
+			observability.Err(err),
+		)
+	}
 }
 
 // Server represents a successfully booted process: a mounted HTTP mux
@@ -73,20 +182,28 @@ type BootConfig struct {
 type Server struct {
 	Addr string
 
-	db      *storage.DB
-	lock    *Lock
-	http    *http.Server
-	ln      net.Listener
-	keyring *secrets.Keyring
+	db              *storage.DB
+	lock            *Lock
+	http            *http.Server
+	ln              net.Listener
+	keyring         *secrets.Keyring
+	scheduler       *Scheduler
+	cancelScheduler context.CancelFunc
 }
 
-// Shutdown gracefully stops the listener and releases what Boot
-// acquired (the database handle, then the single-instance lock), in
-// reverse order of acquisition.
+// Shutdown gracefully stops the listener, stops the background
+// scheduler (cancel, then wait for its in-flight tick to finish — this
+// MUST happen before db.Close(), or a still-running tick would touch a
+// closed *sql.DB), and releases what Boot acquired (the database handle,
+// then the single-instance lock), in reverse order of acquisition.
 func (s *Server) Shutdown(ctx context.Context) error {
 	var errs []error
 	if err := s.http.Shutdown(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("http shutdown: %w", err))
+	}
+	if s.cancelScheduler != nil {
+		s.cancelScheduler()
+		s.scheduler.Wait()
 	}
 	if err := s.db.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("db close: %w", err))
@@ -268,13 +385,43 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		_ = httpServer.Serve(ln)
 	}()
 
+	// 11. Start the background scheduler (P3c-JOBS-001 GOVERNOR DECISION):
+	// P3b's ReconcileTick/JanitorTick and P3c's DrainTick/RecertifyTick/
+	// ReclaimTick, all previously fully tested but never scheduled by
+	// anything — this closes that gap. Started after the mux is
+	// composed, as decided; a fresh crash-recovery pass runs immediately,
+	// then every cfg.SchedulerInterval (default 30s). This log line
+	// deliberately has no "stage" field — it is not one of the fail-
+	// closed startup-order stages parseStages/TestBoot_StartupOrderEnforced
+	// assert on, since it is a background concern, not a boot
+	// precondition.
+	quotaWorkers, probeWorkers, err := httpapi.BuildSchedulerWorkers(db, "scheduler", time.Now, nil)
+	if err != nil {
+		_ = httpServer.Close()
+		closeDB()
+		release()
+		return nil, fmt.Errorf("app: build scheduler workers: %w", err)
+	}
+	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
+	scheduler := NewScheduler(cfg.SchedulerInterval, logger,
+		SchedulerTick{Name: "quota_reconcile", Run: func(ctx context.Context) error { _, err := quotaWorkers.ReconcileTick(ctx); return err }},
+		SchedulerTick{Name: "quota_janitor", Run: func(ctx context.Context) error { _, err := quotaWorkers.JanitorTick(ctx); return err }},
+		SchedulerTick{Name: "probe_drain", Run: func(ctx context.Context) error { _, err := probeWorkers.DrainTick(ctx); return err }},
+		SchedulerTick{Name: "probe_recertify", Run: func(ctx context.Context) error { _, err := probeWorkers.RecertifyTick(ctx); return err }},
+		SchedulerTick{Name: "probe_reclaim", Run: func(ctx context.Context) error { _, err := probeWorkers.ReclaimTick(ctx); return err }},
+	)
+	logger.Info("background scheduler started", observability.String("interval", scheduler.interval.String()))
+	scheduler.Start(schedulerCtx)
+
 	return &Server{
-		Addr:    ln.Addr().String(),
-		db:      db,
-		lock:    lock,
-		http:    httpServer,
-		ln:      ln,
-		keyring: kr,
+		Addr:            ln.Addr().String(),
+		db:              db,
+		lock:            lock,
+		http:            httpServer,
+		ln:              ln,
+		keyring:         kr,
+		scheduler:       scheduler,
+		cancelScheduler: cancelScheduler,
 	}, nil
 }
 

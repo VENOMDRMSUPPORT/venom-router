@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -443,6 +444,167 @@ func TestBoot_LoopbackBindVariantsAccepted(t *testing.T) {
 			}
 		})
 	}
+}
+
+// fakeTickerSource is a channel-driven tickerSource — tests fire a tick
+// by sending on ch, deterministically, instead of waiting on real
+// wall-clock time.
+type fakeTickerSource struct {
+	ch chan time.Time
+}
+
+func newFakeTickerSource() *fakeTickerSource {
+	return &fakeTickerSource{ch: make(chan time.Time)}
+}
+
+func (f *fakeTickerSource) C() <-chan time.Time { return f.ch }
+func (f *fakeTickerSource) Stop()               {}
+func (f *fakeTickerSource) fire()               { f.ch <- time.Time{} }
+
+// countingTick returns a SchedulerTick whose Run increments a counter
+// (protected by a mutex) each call and signals on done after every call,
+// so a test can deterministically wait for "the Nth invocation happened"
+// without a wall-clock sleep.
+func countingTick(name string, count *int, mu *sync.Mutex, done chan struct{}) SchedulerTick {
+	return SchedulerTick{Name: name, Run: func(_ context.Context) error {
+		mu.Lock()
+		*count++
+		mu.Unlock()
+		done <- struct{}{}
+		return nil
+	}}
+}
+
+// TestBoot_SchedulerRunsEveryTickOnceAtBootThenOnInterval proves Start
+// runs every tick once immediately (crash recovery) and again each time
+// the injected fake ticker fires — using a fake, channel-driven ticker,
+// never a real wall-clock sleep.
+func TestBoot_SchedulerRunsEveryTickOnceAtBootThenOnInterval(t *testing.T) {
+	var mu sync.Mutex
+	countA, countB := 0, 0
+	doneA := make(chan struct{}, 10)
+	doneB := make(chan struct{}, 10)
+
+	scheduler := NewScheduler(time.Hour, nil, countingTick("a", &countA, &mu, doneA), countingTick("b", &countB, &mu, doneB))
+	fake := newFakeTickerSource()
+	scheduler.newTicker = func(time.Duration) tickerSource { return fake }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler.Start(ctx)
+
+	// Boot-time pass: both ticks fire once, with no ticker signal sent yet.
+	waitForSignal(t, doneA, 2*time.Second)
+	waitForSignal(t, doneB, 2*time.Second)
+	mu.Lock()
+	if countA != 1 || countB != 1 {
+		t.Fatalf("after boot-time pass: countA=%d countB=%d, want 1/1", countA, countB)
+	}
+	mu.Unlock()
+
+	// Fire the fake ticker once: both ticks must run a second time.
+	fake.fire()
+	waitForSignal(t, doneA, 2*time.Second)
+	waitForSignal(t, doneB, 2*time.Second)
+	mu.Lock()
+	if countA != 2 || countB != 2 {
+		t.Fatalf("after one interval tick: countA=%d countB=%d, want 2/2", countA, countB)
+	}
+	mu.Unlock()
+
+	cancel()
+	scheduler.Wait()
+}
+
+// waitForSignal blocks until ch receives a value or timeout elapses.
+func waitForSignal(t *testing.T, ch chan struct{}, timeout time.Duration) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(timeout):
+		t.Fatalf("timed out after %v waiting for a tick signal", timeout)
+	}
+}
+
+// TestBoot_SchedulerStopsOnContextCancel proves cancelling the context
+// passed to Start makes the background goroutine exit promptly (Wait
+// returns) and that no tick runs after cancellation.
+func TestBoot_SchedulerStopsOnContextCancel(t *testing.T) {
+	var mu sync.Mutex
+	count := 0
+	done := make(chan struct{}, 10)
+
+	scheduler := NewScheduler(time.Hour, nil, countingTick("a", &count, &mu, done))
+	fake := newFakeTickerSource()
+	scheduler.newTicker = func(time.Duration) tickerSource { return fake }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	scheduler.Start(ctx)
+	waitForSignal(t, done, 2*time.Second) // the boot-time pass
+
+	cancel()
+
+	waitDone := make(chan struct{})
+	go func() {
+		scheduler.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Wait() did not return promptly after context cancellation")
+	}
+
+	mu.Lock()
+	final := count
+	mu.Unlock()
+	if final != 1 {
+		t.Fatalf("tick count after cancellation = %d, want 1 (no tick may run after cancel)", final)
+	}
+}
+
+// TestBoot_TickPanicDoesNotKillTheProcess proves one tick's panic is
+// recovered — the OTHER tick in the same pass still runs, and the
+// scheduler keeps ticking on the next interval, rather than the panic
+// crashing the process (which would abort this entire test binary if
+// unrecovered).
+func TestBoot_TickPanicDoesNotKillTheProcess(t *testing.T) {
+	var mu sync.Mutex
+	survivorCount := 0
+	survivorDone := make(chan struct{}, 10)
+
+	panicking := SchedulerTick{Name: "panics", Run: func(_ context.Context) error {
+		panic("simulated tick panic") //nolint:forbidigo // deliberately triggers a panic to prove Scheduler.runOne's recover actually catches one
+	}}
+	survivor := countingTick("survivor", &survivorCount, &mu, survivorDone)
+
+	scheduler := NewScheduler(time.Hour, nil, panicking, survivor)
+	fake := newFakeTickerSource()
+	scheduler.newTicker = func(time.Duration) tickerSource { return fake }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler.Start(ctx)
+
+	// If the panic were not recovered, this whole test binary would
+	// crash before ever reaching this assertion.
+	waitForSignal(t, survivorDone, 2*time.Second)
+	mu.Lock()
+	if survivorCount != 1 {
+		t.Fatalf("survivor tick count after boot-time pass = %d, want 1", survivorCount)
+	}
+	mu.Unlock()
+
+	// A second round (via the fake ticker) proves the scheduler loop
+	// itself survived the panic and keeps running, not just that one
+	// pass tolerated it.
+	fake.fire()
+	waitForSignal(t, survivorDone, 2*time.Second)
+	mu.Lock()
+	if survivorCount != 2 {
+		t.Fatalf("survivor tick count after second pass = %d, want 2 (scheduler must keep running after a tick panics)", survivorCount)
+	}
+	mu.Unlock()
 }
 
 func parseStages(t *testing.T, logBytes []byte) []string {
