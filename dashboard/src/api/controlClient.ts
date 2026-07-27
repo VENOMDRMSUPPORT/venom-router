@@ -103,6 +103,31 @@ export interface AccountEligibility {
   reason?: string;
 }
 
+/** One quota window (P3b-CAPI-QUOTAREAD / internal/httpapi/accounts.go's
+ * quotaWindowJSON, enables P3b-UI-001). Nullable numerics are `number |
+ * null`, NEVER widened to plain `number` — `null` means unknown and must
+ * be rendered as such, never coerced to 0. The three string fields are
+ * exactly the internal/quota vocabularies, byte-identical to
+ * `@venom/design-system/domain`'s QuotaEvidenceSource / QuotaWindowState /
+ * QuotaFreshness unions — kept as real unions here (not widened to
+ * `string`) so they pass straight through to those components without a
+ * cast. */
+export interface QuotaWindow {
+  source: "provider_evidence" | "local_safety" | "owner_override";
+  unit: string;
+  window_type: string;
+  window_key: string;
+  state: "available" | "insufficient" | "exhausted" | "unknown" | "stale";
+  freshness: "fresh" | "stale" | "unknown";
+  used: number | null;
+  remaining: number | null;
+  total: number | null;
+  limit_value: number | null;
+  reserved: number;
+  reset_at: number | null;
+  observed_at: string;
+}
+
 /** Exactly @venom/design-system/domain's DisplayStatus vocabulary — the
  * server's domain.DeriveDisplayStatus (internal/accounts/domain/
  * display_status.go) emits precisely these 9 values verbatim. */
@@ -134,6 +159,10 @@ export interface AccountProjection {
   funding: AccountFunding | null;
   display_status: DisplayStatus;
   eligibility: AccountEligibility;
+  /** Every quota window tracked for this account, in the server's
+   * canonical order. Always an array — an account with no windows yet
+   * serializes `[]`, never `null`. */
+  quota: QuotaWindow[];
   last_health_check_at?: string;
   last_health_error?: string;
   created_at: string;

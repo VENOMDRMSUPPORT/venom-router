@@ -10,6 +10,7 @@ import {
   TypedErrorDisplay,
 } from "@venom/design-system/domain";
 import ReverifyModal from "../auth/ReverifyModal";
+import QuotaSummary from "./QuotaSummary";
 import {
   AuthApiError,
   disconnectAccount,
@@ -190,6 +191,7 @@ export default function AccountRow(props: AccountRowProps) {
           </div>
         }
         status={<AccountStatus status={account.display_status} />}
+        quota={<QuotaSummary windows={account.quota} />}
         funding={
           <div className="flex items-center gap-2">
             <FundingBadge funding={account.funding?.funding} source={account.funding?.source} locked={fundingLocked} />
