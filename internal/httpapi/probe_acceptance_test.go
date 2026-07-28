@@ -340,9 +340,24 @@ func assertInfraFailureLeftCapabilityUnknown(t *testing.T, f *p3cGateFixture, wa
 	if cert.Truth != models.TruthUnknown {
 		t.Fatalf("cert.Truth = %q after an infra failure, want unknown (a quota/rate-limit/infra failure must never flip capability truth)", cert.Truth)
 	}
-	gotExecution, ok, err := f.probeRuns.LatestExecution(context.Background(), f.opID)
-	if err != nil || !ok {
-		t.Fatalf("LatestExecution: ok=%v err=%v", ok, err)
+	// The job row is marked completed BEFORE the deferred ProbeRunRepo.Finish
+	// closes the run row (probe.go: the defer frees the in-flight slot on
+	// every exit path), so "job terminal ⇒ run row closed" was never a
+	// promised ordering — only that the run row's execution SETTLES to the
+	// failure class. Wait out that window instead of asserting the ordering.
+	deadline := time.Now().Add(5 * time.Second)
+	var gotExecution intelligence.ProbeExecution
+	for {
+		var ok bool
+		var err error
+		gotExecution, ok, err = f.probeRuns.LatestExecution(context.Background(), f.opID)
+		if err != nil || !ok {
+			t.Fatalf("LatestExecution: ok=%v err=%v", ok, err)
+		}
+		if gotExecution != intelligence.ProbeRunning || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if gotExecution != wantExecution {
 		t.Fatalf("probe execution = %q, want %q", gotExecution, wantExecution)
