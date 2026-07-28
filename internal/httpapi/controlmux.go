@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/application"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/execution"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
@@ -218,24 +219,36 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// the certification-read route (DiscoveryHandler.WithProbeRuns)
 	// immediately below, rather than each building its own.
 	//
-	// DISCLOSED, HONEST LIMITATION: the production transport is
-	// probeTransportAdapter (probeadapters.go) — a stub that reports every
-	// provider unavailable, so every request here is refused with 409
-	// probe_unsupported before any job is created. internal/execution's
-	// frozen NormalizedRequest/NormalizedResponse seam cannot express a
-	// probe request or classify a probe response yet (no max_tokens field,
-	// no HTTP-status/provider-code passthrough, no witness classification)
-	// — reshaping that seam is out of this batch's scope. The full
-	// admission -> transport -> certification-driver pipeline below is
-	// real and gate-tested; only the transport call itself is stubbed.
+	// Probe transport wiring (P3c-EXEC-001): probeTransports is a DATA
+	// lookup (never a slug switch) from provider id to the
+	// execution.InferenceTransport that serves it — today, only
+	// opencode-zen (the one provider with both a base URL and a live
+	// API-key credential adapter). probeBaseURLs carries the FULL base
+	// each entry's transport needs (providers.OpenCodeZenBaseURL + "/v1":
+	// this transport's fixed "/chat/completions" suffix convention needs
+	// the version segment folded in, independent of whatever base_url the
+	// providers table stores for that provider's OTHER adapters). Every
+	// other provider is simply absent from both maps, so Available()
+	// reports it unavailable and ServeProbe refuses 409 probe_unsupported
+	// before any job row is ever created — fail-closed, never a
+	// fabricated capability.
+	probeHTTPClient := &http.Client{Timeout: execution.DefaultOpenAICompatibleTimeout}
+	openAICompatTransport := execution.NewOpenAICompatibleTransport(probeHTTPClient, 0)
+	probeTransports := map[string]execution.InferenceTransport{
+		string(providers.OpenCodeZenID): openAICompatTransport,
+	}
+	probeBaseURLs := map[string]string{
+		string(providers.OpenCodeZenID): providers.OpenCodeZenBaseURL + "/v1",
+	}
 	certRepo := storage.NewCertificationRepo(db, nil)
 	probeRunRepo := storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown)
 	certAuditor := newCertificationAuditorAdapter(audit)
 	certDriver, _ := intelligence.NewCertificationDriver(certRepo, certAuditor, intelligence.DefaultProbeRetryBudget, nil)
 	probeReserver := newProbeReserverAdapter(storage.NewQuotaReservationRepo(db, nil))
+	probeTransportAdapterInstance := newProbeTransportAdapter(probeTransports, probeBaseURLs, credentialRepo, credentialService)
 	probeHandler := NewProbeHandler(
 		accountRepo, credentialRepo, catalogRepo, jobRepo, certRepo, probeRunRepo,
-		probeReserver, newProbeTransportAdapter(), certDriver, intelligence.DefaultProbeSafetyPolicy(),
+		probeReserver, probeTransportAdapterInstance, certDriver, intelligence.DefaultProbeSafetyPolicy(),
 		audit, idem, newOAuthTransactionID, nil,
 	)
 	mux.Handle("/api/control/v1/offerings/{id}/probe", gated(probeHandler.ServeProbe))

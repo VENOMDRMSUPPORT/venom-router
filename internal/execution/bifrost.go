@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -117,6 +118,20 @@ func (t *BifrostTransport) checkRoute(route ResolvedRoute) error {
 	return nil
 }
 
+// bifrostExecError carries the structured fields a bifrost-reported
+// failure has available (status/code/message) so Failure can extract
+// them later — Execute itself never inspects or leaks message here, it
+// only preserves it for the ONE caller (Failure) allowed to read it.
+type bifrostExecError struct {
+	status  int
+	code    string
+	message string
+}
+
+func (e *bifrostExecError) Error() string {
+	return fmt.Sprintf("execution: bifrost chat completion failed (status %d)", e.status)
+}
+
 // Execute sends a single non-streamed chat completion request through
 // Bifrost.
 func (t *BifrostTransport) Execute(ctx context.Context, route ResolvedRoute, req NormalizedRequest) (*NormalizedResponse, error) {
@@ -133,18 +148,25 @@ func (t *BifrostTransport) Execute(ctx context.Context, route ResolvedRoute, req
 		})
 	}
 
+	var params *schemas.ChatParameters
+	if req.MaxTokens != nil {
+		params = &schemas.ChatParameters{MaxCompletionTokens: req.MaxTokens}
+	}
+
 	bfCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
 	resp, bifrostErr := t.client.ChatCompletionRequest(bfCtx, &schemas.BifrostChatRequest{
 		Provider: schemas.ModelProvider(t.provider),
 		Model:    t.modelID,
 		Input:    messages,
+		Params:   params,
 	})
 	if bifrostErr != nil {
-		msg := "bifrost chat completion failed"
+		execErr := &bifrostExecError{status: derefIntOrZero(bifrostErr.StatusCode)}
 		if bifrostErr.Error != nil {
-			msg = bifrostErr.Error.Message
+			execErr.message = bifrostErr.Error.Message
+			execErr.code = derefOrEmpty(bifrostErr.Error.Code)
 		}
-		return nil, fmt.Errorf("execution: %s", msg)
+		return nil, execErr
 	}
 	if len(resp.Choices) == 0 ||
 		resp.Choices[0].ChatNonStreamResponseChoice == nil ||
@@ -158,10 +180,40 @@ func (t *BifrostTransport) Execute(ctx context.Context, route ResolvedRoute, req
 		content = *message.Content.ContentStr
 	}
 
+	var toolCalls []ToolCall
+	if message.ChatAssistantMessage != nil {
+		for _, tc := range message.ToolCalls {
+			toolCalls = append(toolCalls, ToolCall{
+				Name:          derefOrEmpty(tc.Function.Name),
+				ArgumentsJSON: tc.Function.Arguments,
+			})
+		}
+	}
+
 	return &NormalizedResponse{
 		Message:      Message{Role: string(message.Role), Content: content},
+		ToolCalls:    toolCalls,
+		HTTPStatus:   http.StatusOK,
 		FinishReason: derefOrEmpty(resp.Choices[0].FinishReason),
 	}, nil
+}
+
+// Failure implements InferenceTransport.Failure for BifrostTransport: it
+// extracts the status/code/message a bifrostExecError carries, or falls
+// back to a generic server-side classification for anything else
+// (checkRoute's ErrRouteNotConfigured, or a non-bifrost error).
+func (t *BifrostTransport) Failure(err error, _ ResolvedRoute) TypedFailure {
+	var berr *bifrostExecError
+	if errors.As(err, &berr) {
+		return TypedFailure{
+			FailureClass: classifyHTTPStatus(berr.status),
+			HTTPStatus:   berr.status,
+			ProviderCode: berr.code,
+			SafeMessage:  "the provider rejected the request",
+			RawMessage:   berr.message,
+		}
+	}
+	return TypedFailure{FailureClass: FailureClassServer, SafeMessage: "an internal error occurred"}
 }
 
 // Stream is not implemented by this smoke-test shim — streaming is P4.
@@ -203,4 +255,11 @@ func derefOrEmpty(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func derefIntOrZero(n *int) int {
+	if n == nil {
+		return 0
+	}
+	return *n
 }

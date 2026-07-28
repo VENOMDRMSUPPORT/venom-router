@@ -64,12 +64,34 @@ type NormalizedRequest struct {
 	Operation Operation
 	Messages  []Message
 	Stream    bool
+	// MaxTokens is the request's max_tokens; nil means the provider's own
+	// default. quota.EstimateInput.MaxOutputTokens has referred to exactly
+	// this field since P3b — this is that field's first concrete carrier
+	// on the seam (P3c-EXEC-001).
+	MaxTokens *int
+}
+
+// ToolCall is one tool invocation a provider's response carries — the
+// minimal shape a witness classification needs (04 §2/§5): which tool,
+// and its raw argument payload. Argument VALUES are provider-controlled
+// content, not Venom-generated, so they travel as an opaque JSON string
+// rather than a parsed structure this seam would have to interpret.
+type ToolCall struct {
+	Name          string
+	ArgumentsJSON string
 }
 
 // NormalizedResponse is Venom's provider-agnostic representation of a
 // completed, non-streamed inference response.
 type NormalizedResponse struct {
-	Message      Message
+	Message Message
+	// Content is already carried by Message; ToolCalls and HTTPStatus are
+	// the two additional facts a probe witness classification needs and
+	// nothing more (P3c-EXEC-001) — a non-empty ToolCalls or an HTTPStatus
+	// somewhere else in the response is never guessed at, only what the
+	// transport actually observed.
+	ToolCalls    []ToolCall
+	HTTPStatus   int
 	FinishReason string
 }
 
@@ -132,6 +154,13 @@ type TypedFailure struct {
 	HTTPStatus    int            // HTTP status code (0 if not HTTP)
 	SafeMessage   string         // user-safe error description, never raw provider text
 	Evidence      map[string]any // sanitized diagnostic data for observability
+	// RawMessage is the provider's unredacted text. Probe-path use only:
+	// intelligence redacts it before it ever becomes evidence (GOVERNOR
+	// DECISION, P3c-EXEC-001's raw-text exception). Never logged, never
+	// returned on the wire, never consulted by the ordinary routing path —
+	// NormalizeError's SafeMessage remains the only error text that path
+	// ever sees.
+	RawMessage string
 }
 
 // InferenceTransport executes an already-decided inference call. One
@@ -151,8 +180,39 @@ type InferenceTransport interface {
 	// error envelope. Must never leak credentials or raw provider text.
 	NormalizeError(err error, route ResolvedRoute) VenomError
 
+	// Failure is NormalizeError's richer sibling (P3c-EXEC-001): it
+	// returns the already-defined TypedFailure, including HTTPStatus,
+	// ProviderCode, and RawMessage — fields NormalizeError's VenomError
+	// cannot carry. NormalizeError's existing signature and contract are
+	// untouched by this addition, so no existing caller on the ordinary
+	// routing path changes; Failure exists for the probe path (and for
+	// P4-ROUTE-014, later) to consult instead.
+	Failure(err error, route ResolvedRoute) TypedFailure
+
 	// SupportedCapabilities returns the operation set this transport can
 	// handle for the given route. Used during capability certification,
 	// never during routing (certification is pre-computed).
 	SupportedCapabilities(route ResolvedRoute) []Operation
+}
+
+// classifyHTTPStatus maps a raw HTTP status code onto the coarse
+// FailureClass every transport's Failure implementation reports — shared
+// so bifrost.go and openaicompat.go agree on the same mapping rather than
+// each inventing their own. This switches on an int, never a provider
+// slug string, so it is outside CheckNoSlugSwitch's scope by construction.
+func classifyHTTPStatus(status int) FailureClass {
+	switch {
+	case status == 401 || status == 403:
+		return FailureClassAuth
+	case status == 404:
+		return FailureClassNotFound
+	case status == 429:
+		return FailureClassRateLimit
+	case status >= 500:
+		return FailureClassServer
+	case status >= 400:
+		return FailureClassInvalidRequest
+	default:
+		return FailureClassServer
+	}
 }

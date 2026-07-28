@@ -35,6 +35,11 @@ func (t *recordingTransport) NormalizeError(_ error, route ResolvedRoute) VenomE
 	return VenomError{}
 }
 
+func (t *recordingTransport) Failure(_ error, route ResolvedRoute) TypedFailure {
+	t.gotExecuteRoute = route
+	return TypedFailure{}
+}
+
 func (t *recordingTransport) SupportedCapabilities(route ResolvedRoute) []Operation {
 	t.gotExecuteRoute = route
 	return []Operation{OperationChat}
