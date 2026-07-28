@@ -347,33 +347,7 @@ func TestNativeOAuth_TimeoutAndNetworkAreTyped(t *testing.T) {
 	})
 }
 
-// TestNativeOAuth_StreamUnsupported is mutation row 1.9: Stream must
-// return ErrNativeOAuthStreamingUnsupported and a nil channel in this unit.
-// The channel being nil is the contract a caller would check to avoid range
-// over nil panics.
-func TestNativeOAuth_StreamUnsupported(t *testing.T) {
-	transport := NewNativeOAuthTransport(&http.Client{}, 5*time.Second)
-	ch, err := transport.Stream(context.Background(), newNativeOAuthTestRoute("http://127.0.0.1"), NormalizedRequest{})
-	if ch != nil {
-		t.Fatalf("Stream() chan = non-nil, want nil for unsupported transport")
-	}
-	if !errors.Is(err, ErrNativeOAuthStreamingUnsupported) {
-		t.Fatalf("Stream() error = %v, want ErrNativeOAuthStreamingUnsupported", err)
-	}
-}
-
-// TestNativeOAuth_CancelUnsupported is mutation row 1.10: Cancel must
-// return ErrNativeOAuthStreamingUnsupported in this unit (in-flight
-// registry arrives in P4-EXEC-003).
-func TestNativeOAuth_CancelUnsupported(t *testing.T) {
-	transport := NewNativeOAuthTransport(&http.Client{}, 5*time.Second)
-	err := transport.Cancel(context.Background(), newNativeOAuthTestRoute("http://127.0.0.1"), "req-123")
-	if !errors.Is(err, ErrNativeOAuthStreamingUnsupported) {
-		t.Fatalf("Cancel() error = %v, want ErrNativeOAuthStreamingUnsupported", err)
-	}
-}
-
-// TestNativeOAuth_SupportedCapabilities_IncludesChat is mutation row 1.11:
+// TestNativeOAuth_SupportedCapabilities_IncludesChat is mutation row 1.9:
 // SupportedCapabilities must include OperationChat; excluding it would
 // prevent any chat offering from reaching certified state for this transport.
 func TestNativeOAuth_SupportedCapabilities_IncludesChat(t *testing.T) {

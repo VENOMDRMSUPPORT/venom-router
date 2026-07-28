@@ -8,26 +8,25 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
-// DefaultNativeOAuthTimeout bounds every request this transport sends
-// when the caller does not provide one.
-const DefaultNativeOAuthTimeout = 30 * time.Second
-
-// ErrNativeOAuthStreamingUnsupported is returned by Stream and Cancel in
-// this unit — streaming is implemented in P4-EXEC-003.
-var ErrNativeOAuthStreamingUnsupported = errors.New("execution: native-oauth transport streaming not yet implemented (P4-EXEC-003)")
+const (
+	DefaultNativeOAuthTimeout          = 30 * time.Second
+	DefaultNativeOAuthFirstByteTimeout = 10 * time.Second
+	DefaultNativeOAuthIdleGapTimeout   = 30 * time.Second
+)
 
 // nativeOAuthHTTPError carries a non-2xx Gemini response's status/code/
 // message. Error() omits message — raw provider text is only accessible
-// through Failure's RawMessage (the probe-path exception).
+// through Failure's RawMessage (probe path).
 type nativeOAuthHTTPError struct {
 	status  int
 	code    string
 	message string
-	scope   string      // from body (Venom extension: "account" | "model" | "offering")
-	headers http.Header // response headers for rung-2 classification
+	scope   string
+	headers http.Header
 }
 
 func (e *nativeOAuthHTTPError) Error() string {
@@ -73,36 +72,53 @@ type geminiErrDetail struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Status  string `json:"status"`
-	Scope   string `json:"scope"` // Venom extension for scope classification
+	Scope   string `json:"scope"`
 }
 
 type geminiErrBody struct {
 	Error geminiErrDetail `json:"error"`
 }
 
-// NativeOAuthTransport is the InferenceTransport implementation for
-// 01 §4.3's native_oauth type: a Gemini-style generateContent call
-// against route.BaseURL + "/models/" + route.ModelID + ":generateContent"
-// with Authorization: Bearer <route.Credential.Value>.
-// Credential refresh is the credential provider's responsibility (01 §4.5)
-// — this transport receives a fresh credential on every call.
+// NativeOAuthTransport is the InferenceTransport for the native_oauth
+// type (01 §4.3): Gemini-style generateContent/streamGenerateContent
+// against route.BaseURL with Authorization: Bearer.
 type NativeOAuthTransport struct {
-	client  *http.Client
-	timeout time.Duration
+	client           *http.Client
+	timeout          time.Duration
+	firstByteTimeout time.Duration
+	idleGapTimeout   time.Duration
+	inflights        *inflightRegistry
 }
 
-// NewNativeOAuthTransport builds a transport over the injected client
-// and timeout. timeout <= 0 defaults to DefaultNativeOAuthTimeout.
+// NewNativeOAuthTransport builds a transport with default streaming timeouts.
 func NewNativeOAuthTransport(client *http.Client, timeout time.Duration) *NativeOAuthTransport {
+	return newNativeOAuthTransport(client, timeout,
+		DefaultNativeOAuthFirstByteTimeout,
+		DefaultNativeOAuthIdleGapTimeout)
+}
+
+// newNativeOAuthTransport is the internal constructor for test-controlled
+// firstByteTimeout and idleGapTimeout values.
+func newNativeOAuthTransport(client *http.Client, timeout, firstByteTimeout, idleGapTimeout time.Duration) *NativeOAuthTransport {
 	if timeout <= 0 {
 		timeout = DefaultNativeOAuthTimeout
 	}
-	return &NativeOAuthTransport{client: client, timeout: timeout}
+	if firstByteTimeout <= 0 {
+		firstByteTimeout = DefaultNativeOAuthFirstByteTimeout
+	}
+	if idleGapTimeout <= 0 {
+		idleGapTimeout = DefaultNativeOAuthIdleGapTimeout
+	}
+	return &NativeOAuthTransport{
+		client:           client,
+		timeout:          timeout,
+		firstByteTimeout: firstByteTimeout,
+		idleGapTimeout:   idleGapTimeout,
+		inflights:        newInflightRegistry(),
+	}
 }
 
-// geminiRoleFor maps Venom's role vocabulary onto Gemini's:
-// "user" stays "user"; anything else (including "assistant") becomes
-// "model" (Gemini's role for the AI turn).
+// geminiRoleFor maps Venom's role vocabulary onto Gemini's.
 func geminiRoleFor(role string) string {
 	if role == "user" {
 		return "user"
@@ -197,27 +213,205 @@ func (t *NativeOAuthTransport) Execute(ctx context.Context, route ResolvedRoute,
 	}, nil
 }
 
-// Stream is not yet implemented — real SSE streaming arrives in P4-EXEC-003.
-func (t *NativeOAuthTransport) Stream(_ context.Context, _ ResolvedRoute, _ NormalizedRequest) (<-chan Chunk, error) {
-	return nil, ErrNativeOAuthStreamingUnsupported
+// Stream sends a streaming request against the Gemini streamGenerateContent
+// endpoint (?alt=sse). Pre-first-byte errors are returned from Stream;
+// post-first-byte failures arrive as Chunk{Err: ...}.
+func (t *NativeOAuthTransport) Stream(ctx context.Context, route ResolvedRoute, req NormalizedRequest) (<-chan Chunk, error) {
+	streamCtx, cancel := context.WithCancel(ctx)
+
+	contents := make([]geminiContent, 0, len(req.Messages))
+	for _, m := range req.Messages {
+		text := m.Content
+		contents = append(contents, geminiContent{
+			Role:  geminiRoleFor(m.Role),
+			Parts: []geminiPart{{Text: &text}},
+		})
+	}
+	genReq := geminiGenerateReq{Contents: contents}
+	if req.MaxTokens != nil {
+		genReq.GenerationConfig = &geminiGenerationConfig{MaxOutputTokens: req.MaxTokens}
+	}
+
+	payload, err := json.Marshal(genReq)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("execution: native-oauth transport: encode stream request: %w", err)
+	}
+
+	streamURL := route.BaseURL + "/models/" + route.ModelID + ":streamGenerateContent?alt=sse"
+	httpReq, err := http.NewRequestWithContext(streamCtx, http.MethodPost, streamURL, bytes.NewReader(payload))
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("execution: native-oauth transport: build stream request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+route.Credential.Value)
+
+	resp, err := t.client.Do(httpReq)
+	if err != nil {
+		cancel()
+		if errors.Is(streamCtx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("%w: %v", ErrTransportTimeout, err)
+		}
+		return nil, fmt.Errorf("%w: %v", ErrTransportNetwork, err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		rawBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		cancel()
+		var errBody geminiErrBody
+		_ = json.Unmarshal(rawBody, &errBody)
+		return nil, &nativeOAuthHTTPError{
+			status:  resp.StatusCode,
+			code:    errBody.Error.Status,
+			message: errBody.Error.Message,
+			scope:   errBody.Error.Scope,
+			headers: resp.Header.Clone(),
+		}
+	}
+
+	t.inflights.register(req.RequestID, cancel)
+
+	ch := make(chan Chunk, 8)
+	go t.runNativeOAuthSSE(streamCtx, cancel, resp, req.RequestID, ch)
+	return ch, nil
 }
 
-// Cancel is not yet implemented — in-flight registry arrives in P4-EXEC-003.
-func (t *NativeOAuthTransport) Cancel(_ context.Context, _ ResolvedRoute, _ string) error {
-	return ErrNativeOAuthStreamingUnsupported
+// parseGeminiSSEData decodes one "data: ..." SSE payload into a delta
+// string and a done flag. Branchy JSON + parts-walk logic is isolated
+// here so runNativeOAuthSSE stays within the gocyclo limit.
+func parseGeminiSSEData(data string) (delta string, done bool, err error) {
+	var sc geminiGenerateResp
+	if jsonErr := json.Unmarshal([]byte(data), &sc); jsonErr != nil {
+		return "", false, fmt.Errorf("execution: native-oauth transport: decode stream chunk: %w", jsonErr)
+	}
+	if len(sc.Candidates) == 0 {
+		return "", false, nil
+	}
+	candidate := sc.Candidates[0]
+	for _, part := range candidate.Content.Parts {
+		if part.Text != nil {
+			delta += *part.Text
+		}
+	}
+	done = candidate.FinishReason != "" && candidate.FinishReason != "FINISH_REASON_UNSPECIFIED"
+	return delta, done, nil
 }
 
-// NormalizeError returns a minimal, safe VenomError. The richer
-// classification (01 §4.2 full ladder) is in Failure; NormalizeError
-// never inspects raw provider text.
+// runNativeOAuthSSE is the goroutine body for Stream. Extracting it into
+// a named method keeps (*NativeOAuthTransport).Stream's cyclomatic
+// complexity within the project's gocyclo limit.
+func (t *NativeOAuthTransport) runNativeOAuthSSE(
+	streamCtx context.Context,
+	cancel context.CancelFunc,
+	resp *http.Response,
+	requestID string,
+	ch chan<- Chunk,
+) {
+	defer func() {
+		t.inflights.unregister(requestID)
+		_ = resp.Body.Close()
+		cancel()
+		close(ch)
+	}()
+
+	lineCh := sseScanner(streamCtx, resp.Body)
+
+	firstByteTimer := time.NewTimer(t.firstByteTimeout)
+	defer firstByteTimer.Stop()
+	idleTimer := time.NewTimer(t.idleGapTimeout)
+	defer idleTimer.Stop()
+	firstByteSeen := false
+
+	for {
+		select {
+		case <-streamCtx.Done():
+			return
+
+		case <-firstByteTimer.C:
+			if !firstByteSeen {
+				select {
+				case ch <- Chunk{Err: ErrStreamFirstByteTimeout}:
+				case <-streamCtx.Done():
+				}
+				return
+			}
+
+		case <-idleTimer.C:
+			select {
+			case ch <- Chunk{Err: ErrStreamIdleGapTimeout}:
+			case <-streamCtx.Done():
+			}
+			return
+
+		case ev, ok := <-lineCh:
+			if !ok {
+				// Natural EOF — Gemini closes the connection when done.
+				select {
+				case ch <- Chunk{Done: true}:
+				case <-streamCtx.Done():
+				}
+				return
+			}
+			if ev.err != nil {
+				select {
+				case ch <- Chunk{Err: fmt.Errorf("%w: %v", ErrTransportNetwork, ev.err)}:
+				case <-streamCtx.Done():
+				}
+				return
+			}
+
+			if ev.line != "" {
+				if !firstByteSeen {
+					firstByteSeen = true
+					firstByteTimer.Stop()
+				}
+				resetTimer(idleTimer, t.idleGapTimeout)
+			}
+
+			if !strings.HasPrefix(ev.line, "data: ") {
+				continue
+			}
+			delta, done, parseErr := parseGeminiSSEData(strings.TrimPrefix(ev.line, "data: "))
+			if parseErr != nil {
+				select {
+				case ch <- Chunk{Err: parseErr}:
+				case <-streamCtx.Done():
+				}
+				return
+			}
+			if delta != "" {
+				select {
+				case ch <- Chunk{Delta: delta}:
+				case <-streamCtx.Done():
+					return
+				}
+			}
+			if done {
+				select {
+				case ch <- Chunk{Done: true}:
+				case <-streamCtx.Done():
+				}
+				return
+			}
+		}
+	}
+}
+
+// Cancel aborts an in-flight stream. Returns ErrRequestNotInflight when
+// the ID is unknown or the stream already finished.
+func (t *NativeOAuthTransport) Cancel(_ context.Context, _ ResolvedRoute, requestID string) error {
+	return t.inflights.cancel(requestID)
+}
+
+// NormalizeError returns a minimal, safe VenomError.
 func (t *NativeOAuthTransport) NormalizeError(_ error, _ ResolvedRoute) VenomError {
 	return VenomError{Code: "internal", Message: "an internal error occurred", Retryable: false}
 }
 
-// Failure classifies err using the 4-rung ladder (ClassifyFailure,
-// failure.go). Timeout and network sentinels bypass the ladder
-// (HTTPStatus stays 0 — never fabricated). HTTP rejections carry
-// RawMessage for the probe path; it is never placed in SafeMessage.
+// Failure classifies err using the 4-rung ladder. RawMessage is set for
+// the probe path; it is never placed in SafeMessage.
 func (t *NativeOAuthTransport) Failure(err error, _ ResolvedRoute) TypedFailure {
 	if errors.Is(err, ErrTransportTimeout) {
 		return TypedFailure{FailureClass: FailureClassNetwork, Scope: FailureScopeTransientTransport, Retryable: true, SafeMessage: safeMessageFor(FailureClassNetwork)}
@@ -234,10 +428,9 @@ func (t *NativeOAuthTransport) Failure(err error, _ ResolvedRoute) TypedFailure 
 	return TypedFailure{FailureClass: FailureClassServer, SafeMessage: "an internal error occurred"}
 }
 
-// SupportedCapabilities reports chat only for this unit; vision/tools
-// certification is per-offering and not a transport-level claim.
+// SupportedCapabilities reports chat and streaming.
 func (t *NativeOAuthTransport) SupportedCapabilities(_ ResolvedRoute) []Operation {
-	return []Operation{OperationChat}
+	return []Operation{OperationChat, OperationStreaming}
 }
 
 // Compile-time proof NativeOAuthTransport satisfies InferenceTransport.
