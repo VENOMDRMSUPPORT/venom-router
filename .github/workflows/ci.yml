@@ -78,11 +78,16 @@ jobs:
           # across runs instead of recompiling everything cold.
           cache: true
 
-      - name: Set up Task (pinned, prebuilt binary — no from-source build)
-        uses: arduino/setup-task@v2
-        with:
-          version: ${{ env.TASK_VERSION }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # arduino/setup-task@v2 (a prebuilt-binary download + Expand-Archive) fails
+      # on this self-hosted Windows runner: @actions/tool-cache's temp download
+      # file has no .zip extension, and Expand-Archive refuses to extract it
+      # ("... is not a supported archive file format") — a known self-hosted/
+      # Windows PowerShell incompatibility that GitHub-hosted runners never hit.
+      # `go install` sidesteps it entirely (Go is already set up above) and is
+      # equally pinned/reproducible via TASK_VERSION.
+      - name: Set up Task (go install, pinned — arduino/setup-task fails on this self-hosted Windows runner)
+        shell: bash
+        run: go install github.com/go-task/task/v3/cmd/task@v${{ env.TASK_VERSION }}
 
       - name: Locate GOPATH/bin (where go install places the pinned tools)
         id: gobin
@@ -132,11 +137,16 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Set up Task (pinned, prebuilt binary — no from-source build)
-        uses: arduino/setup-task@v2
-        with:
-          version: ${{ env.TASK_VERSION }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # arduino/setup-task@v2 (a prebuilt-binary download + Expand-Archive) fails
+      # on this self-hosted Windows runner: @actions/tool-cache's temp download
+      # file has no .zip extension, and Expand-Archive refuses to extract it
+      # ("... is not a supported archive file format") — a known self-hosted/
+      # Windows PowerShell incompatibility that GitHub-hosted runners never hit.
+      # `go install` sidesteps it entirely (Go is already set up above) and is
+      # equally pinned/reproducible via TASK_VERSION.
+      - name: Set up Task (go install, pinned — arduino/setup-task fails on this self-hosted Windows runner)
+        shell: bash
+        run: go install github.com/go-task/task/v3/cmd/task@v${{ env.TASK_VERSION }}
 
       # ubuntu-latest ships gcc already. windows-latest ships MinGW but not always
       # on PATH for a bare `gcc` invocation; add it via chocolatey only if it isn't
@@ -224,11 +234,16 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Set up Task (pinned, prebuilt binary — no from-source build)
-        uses: arduino/setup-task@v2
-        with:
-          version: ${{ env.TASK_VERSION }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # arduino/setup-task@v2 (a prebuilt-binary download + Expand-Archive) fails
+      # on this self-hosted Windows runner: @actions/tool-cache's temp download
+      # file has no .zip extension, and Expand-Archive refuses to extract it
+      # ("... is not a supported archive file format") — a known self-hosted/
+      # Windows PowerShell incompatibility that GitHub-hosted runners never hit.
+      # `go install` sidesteps it entirely (Go is already set up above) and is
+      # equally pinned/reproducible via TASK_VERSION.
+      - name: Set up Task (go install, pinned — arduino/setup-task fails on this self-hosted Windows runner)
+        shell: bash
+        run: go install github.com/go-task/task/v3/cmd/task@v${{ env.TASK_VERSION }}
 
       - name: Build + embed the dashboard into internal/httpui/dist (P2a-UI-001)
         run: task dashboard:build-embed
