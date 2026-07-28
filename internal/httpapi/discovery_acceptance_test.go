@@ -748,8 +748,21 @@ func assertP3aCostsIdentical(t *testing.T, before, after []effectiveOfferingJSON
 	}
 	for _, b := range before {
 		a := p3aFindOffering(t, after, b.ProviderModelID)
-		if !jsonEqual(t, a.Cost, b.Cost) {
-			t.Fatalf("%s cost changed after an enrichment toggle:\nbefore = %+v\nafter  = %+v", b.ProviderModelID, b.Cost, a.Cost)
+		// Normalized for the same reason p3aStableOffering exists (see its
+		// doc comment): cost.observed_at is stamped with the instant the
+		// cost was RESOLVED, at second precision, and `before`/`after` come
+		// from two SEPARATE HTTP calls — so it is equal only when both land
+		// inside the same wall-clock second. Comparing it here made this
+		// gate test a latent real-clock race, which is exactly what it then
+		// became once this package grew slow enough under -race on
+		// windows-latest (CI run 30320802813). The invariant this test
+		// exists to prove is that toggling ENRICHMENT never changes a COST;
+		// every substantive cost field, including the whole provenance
+		// tuple, is still compared verbatim.
+		beforeCost := p3aStableOffering(b).Cost
+		afterCost := p3aStableOffering(a).Cost
+		if !jsonEqual(t, afterCost, beforeCost) {
+			t.Fatalf("%s cost changed after an enrichment toggle:\nbefore = %+v\nafter  = %+v", b.ProviderModelID, beforeCost, afterCost)
 		}
 	}
 }
