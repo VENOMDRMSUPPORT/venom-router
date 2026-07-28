@@ -135,7 +135,7 @@ func newLegalTransitionDriver(t *testing.T, now time.Time, cert models.Certifica
 func TestCertificationDriver_EachLegalTransition(t *testing.T) {
 	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
 
-	t.Run("edge 1: discovered -> observed (out of this driver's scope, driven directly)", func(t *testing.T) {
+	t.Run("edge 1: discovered -> observed via Observe", func(t *testing.T) {
 		testEdge1DiscoveredToObserved(t, now)
 	})
 	t.Run("edge 2: observed -> probing via StartProbe", func(t *testing.T) {
@@ -168,13 +168,19 @@ func TestCertificationDriver_EachLegalTransition(t *testing.T) {
 }
 
 func testEdge1DiscoveredToObserved(t *testing.T, now time.Time) {
-	c := models.Certification{OfferingOperationID: "oo-1", State: models.CertDiscovered, Truth: models.TruthUnknown}
-	next, err := c.Transition(models.CertObserved, models.TruthUnknown, models.RetryPolicy{}, now)
+	d, store, auditor := newLegalTransitionDriver(t, now, models.Certification{OfferingOperationID: "oo-1", State: models.CertDiscovered, Truth: models.TruthUnknown})
+	got, err := d.Observe(context.Background(), "oo-1")
 	if err != nil {
-		t.Fatalf("Transition error = %v", err)
+		t.Fatalf("Observe error = %v", err)
 	}
-	if next.State != models.CertObserved {
-		t.Fatalf("state = %q, want observed", next.State)
+	if got.State != models.CertObserved {
+		t.Fatalf("state = %q, want observed", got.State)
+	}
+	if len(store.casCalls) != 1 || store.casCalls[0].previous.State != models.CertDiscovered {
+		t.Errorf("CAS previous = %+v, want State=discovered", store.casCalls[0].previous)
+	}
+	if len(auditor.records) != 1 || auditor.records[0].Reason != AuditObserved {
+		t.Errorf("audit = %+v, want reason observed", auditor.records)
 	}
 }
 
@@ -461,6 +467,73 @@ func TestCertificationDriver_NonDefinitiveOutcomeNeverWritesTruth(t *testing.T) 
 			plan := planRecordAttempt(outcome)
 			if plan.verdict != models.TruthUnknown {
 				t.Fatalf("plan.verdict = %q, want unknown", plan.verdict)
+			}
+		})
+	}
+}
+
+// TestCertificationDriver_ObserveDrivesEdge1 is P3c-CERT-008's pinning
+// test for CertificationDriver.Observe: discovered -> observed commits
+// with CAS called against the right previous state and exactly one
+// accepted audit row; from every OTHER current state, Observe is an
+// illegal transition — rejected, audited (Accepted:false,
+// illegal_transition), and CAS is never called.
+func TestCertificationDriver_ObserveDrivesEdge1(t *testing.T) {
+	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+
+	t.Run("discovered -> observed commits", func(t *testing.T) {
+		id := "oo-observe-legal"
+		d, store, auditor := newLegalTransitionDriver(t, now, models.Certification{OfferingOperationID: id, State: models.CertDiscovered, Truth: models.TruthUnknown})
+
+		got, err := d.Observe(context.Background(), id)
+		if err != nil {
+			t.Fatalf("Observe error = %v", err)
+		}
+		if got.State != models.CertObserved {
+			t.Fatalf("state = %q, want observed", got.State)
+		}
+		if len(store.casCalls) != 1 {
+			t.Fatalf("CAS called %d times, want exactly 1", len(store.casCalls))
+		}
+		if store.casCalls[0].previous.State != models.CertDiscovered {
+			t.Fatalf("CAS previous.State = %q, want discovered", store.casCalls[0].previous.State)
+		}
+		if len(auditor.records) != 1 {
+			t.Fatalf("audit records = %d, want exactly 1", len(auditor.records))
+		}
+		if !auditor.records[0].Accepted || auditor.records[0].Reason != AuditObserved {
+			t.Fatalf("audit = %+v, want Accepted=true reason=observed", auditor.records[0])
+		}
+	})
+
+	for _, state := range []models.CertificationState{
+		models.CertObserved, models.CertProbing, models.CertCertified, models.CertSuspended, models.CertExpired,
+	} {
+		t.Run(fmt.Sprintf("%s -> observed is illegal", state), func(t *testing.T) {
+			id := "oo-observe-illegal"
+			cert := models.Certification{OfferingOperationID: id, State: state, Truth: models.TruthUnknown}
+			store := &trapCertStore{t: t, loadCert: cert}
+			auditor := &fakeAuditor{}
+			d, err := NewCertificationDriver(store, auditor, 3, clockAt(now))
+			if err != nil {
+				t.Fatalf("NewCertificationDriver error = %v", err)
+			}
+
+			got, err := d.Observe(context.Background(), id)
+			if !errors.Is(err, models.ErrIllegalCertificationTransition) {
+				t.Fatalf("err = %v, want ErrIllegalCertificationTransition", err)
+			}
+			if got.State != state {
+				t.Fatalf("state = %q, want unchanged %q", got.State, state)
+			}
+			if len(auditor.records) != 1 {
+				t.Fatalf("audit records = %d, want exactly 1", len(auditor.records))
+			}
+			if auditor.records[0].Accepted {
+				t.Fatalf("audit Accepted = true, want false")
+			}
+			if auditor.records[0].Reason != AuditIllegalTransition {
+				t.Fatalf("audit reason = %q, want illegal_transition", auditor.records[0].Reason)
 			}
 		})
 	}

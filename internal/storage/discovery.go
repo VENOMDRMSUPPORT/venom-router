@@ -315,22 +315,29 @@ func (r *DiscoveryRepo) ensureModel(ctx context.Context, tx *sql.Tx, canonicalKe
 }
 
 // ensureOfferingOperation upserts one offering_operations row keyed by its
-// natural identity (account_id, provider_model_id, operation) and — only
-// when that row is brand new — inserts its 'discovered'-baseline
-// certifications row. An already-existing offering_operation is left
-// completely untouched (including its certification): re-discovering an
-// offering-operation a probe has since progressed toward 'certified' must
-// never reset that progress back to 'discovered'.
+// natural identity (account_id, provider_model_id, operation). A BRAND NEW
+// row gets its 'discovered'-baseline certifications row and nothing more —
+// the very first time discovery ever sees an offering-operation, that
+// sighting IS the baseline, not yet "recorded evidence" for something
+// already on file (P3a's own acceptance gates pin this: a single
+// first-ever discovery run leaves every certification at
+// discovered/unknown). An ALREADY-EXISTING row instead calls
+// recordEvidenceObserved: THIS re-discovery is "concrete evidence...
+// recorded" for an offering-operation already known (04 §5 edge 1), so it
+// advances a still-'discovered' certification to 'observed'. Either way,
+// an offering-operation a probe has since progressed past 'observed'
+// (toward 'certified', or into 'suspended'/'expired') is left completely
+// untouched — re-discovery must never reset that progress back.
 func (r *DiscoveryRepo) ensureOfferingOperation(ctx context.Context, tx *sql.Tx, accountID, providerID, providerModelID, operation string, epoch int64) error {
 	var existingID string
 	err := tx.QueryRowContext(ctx,
 		`SELECT id FROM offering_operations WHERE account_id = ? AND provider_model_id = ? AND operation = ?`,
 		accountID, providerModelID, operation,
 	).Scan(&existingID)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	switch {
+	case err == nil:
+		return r.recordEvidenceObserved(ctx, tx, existingID, epoch)
+	case !errors.Is(err, sql.ErrNoRows):
 		return fmt.Errorf("storage: lookup offering_operation (%q,%q,%q): %w", accountID, providerModelID, operation, err)
 	}
 
@@ -347,6 +354,36 @@ func (r *DiscoveryRepo) ensureOfferingOperation(ctx context.Context, tx *sql.Tx,
 		id, epoch, epoch,
 	); err != nil {
 		return fmt.Errorf("storage: insert certification baseline for %q: %w", id, err)
+	}
+	return nil
+}
+
+// recordEvidenceObserved advances edge 1 (discovered -> observed, 04 §5)
+// for offeringOperationID INSIDE tx — the same transaction the snapshot
+// itself is written in, never a second connection (P3c-CERT-008: the
+// pool is SetMaxOpenConns(1); acquiring a second connection while tx
+// holds the only one would deadlock). This is a direct SQL mirror of
+// intelligence.CertificationDriver.Observe's one edge, not a call through
+// that port — Observe's backing CertificationStore (CertificationRepo)
+// uses db.Conn() independently of tx and would deadlock exactly that way
+// if invoked here.
+//
+// The `status = 'discovered'` guard is what makes this both idempotent (a
+// re-discovery of an already-observed-or-later row matches zero rows —
+// a no-op, never an error) and safe against ever resetting a row a probe
+// has since progressed past 'observed' — the same invariant
+// ensureOfferingOperation's existing-row branch has always upheld, now
+// upheld by this guard instead of by never running at all. It never
+// touches version or capability_truth — those remain
+// models.Certification.Transition's exclusive concern (edge 1's own
+// Transition call carries neither), so this SQL only ever sets status and
+// updated_at.
+func (r *DiscoveryRepo) recordEvidenceObserved(ctx context.Context, tx *sql.Tx, offeringOperationID string, epoch int64) error {
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE certifications SET status = 'observed', updated_at = ? WHERE offering_operation_id = ? AND status = 'discovered'`,
+		epoch, offeringOperationID,
+	); err != nil {
+		return fmt.Errorf("storage: advance certification %q to observed: %w", offeringOperationID, err)
 	}
 	return nil
 }

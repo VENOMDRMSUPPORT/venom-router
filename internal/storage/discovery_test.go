@@ -235,7 +235,11 @@ func TestDiscoveryRepo_MarkFailed_LeavesOfferingsUntouched(t *testing.T) {
 // complete expected row set: a models identity row, a provider_model_alias,
 // the account_model_offerings row (with sanitized evidence landing in
 // lifecycle_json), an offering_operations row per recognized operation, and
-// a 'discovered'/'unknown' certifications baseline for each.
+// a 'discovered'/'unknown' certifications baseline for each — the very
+// first sighting of a brand-new offering-operation IS the baseline, not
+// yet "recorded evidence" for something already on file (P3c-CERT-008's
+// edge 1 fires on a SUBSEQUENT re-discovery instead; see
+// TestDiscoveryApply_AdvancesDiscoveredToObserved).
 func TestDiscoveryRepo_Apply_FullRowSet(t *testing.T) {
 	db := migratedCatalogDB(t)
 	insertProvider(t, db, "prov1")
@@ -390,6 +394,263 @@ func TestDiscoveryRepo_Apply_ExistingOfferingOperationCertificationNeverReset(t 
 	}
 	if status != "certified" || truth != "supported" || version != 2 {
 		t.Fatalf("certification = (%s, %s, v%d), want (certified, supported, v2) — re-discovery must never reset progress", status, truth, version)
+	}
+}
+
+// TestDiscoveryApply_AdvancesDiscoveredToObserved is P3c-CERT-008's
+// direct pinning test: an offering-operation's very first sighting stays
+// 'discovered' (it IS the baseline), but a SECOND snapshot recording
+// concrete evidence for that SAME, already-known offering-operation
+// advances its certification to 'observed' — 04 §5 edge 1, driven by
+// discovery itself rather than left permanently un-driven.
+func TestDiscoveryApply_AdvancesDiscoveredToObserved(t *testing.T) {
+	db := migratedCatalogDB(t)
+	insertProvider(t, db, "prov1")
+	insertAccount(t, db, "acct1", "prov1")
+	repo := NewDiscoveryRepo(db, sequentialTestIDs())
+	ctx := context.Background()
+	now := time.Unix(1000, 0)
+
+	snapshotFor := func(gen int64) intelligence.DiscoverySnapshot {
+		return intelligence.DiscoverySnapshot{
+			AccountID: "acct1", ProviderID: "prov1", Generation: gen,
+			Models: []intelligence.DiscoverySnapshotModel{{
+				CanonicalKey: "key-a", ProviderModelID: "model-a",
+				Operations: []models.Operation{models.OperationChat},
+			}},
+		}
+	}
+
+	gen1, _ := repo.BeginRun(ctx, "acct1", "run1", now)
+	if applied, err := repo.Apply(ctx, "run1", snapshotFor(gen1), now); err != nil || !applied {
+		t.Fatalf("first Apply = (%v, %v), want (true, nil)", applied, err)
+	}
+
+	var opID, status string
+	if err := db.Conn().QueryRow(
+		`SELECT id FROM offering_operations WHERE account_id = ? AND provider_model_id = ? AND operation = ?`,
+		"acct1", "model-a", "chat",
+	).Scan(&opID); err != nil {
+		t.Fatalf("query offering_operations: %v", err)
+	}
+	if err := db.Conn().QueryRow(`SELECT status FROM certifications WHERE offering_operation_id = ?`, opID).Scan(&status); err != nil {
+		t.Fatalf("query certifications: %v", err)
+	}
+	if status != "discovered" {
+		t.Fatalf("certification status after first sighting = %q, want discovered", status)
+	}
+
+	gen2, _ := repo.BeginRun(ctx, "acct1", "run2", now)
+	if applied, err := repo.Apply(ctx, "run2", snapshotFor(gen2), now); err != nil || !applied {
+		t.Fatalf("second Apply = (%v, %v), want (true, nil)", applied, err)
+	}
+
+	if err := db.Conn().QueryRow(`SELECT status FROM certifications WHERE offering_operation_id = ?`, opID).Scan(&status); err != nil {
+		t.Fatalf("query certifications: %v", err)
+	}
+	if status != "observed" {
+		t.Fatalf("certification status after re-discovery = %q, want observed", status)
+	}
+}
+
+// TestDiscoveryApply_NeverResetsANonDiscoveredCertification proves
+// recordEvidenceObserved's status='discovered' guard protects every
+// state a probe can have reached: a re-discovery leaves probing/
+// certified/suspended/expired byte-identical (state, truth, version).
+// MUTATION 2.2/2.3: removing the guard (or narrowing it incorrectly)
+// turns this RED.
+func TestDiscoveryApply_NeverResetsANonDiscoveredCertification(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		truth  string
+	}{
+		{"probing", "unknown"},
+		{"certified", "supported"},
+		{"suspended", "unknown"},
+		{"expired", "supported"},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			db := migratedCatalogDB(t)
+			insertProvider(t, db, "prov1")
+			insertAccount(t, db, "acct1", "prov1")
+			repo := NewDiscoveryRepo(db, sequentialTestIDs())
+			ctx := context.Background()
+			now := time.Unix(1000, 0)
+
+			gen1, _ := repo.BeginRun(ctx, "acct1", "run1", now)
+			seed := intelligence.DiscoverySnapshot{
+				AccountID: "acct1", ProviderID: "prov1", Generation: gen1,
+				Models: []intelligence.DiscoverySnapshotModel{{
+					CanonicalKey: "key-a", ProviderModelID: "model-a",
+					Operations: []models.Operation{models.OperationChat},
+				}},
+			}
+			if applied, err := repo.Apply(ctx, "run1", seed, now); err != nil || !applied {
+				t.Fatalf("seed Apply = (%v, %v), want (true, nil)", applied, err)
+			}
+
+			var opID string
+			if err := db.Conn().QueryRow(
+				`SELECT id FROM offering_operations WHERE account_id = ? AND provider_model_id = ? AND operation = ?`,
+				"acct1", "model-a", "chat",
+			).Scan(&opID); err != nil {
+				t.Fatalf("query offering_operations: %v", err)
+			}
+			if _, err := db.Conn().Exec(
+				`UPDATE certifications SET status = ?, capability_truth = ?, version = 7 WHERE offering_operation_id = ?`,
+				tc.status, tc.truth, opID,
+			); err != nil {
+				t.Fatalf("simulate probe progress: %v", err)
+			}
+
+			gen2, _ := repo.BeginRun(ctx, "acct1", "run2", now)
+			rediscovered := intelligence.DiscoverySnapshot{
+				AccountID: "acct1", ProviderID: "prov1", Generation: gen2,
+				Models: []intelligence.DiscoverySnapshotModel{{
+					CanonicalKey: "key-a", ProviderModelID: "model-a",
+					Operations: []models.Operation{models.OperationChat},
+				}},
+			}
+			if applied, err := repo.Apply(ctx, "run2", rediscovered, now); err != nil || !applied {
+				t.Fatalf("rediscover Apply = (%v, %v), want (true, nil)", applied, err)
+			}
+
+			var gotStatus, gotTruth string
+			var gotVersion int
+			if err := db.Conn().QueryRow(
+				`SELECT status, capability_truth, version FROM certifications WHERE offering_operation_id = ?`, opID,
+			).Scan(&gotStatus, &gotTruth, &gotVersion); err != nil {
+				t.Fatalf("query certifications: %v", err)
+			}
+			if gotStatus != tc.status || gotTruth != tc.truth || gotVersion != 7 {
+				t.Fatalf("certification = (%s, %s, v%d), want (%s, %s, v7) unchanged", gotStatus, gotTruth, gotVersion, tc.status, tc.truth)
+			}
+		})
+	}
+}
+
+// TestDiscoveryApply_ObserveIsIdempotent proves two applies of the same
+// evidence leave exactly one 'observed' row, with its version unchanged
+// by the second apply — recordEvidenceObserved never bumps version.
+// MUTATION 2.4: bumping the version on an already-observed row turns
+// this RED.
+func TestDiscoveryApply_ObserveIsIdempotent(t *testing.T) {
+	db := migratedCatalogDB(t)
+	insertProvider(t, db, "prov1")
+	insertAccount(t, db, "acct1", "prov1")
+	repo := NewDiscoveryRepo(db, sequentialTestIDs())
+	ctx := context.Background()
+	now := time.Unix(1000, 0)
+
+	snapshotFor := func(gen int64) intelligence.DiscoverySnapshot {
+		return intelligence.DiscoverySnapshot{
+			AccountID: "acct1", ProviderID: "prov1", Generation: gen,
+			Models: []intelligence.DiscoverySnapshotModel{{
+				CanonicalKey: "key-a", ProviderModelID: "model-a",
+				Operations: []models.Operation{models.OperationChat},
+			}},
+		}
+	}
+
+	gen1, _ := repo.BeginRun(ctx, "acct1", "run1", now)
+	if applied, err := repo.Apply(ctx, "run1", snapshotFor(gen1), now); err != nil || !applied {
+		t.Fatalf("first Apply = (%v, %v), want (true, nil)", applied, err)
+	}
+
+	var opID string
+	if err := db.Conn().QueryRow(
+		`SELECT id FROM offering_operations WHERE account_id = ? AND provider_model_id = ? AND operation = ?`,
+		"acct1", "model-a", "chat",
+	).Scan(&opID); err != nil {
+		t.Fatalf("query offering_operations: %v", err)
+	}
+	var versionAfterFirst int
+	if err := db.Conn().QueryRow(`SELECT version FROM certifications WHERE offering_operation_id = ?`, opID).Scan(&versionAfterFirst); err != nil {
+		t.Fatalf("query certifications: %v", err)
+	}
+
+	gen2, _ := repo.BeginRun(ctx, "acct1", "run2", now)
+	if applied, err := repo.Apply(ctx, "run2", snapshotFor(gen2), now); err != nil || !applied {
+		t.Fatalf("second Apply = (%v, %v), want (true, nil)", applied, err)
+	}
+
+	var rowCount int
+	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM certifications WHERE offering_operation_id = ?`, opID).Scan(&rowCount); err != nil {
+		t.Fatalf("count certifications: %v", err)
+	}
+	if rowCount != 1 {
+		t.Fatalf("certifications row count = %d, want exactly 1", rowCount)
+	}
+
+	var status string
+	var versionAfterSecond int
+	if err := db.Conn().QueryRow(`SELECT status, version FROM certifications WHERE offering_operation_id = ?`, opID).Scan(&status, &versionAfterSecond); err != nil {
+		t.Fatalf("query certifications: %v", err)
+	}
+	if status != "observed" {
+		t.Fatalf("status = %q, want observed", status)
+	}
+	if versionAfterSecond != versionAfterFirst {
+		t.Fatalf("version changed from %d to %d on the second (idempotent) apply", versionAfterFirst, versionAfterSecond)
+	}
+}
+
+// TestDiscoveryApply_NoSecondConnection proves the apply path completes
+// under a bounded context: recordEvidenceObserved runs the advance on tx
+// itself, never a second connection against db's own SetMaxOpenConns(1)
+// pool. MUTATION 2.5: switching the advance to r.db.Conn() would try to
+// acquire a second connection while tx holds the pool's only one — a
+// deadlock this timeout would catch instead of hanging forever.
+func TestDiscoveryApply_NoSecondConnection(t *testing.T) {
+	db := migratedCatalogDB(t)
+	insertProvider(t, db, "prov1")
+	insertAccount(t, db, "acct1", "prov1")
+	repo := NewDiscoveryRepo(db, sequentialTestIDs())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	now := time.Unix(1000, 0)
+
+	snapshotFor := func(gen int64) intelligence.DiscoverySnapshot {
+		return intelligence.DiscoverySnapshot{
+			AccountID: "acct1", ProviderID: "prov1", Generation: gen,
+			Models: []intelligence.DiscoverySnapshotModel{{
+				CanonicalKey: "key-a", ProviderModelID: "model-a",
+				Operations: []models.Operation{models.OperationChat},
+			}},
+		}
+	}
+
+	// The first Apply only creates the 'discovered' baseline — it never
+	// calls recordEvidenceObserved (see ensureOfferingOperation's own doc
+	// comment). It is the SECOND Apply (re-discovery of an already-known
+	// offering-operation) that exercises recordEvidenceObserved, so it
+	// must run inside the monitored goroutine below, not before it.
+	gen1, err := repo.BeginRun(ctx, "acct1", "run1", now)
+	if err != nil {
+		t.Fatalf("BeginRun: %v", err)
+	}
+	if _, err := repo.Apply(ctx, "run1", snapshotFor(gen1), now); err != nil {
+		t.Fatalf("first Apply: %v", err)
+	}
+
+	gen2, err := repo.BeginRun(ctx, "acct1", "run2", now)
+	if err != nil {
+		t.Fatalf("BeginRun: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, applyErr := repo.Apply(ctx, "run2", snapshotFor(gen2), now)
+		done <- applyErr
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("second Apply: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("second Apply did not complete within the timeout — a second connection against the single-connection pool deadlocked")
 	}
 }
 

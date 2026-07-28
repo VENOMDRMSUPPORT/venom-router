@@ -86,12 +86,13 @@ const (
 	AuditRetryBudgetExceeded CertificationAuditReason = "retry_budget_exceeded"
 	AuditVerdictRequired     CertificationAuditReason = "verdict_required"
 	AuditNoValidVerdict      CertificationAuditReason = "no_valid_verdict"
+	AuditObserved            CertificationAuditReason = "observed"
 )
 
 var certificationAuditReasonSet = []CertificationAuditReason{
 	AuditProbeStarted, AuditProbeRetry, AuditVerdictRecorded, AuditSuspended, AuditResumed,
 	AuditReProbeScheduled, AuditExpired, AuditIllegalTransition, AuditRetryBudgetExceeded,
-	AuditVerdictRequired, AuditNoValidVerdict,
+	AuditVerdictRequired, AuditNoValidVerdict, AuditObserved,
 }
 
 // ErrUnknownCertificationAuditReason is returned by
@@ -148,10 +149,13 @@ var ErrNilCertificationDriverPort = errors.New("intelligence: certification driv
 // retryBudget below 1.
 var ErrInvalidRetryBudget = errors.New("intelligence: certification driver retry budget must be at least 1")
 
-// CertificationDriver drives 04 §5's certification-state-machine edges
-// 2-10 (edge 1, discovered -> observed, is triggered by discovery
-// evidence being recorded — P3a-DISC-002's concern, not a probe verdict,
-// and is out of this driver's scope). It never re-implements or bypasses
+// CertificationDriver drives every 04 §5 certification-state-machine edge
+// (1-10). Edge 1 (discovered -> observed, Observe) is triggered by
+// discovery evidence being recorded, not a probe verdict — P3c-CERT-008's
+// storage-layer apply path drives it in-transaction directly rather than
+// through this method (see DiscoveryRepo's own doc comment for why), but
+// the transition itself is identical either way. It never re-implements
+// or bypasses
 // the frozen models.Certification.Transition state machine: every method
 // here is Load -> Transition -> CompareAndSwap -> audit.
 type CertificationDriver struct {
@@ -175,6 +179,20 @@ func NewCertificationDriver(store CertificationStore, auditor CertificationAudit
 		now = time.Now
 	}
 	return &CertificationDriver{store: store, auditor: auditor, retryBudget: retryBudget, now: now}, nil
+}
+
+// Observe drives edge 1 (discovered -> observed, 04 §5), triggered by
+// "first concrete evidence for the offering-operation recorded" —
+// normally a discovery snapshot (P3c-CERT-008; internal/storage's
+// DiscoveryRepo drives the SAME edge directly, in-transaction, for the
+// reason its own doc comment gives — this method is the port other
+// callers, and this package's own tests, drive it through). It follows
+// the identical Load -> Transition -> CompareAndSwap -> audit path every
+// other driver method uses: called from any state other than discovered,
+// Transition's frozen legality table rejects it as an illegal transition,
+// audited like any other rejection, CompareAndSwap never called.
+func (d *CertificationDriver) Observe(ctx context.Context, offeringOperationID string) (models.Certification, error) {
+	return d.apply(ctx, offeringOperationID, models.CertObserved, models.TruthUnknown, models.RetryPolicy{}, AuditObserved, "", "")
 }
 
 // StartProbe drives edge 2 (observed -> probing).
