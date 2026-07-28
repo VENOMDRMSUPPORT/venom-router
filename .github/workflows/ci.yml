@@ -16,6 +16,22 @@ name: CI
 #   windows-only lint regression ever slips through.
 #   Gate LOGIC still lives entirely in Taskfile.yml (`task gate` / `task test-race`) —
 #   the P0-TEST-001 "one command, no gate logic in the workflow" invariant holds.
+#
+# 2026-07-28 GOVERNOR DECISION — self-hosted runner (owner-authorized, cost-driven):
+#   GitHub-hosted minutes were exhausted (private repo, 2000 min/month free tier;
+#   windows-latest costs 2x). Owner chose the fast path over standing up a second
+#   genuine-Linux self-hosted runner: ALL FOUR jobs below now run on ONE Windows
+#   self-hosted runner (label `venom`) instead of GitHub-hosted ubuntu-latest/
+#   windows-latest. Zero GitHub Actions minutes are billed for self-hosted runners
+#   regardless of OS or duration.
+#   ⚠️ KNOWN, DISCLOSED GAP: this means NOTHING in CI runs on genuine Linux anymore.
+#   The project has been bitten by this exact class of bug before (a `*_windows.go`
+#   filename carries an implicit GOOS build constraint invisible to a Windows-only
+#   gate — see venom-review-heuristics memory) — that failure mode can now ONLY be
+#   caught by an eventual real Linux runner (e.g. a WSL2 Ubuntu self-hosted runner,
+#   deferred; or restoring ubuntu-latest once billing allows). Until then, run
+#   `GOOS=linux go vet ./...` / `GOOS=linux go build ./...` locally before trusting
+#   any change that touches build-tagged files.
 
 on:
   push:
@@ -45,8 +61,8 @@ jobs:
   # header note for why one OS is sufficient for the STATIC checks. All gate logic
   # lives in Taskfile.yml's `gate` target; this job only invokes it.
   gate:
-    name: gate (ubuntu-latest)
-    runs-on: ubuntu-latest
+    name: gate (self-hosted)
+    runs-on: [self-hosted, venom]
     steps:
       - name: Checkout (with submodules, for the pinned third_party/bifrost)
         uses: actions/checkout@v4
@@ -102,12 +118,8 @@ jobs:
   # detector itself. `go test -race ./...` compiles AND runs every test, so the
   # windows leg is the full compile+test coverage of windows-tagged code.
   race:
-    name: race detector (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest]
+    name: race detector (self-hosted)
+    runs-on: [self-hosted, venom]
     steps:
       - name: Checkout (with submodules, for the pinned third_party/bifrost)
         uses: actions/checkout@v4
@@ -153,7 +165,7 @@ jobs:
   # in the same job, and only for that one narrow, targeted test run.
   dashboard:
     name: dashboard (design system + app)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, venom]
     steps:
       - name: Checkout (with submodules, for the pinned third_party/bifrost)
         uses: actions/checkout@v4
