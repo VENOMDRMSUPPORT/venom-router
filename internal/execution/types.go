@@ -69,6 +69,11 @@ type NormalizedRequest struct {
 	// this field since P3b — this is that field's first concrete carrier
 	// on the seam (P3c-EXEC-001).
 	MaxTokens *int
+	// RequestID is the correlation id Cancel has demanded since P0
+	// (Cancel(ctx, route, requestID)). Empty means "not cancellable by id"
+	// — context cancellation still works. Transports index in-flight calls
+	// by this id when non-empty (P4-EXEC-003).
+	RequestID string
 }
 
 // ToolCall is one tool invocation a provider's response carries — the

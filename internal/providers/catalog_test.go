@@ -117,9 +117,10 @@ func TestDerivedCapabilities_EmptyRegistryYieldsNoCapabilities(t *testing.T) {
 func TestDerivedCapabilities_ReflectsRegisteredAdapter(t *testing.T) {
 	reg := NewRegistry()
 	if err := reg.Register(Definition{
-		ID:       "opencode-zen",
-		AuthMode: AuthModeAPIKey,
-		APIKey:   catalogFakeAPIKeyAdapter{},
+		ID:        "opencode-zen",
+		AuthMode:  AuthModeAPIKey,
+		Transport: TransportKindOpenAICompatible,
+		APIKey:    catalogFakeAPIKeyAdapter{},
 	}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}

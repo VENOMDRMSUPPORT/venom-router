@@ -16,8 +16,13 @@ const (
 // optional adapters. Concrete adapters are supplied by later units
 // (PROV-002/005/007); this unit only freezes the registration shape.
 type Definition struct {
-	ID        ProviderID
-	AuthMode  AuthMode
+	ID       ProviderID
+	AuthMode AuthMode
+	// Transport is the execution transport kind this provider uses (01 §4.4:
+	// transport selection is declared in the provider catalog). It must be
+	// one of the five closed TransportKind values; empty or unknown is
+	// rejected by Register.
+	Transport TransportKind
 	APIKey    APIKeyAdapter         // set iff AuthMode == AuthModeAPIKey
 	OAuth     OAuthAdapter          // set iff AuthMode == AuthModeOAuth
 	Health    HealthAdapter         // optional
@@ -64,8 +69,19 @@ func (r *Registry) Register(def Definition) error {
 		return fmt.Errorf("providers: register %s: a provider registers APIKey XOR OAuth, never both", def.ID)
 	}
 
+	if _, err := ParseTransportKind(string(def.Transport)); err != nil {
+		return fmt.Errorf("providers: register %s: %w", def.ID, err)
+	}
+
 	r.defs[def.ID] = def
 	return nil
+}
+
+// Definition returns the full Definition registered for id, or ok=false if
+// id is unknown. Used by httpapi's transport resolver.
+func (r *Registry) Definition(id ProviderID) (Definition, bool) {
+	def, found := r.defs[id]
+	return def, found
 }
 
 // APIKeyAdapter returns id's registered APIKeyAdapter, or ok=false if id

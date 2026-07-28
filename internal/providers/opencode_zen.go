@@ -110,6 +110,7 @@ func RegisterOpenCodeZen(reg *Registry, chatProbe ChatProbe, modelsProbe ModelsP
 	return reg.Register(Definition{
 		ID:        OpenCodeZenID,
 		AuthMode:  AuthModeAPIKey,
+		Transport: TransportKindOpenAICompatible,
 		APIKey:    adapter,
 		Discovery: adapter,
 	})

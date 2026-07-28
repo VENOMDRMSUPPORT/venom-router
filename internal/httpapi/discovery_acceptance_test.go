@@ -1024,6 +1024,7 @@ func TestP3aGate_NoInferenceProbeRan(t *testing.T) {
 	if err := reg.Register(providers.Definition{
 		ID:        providers.ProviderID(providerID),
 		AuthMode:  providers.AuthModeAPIKey,
+		Transport: providers.TransportKindOpenAICompatible,
 		APIKey:    p3aTrapAPIKeyAdapter{t: t},
 		Discovery: discAdapter,
 	}); err != nil {

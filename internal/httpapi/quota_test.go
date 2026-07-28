@@ -111,7 +111,7 @@ func newQuotaFixture(t *testing.T, clock func() time.Time, opts quotaFixtureOpts
 
 	reg := providers.NewRegistry()
 	adapter := &fakeQuotaAdapter{}
-	def := providers.Definition{ID: providers.ProviderID(providerID), AuthMode: providers.AuthModeAPIKey, APIKey: newFakeAPIKeyAdapter()}
+	def := providers.Definition{ID: providers.ProviderID(providerID), AuthMode: providers.AuthModeAPIKey, Transport: providers.TransportKindOpenAICompatible, APIKey: newFakeAPIKeyAdapter()}
 	if opts.WithQuota {
 		def.Quota = adapter
 	}

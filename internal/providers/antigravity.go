@@ -329,8 +329,9 @@ func antigravityFundingForPlan(planName string) (funding string, confidence floa
 func RegisterAntigravity(reg *Registry, clientID, clientSecret string, tokenProbe AntigravityTokenProbe, userInfoProbe AntigravityGetProbe, loadCodeAssistProbe AntigravityPostProbe) error {
 	adapter := NewAntigravityAdapter(clientID, clientSecret, tokenProbe, userInfoProbe, loadCodeAssistProbe)
 	return reg.Register(Definition{
-		ID:       AntigravityID,
-		AuthMode: AuthModeOAuth,
-		OAuth:    adapter,
+		ID:        AntigravityID,
+		AuthMode:  AuthModeOAuth,
+		Transport: TransportKindNativeOAuth,
+		OAuth:     adapter,
 	})
 }

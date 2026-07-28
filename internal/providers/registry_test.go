@@ -2,8 +2,22 @@ package providers
 
 import (
 	"context"
+	"net/url"
 	"testing"
 )
+
+// Stub probe functions for provider registration tests.
+func stubAntigravityTokenProbe(_ context.Context, _ string, _ url.Values) ([]byte, error) {
+	return []byte(`{"access_token":"tok","refresh_token":"ref","expires_in":3600}`), nil
+}
+
+func stubAntigravityGetProbe(_ context.Context, _, _ string) ([]byte, error) {
+	return []byte(`{"email":"x@example.com"}`), nil
+}
+
+func stubAntigravityPostProbe(_ context.Context, _, _ string, _ []byte) ([]byte, error) {
+	return []byte(`{"cloudaicompanionProject":"p","currentTier":{"id":"1","name":"Free"}}`), nil
+}
 
 type fakeAPIKeyAdapter struct{}
 
@@ -45,10 +59,11 @@ func TestRegistry_DispatchByCapability(t *testing.T) {
 	reg := NewRegistry()
 
 	if err := reg.Register(Definition{
-		ID:       "openai",
-		AuthMode: AuthModeAPIKey,
-		APIKey:   fakeAPIKeyAdapter{},
-		Health:   fakeHealthAdapter{},
+		ID:        "openai",
+		AuthMode:  AuthModeAPIKey,
+		Transport: TransportKindOpenAICompatible,
+		APIKey:    fakeAPIKeyAdapter{},
+		Health:    fakeHealthAdapter{},
 	}); err != nil {
 		t.Fatalf("Register(openai): %v", err)
 	}
@@ -100,9 +115,10 @@ func TestRegistry_OAuthProvider(t *testing.T) {
 	reg := NewRegistry()
 
 	if err := reg.Register(Definition{
-		ID:       "chatgpt",
-		AuthMode: AuthModeOAuth,
-		OAuth:    fakeOAuthAdapter{},
+		ID:        "chatgpt",
+		AuthMode:  AuthModeOAuth,
+		Transport: TransportKindOpenAICompatible,
+		OAuth:     fakeOAuthAdapter{},
 	}); err != nil {
 		t.Fatalf("Register(chatgpt): %v", err)
 	}
@@ -144,7 +160,7 @@ func TestRegistry_Register_RejectsMissingPrimaryAdapter(t *testing.T) {
 
 func TestRegistry_Register_RejectsDuplicateID(t *testing.T) {
 	reg := NewRegistry()
-	def := Definition{ID: "dup", AuthMode: AuthModeAPIKey, APIKey: fakeAPIKeyAdapter{}}
+	def := Definition{ID: "dup", AuthMode: AuthModeAPIKey, Transport: TransportKindOpenAICompatible, APIKey: fakeAPIKeyAdapter{}}
 
 	if err := reg.Register(def); err != nil {
 		t.Fatalf("first Register: %v", err)
@@ -160,5 +176,114 @@ func TestRegistry_Register_RejectsEmptyID(t *testing.T) {
 	err := reg.Register(Definition{AuthMode: AuthModeAPIKey, APIKey: fakeAPIKeyAdapter{}})
 	if err == nil {
 		t.Fatalf("Register succeeded with empty ID, want rejection")
+	}
+}
+
+func TestRegistry_Register_RejectsEmptyTransport(t *testing.T) {
+	reg := NewRegistry()
+
+	err := reg.Register(Definition{ID: "no-transport", AuthMode: AuthModeAPIKey, APIKey: fakeAPIKeyAdapter{}})
+	if err == nil {
+		t.Fatalf("Register succeeded with empty Transport, want rejection")
+	}
+}
+
+func TestRegistry_Register_RejectsUnknownTransport(t *testing.T) {
+	reg := NewRegistry()
+
+	err := reg.Register(Definition{ID: "bad-transport", AuthMode: AuthModeAPIKey, APIKey: fakeAPIKeyAdapter{}, Transport: TransportKind("not_a_real_kind")})
+	if err == nil {
+		t.Fatalf("Register succeeded with unknown Transport, want rejection")
+	}
+}
+
+func TestRegistry_Register_AcceptsValidTransport(t *testing.T) {
+	reg := NewRegistry()
+
+	kinds := []TransportKind{
+		TransportKindBifrost,
+		TransportKindNativeAPI,
+		TransportKindNativeOAuth,
+		TransportKindOpenAICompatible,
+		TransportKindCustom,
+	}
+	for i, k := range kinds {
+		id := ProviderID("prov-" + string(k))
+		var authMode AuthMode
+		var apiKey APIKeyAdapter
+		var oauth OAuthAdapter
+		if i%2 == 0 {
+			authMode = AuthModeAPIKey
+			apiKey = fakeAPIKeyAdapter{}
+		} else {
+			authMode = AuthModeOAuth
+			oauth = fakeOAuthAdapter{}
+		}
+		err := reg.Register(Definition{ID: id, AuthMode: authMode, Transport: k, APIKey: apiKey, OAuth: oauth})
+		if err != nil {
+			t.Errorf("Register(transport=%q) error = %v, want nil", k, err)
+		}
+	}
+}
+
+func TestRegistry_Definition_LookupAndMissingProvider(t *testing.T) {
+	reg := NewRegistry()
+
+	if err := reg.Register(Definition{
+		ID:        "p1",
+		AuthMode:  AuthModeAPIKey,
+		Transport: TransportKindOpenAICompatible,
+		APIKey:    fakeAPIKeyAdapter{},
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	def, ok := reg.Definition("p1")
+	if !ok {
+		t.Fatalf("Definition(p1) ok = false, want true")
+	}
+	if def.Transport != TransportKindOpenAICompatible {
+		t.Fatalf("Definition(p1).Transport = %q, want %q", def.Transport, TransportKindOpenAICompatible)
+	}
+
+	if _, ok := reg.Definition("does-not-exist"); ok {
+		t.Fatalf("Definition(unknown) ok = true, want false")
+	}
+}
+
+func TestRegistrations_ShippedProviders_HaveCorrectTransports(t *testing.T) {
+	reg := NewRegistry()
+	chatProbe := func(_ context.Context, _, _ string) (int, error) { return 200, nil }
+	modelsProbe := func(_ context.Context, _, _ string) ([]byte, error) { return []byte(`{"data":[]}`), nil }
+	if err := RegisterOpenCodeZen(reg, chatProbe, modelsProbe); err != nil {
+		t.Fatalf("RegisterOpenCodeZen: %v", err)
+	}
+
+	def, ok := reg.Definition(OpenCodeZenID)
+	if !ok {
+		t.Fatalf("Definition(%q) ok = false", OpenCodeZenID)
+	}
+	if def.Transport != TransportKindOpenAICompatible {
+		t.Fatalf("opencode-zen transport = %q, want %q", def.Transport, TransportKindOpenAICompatible)
+	}
+}
+
+func TestRegistrations_Antigravity_HasNativeOAuthTransport(t *testing.T) {
+	reg := NewRegistry()
+
+	if err := RegisterAntigravity(reg, "cid", "csecret",
+		stubAntigravityTokenProbe,
+		stubAntigravityGetProbe,
+		stubAntigravityPostProbe,
+	); err != nil {
+		t.Fatalf("RegisterAntigravity: %v", err)
+	}
+
+	def, ok := reg.Definition(AntigravityID)
+	if !ok {
+		t.Fatalf("Definition(%q) ok = false", AntigravityID)
+	}
+	if def.Transport != TransportKindNativeOAuth {
+		t.Fatalf("antigravity transport = %q, want %q", def.Transport, TransportKindNativeOAuth)
 	}
 }

@@ -68,7 +68,7 @@ func newTestEnrollmentHandler(t *testing.T, providerID string, adapter providers
 	}
 
 	reg := providers.NewRegistry()
-	if err := reg.Register(providers.Definition{ID: providers.ProviderID(providerID), AuthMode: providers.AuthModeAPIKey, APIKey: adapter}); err != nil {
+	if err := reg.Register(providers.Definition{ID: providers.ProviderID(providerID), AuthMode: providers.AuthModeAPIKey, Transport: providers.TransportKindOpenAICompatible, APIKey: adapter}); err != nil {
 		t.Fatalf("register fake adapter: %v", err)
 	}
 

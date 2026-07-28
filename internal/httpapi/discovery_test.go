@@ -115,7 +115,7 @@ func newDiscoveryFixture(t *testing.T, clock func() time.Time, opts discoveryFix
 
 	reg := providers.NewRegistry()
 	discAdapter := &fakeDiscoveryAdapter{}
-	def := providers.Definition{ID: providers.ProviderID(providerID), AuthMode: providers.AuthModeAPIKey, APIKey: newFakeAPIKeyAdapter()}
+	def := providers.Definition{ID: providers.ProviderID(providerID), AuthMode: providers.AuthModeAPIKey, Transport: providers.TransportKindOpenAICompatible, APIKey: newFakeAPIKeyAdapter()}
 	if opts.WithDiscovery {
 		def.Discovery = discAdapter
 	}
