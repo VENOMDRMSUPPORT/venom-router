@@ -36,6 +36,7 @@ coverage/
 # Temp
 tmp/
 .tmp/
+.worktrees/
 
 # Tool caches
 .codegraph/
