@@ -43,6 +43,8 @@ type openAICompatHTTPError struct {
 	status  int
 	code    string
 	message string
+	scope   string      // explicit scope hint from the response body (may be empty)
+	headers http.Header // response headers for rung-2 classification
 }
 
 func (e *openAICompatHTTPError) Error() string {
@@ -96,6 +98,7 @@ type chatCompletionErrorBody struct {
 	Error struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
+		Scope   string `json:"scope"` // Venom extension: explicit scope hint ("account","model","offering")
 	} `json:"error"`
 }
 
@@ -168,7 +171,13 @@ func (t *OpenAICompatibleTransport) Execute(ctx context.Context, route ResolvedR
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var errBody chatCompletionErrorBody
 		_ = json.Unmarshal(rawBody, &errBody) // best-effort; zero value on a non-matching body
-		return nil, &openAICompatHTTPError{status: resp.StatusCode, code: errBody.Error.Code, message: errBody.Error.Message}
+		return nil, &openAICompatHTTPError{
+			status:  resp.StatusCode,
+			code:    errBody.Error.Code,
+			message: errBody.Error.Message,
+			scope:   errBody.Error.Scope,
+			headers: resp.Header.Clone(),
+		}
 	}
 
 	var okBody chatCompletionResponseBody
@@ -212,25 +221,22 @@ func (t *OpenAICompatibleTransport) NormalizeError(_ error, _ ResolvedRoute) Ven
 	return VenomError{Code: "internal", Message: "an internal error occurred", Retryable: false}
 }
 
-// Failure classifies err into the richer TypedFailure envelope: a timeout
-// or network failure (HTTPStatus stays 0 — never a fabricated status),
-// or an HTTP-level rejection carrying the real status/code/RawMessage.
+// Failure classifies err using the 4-rung ladder (ClassifyFailure,
+// failure.go). Timeout and network sentinels bypass the ladder
+// (HTTPStatus stays 0 — never fabricated). HTTP rejections carry
+// RawMessage for the probe path; it is never placed in SafeMessage.
 func (t *OpenAICompatibleTransport) Failure(err error, _ ResolvedRoute) TypedFailure {
-	switch {
-	case errors.Is(err, ErrTransportTimeout):
-		return TypedFailure{FailureClass: FailureClassNetwork, Scope: FailureScopeTransientTransport, Retryable: true, SafeMessage: "the request timed out"}
-	case errors.Is(err, ErrTransportNetwork):
-		return TypedFailure{FailureClass: FailureClassNetwork, Scope: FailureScopeTransientTransport, Retryable: true, SafeMessage: "a network error occurred"}
+	if errors.Is(err, ErrTransportTimeout) {
+		return TypedFailure{FailureClass: FailureClassNetwork, Scope: FailureScopeTransientTransport, Retryable: true, SafeMessage: safeMessageFor(FailureClassNetwork)}
+	}
+	if errors.Is(err, ErrTransportNetwork) {
+		return TypedFailure{FailureClass: FailureClassNetwork, Scope: FailureScopeTransientTransport, Retryable: true, SafeMessage: safeMessageFor(FailureClassNetwork)}
 	}
 	var httpErr *openAICompatHTTPError
 	if errors.As(err, &httpErr) {
-		return TypedFailure{
-			FailureClass: classifyHTTPStatus(httpErr.status),
-			HTTPStatus:   httpErr.status,
-			ProviderCode: httpErr.code,
-			SafeMessage:  "the provider rejected the request",
-			RawMessage:   httpErr.message,
-		}
+		f := ClassifyFailure(httpErr.code, httpErr.scope, httpErr.headers, nil, httpErr.status)
+		f.RawMessage = httpErr.message
+		return f
 	}
 	return TypedFailure{FailureClass: FailureClassServer, SafeMessage: "an internal error occurred"}
 }

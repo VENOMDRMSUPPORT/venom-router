@@ -198,20 +198,17 @@ func (t *BifrostTransport) Execute(ctx context.Context, route ResolvedRoute, req
 	}, nil
 }
 
-// Failure implements InferenceTransport.Failure for BifrostTransport: it
-// extracts the status/code/message a bifrostExecError carries, or falls
-// back to a generic server-side classification for anything else
-// (checkRoute's ErrRouteNotConfigured, or a non-bifrost error).
+// Failure classifies err using the 4-rung ladder (ClassifyFailure,
+// failure.go). Bifrost does not surface HTTP response headers, so
+// headers is nil (rung-2 header enrichment is skipped). RawMessage
+// is set from the bifrost error for the probe path; it is never placed
+// in SafeMessage.
 func (t *BifrostTransport) Failure(err error, _ ResolvedRoute) TypedFailure {
 	var berr *bifrostExecError
 	if errors.As(err, &berr) {
-		return TypedFailure{
-			FailureClass: classifyHTTPStatus(berr.status),
-			HTTPStatus:   berr.status,
-			ProviderCode: berr.code,
-			SafeMessage:  "the provider rejected the request",
-			RawMessage:   berr.message,
-		}
+		f := ClassifyFailure(berr.code, "", nil, nil, berr.status)
+		f.RawMessage = berr.message
+		return f
 	}
 	return TypedFailure{FailureClass: FailureClassServer, SafeMessage: "an internal error occurred"}
 }

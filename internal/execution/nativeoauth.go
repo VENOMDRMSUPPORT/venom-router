@@ -214,25 +214,22 @@ func (t *NativeOAuthTransport) NormalizeError(_ error, _ ResolvedRoute) VenomErr
 	return VenomError{Code: "internal", Message: "an internal error occurred", Retryable: false}
 }
 
-// Failure classifies err into a TypedFailure: timeout/network errors stay
-// at their typed sentinels; HTTP rejections carry status/code/RawMessage.
-// This is the minimal rung-4 build; the full ladder arrives in P4-EXEC-002.
+// Failure classifies err using the 4-rung ladder (ClassifyFailure,
+// failure.go). Timeout and network sentinels bypass the ladder
+// (HTTPStatus stays 0 — never fabricated). HTTP rejections carry
+// RawMessage for the probe path; it is never placed in SafeMessage.
 func (t *NativeOAuthTransport) Failure(err error, _ ResolvedRoute) TypedFailure {
 	if errors.Is(err, ErrTransportTimeout) {
-		return TypedFailure{FailureClass: FailureClassNetwork, Scope: FailureScopeTransientTransport, Retryable: true, SafeMessage: "the request timed out"}
+		return TypedFailure{FailureClass: FailureClassNetwork, Scope: FailureScopeTransientTransport, Retryable: true, SafeMessage: safeMessageFor(FailureClassNetwork)}
 	}
 	if errors.Is(err, ErrTransportNetwork) {
-		return TypedFailure{FailureClass: FailureClassNetwork, Scope: FailureScopeTransientTransport, Retryable: true, SafeMessage: "a network error occurred"}
+		return TypedFailure{FailureClass: FailureClassNetwork, Scope: FailureScopeTransientTransport, Retryable: true, SafeMessage: safeMessageFor(FailureClassNetwork)}
 	}
 	var httpErr *nativeOAuthHTTPError
 	if errors.As(err, &httpErr) {
-		return TypedFailure{
-			FailureClass: classifyHTTPStatus(httpErr.status),
-			HTTPStatus:   httpErr.status,
-			ProviderCode: httpErr.code,
-			SafeMessage:  "the provider rejected the request",
-			RawMessage:   httpErr.message,
-		}
+		f := ClassifyFailure(httpErr.code, httpErr.scope, httpErr.headers, nil, httpErr.status)
+		f.RawMessage = httpErr.message
+		return f
 	}
 	return TypedFailure{FailureClass: FailureClassServer, SafeMessage: "an internal error occurred"}
 }
