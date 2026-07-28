@@ -114,9 +114,22 @@ func TestApplyCompetitiveBand_NeverWidens(t *testing.T) {
 // TestApplyCompetitiveBand_LitePassthrough verifies Lite scores are returned
 // unchanged regardless of their QualityFactor spread.
 //
+// GOVERNOR CORRECTION: the original version of this test used quality
+// values {1.0, 0.5, 0.0} against Lite's BandWidth=0. That data is vacuous
+// against mutation B-M3 (removing the `!policy.Scored` short-circuit):
+// with band=0, only the top (1.0) entry satisfies the generic band filter,
+// so the generic "fewer than two in-band → return original" fallback
+// ALSO returns all 3 entries unchanged — passing for the wrong reason and
+// masking the short-circuit's removal entirely (confirmed by hand: the
+// mutated code passed this exact data). The corrected data below ties two
+// entries at the top quality value, so the generic filter alone would
+// keep exactly those 2 (satisfying the plain "len(kept) >= 2" path) and
+// silently drop the third — a real, visible divergence from "unchanged"
+// that only the explicit Lite short-circuit prevents.
+//
 // Mutation row B-M3: apply the band to Lite (remove the !policy.Scored check)
-// → the wide-spread Lite scores are filtered → len(result) < len(input) →
-// restore.
+// → with 2 entries tied at top quality, the generic filter keeps only
+// those 2 and drops the third → len(result) == 2 ≠ 3 → restore.
 func TestApplyCompetitiveBand_LitePassthrough(t *testing.T) {
 	ps, err := Policies()
 	if err != nil {
@@ -126,8 +139,8 @@ func TestApplyCompetitiveBand_LitePassthrough(t *testing.T) {
 
 	scores := []GroupScore{
 		bandScore(1.0),
-		bandScore(0.5),
-		bandScore(0.0),
+		bandScore(1.0), // tied with the top — the generic filter would ALSO keep this
+		bandScore(0.5), // NOT tied — only the explicit Lite short-circuit preserves this
 	}
 
 	result := ApplyCompetitiveBand(scores, policy)
