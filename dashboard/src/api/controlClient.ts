@@ -328,6 +328,75 @@ export async function disconnectAccount(accountId: string, csrfToken: string): P
   return resp.data;
 }
 
+// --- Certification (P3c-CAPI-001, enables P3c-UI-001) ---
+
+/** GET /offerings/{id}/certification's success payload
+ * (internal/httpapi/discovery.go's certificationJSON), rendered verbatim —
+ * `state`/`capability_truth` are exactly the domain vocabularies
+ * `@venom/design-system/domain`'s CertState/CapabilityTruth already use, so
+ * they pass straight through with no mapping table. `probe_execution` is
+ * `undefined` (never a fabricated value) until a probe has actually run;
+ * `review_reasons` is always an array (possibly empty), never omitted. */
+export interface CertificationRead {
+  offering_operation_id: string;
+  account_id: string;
+  provider_model_id: string;
+  operation: string;
+  state: "discovered" | "observed" | "probing" | "certified" | "suspended" | "expired";
+  capability_truth: "unknown" | "supported" | "unsupported";
+  version: number;
+  certified_at: string | null;
+  evidence_ref?: string;
+  certified_and_supported: boolean;
+  probe_execution?: "pending" | "running" | "succeeded" | "inconclusive" | "retryable_failure" | "terminal_failure";
+  review_reasons: string[];
+}
+
+/** GET /offerings/{id}/certification — one offering-operation's
+ * certification read. A read — no CSRF token. */
+export async function getCertification(offeringOperationID: string): Promise<CertificationRead> {
+  const body = await request<{ data: CertificationRead }>(
+    `/offerings/${encodeURIComponent(offeringOperationID)}/certification`,
+    { method: "GET" },
+  );
+  return body.data;
+}
+
+// --- Probe trigger (P3c-CAPI-001, enables P3c-UI-001) ---
+
+export interface StartProbeBody {
+  /** At most one element, matching this offering-operation's own operation
+   * (internal/httpapi/probe.go's resolveProbeOperation) — omit to probe
+   * that operation directly. */
+  operations?: string[];
+  /** Bypasses ONLY the context-probe cooldown gate — every other safety
+   * gate (cost caps, concurrency, the reservation itself) still applies. */
+  force?: boolean;
+}
+
+export interface StartProbeResult {
+  job_id: string;
+  status_url: string;
+}
+
+/** POST /offerings/{id}/probe — triggers an async capability probe (202 +
+ * job); poll GET /jobs/{job_id} (not yet wrapped here) for terminal status. */
+export async function startProbe(
+  offeringOperationID: string,
+  csrfToken: string,
+  body?: StartProbeBody,
+): Promise<StartProbeResult> {
+  const resp = await request<{ data: StartProbeResult }>(
+    `/offerings/${encodeURIComponent(offeringOperationID)}/probe`,
+    {
+      method: "POST",
+      headers: { [CSRF_HEADER]: csrfToken },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    },
+  );
+  return resp.data;
+}
+
 // --- OAuth enrollment (P2b-PROV-006) ---
 
 export interface OAuthBeginResult {

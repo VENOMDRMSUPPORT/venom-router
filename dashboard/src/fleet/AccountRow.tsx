@@ -10,6 +10,7 @@ import {
   TypedErrorDisplay,
 } from "@venom/design-system/domain";
 import ReverifyModal from "../auth/ReverifyModal";
+import CertificationSummary from "./CertificationSummary";
 import QuotaSummary from "./QuotaSummary";
 import {
   AuthApiError,
@@ -244,6 +245,19 @@ export default function AccountRow(props: AccountRowProps) {
           />
         }
       />
+
+      {/* P3c-UI-001: the certification summary composes entirely from
+       * offering-operation data (state/truth/probe-execution/review
+       * reasons), none of which GET /accounts or AccountProjection carries
+       * today — GET /offerings has no per-account mount point wired into
+       * this page yet (FleetOverview's own "Models" StatCard is the same
+       * honest "—" for the same reason). Wiring is complete and tested in
+       * isolation (CertificationSummary.test.tsx); the moment a later unit
+       * supplies this account's offering-operations, passing them here is
+       * the only change needed — an empty array renders the same honest
+       * "—" idiom QuotaSummary uses for its own empty case, never a
+       * fabricated row. */}
+      <CertificationSummary operations={[]} />
 
       {actionError ? (
         <TypedErrorDisplay code={actionError.code} message={actionError.message} retryable={actionError.retryable} tone="critical" />
