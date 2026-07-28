@@ -86,12 +86,12 @@ jobs:
       # `go install` sidesteps it entirely (Go is already set up above) and is
       # equally pinned/reproducible via TASK_VERSION.
       - name: Set up Task (go install, pinned — arduino/setup-task fails on this self-hosted Windows runner)
-        shell: pwsh
+        shell: powershell
         run: go install github.com/go-task/task/v3/cmd/task@v${{ env.TASK_VERSION }}
 
       - name: Locate GOPATH/bin (where go install places the pinned tools)
         id: gobin
-        shell: pwsh
+        shell: powershell
         run: '"dir=$(go env GOPATH)/bin" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'
 
       - name: Cache the pinned lint tools (golangci-lint, goimports)
@@ -103,7 +103,7 @@ jobs:
 
       - name: Install the pinned lint tools (only on a cache miss)
         if: steps.lint-tools-cache.outputs.cache-hit != 'true'
-        shell: pwsh
+        shell: powershell
         run: |
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }}
           go install golang.org/x/tools/cmd/goimports@${{ env.GOIMPORTS_VERSION }}
@@ -145,7 +145,7 @@ jobs:
       # `go install` sidesteps it entirely (Go is already set up above) and is
       # equally pinned/reproducible via TASK_VERSION.
       - name: Set up Task (go install, pinned — arduino/setup-task fails on this self-hosted Windows runner)
-        shell: pwsh
+        shell: powershell
         run: go install github.com/go-task/task/v3/cmd/task@v${{ env.TASK_VERSION }}
 
       # ubuntu-latest ships gcc already. windows-latest ships MinGW but not always
@@ -153,7 +153,7 @@ jobs:
       # already resolvable, so cgo has a compiler to build the race runtime with.
       - name: Ensure a C toolchain is available for cgo (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
             choco install mingw -y
@@ -242,7 +242,7 @@ jobs:
       # `go install` sidesteps it entirely (Go is already set up above) and is
       # equally pinned/reproducible via TASK_VERSION.
       - name: Set up Task (go install, pinned — arduino/setup-task fails on this self-hosted Windows runner)
-        shell: pwsh
+        shell: powershell
         run: go install github.com/go-task/task/v3/cmd/task@v${{ env.TASK_VERSION }}
 
       - name: Build + embed the dashboard into internal/httpui/dist (P2a-UI-001)
