@@ -37,6 +37,11 @@ coverage/
 tmp/
 .tmp/
 
+# Tool caches
+.codegraph/
+.hive/
+.omo/
+
 # internal/httpui/dist is populated by `task dashboard:build-embed`
 # (dashboard/dist copied here for go:embed, P2a-UI-001). Only the
 # compile-time placeholder marker is tracked, so go:embed always has
