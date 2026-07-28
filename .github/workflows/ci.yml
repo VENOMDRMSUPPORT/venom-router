@@ -149,19 +149,33 @@ jobs:
         run: go install github.com/go-task/task/v3/cmd/task@v${{ env.TASK_VERSION }}
 
       # This self-hosted Windows box has a MinGW-w64 gcc toolchain installed
-      # machine-wide as a one-time host setup step (it's a persistent machine,
-      # not a fresh-per-run VM, so the toolchain doesn't need reinstalling
-      # every run). Chocolatey is NOT installed on this host (that was a
-      # GitHub-hosted-runner assumption that doesn't hold here) — winget is
-      # what's actually available, and only runs as a fallback if gcc is
-      # ever missing.
+      # as a one-time host setup step (it's a persistent machine, not a
+      # fresh-per-run VM, so the toolchain doesn't need reinstalling every
+      # run). We set CC to gcc's absolute path (via GITHUB_ENV) rather than
+      # relying on PATH resolution: the runner service's process environment
+      # is a snapshot the Service Control Manager took independently of any
+      # later machine-PATH change, so `gcc` on PATH is not a reliable check
+      # under a Windows Service. Chocolatey is NOT installed on this host
+      # (that was a GitHub-hosted-runner assumption that doesn't hold here)
+      # — winget is what's actually available, and only runs as a last
+      # resort if gcc can't be found by any other means.
       - name: Ensure a C toolchain is available for cgo (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
-            winget install --id BrechtSanders.WinLibs.POSIX.UCRT -e --accept-package-agreements --accept-source-agreements
+          $gcc = Get-Command gcc -ErrorAction SilentlyContinue
+          if ($gcc) {
+            $gccPath = $gcc.Source
+          } else {
+            $known = Get-ChildItem "$env:SystemDrive\Users\*\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs*\mingw64\bin\gcc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($known) {
+              $gccPath = $known.FullName
+            } else {
+              winget install --id BrechtSanders.WinLibs.POSIX.UCRT -e --accept-package-agreements --accept-source-agreements
+              $gccPath = (Get-ChildItem "$env:SystemDrive\Users\*\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs*\mingw64\bin\gcc.exe" -ErrorAction Stop | Select-Object -First 1).FullName
+            }
           }
+          "CC=$gccPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run the race detector
         run: task test-race
