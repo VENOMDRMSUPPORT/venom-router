@@ -229,16 +229,13 @@ func (t *BifrostTransport) Cancel(_ context.Context, route ResolvedRoute, _ stri
 	return errors.New("execution: bifrost transport cancel is not implemented by the P0-EXEC-003 smoke shim (P4)")
 }
 
-// NormalizeError returns a minimal, generically-safe VenomError. The
-// real provider-error-mapping logic (01 §4.2's full scope-classification
-// table) is a separate, later task; this deliberately never touches err's
-// content, so it trivially never leaks a credential or raw provider text.
-func (t *BifrostTransport) NormalizeError(_ error, _ ResolvedRoute) VenomError {
-	return VenomError{
-		Code:      "internal",
-		Message:   "an internal error occurred",
-		Retryable: false,
-	}
+// NormalizeError derives the stable VenomError from the SAME
+// classification Failure performs, so the two shapes can never disagree
+// (P4-EXEC-002): code is the FailureClass, message the Venom-authored
+// SafeMessage, retryable the taxonomy's verdict.
+func (t *BifrostTransport) NormalizeError(err error, route ResolvedRoute) VenomError {
+	f := t.Failure(err, route)
+	return VenomError{Code: string(f.FailureClass), Message: f.SafeMessage, Retryable: f.Retryable}
 }
 
 // SupportedCapabilities reports plain chat only — this smoke shim never

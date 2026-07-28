@@ -3,7 +3,10 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/execution"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
@@ -14,7 +17,7 @@ import (
 // constant. These two types are intentionally duplicated across separate
 // packages (providers may never import execution); this test is the compile-
 // time+runtime guard that catches any drift before it reaches the
-// BuildDispatcher cast.
+// BuildProbeTransportMaps cast.
 func TestTransportKindVocabularySyncWithTransportType(t *testing.T) {
 	pairs := []struct {
 		kind providers.TransportKind
@@ -37,7 +40,7 @@ func TestTransportKindVocabularySyncWithTransportType(t *testing.T) {
 
 // stubInferenceTransport satisfies execution.InferenceTransport for wiring in
 // resolver tests; none of its methods should be called (this stub is only used
-// to prove that BuildDispatcher places the correct instance in the output maps).
+// to prove that BuildProbeTransportMaps places the correct instance in the output maps).
 type stubInferenceTransport struct{ id string }
 
 var errStubNotImplemented = errors.New("stub transport: method not implemented in resolver tests")
@@ -86,10 +89,10 @@ func registerTestProvider(t *testing.T, reg *providers.Registry, id providers.Pr
 	}
 }
 
-// TestBuildDispatcher_HappyPath is mutation row 2.1: two providers with
+// TestBuildProbeTransportMaps_HappyPath is mutation row 2.1: two providers with
 // different transport kinds, both wired, both present in baseURLs →
 // returns two-element maps with the correct transport instances and URLs.
-func TestBuildDispatcher_HappyPath(t *testing.T) {
+func TestBuildProbeTransportMaps_HappyPath(t *testing.T) {
 	reg := providers.NewRegistry()
 	registerTestProvider(t, reg, "p-openai", providers.TransportKindOpenAICompatible)
 	registerTestProvider(t, reg, "p-oauth", providers.TransportKindNativeOAuth)
@@ -105,9 +108,9 @@ func TestBuildDispatcher_HappyPath(t *testing.T) {
 		"p-oauth":  "https://generativelanguage.googleapis.com/v1beta",
 	}
 
-	transports, urls, err := BuildDispatcher(reg, impls, baseURLs)
+	transports, urls, err := BuildProbeTransportMaps(reg, impls, baseURLs)
 	if err != nil {
-		t.Fatalf("BuildDispatcher() error = %v, want nil", err)
+		t.Fatalf("BuildProbeTransportMaps() error = %v, want nil", err)
 	}
 	if len(transports) != 2 {
 		t.Fatalf("transports length = %d, want 2", len(transports))
@@ -126,18 +129,18 @@ func TestBuildDispatcher_HappyPath(t *testing.T) {
 	}
 }
 
-// TestBuildDispatcher_EmptyBaseURLs is mutation row 2.2: passing an empty
+// TestBuildProbeTransportMaps_EmptyBaseURLs is mutation row 2.2: passing an empty
 // baseURLs map returns two empty (non-nil) maps with no error — the caller
 // simply wires no providers, which is a valid state for ControlMux before
 // any transports are ready.
-func TestBuildDispatcher_EmptyBaseURLs(t *testing.T) {
+func TestBuildProbeTransportMaps_EmptyBaseURLs(t *testing.T) {
 	reg := providers.NewRegistry()
 	impls := map[execution.TransportType]execution.InferenceTransport{}
 	baseURLs := map[providers.ProviderID]string{}
 
-	transports, urls, err := BuildDispatcher(reg, impls, baseURLs)
+	transports, urls, err := BuildProbeTransportMaps(reg, impls, baseURLs)
 	if err != nil {
-		t.Fatalf("BuildDispatcher() error = %v, want nil", err)
+		t.Fatalf("BuildProbeTransportMaps() error = %v, want nil", err)
 	}
 	if transports == nil {
 		t.Fatal("transports = nil, want non-nil empty map")
@@ -147,10 +150,10 @@ func TestBuildDispatcher_EmptyBaseURLs(t *testing.T) {
 	}
 }
 
-// TestBuildDispatcher_RejectsUnregisteredProvider is mutation row 2.3: a
+// TestBuildProbeTransportMaps_RejectsUnregisteredProvider is mutation row 2.3: a
 // provider ID that appears in baseURLs but is not registered in reg must
 // return an error — fail-closed, never a silent absent-transport default.
-func TestBuildDispatcher_RejectsUnregisteredProvider(t *testing.T) {
+func TestBuildProbeTransportMaps_RejectsUnregisteredProvider(t *testing.T) {
 	reg := providers.NewRegistry()
 	impls := map[execution.TransportType]execution.InferenceTransport{
 		execution.TransportTypeOpenAICompatible: &stubInferenceTransport{},
@@ -159,17 +162,17 @@ func TestBuildDispatcher_RejectsUnregisteredProvider(t *testing.T) {
 		"not-registered": "https://example.com",
 	}
 
-	_, _, err := BuildDispatcher(reg, impls, baseURLs)
+	_, _, err := BuildProbeTransportMaps(reg, impls, baseURLs)
 	if err == nil {
-		t.Fatal("BuildDispatcher() error = nil, want rejection for unregistered provider")
+		t.Fatal("BuildProbeTransportMaps() error = nil, want rejection for unregistered provider")
 	}
 }
 
-// TestBuildDispatcher_RejectsProviderWithNoImplementation is mutation row
+// TestBuildProbeTransportMaps_RejectsProviderWithNoImplementation is mutation row
 // 2.4: a provider is registered with a valid TransportKind but the impls
 // map has no entry for that kind → error. This enforces the fail-closed
 // invariant: a provider never silently falls through to an absent transport.
-func TestBuildDispatcher_RejectsProviderWithNoImplementation(t *testing.T) {
+func TestBuildProbeTransportMaps_RejectsProviderWithNoImplementation(t *testing.T) {
 	reg := providers.NewRegistry()
 	registerTestProvider(t, reg, "p-bifrost", providers.TransportKindBifrost)
 
@@ -181,18 +184,18 @@ func TestBuildDispatcher_RejectsProviderWithNoImplementation(t *testing.T) {
 		"p-bifrost": "https://bifrost.example.com",
 	}
 
-	_, _, err := BuildDispatcher(reg, impls, baseURLs)
+	_, _, err := BuildProbeTransportMaps(reg, impls, baseURLs)
 	if err == nil {
-		t.Fatal("BuildDispatcher() error = nil, want rejection when impl is missing for transport kind")
+		t.Fatal("BuildProbeTransportMaps() error = nil, want rejection when impl is missing for transport kind")
 	}
 }
 
-// TestBuildDispatcher_AbsentProviderIsNotWired is mutation row 2.5: a
+// TestBuildProbeTransportMaps_AbsentProviderIsNotWired is mutation row 2.5: a
 // provider registered in reg but NOT in baseURLs must simply be absent
 // from the returned maps — it is not an error (the caller decided not to
 // wire it). Available() returns false for it, which is the correct
 // probe_unsupported refusal path.
-func TestBuildDispatcher_AbsentProviderIsNotWired(t *testing.T) {
+func TestBuildProbeTransportMaps_AbsentProviderIsNotWired(t *testing.T) {
 	reg := providers.NewRegistry()
 	registerTestProvider(t, reg, "p-wired", providers.TransportKindOpenAICompatible)
 	registerTestProvider(t, reg, "p-unwired", providers.TransportKindNativeOAuth)
@@ -207,14 +210,103 @@ func TestBuildDispatcher_AbsentProviderIsNotWired(t *testing.T) {
 		"p-wired": "https://example.com/v1",
 	}
 
-	transports, _, err := BuildDispatcher(reg, impls, baseURLs)
+	transports, _, err := BuildProbeTransportMaps(reg, impls, baseURLs)
 	if err != nil {
-		t.Fatalf("BuildDispatcher() error = %v, want nil", err)
+		t.Fatalf("BuildProbeTransportMaps() error = %v, want nil", err)
 	}
 	if _, ok := transports["p-unwired"]; ok {
 		t.Fatal("transports[p-unwired] is present — a provider absent from baseURLs must not appear in the result")
 	}
 	if transports["p-wired"] != impl {
 		t.Fatal("transports[p-wired] is missing or wrong — wired provider must appear in the result")
+	}
+}
+
+// TestRegistryTransportResolver_ResolvesDeclaredKind proves THE
+// TransportTypeResolver implementation (governor fix D1 — 01 §4.4): a
+// registered provider resolves to its catalog-declared type; an
+// unregistered provider is a typed fail-closed error, never a default.
+func TestRegistryTransportResolver_ResolvesDeclaredKind(t *testing.T) {
+	reg := providers.NewRegistry()
+	registerTestProvider(t, reg, "p-oauth", providers.TransportKindNativeOAuth)
+	resolver := NewRegistryTransportResolver(reg)
+
+	tt, err := resolver.TransportTypeFor(execution.ResolvedRoute{Provider: "p-oauth"})
+	if err != nil {
+		t.Fatalf("TransportTypeFor(registered) error = %v, want nil", err)
+	}
+	if tt != execution.TransportTypeNativeOAuth {
+		t.Fatalf("TransportTypeFor = %q, want %q", tt, execution.TransportTypeNativeOAuth)
+	}
+
+	if _, err := resolver.TransportTypeFor(execution.ResolvedRoute{Provider: "ghost"}); !errors.Is(err, ErrProviderTransportUnresolvable) {
+		t.Fatalf("TransportTypeFor(unregistered) error = %v, want ErrProviderTransportUnresolvable", err)
+	}
+}
+
+// TestBuildInferenceDispatcher_DispatchesByCatalogDeclaredType is the
+// end-to-end proof the P4-EXEC-001 card asks for: a Dispatcher composed
+// from the registry sends an openai_compatible provider's route to the
+// OpenAI-shaped server and a native_oauth provider's route to the
+// Gemini-shaped server — selection by typed capability, observed via
+// which httptest server was actually hit; and a route whose provider is
+// unregistered is rejected as unresolvable, never defaulted.
+func TestBuildInferenceDispatcher_DispatchesByCatalogDeclaredType(t *testing.T) {
+	var openaiHits, geminiHits int
+	openaiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		openaiHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	t.Cleanup(openaiSrv.Close)
+	geminiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		geminiHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`))
+	}))
+	t.Cleanup(geminiSrv.Close)
+
+	reg := providers.NewRegistry()
+	registerTestProvider(t, reg, "p-zen", providers.TransportKindOpenAICompatible)
+	registerTestProvider(t, reg, "p-anti", providers.TransportKindNativeOAuth)
+
+	d := BuildInferenceDispatcher(reg, map[execution.TransportType]execution.InferenceTransport{
+		execution.TransportTypeOpenAICompatible: execution.NewOpenAICompatibleTransport(&http.Client{}, 5*time.Second),
+		execution.TransportTypeNativeOAuth:      execution.NewNativeOAuthTransport(&http.Client{}, 5*time.Second),
+	})
+
+	req := execution.NormalizedRequest{Operation: execution.OperationChat, Messages: []execution.Message{{Role: "user", Content: "hi"}}}
+	if _, err := d.Execute(context.Background(), execution.ResolvedRoute{
+		Provider: "p-zen", ModelID: "m1", BaseURL: openaiSrv.URL,
+		Credential: execution.StoredCredentials{Value: "k"},
+	}, req); err != nil {
+		t.Fatalf("Execute(p-zen) error = %v, want nil", err)
+	}
+	if _, err := d.Execute(context.Background(), execution.ResolvedRoute{
+		Provider: "p-anti", ModelID: "m2", BaseURL: geminiSrv.URL,
+		Credential: execution.StoredCredentials{Value: "tok"},
+	}, req); err != nil {
+		t.Fatalf("Execute(p-anti) error = %v, want nil", err)
+	}
+	if openaiHits != 1 || geminiHits != 1 {
+		t.Fatalf("server hits = openai %d / gemini %d, want 1 / 1 (typed dispatch must pick the declared transport)", openaiHits, geminiHits)
+	}
+
+	// Fail closed: unregistered provider never dispatches anywhere.
+	if _, err := d.Execute(context.Background(), execution.ResolvedRoute{
+		Provider: "ghost", ModelID: "m3", BaseURL: openaiSrv.URL,
+	}, req); !errors.Is(err, ErrProviderTransportUnresolvable) {
+		t.Fatalf("Execute(ghost) error = %v, want ErrProviderTransportUnresolvable", err)
+	}
+	if openaiHits != 1 {
+		t.Fatalf("openai hits after ghost dispatch = %d, want still 1 (no default transport)", openaiHits)
+	}
+
+	// Fail closed: declared type with no wired implementation.
+	registerTestProvider(t, reg, "p-custom", providers.TransportKindCustom)
+	if _, err := d.Execute(context.Background(), execution.ResolvedRoute{
+		Provider: "p-custom", ModelID: "m4", BaseURL: openaiSrv.URL,
+	}, req); !errors.Is(err, execution.ErrUnresolvableRoute) {
+		t.Fatalf("Execute(p-custom) error = %v, want execution.ErrUnresolvableRoute", err)
 	}
 }

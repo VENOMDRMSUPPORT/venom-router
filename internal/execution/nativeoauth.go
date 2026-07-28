@@ -405,9 +405,13 @@ func (t *NativeOAuthTransport) Cancel(_ context.Context, _ ResolvedRoute, reques
 	return t.inflights.cancel(requestID)
 }
 
-// NormalizeError returns a minimal, safe VenomError.
-func (t *NativeOAuthTransport) NormalizeError(_ error, _ ResolvedRoute) VenomError {
-	return VenomError{Code: "internal", Message: "an internal error occurred", Retryable: false}
+// NormalizeError derives the stable VenomError from the SAME
+// classification Failure performs, so the two shapes can never disagree
+// (P4-EXEC-002): code is the FailureClass, message the Venom-authored
+// SafeMessage, retryable the taxonomy's verdict.
+func (t *NativeOAuthTransport) NormalizeError(err error, route ResolvedRoute) VenomError {
+	f := t.Failure(err, route)
+	return VenomError{Code: string(f.FailureClass), Message: f.SafeMessage, Retryable: f.Retryable}
 }
 
 // Failure classifies err using the 4-rung ladder. RawMessage is set for

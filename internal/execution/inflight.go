@@ -24,6 +24,13 @@ var (
 	// ErrStreamIdleGapTimeout is sent as Chunk.Err when the idle gap
 	// between consecutive SSE events exceeds the transport's idleGapTimeout.
 	ErrStreamIdleGapTimeout = errors.New("execution: stream: idle gap timeout exceeded")
+
+	// ErrStreamTruncated is sent as Chunk.Err when a stream whose protocol
+	// has an explicit completion marker (OpenAI SSE's [DONE]) ends without
+	// it: a truncated response must be DISTINGUISHABLE from clean
+	// completion (05 §3 — the reconciler settles partial consumption from
+	// exactly this fact), so the channel never just closes silently.
+	ErrStreamTruncated = errors.New("execution: stream: ended without completion marker")
 )
 
 // sseLineEvent carries one SSE line from the scanner goroutine to the

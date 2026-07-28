@@ -62,6 +62,22 @@ func retryableFor(fc FailureClass) bool {
 	return false
 }
 
+// sanitizedEvidence builds TypedFailure.Evidence (01 §4.2): identifiers
+// and enumerations ONLY — the HTTP status, the provider's error CODE
+// (an enum, never free text), and which rung produced the scope. Raw
+// provider message text never enters this map; RawMessage is its only
+// sanctioned carrier.
+func sanitizedEvidence(status int, code, scopeSource string) map[string]any {
+	ev := map[string]any{
+		"http_status":  status,
+		"scope_source": scopeSource,
+	}
+	if code != "" {
+		ev["provider_code"] = code
+	}
+	return ev
+}
+
 // providerCodeMatch is the result of a rung-1 classification.
 type providerCodeMatch struct {
 	class     FailureClass
@@ -210,6 +226,7 @@ func ClassifyFailure(code, scope string, headers http.Header, rules []AdapterRul
 				ProviderCode: code,
 				HTTPStatus:   status,
 				SafeMessage:  safeMessageFor(m.class),
+				Evidence:     sanitizedEvidence(status, code, "provider_code"),
 			}
 			applyHeaderEnrichment(&f, headers, now)
 			return f
@@ -228,6 +245,7 @@ func ClassifyFailure(code, scope string, headers http.Header, rules []AdapterRul
 				ProviderCode: code,
 				HTTPStatus:   status,
 				SafeMessage:  safeMessageFor(FailureClassQuota),
+				Evidence:     sanitizedEvidence(status, code, "scope_signal"),
 			}
 			applyHeaderEnrichment(&f, headers, now)
 			return f
@@ -240,6 +258,7 @@ func ClassifyFailure(code, scope string, headers http.Header, rules []AdapterRul
 				ProviderCode: code,
 				HTTPStatus:   status,
 				SafeMessage:  safeMessageFor(FailureClassRateLimit),
+				Evidence:     sanitizedEvidence(status, code, "scope_signal"),
 			}
 			applyHeaderEnrichment(&f, headers, now)
 			return f
@@ -256,6 +275,9 @@ func ClassifyFailure(code, scope string, headers http.Header, rules []AdapterRul
 			if f.ProviderCode == "" {
 				f.ProviderCode = code
 			}
+			if f.Evidence == nil {
+				f.Evidence = sanitizedEvidence(f.HTTPStatus, f.ProviderCode, "adapter_rule")
+			}
 			applyHeaderEnrichment(&f, headers, now)
 			return f
 		}
@@ -270,6 +292,7 @@ func ClassifyFailure(code, scope string, headers http.Header, rules []AdapterRul
 		HTTPStatus:   status,
 		ProviderCode: code,
 		SafeMessage:  safeMessageFor(fc),
+		Evidence:     sanitizedEvidence(status, code, "http_status"),
 	}
 	applyDefaultScope(&f)
 	applyHeaderEnrichment(&f, headers, now)

@@ -428,3 +428,142 @@ func TestInflight_Cancel_DoubleCancel_IsTypedNoOp(t *testing.T) {
 		t.Fatalf("cancel func called %d times after double cancel, want 1", called)
 	}
 }
+
+// TestStream_NativeOAuth_Cancel (governor review addition) proves the
+// Cancel wiring on the SECOND transport too — the registry mechanism is
+// shared, but each transport wires its own registration/delegation, and
+// a per-method wiring mistake would otherwise be invisible.
+func TestStream_NativeOAuth_Cancel(t *testing.T) {
+	started := make(chan struct{}, 1)
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fl, _ := w.(http.Flusher)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", `{"candidates":[{"content":{"role":"model","parts":[{"text":"start"}]}}]}`)
+		if fl != nil {
+			fl.Flush()
+		}
+		started <- struct{}{}
+		<-block
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(block) })
+
+	const reqID = "req-native-cancel-001"
+	tr := newNativeOAuthTransport(&http.Client{}, 5*time.Second, 2*time.Second, 2*time.Second)
+	route := newNativeOAuthTestRoute(srv.URL)
+	ch, err := tr.Stream(context.Background(), route, NormalizedRequest{
+		Messages:  []Message{{Role: "user", Content: "hi"}},
+		RequestID: reqID,
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream never started")
+	}
+
+	if cancelErr := tr.Cancel(context.Background(), route, reqID); cancelErr != nil {
+		t.Fatalf("Cancel() error = %v, want nil", cancelErr)
+	}
+	drainChunks(t, ch, 2*time.Second)
+
+	unknownErr := tr.Cancel(context.Background(), route, "no-such-id")
+	if !errors.Is(unknownErr, ErrRequestNotInflight) {
+		t.Fatalf("Cancel(unknown) = %v, want ErrRequestNotInflight", unknownErr)
+	}
+}
+
+// TestStream_OpenAI_TruncatedWithoutDone (governor review addition, D7):
+// a stream that ends CLEANLY but without the [DONE] completion marker is
+// a truncated response — it must surface ErrStreamTruncated, never a
+// silent channel close indistinguishable from success (05 §3: the
+// reconciler settles partial consumption from exactly this fact).
+func TestStream_OpenAI_TruncatedWithoutDone(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", `{"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}`)
+		// Handler returns WITHOUT sending [DONE]: clean EOF, truncated stream.
+	}))
+	t.Cleanup(srv.Close)
+
+	tr := newOpenAICompatibleTransport(&http.Client{}, 5*time.Second, 2*time.Second, 2*time.Second)
+	ch, err := tr.Stream(context.Background(), newOpenAICompatTestRoute(srv.URL), NormalizedRequest{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v, want nil (200 was established)", err)
+	}
+
+	chunks := drainChunks(t, ch, 5*time.Second)
+	if len(chunks) == 0 || chunks[0].Delta != "partial" {
+		t.Fatalf("chunks = %+v, want the partial delta first", chunks)
+	}
+	var truncated, done bool
+	for _, c := range chunks {
+		if errors.Is(c.Err, ErrStreamTruncated) {
+			truncated = true
+		}
+		if c.Done {
+			done = true
+		}
+	}
+	if !truncated {
+		t.Fatalf("no ErrStreamTruncated chunk after EOF-without-[DONE]; chunks = %+v (a truncated stream must be distinguishable from completion)", chunks)
+	}
+	if done {
+		t.Fatalf("Done chunk emitted for a truncated stream; chunks = %+v", chunks)
+	}
+}
+
+// TestStream_OpenAI_MidStreamConnectionCut (governor review addition):
+// an ABRUPT connection kill mid-stream drives the scanner-error branch
+// (distinct from the malformed-JSON branch PostFirstByteError covers) —
+// it must surface as a network-typed Err chunk, never a silent close.
+func TestStream_OpenAI_MidStreamConnectionCut(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fl, _ := w.(http.Flusher)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", `{"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}`)
+		if fl != nil {
+			fl.Flush()
+		}
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("httptest server does not support hijacking")
+			return
+		}
+		conn, _, hijackErr := hj.Hijack()
+		if hijackErr != nil {
+			t.Errorf("hijack: %v", hijackErr)
+			return
+		}
+		_ = conn.Close() // abrupt kill: invalid chunked termination
+	}))
+	t.Cleanup(srv.Close)
+
+	tr := newOpenAICompatibleTransport(&http.Client{}, 5*time.Second, 2*time.Second, 2*time.Second)
+	ch, err := tr.Stream(context.Background(), newOpenAICompatTestRoute(srv.URL), NormalizedRequest{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v, want nil (200 was established)", err)
+	}
+
+	chunks := drainChunks(t, ch, 5*time.Second)
+	var gotErr bool
+	for _, c := range chunks {
+		if c.Err != nil {
+			gotErr = true
+		}
+	}
+	if !gotErr {
+		t.Fatalf("no Err chunk after mid-stream connection cut; chunks = %+v (silent close would be indistinguishable from success)", chunks)
+	}
+}
