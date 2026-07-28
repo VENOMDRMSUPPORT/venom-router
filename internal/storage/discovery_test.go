@@ -325,8 +325,11 @@ func TestDiscoveryRepo_Apply_FullRowSet(t *testing.T) {
 		).Scan(&status, &truth); err != nil {
 			t.Fatalf("query certifications(%s): %v", op, err)
 		}
-		if status != "discovered" || truth != "unknown" {
-			t.Fatalf("certification(%s) = (%s, %s), want (discovered, unknown)", op, status, truth)
+		// observed, not discovered: the snapshot that produced this operation
+		// is 04 §5 edge 1's "first concrete evidence recorded". Truth stays
+		// unknown — only a probe verdict resolves that.
+		if status != "observed" || truth != "unknown" {
+			t.Fatalf("certification(%s) = (%s, %s), want (observed, unknown)", op, status, truth)
 		}
 	}
 }
@@ -436,8 +439,11 @@ func TestDiscoveryApply_AdvancesDiscoveredToObserved(t *testing.T) {
 	if err := db.Conn().QueryRow(`SELECT status FROM certifications WHERE offering_operation_id = ?`, opID).Scan(&status); err != nil {
 		t.Fatalf("query certifications: %v", err)
 	}
-	if status != "discovered" {
-		t.Fatalf("certification status after first sighting = %q, want discovered", status)
+	// The FIRST snapshot already advances edge 1 — a freshly discovered
+	// offering-operation must be probeable without the owner triggering
+	// discovery a second time (nothing schedules discovery).
+	if status != "observed" {
+		t.Fatalf("certification status after the first snapshot = %q, want observed", status)
 	}
 
 	gen2, _ := repo.BeginRun(ctx, "acct1", "run2", now)
@@ -592,6 +598,14 @@ func TestDiscoveryApply_ObserveIsIdempotent(t *testing.T) {
 	}
 	if versionAfterSecond != versionAfterFirst {
 		t.Fatalf("version changed from %d to %d on the second (idempotent) apply", versionAfterFirst, versionAfterSecond)
+	}
+	// And edge 1 must not bump the version AT ALL — comparing before/after
+	// the second apply alone would still pass if the FIRST one bumped it.
+	// models.Certification.Transition's default branch carries Version
+	// forward untouched; only probing -> certified (edge 4) ever bumps it,
+	// so the baseline 1 must survive both applies.
+	if versionAfterFirst != 1 {
+		t.Fatalf("version after the first apply = %d, want the untouched baseline 1 — edge 1 never bumps version", versionAfterFirst)
 	}
 }
 

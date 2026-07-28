@@ -355,7 +355,16 @@ func (r *DiscoveryRepo) ensureOfferingOperation(ctx context.Context, tx *sql.Tx,
 	); err != nil {
 		return fmt.Errorf("storage: insert certification baseline for %q: %w", id, err)
 	}
-	return nil
+	// GOVERNOR CORRECTION (P3c-CERT-008): edge 1 fires on THIS snapshot too,
+	// not only on a later re-discovery. 04 §5 edge 1's trigger names
+	// "discovery snapshot / provider metadata" literally, and an operation
+	// row only ever exists because the provider explicitly reported the
+	// capability that produced it — that IS the first concrete evidence.
+	// Firing only on the already-existing-row branch would mean a freshly
+	// discovered offering-operation could never be probed until the owner
+	// triggered discovery a SECOND time (nothing schedules discovery), an
+	// undiscoverable requirement no document states.
+	return r.recordEvidenceObserved(ctx, tx, id, epoch)
 }
 
 // recordEvidenceObserved advances edge 1 (discovered -> observed, 04 §5)

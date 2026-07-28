@@ -348,8 +348,12 @@ func assertP3aProvenanceOfferings(t *testing.T, offerings []storage.CatalogOffer
 	if len(free.Operations) != 1 || free.Operations[0].Operation != "chat" {
 		t.Fatalf("model-free operations = %+v, want exactly one chat operation (the unrecognized capability must not produce a row)", free.Operations)
 	}
-	if free.Operations[0].CertificationStatus != "discovered" || free.Operations[0].CapabilityTruth != "unknown" || free.Operations[0].CertificationVersion != 1 {
-		t.Fatalf("model-free chat certification baseline = %+v, want discovered/unknown/1", free.Operations[0])
+	// observed, not discovered: the discovery snapshot that produced this
+	// operation IS 04 §5 edge 1's "first concrete evidence recorded"
+	// (P3c-CERT-008). Truth stays unknown and version stays 1 — edge 1
+	// resolves neither, and only a probe verdict ever could.
+	if free.Operations[0].CertificationStatus != "observed" || free.Operations[0].CapabilityTruth != "unknown" || free.Operations[0].CertificationVersion != 1 {
+		t.Fatalf("model-free chat certification baseline = %+v, want observed/unknown/1", free.Operations[0])
 	}
 	if len(paid.Operations) != 1 || paid.Operations[0].Operation != "chat" {
 		t.Fatalf("model-paid operations = %+v, want exactly one chat operation", paid.Operations)
@@ -1034,14 +1038,24 @@ func TestP3aGate_NoInferenceProbeRan(t *testing.T) {
 		t.Fatalf("job Status = %q, want completed (error = %+v) — the trap adapter would have failed the test directly if it fired", row.Status, row.Error)
 	}
 
-	var offCertNotDiscovered int
+	// Discovery legitimately drives 04 §5 edge 1 (discovered -> observed) —
+	// that edge's trigger names "discovery snapshot / provider metadata"
+	// literally, and P3c-CERT-008 wires it. What THIS test protects is
+	// narrower and unchanged: no INFERENCE PROBE ran. The probe-reachable
+	// states are probing/certified/suspended/expired, and only a probe
+	// verdict can resolve capability_truth — so those are what must be
+	// absent. Asserting the literal string "discovered" would pin an
+	// incidental resting state rather than the invariant, and would go red
+	// for a spec-mandated transition that has nothing to do with probing.
+	var offCertProbeTouched int
 	if err := db.Conn().QueryRow(
-		`SELECT COUNT(*) FROM certifications WHERE status != 'discovered' OR capability_truth != 'unknown'`,
-	).Scan(&offCertNotDiscovered); err != nil {
-		t.Fatalf("count non-baseline certifications: %v", err)
+		`SELECT COUNT(*) FROM certifications
+		 WHERE status NOT IN ('discovered', 'observed') OR capability_truth != 'unknown'`,
+	).Scan(&offCertProbeTouched); err != nil {
+		t.Fatalf("count probe-touched certifications: %v", err)
 	}
-	if offCertNotDiscovered != 0 {
-		t.Fatalf("%d certifications advanced past discovered/unknown — discovery alone must never advance certification", offCertNotDiscovered)
+	if offCertProbeTouched != 0 {
+		t.Fatalf("%d certifications reached a probe-only state or a resolved capability truth — discovery must never do that", offCertProbeTouched)
 	}
 
 	var withEvidence int
