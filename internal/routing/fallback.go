@@ -30,13 +30,19 @@ func (e *NoEligibleOfferingError) Error() string {
 // Unwrap lets errors.Is(err, ErrNoEligibleOffering) match.
 func (e *NoEligibleOfferingError) Unwrap() error { return ErrNoEligibleOffering }
 
+// DefaultCooldownWindow is the fallback cooldown length used when a scoped
+// failure carries no provider Retry-After hint (05 §3: "else a capped
+// default"). It is a computed eligibility input, never a sleep.
+const DefaultCooldownWindow = 30 * time.Second
+
 // FallbackInput bundles everything RunFallbackLoop needs: the tier policy and
-// initial winning-group snapshot, the request identity and selection inputs,
-// the estimate input, an injected clock, and the seven local ports.
+// the ranked pool snapshot from Step 7, the request identity and selection
+// inputs, the estimate input, an injected clock, the current breaker/cooldown/
+// provider-evidence state (P4-WIRE-001), and the local ports.
 type FallbackInput struct {
 	Tier          Tier
 	Policy        TierPolicy
-	Group         RouteGroup // initial winning-group snapshot from Step 7
+	Pool          RoutePool // ranked in-band pool snapshot from Step 7
 	Requirements  Requirements
 	RequestID     string
 	StickinessKey string
@@ -47,6 +53,14 @@ type FallbackInput struct {
 	Now           time.Time
 	StaleAfter    time.Duration
 
+	// Breakers, Cooldowns, and ProviderEvidence are the persisted routing state
+	// (P4-WIRE-001) the loop reads as eligibility inputs and updates as it goes.
+	// Nil maps are treated as empty. Their updated values are returned in
+	// FallbackResult for the caller to persist (storage's job, not the loop's).
+	Breakers         BreakerSet
+	Cooldowns        []quota.Cooldown
+	ProviderEvidence map[string]*ProviderFailureEvidence
+
 	Recorder    AttemptRecorder
 	Reserver    Reserver
 	Lifecycle   Lifecycle
@@ -54,14 +68,25 @@ type FallbackInput struct {
 	Classifier  FailureClassifier
 	ReEvaluator PoolReEvaluator
 	Minter      AttemptIDMinter
+	// Scoper enables the ROUTE-014 scope-classified fallback (breaker trips,
+	// cross-offering / skip-provider steering, bounded transient retry). When
+	// nil the loop runs the ROUTE-013 verdict-only path unchanged.
+	Scoper FailureScoper
 }
 
-// FallbackResult is the successful-route outcome.
+// FallbackResult is the loop's outcome. On success Response/AccountID/ProviderID/
+// ReservationID identify the served route; on any return the Breakers,
+// Cooldowns, and TransientBackoffs carry the routing-state deltas the caller
+// persists (P4-WIRE-001) and the computed transient backoffs (never slept).
 type FallbackResult struct {
-	Response      any
-	AccountID     string
-	ReservationID string
-	Attempts      int
+	Response          any
+	AccountID         string
+	ProviderID        string
+	ReservationID     string
+	Attempts          int
+	Breakers          BreakerSet
+	Cooldowns         []quota.CooldownTrigger
+	TransientBackoffs []time.Duration
 }
 
 // RunFallbackLoop runs Step 8's per-attempt reserve→execute→reconcile cycle
@@ -92,27 +117,52 @@ type FallbackResult struct {
 // the earliest retry_after observed. Each attempt's reservation id comes from
 // quota.ReservationID(requestID, attemptID); none is ever inherited.
 func RunFallbackLoop(ctx context.Context, in FallbackInput) (FallbackResult, error) {
-	group := in.Group
-	drrState := in.DRRState
-
-	var earliestRetry time.Duration
-	haveRetry := false
-	attempts := 0
+	st := loopState{
+		pool:             in.Pool,
+		drrState:         in.DRRState,
+		breakers:         cloneBreakerSet(in.Breakers),
+		activeCooldowns:  append([]quota.Cooldown(nil), in.Cooldowns...),
+		evidence:         in.ProviderEvidence,
+		dropped:          map[string]bool{},
+		excluded:         map[string]bool{},
+		transientRetries: map[string]int{},
+	}
+	if st.evidence == nil {
+		st.evidence = map[string]*ProviderFailureEvidence{}
+	}
 
 	for i := 1; i <= in.Policy.AttemptBudget; i++ {
-		// 1. Select a candidate over the CURRENT snapshot.
-		chosen, nextDRR, ok := SelectAccount(in.Tier, group, in.StickinessKey, in.Cache, drrState, in.Need, in.Now, in.StaleAfter)
-		drrState = nextDRR
-		if !ok {
-			// No candidate in this snapshot — treat as exhausted.
+		elig := EligibilityInput{
+			Funding:              in.Policy.Funding,
+			RequiredCapabilities: in.Requirements.Capabilities,
+			Cooldowns:            st.activeCooldowns,
+			Breakers:             st.breakers,
+		}
+
+		// 1. Narrow the pool with ROUTE-014's eligibility filter, then select a
+		//    candidate within the top eligible group. A filtered-out candidate
+		//    (funding/capability boundary, active cooldown, open breaker) is
+		//    never attempted.
+		group, members, gok := currentEligibleGroup(st.pool, st.dropped, st.excluded, elig, in.Now)
+		if !gok {
 			break
 		}
-		attempts = i
+		chosen, nextDRR, ok := SelectAccount(in.Tier, RouteGroup{
+			ProviderID:      group.ProviderID,
+			ProviderModelID: group.ProviderModelID,
+			Funding:         group.Funding,
+			Members:         members,
+		}, in.StickinessKey, in.Cache, st.drrState, in.Need, in.Now, in.StaleAfter)
+		st.drrState = nextDRR
+		if !ok {
+			break
+		}
+		st.attempts = i
 
 		attemptID := in.Minter.MintAttemptID(in.RequestID, i)
 		reservationID, err := quota.ReservationID(in.RequestID, attemptID)
 		if err != nil {
-			return FallbackResult{}, err
+			return st.result(), err
 		}
 
 		// 2. Record the attempt identity (no content) BEFORE reserving.
@@ -122,13 +172,13 @@ func RunFallbackLoop(ctx context.Context, in FallbackInput) (FallbackResult, err
 			AccountID:       chosen.AccountID,
 			ProviderModelID: chosen.ProviderModelID,
 		}); err != nil {
-			return FallbackResult{}, err
+			return st.result(), err
 		}
 
 		// 3. Estimate + reserve atomically across every applicable window.
 		allocations, err := quota.Estimate(in.EstimateInput, quota.DefaultEstimatePolicy())
 		if err != nil {
-			return FallbackResult{}, err
+			return st.result(), err
 		}
 		if _, err := in.Reserver.Reserve(ctx, ReserveParams{
 			ReservationID: reservationID,
@@ -138,20 +188,20 @@ func RunFallbackLoop(ctx context.Context, in FallbackInput) (FallbackResult, err
 			Allocations:   allocations,
 		}); err != nil {
 			if errors.Is(err, ErrReservationRejected) {
-				// Nothing debited → do NOT release. Re-evaluate a fresh snapshot.
+				// Nothing debited → do NOT release. Re-evaluate a fresh pool.
 				fresh, rerr := in.ReEvaluator.ReEvaluate(ctx)
 				if rerr != nil {
-					return FallbackResult{}, rerr
+					return st.result(), rerr
 				}
-				group = fresh
+				st.pool = fresh
 				continue
 			}
-			return FallbackResult{}, err
+			return st.result(), err
 		}
 
 		// 4. Mark dispatched, THEN execute (no reservation-mutating call in flight).
 		if err := in.Lifecycle.MarkDispatched(ctx, reservationID); err != nil {
-			return FallbackResult{}, err
+			return st.result(), err
 		}
 		outcome := in.Executor.Execute(ctx, ResolvedAttempt{
 			RequestID:     in.RequestID,
@@ -160,72 +210,266 @@ func RunFallbackLoop(ctx context.Context, in FallbackInput) (FallbackResult, err
 			Candidate:     chosen,
 			Requirements:  in.Requirements,
 		})
-		if outcome.RetryAfter > 0 && (!haveRetry || outcome.RetryAfter < earliestRetry) {
-			earliestRetry = outcome.RetryAfter
-			haveRetry = true
-		}
+		st.observeRetryAfter(outcome.RetryAfter)
 
-		// 5. Reconcile on exactly one branch.
-		//
-		// Success is decided SOLELY by outcome.Err == nil, never by the
-		// classifier. VerdictSuccess is ReconcileVerdict's zero value, so a
-		// classifier or adapter with a forgotten switch case returns it by
-		// accident — and trusting that would settle a FAILED attempt's quota as
-		// consumed and hand the caller the failure body with a nil error. The
-		// classifier is consulted only for a genuine error, and a VerdictSuccess
-		// answer there is treated as unrecognized (fail closed, below).
+		// 5. Reconcile on exactly one branch. Success is decided SOLELY by
+		//    outcome.Err == nil, never by the classifier (whose zero value is
+		//    VerdictSuccess — trusting it would settle a FAILED attempt).
 		if outcome.Err == nil {
 			if err := settleOutcome(ctx, in.Lifecycle, reservationID, outcome); err != nil {
-				return FallbackResult{}, err
+				return st.result(), err
+			}
+			if in.Scoper != nil {
+				// A success closes (and resets the backoff of) the account
+				// breaker — a half-open probe that succeeded recovers the scope.
+				st.breakers.Account[chosen.AccountID] = lookupBreaker(st.breakers.Account, chosen.AccountID).RecordSuccess()
 			}
 			// The stickiness pin is recorded ONLY on a successful response
-			// (05 §2 Step 7). This loop is the "caller" P4-ROUTE-012 delegated
-			// pinning to — SelectAccount deliberately never pins, so without
-			// this the LRU would never be populated and stickiness would be
-			// inert in production.
+			// (05 §2 Step 7) — this loop is the caller ROUTE-012 delegated it to.
 			if in.Cache != nil && in.StickinessKey != "" {
 				in.Cache.Pin(in.StickinessKey, chosen.AccountID, in.Now)
 			}
-			return FallbackResult{Response: outcome.Response, AccountID: chosen.AccountID, ReservationID: reservationID, Attempts: i}, nil
+			res := st.result()
+			res.Response = outcome.Response
+			res.AccountID = chosen.AccountID
+			res.ProviderID = chosen.ProviderID
+			res.ReservationID = reservationID
+			return res, nil
 		}
 
-		switch in.Classifier.Classify(outcome.Err) {
+		verdict := in.Classifier.Classify(outcome.Err)
+		switch verdict {
 		case VerdictPreConsumptionFailure:
 			if err := in.Lifecycle.Release(ctx, reservationID); err != nil {
-				return FallbackResult{}, err
+				return st.result(), err
 			}
 		case VerdictPartialConsumption:
-			// Settle the provider-reported known cost; the remainder is freed.
 			if err := settleOutcome(ctx, in.Lifecycle, reservationID, outcome); err != nil {
-				return FallbackResult{}, err
+				return st.result(), err
 			}
 		case VerdictUnknownConsumption:
-			// Headroom stays debited — never release on an unknown outcome.
 			if err := in.Lifecycle.MarkReconciliationPending(ctx, reservationID); err != nil {
-				return FallbackResult{}, err
+				return st.result(), err
 			}
 		case VerdictRequestScope:
-			// The request itself is bad (nothing consumed): free and stop.
 			if err := in.Lifecycle.Release(ctx, reservationID); err != nil {
-				return FallbackResult{}, err
+				return st.result(), err
 			}
-			return FallbackResult{}, outcome.Err
+			return st.result(), outcome.Err
 		default:
-			// Unrecognized verdict — INCLUDING VerdictSuccess, which a classifier
-			// must never return for a real error — fails closed to
-			// reconciliation_pending: headroom stays debited and the loop
-			// continues, rather than charging or freeing on a guess.
+			// Unrecognized verdict — INCLUDING VerdictSuccess — fails closed to
+			// reconciliation_pending (headroom stays debited), never charging or
+			// freeing on a guess.
 			if err := in.Lifecycle.MarkReconciliationPending(ctx, reservationID); err != nil {
-				return FallbackResult{}, err
+				return st.result(), err
+			}
+		}
+
+		// 6. Scope-classified steering (ROUTE-014), only when a scoper is wired.
+		//    The reconcile op above already ran exactly once; this only decides
+		//    what to try NEXT and which breaker/cooldown to record.
+		if in.Scoper != nil {
+			if stop := st.applyScopeAction(in.Scoper.ScopeOf(outcome.Err), chosen, in.Now, outcome.RetryAfter); stop {
+				return st.result(), outcome.Err
 			}
 		}
 	}
 
-	retry := time.Duration(0)
-	if haveRetry {
-		retry = earliestRetry
+	return st.result(), &NoEligibleOfferingError{Attempts: st.attempts, RetryAfter: st.earliestRetry}
+}
+
+// loopState is RunFallbackLoop's mutable per-request state.
+type loopState struct {
+	pool             RoutePool
+	drrState         DRRState
+	breakers         BreakerSet
+	activeCooldowns  []quota.Cooldown
+	evidence         map[string]*ProviderFailureEvidence
+	dropped          map[string]bool // provider ids skipped for this request
+	excluded         map[string]bool // candidate keys spent (transient-exhausted)
+	transientRetries map[string]int
+	emitted          []quota.CooldownTrigger
+	backoffs         []time.Duration
+	earliestRetry    time.Duration
+	haveRetry        bool
+	attempts         int
+}
+
+func (st *loopState) observeRetryAfter(d time.Duration) {
+	if d > 0 && (!st.haveRetry || d < st.earliestRetry) {
+		st.earliestRetry = d
+		st.haveRetry = true
 	}
-	return FallbackResult{Attempts: attempts}, &NoEligibleOfferingError{Attempts: attempts, RetryAfter: retry}
+}
+
+// result snapshots the routing-state deltas returned on every exit path. The
+// exhaustion retry_after travels on NoEligibleOfferingError, not here.
+func (st *loopState) result() FallbackResult {
+	return FallbackResult{
+		Attempts:          st.attempts,
+		Breakers:          st.breakers,
+		Cooldowns:         st.emitted,
+		TransientBackoffs: st.backoffs,
+	}
+}
+
+// applyScopeAction honors ROUTE-014's ResolveScope verdict for a failed attempt.
+// It returns stop=true only for the request-scope action. Breaker trips and
+// cooldown emissions are recorded into the loop state (returned as values).
+func (st *loopState) applyScopeAction(scope FallbackScope, chosen CandidateOffering, now time.Time, retryAfter time.Duration) (stop bool) {
+	crossAccount := false
+	if scope == ScopeProvider {
+		ev := st.evidence[chosen.ProviderID]
+		if ev == nil {
+			ev = NewProviderFailureEvidence()
+			st.evidence[chosen.ProviderID] = ev
+		}
+		ev.Observe(chosen.AccountID)
+		crossAccount = ev.CrossAccount()
+	}
+
+	res := ResolveScope(scope, crossAccount)
+	switch res.Action {
+	case ActionStop:
+		return true
+	case ActionBoundedRetry:
+		// Bounded retry of the SAME candidate: at most TransientMaxRetries total
+		// tries. Count this try; if more are allowed, record the (computed, never
+		// slept) backoff for the next one; otherwise give up on this candidate
+		// for the rest of the request.
+		key := candKey(chosen)
+		st.transientRetries[key]++
+		if st.transientRetries[key] < TransientMaxRetries {
+			st.backoffs = append(st.backoffs, TransientBackoff(st.transientRetries[key]))
+		} else {
+			st.excluded[key] = true
+		}
+	case ActionNextAccount:
+		st.breakers.Account[chosen.AccountID] = lookupBreaker(st.breakers.Account, chosen.AccountID).Trip(now)
+		st.emitCooldown(res, chosen, now, retryAfter)
+	case ActionNextOffering:
+		st.breakers.Offering[chosen.ProviderModelID] = lookupBreaker(st.breakers.Offering, chosen.ProviderModelID).Trip(now)
+		st.emitCooldown(res, chosen, now, retryAfter)
+	case ActionSkipProvider:
+		// Skip every route for this provider for the REST of the request,
+		// regardless of cross-account evidence.
+		st.dropped[chosen.ProviderID] = true
+		// The persisted provider breaker + cooldown trip only on cross-account
+		// evidence (05 §3's load-bearing rule).
+		if crossAccount {
+			st.breakers.Provider[chosen.ProviderID] = lookupBreaker(st.breakers.Provider, chosen.ProviderID).Trip(now)
+			st.emitCooldown(res, chosen, now, retryAfter)
+		}
+	}
+	return false
+}
+
+// emitCooldown records a scoped cooldown as both an active eligibility input
+// (so the just-failed scope is skipped for the rest of this request) and a
+// returned CooldownTrigger value (for the caller to persist).
+func (st *loopState) emitCooldown(res ScopeResolution, chosen CandidateOffering, now time.Time, retryAfter time.Duration) {
+	if !res.Cooldown {
+		return
+	}
+	ct := cooldownTrigger(res.CooldownScope, chosen, now, retryAfter)
+	st.emitted = append(st.emitted, ct)
+	st.activeCooldowns = append(st.activeCooldowns, cooldownFromTrigger(ct))
+}
+
+// currentEligibleGroup returns the top-ranked group that still has at least one
+// eligible, non-excluded, non-dropped-provider candidate after FilterEligible.
+func currentEligibleGroup(pool RoutePool, dropped, excluded map[string]bool, elig EligibilityInput, now time.Time) (RouteGroup, []CandidateOffering, bool) {
+	for _, g := range pool.Groups {
+		if dropped[g.ProviderID] {
+			continue
+		}
+		var kept []CandidateOffering
+		for _, c := range FilterEligible(g.Members, elig, now) {
+			if excluded[candKey(c)] {
+				continue
+			}
+			kept = append(kept, c)
+		}
+		if len(kept) > 0 {
+			return g, kept, true
+		}
+	}
+	return RouteGroup{}, nil, false
+}
+
+// cloneBreakerSet deep-copies a BreakerSet (with non-nil maps) so the loop can
+// mutate breaker state without touching the caller's input.
+func cloneBreakerSet(in BreakerSet) BreakerSet {
+	out := BreakerSet{
+		Account:  map[string]Breaker{},
+		Offering: map[string]Breaker{},
+		Provider: map[string]Breaker{},
+	}
+	for k, v := range in.Account {
+		out.Account[k] = v
+	}
+	for k, v := range in.Offering {
+		out.Offering[k] = v
+	}
+	for k, v := range in.Provider {
+		out.Provider[k] = v
+	}
+	return out
+}
+
+// lookupBreaker returns m[key], or a fresh zero (closed-equivalent, cycle 0)
+// breaker when absent — Trip/RecordSuccess both start correctly from zero.
+func lookupBreaker(m map[string]Breaker, key string) Breaker {
+	return m[key]
+}
+
+// cooldownTrigger builds a scope-correct quota.CooldownTrigger (quota's own
+// vocabulary) from a scoped failure. The until is the provider Retry-After when
+// present, else DefaultCooldownWindow.
+func cooldownTrigger(scope quota.CooldownScope, c CandidateOffering, now time.Time, retryAfter time.Duration) quota.CooldownTrigger {
+	dur := DefaultCooldownWindow
+	src := quota.CooldownSourceDefaultBackoff
+	if retryAfter > 0 {
+		dur = retryAfter
+		src = quota.CooldownSourceRetryAfter
+	}
+	var ref string
+	switch scope {
+	case quota.CooldownScopeAccount:
+		ref = c.AccountID
+	case quota.CooldownScopeOffering:
+		ref = c.ProviderModelID
+	case quota.CooldownScopeProvider:
+		ref = c.ProviderID
+	}
+	return quota.CooldownTrigger{
+		Scope:      scope,
+		ScopeRef:   ref,
+		Until:      now.Add(dur),
+		Source:     src,
+		ReasonCode: "fallback_" + string(scope),
+	}
+}
+
+// cooldownFromTrigger projects a CooldownTrigger into a quota.Cooldown so the
+// just-emitted cooldown feeds FilterEligible within the same request.
+func cooldownFromTrigger(ct quota.CooldownTrigger) quota.Cooldown {
+	ref := ct.ScopeRef
+	cd := quota.Cooldown{
+		Scope:      ct.Scope,
+		Until:      ct.Until,
+		Source:     ct.Source,
+		ReasonCode: ct.ReasonCode,
+	}
+	switch ct.Scope {
+	case quota.CooldownScopeAccount:
+		cd.AccountID = &ref
+	case quota.CooldownScopeOffering:
+		cd.OfferingOperationID = &ref
+	case quota.CooldownScopeProvider:
+		cd.ProviderID = &ref
+	}
+	return cd
 }
 
 // settleOutcome converts a reservation from reserved to consumed: at the

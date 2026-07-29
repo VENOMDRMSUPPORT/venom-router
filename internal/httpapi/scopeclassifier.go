@@ -32,7 +32,19 @@ func (c *ScopeClassifier) Classify(err error) routing.ReconcileVerdict {
 	return VerdictForTypedFailure(c.classify(err))
 }
 
-var _ routing.FailureClassifier = (*ScopeClassifier)(nil)
+// ScopeOf normalizes err and returns its routing.FallbackScope (P4-WIRE-001).
+// routing.FallbackScope is pinned byte-identical to execution.FailureScope by
+// TestFallbackScopeVocabularySyncWithFailureScope, so this cast is total and
+// safe: an unrecognized value simply resolves to ResolveScope's fail-closed
+// default at the routing layer.
+func (c *ScopeClassifier) ScopeOf(err error) routing.FallbackScope {
+	return routing.FallbackScope(c.classify(err).Scope)
+}
+
+var (
+	_ routing.FailureClassifier = (*ScopeClassifier)(nil)
+	_ routing.FailureScoper     = (*ScopeClassifier)(nil)
+)
 
 // VerdictForTypedFailure maps a TypedFailure onto a routing.ReconcileVerdict,
 // TOTALLY and FAIL-CLOSED (P4-ROUTE-014; the ROUTE-013 fail-open defect must

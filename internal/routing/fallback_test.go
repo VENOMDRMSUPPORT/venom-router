@@ -18,6 +18,7 @@ type scriptedAttempt struct {
 	reserveRejected bool             // Reserve returns ErrReservationRejected
 	outcome         ExecOutcome      // Executor result (used only if reserve ok)
 	verdict         ReconcileVerdict // Classify result for outcome.Err (if non-nil)
+	scope           FallbackScope    // ScopeOf result (P4-WIRE-001; only used when a Scoper is wired)
 }
 
 // fakeHarness implements every routing port and records call order + counts so
@@ -42,6 +43,7 @@ type fakeHarness struct {
 	reservationIDs   []string
 	recorded         []AttemptRecord
 	executedAccounts []string
+	executedModels   []string
 	settleActuals    []map[quota.Unit]float64
 
 	reservedForCurrent            bool
@@ -83,11 +85,14 @@ func (h *fakeHarness) Execute(_ context.Context, attempt ResolvedAttempt) ExecOu
 		h.reserveBeforeExecuteViolation = true
 	}
 	h.executedAccounts = append(h.executedAccounts, attempt.Candidate.AccountID)
+	h.executedModels = append(h.executedModels, attempt.Candidate.ProviderModelID)
 	h.order = append(h.order, "execute")
 	return h.script[h.cur()].outcome
 }
 
 func (h *fakeHarness) Classify(_ error) ReconcileVerdict { return h.script[h.cur()].verdict }
+
+func (h *fakeHarness) ScopeOf(_ error) FallbackScope { return h.script[h.cur()].scope }
 
 func (h *fakeHarness) Settle(_ context.Context, _ string, actuals map[quota.Unit]float64) error {
 	h.settle++
@@ -114,13 +119,13 @@ func (h *fakeHarness) MarkReconciliationPending(_ context.Context, _ string) err
 	return nil
 }
 
-func (h *fakeHarness) ReEvaluate(_ context.Context) (RouteGroup, error) {
+func (h *fakeHarness) ReEvaluate(_ context.Context) (RoutePool, error) {
 	h.reEvalCalls++
 	h.order = append(h.order, "reeval")
 	if h.reEvalCalls-1 < len(h.groups) {
-		return h.groups[h.reEvalCalls-1], nil
+		return SingleGroupPool(h.groups[h.reEvalCalls-1]), nil
 	}
-	return RouteGroup{}, nil
+	return RoutePool{}, nil
 }
 
 func (h *fakeHarness) MintAttemptID(requestID string, attemptNumber int) string {
@@ -154,7 +159,7 @@ func baseInput(t *testing.T, tier Tier, group RouteGroup, h *fakeHarness) Fallba
 	return FallbackInput{
 		Tier:          tier,
 		Policy:        mustPolicy(t, tier),
-		Group:         group,
+		Pool:          SingleGroupPool(group),
 		Requirements:  Requirements{TextModality: true, ContextTokens: 100},
 		RequestID:     "req-1",
 		StickinessKey: "",

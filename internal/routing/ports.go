@@ -144,11 +144,23 @@ type FailureClassifier interface {
 	Classify(err error) ReconcileVerdict
 }
 
-// PoolReEvaluator returns a FRESH winning-group snapshot (Step 8.3: after a
+// PoolReEvaluator returns a FRESH ranked pool snapshot (Step 8.3: after a
 // rejected reservation, "re-evaluate the candidate pool from a fresh snapshot"
-// — never reuse the stale one).
+// — never reuse the stale one). It returns the whole ranked RoutePool, not a
+// single group, so P4-WIRE-001's cross-offering / skip-provider actions remain
+// expressible after a re-evaluation.
 type PoolReEvaluator interface {
-	ReEvaluate(ctx context.Context) (RouteGroup, error)
+	ReEvaluate(ctx context.Context) (RoutePool, error)
+}
+
+// FailureScoper reports the routing-neutral FallbackScope for a failed attempt's
+// error (P4-WIRE-001). It is separate from FailureClassifier (which yields the
+// reconcile verdict): the loop needs BOTH the verdict (how to settle/release
+// quota) AND the scope (how to steer the next attempt and which breaker to
+// trip). The httpapi ScopeClassifier satisfies both. A nil Scoper disables the
+// scope-classified fallback path, leaving the ROUTE-013 verdict-only behavior.
+type FailureScoper interface {
+	ScopeOf(err error) FallbackScope
 }
 
 // AttemptIDMinter mints a distinct attemptID per attempt (1-based
