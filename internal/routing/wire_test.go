@@ -178,6 +178,13 @@ func TestWire_ProviderCooldownRequiresCrossAccount(t *testing.T) {
 	if hasCooldownScope(res1.Cooldowns, quota.CooldownScopeProvider) {
 		t.Fatalf("single-account provider failure must NOT trip a provider cooldown")
 	}
+	// GOVERNOR ADDITION: the persisted provider BREAKER must not trip either.
+	// Asserting only on cooldowns left the breaker half of this load-bearing rule
+	// uncovered — a regression tripping the breaker without cross-account evidence
+	// would take a whole provider out for every OTHER account, and passed the test.
+	if b := res1.Breakers.Provider["P1"]; b.State != "" && b.State != BreakerClosed {
+		t.Fatalf("single-account provider failure must NOT trip the provider breaker; got %q (cycles=%d)", b.State, b.OpenCycles)
+	}
 
 	// Scenario 2: evidence already holds a1 (a prior request); a2 fails now.
 	h2 := mkProviderFail()
@@ -241,5 +248,92 @@ func TestWire_PreservesRoute013InvariantsWithScoper(t *testing.T) {
 	}
 	if len(h.reservationIDs) != 2 || h.reservationIDs[0] == h.reservationIDs[1] {
 		t.Fatalf("reservation ids must be distinct per attempt: %v", h.reservationIDs)
+	}
+}
+
+// TestWire_SuccessClosesEveryScopeBreaker is a GOVERNOR-ADDED regression test.
+//
+// The batch closed only the ACCOUNT breaker on success, so an offering or
+// provider breaker — once tripped — could never return to closed: it stayed
+// half-open with its inflated OpenCycles, and its adaptive backoff was never
+// reset (verified before the fix: offering and provider both stayed
+// state=half_open cycles=4 resetTimeout=4m0s after a fully successful route).
+// 05 §3 requires that a success closes the breaker AND resets the backoff, and a
+// successful route is positive evidence for all three of its scopes.
+//
+// Mutation: close only the Account breaker → this test RED on offering/provider.
+func TestWire_SuccessClosesEveryScopeBreaker(t *testing.T) {
+	group := wireGroup("provX", "modelX", wireCand("acc1", "provX", "modelX"))
+	h := &fakeHarness{script: []scriptedAttempt{{outcome: successOutcome()}}}
+	in := baseInput(t, TierPro, group, h)
+	in.Pool = SingleGroupPool(group)
+	in.Scoper = h
+	in.Breakers = BreakerSet{
+		Account:  map[string]Breaker{"acc1": {State: BreakerHalfOpen, OpenCycles: 3}},
+		Offering: map[string]Breaker{"modelX": {State: BreakerHalfOpen, OpenCycles: 4}},
+		Provider: map[string]Breaker{"provX": {State: BreakerHalfOpen, OpenCycles: 4}},
+	}
+
+	res, err := RunFallbackLoop(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	for name, b := range map[string]Breaker{
+		"account":  res.Breakers.Account["acc1"],
+		"offering": res.Breakers.Offering["modelX"],
+		"provider": res.Breakers.Provider["provX"],
+	} {
+		if b.State != BreakerClosed {
+			t.Errorf("%s breaker = %q after a successful route, want closed", name, b.State)
+		}
+		if b.OpenCycles != 0 {
+			t.Errorf("%s breaker OpenCycles = %d after success, want 0 (backoff reset)", name, b.OpenCycles)
+		}
+		if b.ResetTimeout() != BreakerBaseTimeout {
+			t.Errorf("%s breaker reset timeout = %s after success, want base %s", name, b.ResetTimeout(), BreakerBaseTimeout)
+		}
+	}
+}
+
+// TestWire_HalfOpenProbeIsMarkedInFlight is a GOVERNOR-ADDED regression test.
+//
+// The batch never called Breaker.MarkProbe anywhere in production, so a
+// persisted half-open breaker kept ProbeInFlight=false and Admits() returned
+// true for EVERY caller — the "half-open admits exactly one probe" invariant
+// that ROUTE-014 built and mutation-proved (R14-M6) was inert, and a recovering
+// scope would be hammered by concurrent requests instead of probed once.
+//
+// The attempt the loop runs through a half-open breaker IS that scope's trial,
+// so the breaker must come back with the probe marked (when the attempt fails
+// and does not itself Trip/close the scope).
+//
+// Mutation: drop the markHalfOpenProbes call → this test RED.
+func TestWire_HalfOpenProbeIsMarkedInFlight(t *testing.T) {
+	group := wireGroup("provX", "modelX", wireCand("acc1", "provX", "modelX"))
+	// A pre-consumption failure with an OFFERING scope: it trips the offering
+	// breaker, so assert on the PROVIDER breaker, which this attempt probed but
+	// does not itself transition.
+	h := &fakeHarness{script: []scriptedAttempt{{
+		outcome: ExecOutcome{Err: errRetryable},
+		verdict: VerdictPreConsumptionFailure,
+		scope:   ScopeOffering,
+	}}}
+	in := baseInput(t, TierPro, group, h)
+	in.Policy.AttemptBudget = 1
+	in.Pool = SingleGroupPool(group)
+	in.Scoper = h
+	in.Breakers = BreakerSet{
+		Account:  map[string]Breaker{},
+		Offering: map[string]Breaker{},
+		Provider: map[string]Breaker{"provX": {State: BreakerHalfOpen, OpenCycles: 2}},
+	}
+
+	res, _ := RunFallbackLoop(context.Background(), in)
+	prov := res.Breakers.Provider["provX"]
+	if !prov.ProbeInFlight {
+		t.Fatalf("the half-open provider breaker must have its probe marked in flight after the loop consumed it")
+	}
+	if prov.Admits(drrTestNow) {
+		t.Fatalf("a half-open breaker with a probe in flight must admit no further request")
 	}
 }

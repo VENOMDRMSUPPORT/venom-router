@@ -104,11 +104,28 @@ func TestWriteRoutingError_NoSecretLeak(t *testing.T) {
 	const credCanary = "Bearer sk-SECRETcanary1234567890"
 	const plainCanary = "PLAIN-CANARY-marker-7f3a"
 
-	// The canary rides in the capability field AND in a wrapped raw message.
+	// The canary rides in the capability field AND in wrapped raw messages.
 	capErr := &routing.CapabilityUnsupportedError{Capability: "vision " + plainCanary + " " + credCanary}
 	wrapped := fmt.Errorf("provider raw: %s %s: %w", credCanary, plainCanary, routing.ErrNoEligibleOffering)
 
-	for _, err := range []error{capErr, wrapped, &routing.NoEligibleOfferingError{Attempts: 1}} {
+	// GOVERNOR ADDITION: `wrapped` above wraps the SENTINEL, which RoutingErrorFor
+	// does not recognize (errors.As for *NoEligibleOfferingError fails), so
+	// writeRoutingError writes NOTHING and that case passed vacuously — leaving
+	// the exhaustion branch's rendering entirely uncovered by this canary.
+	// Wrapping the TYPED error instead keeps errors.As matching, so a
+	// canary-carrying error genuinely reaches the 429/503 branch. Same for the
+	// context and extension branches, so all five codes are covered.
+	wrappedTyped := fmt.Errorf("provider raw: %s %s: %w", credCanary, plainCanary,
+		&routing.NoEligibleOfferingError{Attempts: 2, RetryAfter: 3 * time.Second})
+	wrappedNoRetry := fmt.Errorf("provider raw: %s %s: %w", credCanary, plainCanary,
+		&routing.NoEligibleOfferingError{Attempts: 2})
+	wrappedContext := fmt.Errorf("provider raw: %s %s: %w", credCanary, plainCanary, routing.ErrContextExceedsTier)
+	wrappedExtension := fmt.Errorf("provider raw: %s %s: %w", credCanary, plainCanary, routing.ErrInvalidExtension)
+
+	for _, err := range []error{
+		capErr, wrapped, &routing.NoEligibleOfferingError{Attempts: 1},
+		wrappedTyped, wrappedNoRetry, wrappedContext, wrappedExtension,
+	} {
 		rec := httptest.NewRecorder()
 		writeRoutingError(rec, err)
 		body := rec.Body.String()

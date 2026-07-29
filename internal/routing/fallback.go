@@ -203,6 +203,14 @@ func RunFallbackLoop(ctx context.Context, in FallbackInput) (FallbackResult, err
 		if err := in.Lifecycle.MarkDispatched(ctx, reservationID); err != nil {
 			return st.result(), err
 		}
+		// This attempt is the half-open trial for every applicable scope that is
+		// currently half-open, so mark those probes in flight BEFORE executing.
+		// Without this the persisted breaker keeps ProbeInFlight=false and
+		// Admits() returns true for every concurrent caller — a recovering scope
+		// would be hammered instead of probed once (05 §3).
+		if in.Scoper != nil {
+			st.markHalfOpenProbes(chosen, in.Now)
+		}
 		outcome := in.Executor.Execute(ctx, ResolvedAttempt{
 			RequestID:     in.RequestID,
 			AttemptID:     attemptID,
@@ -220,9 +228,13 @@ func RunFallbackLoop(ctx context.Context, in FallbackInput) (FallbackResult, err
 				return st.result(), err
 			}
 			if in.Scoper != nil {
-				// A success closes (and resets the backoff of) the account
-				// breaker — a half-open probe that succeeded recovers the scope.
-				st.breakers.Account[chosen.AccountID] = lookupBreaker(st.breakers.Account, chosen.AccountID).RecordSuccess()
+				// A success closes — and resets the adaptive backoff of — the
+				// breaker for EVERY scope this route just proved healthy: the
+				// account, the offering, AND the provider. Closing only the
+				// account would leave a tripped offering/provider breaker stuck
+				// half-open forever with its inflated backoff never reset
+				// (05 §3: "success closes the breaker and resets the backoff").
+				st.recordScopeSuccess(chosen)
 			}
 			// The stickiness pin is recorded ONLY on a successful response
 			// (05 §2 Step 7) — this loop is the caller ROUTE-012 delegated it to.
@@ -311,6 +323,34 @@ func (st *loopState) result() FallbackResult {
 		Cooldowns:         st.emitted,
 		TransientBackoffs: st.backoffs,
 	}
+}
+
+// markHalfOpenProbes marks the in-flight half-open probe for each of the chosen
+// candidate's three scopes that is currently half-open. The attempt about to run
+// IS that scope's single trial request (05 §3: "half-open probes"), so the
+// breaker must carry ProbeInFlight=true from here on — otherwise Admits() keeps
+// returning true and a recovering scope admits unlimited concurrent probes.
+// Trip and RecordSuccess both clear the flag, so it never leaks past the attempt.
+func (st *loopState) markHalfOpenProbes(chosen CandidateOffering, now time.Time) {
+	if b := lookupBreaker(st.breakers.Account, chosen.AccountID); b.EffectiveState(now) == BreakerHalfOpen {
+		st.breakers.Account[chosen.AccountID] = b.MarkProbe()
+	}
+	if b := lookupBreaker(st.breakers.Offering, chosen.ProviderModelID); b.EffectiveState(now) == BreakerHalfOpen {
+		st.breakers.Offering[chosen.ProviderModelID] = b.MarkProbe()
+	}
+	if b := lookupBreaker(st.breakers.Provider, chosen.ProviderID); b.EffectiveState(now) == BreakerHalfOpen {
+		st.breakers.Provider[chosen.ProviderID] = b.MarkProbe()
+	}
+}
+
+// recordScopeSuccess closes and resets the breaker for every scope a successful
+// route just proved healthy — account, offering, and provider. A success on this
+// route is positive evidence for all three, and closing only one would leave the
+// others permanently half-open with an inflated, never-reset backoff.
+func (st *loopState) recordScopeSuccess(chosen CandidateOffering) {
+	st.breakers.Account[chosen.AccountID] = lookupBreaker(st.breakers.Account, chosen.AccountID).RecordSuccess()
+	st.breakers.Offering[chosen.ProviderModelID] = lookupBreaker(st.breakers.Offering, chosen.ProviderModelID).RecordSuccess()
+	st.breakers.Provider[chosen.ProviderID] = lookupBreaker(st.breakers.Provider, chosen.ProviderID).RecordSuccess()
 }
 
 // applyScopeAction honors ROUTE-014's ResolveScope verdict for a failed attempt.
