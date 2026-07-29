@@ -78,11 +78,11 @@ tasks:
       secret canary (the latter three run as part of `go test ./...`,
       since they are regular Go tests — under internal/staticgate,
       internal/execution, and internal/secrets [package secrets_test]
-      respectively). CI invokes exactly this one command on both Windows
-      and Linux — no gate logic is duplicated in the CI workflow file.
-      The race detector (CGO_ENABLED=1) is wired as a separate CI step,
-      not part of this command, since it needs cgo and this command must
-      stay green on hosts without a C toolchain. schema-lint and
+      respectively). CI invokes exactly this one command on the genuine
+      Linux self-hosted gate; a separate Windows smoke job runs
+      `CGO_ENABLED=0 go test ./...`. No gate logic is duplicated in the CI
+      workflow file. The race detector (CGO_ENABLED=1) remains separate
+      and non-blocking because it needs a C toolchain. schema-lint and
       no-hardcoding remain reserved placeholders (see the `schema-lint`
       and `no-hardcoding-lint` tasks below) — not part of this gate until
       populated in P3.
