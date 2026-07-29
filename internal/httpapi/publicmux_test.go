@@ -166,10 +166,30 @@ func TestModels_NoFleetInternals(t *testing.T) {
 			t.Fatalf("/v1/models leaked a fleet internal %q: %s", forbidden, body)
 		}
 	}
-	_, ids, _ := decodeModelsList(t)
+	_, ids, entries := decodeModelsList(t)
 	for _, id := range ids {
 		if !strings.HasPrefix(id, "venom/") {
 			t.Fatalf("model id %q is not a venom/ tier name — a provider/raw model id leaked", id)
+		}
+	}
+
+	// THE FIELD SET IS FROZEN. Governor review found the two checks above
+	// insufficient: adding a `provider_model: "gpt-5-turbo-2026"` field to every
+	// entry left this test GREEN, because the fabricated value matched neither
+	// seeded fixture and the `id` field stayed venom/-prefixed. The card's DoD is
+	// that NO provider/account/raw-model identifier is exposed at all, so the
+	// public projection's shape — not merely today's fixture values — is what must
+	// be pinned. Any new field is a deliberate review decision (the same
+	// frozen-set discipline the M7 column-set test uses).
+	allowed := map[string]bool{"id": true, "object": true, "created": true, "owned_by": true}
+	for _, e := range entries {
+		for field := range e {
+			if !allowed[field] {
+				t.Fatalf("/v1/models entry carries unexpected field %q — the public projection's field set is frozen; a new field must be reviewed for fleet-internal leakage (entry=%v)", field, e)
+			}
+		}
+		if len(e) != len(allowed) {
+			t.Fatalf("/v1/models entry field count = %d, want exactly %d (%v)", len(e), len(allowed), e)
 		}
 	}
 }

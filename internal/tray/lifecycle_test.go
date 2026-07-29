@@ -9,7 +9,7 @@ import (
 )
 
 func TestServerAdapter_DashboardURL(t *testing.T) {
-	a := NewServerLifecycle("127.0.0.1:8081", nil)
+	a := NewServerLifecycle("127.0.0.1:8081", "", nil)
 	if got := a.DashboardURL(); got != "http://127.0.0.1:8081/" {
 		t.Fatalf("DashboardURL=%q", got)
 	}
@@ -26,7 +26,7 @@ func TestServerAdapter_Healthy_ProbesHealthEndpoint(t *testing.T) {
 	}))
 	defer srv.Close()
 	bind := strings.TrimPrefix(srv.URL, "http://")
-	a := NewServerLifecycle(bind, nil)
+	a := NewServerLifecycle(bind, "", nil)
 	if !a.Healthy(context.Background()) {
 		t.Fatalf("Healthy=false, want true against a live /health")
 	}

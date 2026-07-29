@@ -217,11 +217,28 @@ func TestVKAuth_SecretCanary(t *testing.T) {
 	seedAPIKey(t, db, "k-1", raw, nil, false)
 	auth := newVKAuthenticator(storage.NewAPIKeyRepo(db), func() time.Time { return vkFixedNow })
 
-	// Rejected request (wrong key) must not echo the presented value.
+	// Rejected request (wrong key) must not echo the presented value. This one
+	// carries the vk_live_ prefix, so it is rejected by the LOOKUP branch.
 	rejRec := httptest.NewRecorder()
 	auth.Middleware(vkProbeHandler(new(string))).ServeHTTP(rejRec, vkRequest("vk_live_wrong_MARKER_zzz"))
 	assertNoSecret(t, "401 body", rejRec.Body.String(), "vk_live_wrong_MARKER_zzz")
 	assertNoSecretInHeaders(t, rejRec.Header(), "vk_live_wrong_MARKER_zzz")
+
+	// The MALFORMED-PREFIX branch is a SECOND, distinct 401 path and it must be
+	// held to the same rule. Governor review found this branch uncovered: echoing
+	// the presented token into its message (a plausible "invalid key format: %s"
+	// debugging aid) left the whole suite GREEN. A malformed token is still a
+	// presented credential — it may be the owner's real key with a typo'd prefix,
+	// or another service's bearer secret sent to the wrong host — and a response
+	// body travels through client logs and proxies.
+	const malformed = "not_a_vk_prefix_MARKER_yyy"
+	malRec := httptest.NewRecorder()
+	auth.Middleware(vkProbeHandler(new(string))).ServeHTTP(malRec, vkRequest(malformed))
+	if malRec.Code != http.StatusUnauthorized {
+		t.Fatalf("malformed-prefix status = %d, want 401", malRec.Code)
+	}
+	assertNoSecret(t, "malformed-prefix 401 body", malRec.Body.String(), malformed)
+	assertNoSecretInHeaders(t, malRec.Header(), malformed)
 
 	// Accepted request must not echo the real key in the body or headers.
 	okRec := httptest.NewRecorder()

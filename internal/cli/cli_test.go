@@ -415,3 +415,39 @@ func TestDispatch_Serve_EndToEnd_BootsHealthAndShutsDownCleanly(t *testing.T) {
 		t.Fatalf("dial to %q succeeded after shutdown — listener should be closed", bind)
 	}
 }
+
+// TestServe_ThreadsDataPlaneBindIntoBootConfig pins the wiring that makes the
+// optional public data-plane bind real in PRODUCTION (P5-PAPI-001, 01 §6b).
+// config.Load parses and validates VENOM_DATA_PLANE_BIND / -data-plane-bind, and
+// app.Boot honors BootConfig.DataPlaneBind — but if runServeLoop does not pass
+// the one to the other, the whole feature is INERT: a configured data-plane bind
+// would silently keep sharing the control listener. Nothing else in the tree
+// catches that, because both ends are individually correct and tested.
+//
+// Mutation: drop DataPlaneBind from the BootConfig literal in runServeLoop → the
+// captured value is "" → this test RED.
+func TestServe_ThreadsDataPlaneBindIntoBootConfig(t *testing.T) {
+	setTestDataDir(t)
+
+	var captured app.BootConfig
+	saved := bootFunc
+	bootFunc = func(_ context.Context, cfg app.BootConfig) (*app.Server, error) {
+		captured = cfg
+		return nil, errors.New("boot stopped by test")
+	}
+	t.Cleanup(func() { bootFunc = saved })
+
+	const dataBind = "127.0.0.1:18099"
+	var stdout, stderr bytes.Buffer
+	err := Dispatch(context.Background(), []string{"serve", "-bind", "127.0.0.1:18098", "-data-plane-bind", dataBind}, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("expected the stubbed boot error")
+	}
+
+	if captured.Bind != "127.0.0.1:18098" {
+		t.Fatalf("BootConfig.Bind = %q, want the configured control bind", captured.Bind)
+	}
+	if captured.DataPlaneBind != dataBind {
+		t.Fatalf("BootConfig.DataPlaneBind = %q, want %q — the configured data-plane bind must reach Boot, or the flag is inert", captured.DataPlaneBind, dataBind)
+	}
+}

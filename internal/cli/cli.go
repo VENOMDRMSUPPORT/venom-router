@@ -149,7 +149,10 @@ func runServeLoop(ctx context.Context, configArgs []string, stdout io.Writer) er
 		return fmt.Errorf("cli: load config: %w", err)
 	}
 
-	srv, err := bootFunc(ctx, app.BootConfig{Bind: cfg.Bind})
+	// DataPlaneBind must be threaded through: without it VENOM_DATA_PLANE_BIND /
+	// -data-plane-bind parse and validate but have NO production effect, and the
+	// public /v1 API would always share the control listener (P5-PAPI-001, 01 §6b).
+	srv, err := bootFunc(ctx, app.BootConfig{Bind: cfg.Bind, DataPlaneBind: cfg.DataPlaneBind})
 	if err != nil {
 		return fmt.Errorf("cli: boot: %w", err)
 	}
@@ -181,7 +184,7 @@ func runTrayLoop(parent context.Context, stdout io.Writer) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	lc := tray.NewServerLifecycle(cfg.Bind, logger)
+	lc := tray.NewServerLifecycle(cfg.Bind, cfg.DataPlaneBind, logger)
 	ctrl := tray.NewController(lc, tray.NewOpener(), tray.Options{
 		ShutdownTimeout: app.ShutdownTimeout,
 		Logger:          logger,

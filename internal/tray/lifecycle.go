@@ -12,20 +12,26 @@ import (
 
 // ServerAdapter is the production ServerLifecycle backed by internal/app.
 type ServerAdapter struct {
-	bind   string
-	logger *observability.Logger
+	bind string
+	// dataPlaneBind is the OPTIONAL public data-plane bind (01 §6b). Empty means
+	// the public /v1 API shares the control listener. It must be threaded into
+	// BootConfig or the configured bind has no effect when Venom runs from the
+	// tray (P5-PAPI-001).
+	dataPlaneBind string
+	logger        *observability.Logger
 
 	mu  sync.Mutex
 	srv *app.Server
 }
 
-// NewServerLifecycle returns a ServerAdapter for the given loopback bind.
-func NewServerLifecycle(bind string, logger *observability.Logger) *ServerAdapter {
-	return &ServerAdapter{bind: bind, logger: logger}
+// NewServerLifecycle returns a ServerAdapter for the given loopback control
+// bind and optional public data-plane bind ("" = share the control listener).
+func NewServerLifecycle(bind, dataPlaneBind string, logger *observability.Logger) *ServerAdapter {
+	return &ServerAdapter{bind: bind, dataPlaneBind: dataPlaneBind, logger: logger}
 }
 
 func (a *ServerAdapter) Boot(ctx context.Context) error {
-	srv, err := app.Boot(ctx, app.BootConfig{Bind: a.bind, Logger: a.logger})
+	srv, err := app.Boot(ctx, app.BootConfig{Bind: a.bind, DataPlaneBind: a.dataPlaneBind, Logger: a.logger})
 	if err != nil {
 		return err
 	}

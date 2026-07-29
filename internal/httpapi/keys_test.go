@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -306,8 +307,21 @@ func TestKeys_EntropyAndFormat(t *testing.T) {
 		t.Fatalf("raw key %q lacks the vk_live_ prefix", raw)
 	}
 	randPart := strings.TrimPrefix(raw, vkLiveKeyPrefix)
-	if len(randPart) != 2*vkRawEntropyBytes {
-		t.Fatalf("random part length = %d hex chars, want %d (256 bits)", len(randPart), 2*vkRawEntropyBytes)
+	// ABSOLUTE minimum, deliberately NOT expressed in terms of vkRawEntropyBytes.
+	// Governor review found the original assertion (len == 2*vkRawEntropyBytes)
+	// tautological: it moves with the constant, so lowering the constant to 4
+	// bytes (32 bits — brute-forceable) kept the test GREEN. 09 §3.11 / 01 §8
+	// require a high-entropy secret, and the 64-hex-char wire format is itself a
+	// contract, so both are pinned as literals here.
+	const minHexChars = 64 // 32 CSPRNG bytes = 256 bits
+	if len(randPart) < minHexChars {
+		t.Fatalf("random part = %d hex chars, want at least %d (256 bits of CSPRNG entropy)", len(randPart), minHexChars)
+	}
+	if vkRawEntropyBytes < 32 {
+		t.Fatalf("vkRawEntropyBytes = %d, want at least 32 (256 bits)", vkRawEntropyBytes)
+	}
+	if _, err := hex.DecodeString(randPart); err != nil {
+		t.Fatalf("random part %q is not hex: %v", randPart, err)
 	}
 	// Two successive keys must differ (a constant generator would be caught).
 	other, _ := newRawAPIKey()
