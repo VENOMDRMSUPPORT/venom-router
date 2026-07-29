@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	accountsdomain "github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/domain"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
@@ -142,6 +143,157 @@ func TestP4Gate_StickinessNeverViolatesEligibility(t *testing.T) {
 	chosen2, _, _ := SelectAccount(TierPro, group2, key, cache2, DRRState{}, 1, drrTestNow, testStale)
 	if chosen2.AccountID != "pinnedOK" {
 		t.Fatalf("an eligible pin must be honored; got %q", chosen2.AccountID)
+	}
+}
+
+// TestP4Gate_StickinessDropConditions completes the eligibility criterion across
+// the REMAINING Step-7 drop conditions (05 §2 Step 7): TTL expiry, an unhealthy
+// account, a cooling account, and an account that has left the group. The
+// saturation condition is covered by the test above.
+//
+// Each case is proved against a POSITIVE CONTROL in the same table: the pinned
+// account always has LESS headroom than the alternative, so capacity-fair
+// selection prefers the alternative — meaning "chosen == pinned" can only happen
+// because the pin was honored, and "chosen == alt" only because it was dropped.
+//
+// The TTL case evaluates at a LATER instant and therefore re-observes BOTH
+// accounts' windows AT that instant (freshWinAt): a window observed at drrTestNow
+// would be quota-STALE by then and the SATURATION gate would drop the pin for an
+// unrelated reason. That confound already produced one passing-for-the-wrong-
+// reason test in P4-ROUTE-012.
+//
+// Mutation T2-M8: delete the TTL check in StickinessCache.Lookup → the ttl-expired
+// case honors the stale pin → this test RED. (Verified: with that mutation every
+// other TestP4Gate_* test stays GREEN.)
+func TestP4Gate_StickinessDropConditions(t *testing.T) {
+	const key = "sess-drop"
+	later := drrTestNow.Add(StickinessTTL + time.Minute)
+
+	cases := []struct {
+		name      string
+		pinned    CandidateOffering
+		alt       CandidateOffering
+		pinnedAt  time.Time
+		evalAt    time.Time
+		pinName   string // the account id written into the cache
+		wantHonor bool
+	}{
+		{
+			name:      "eligible-pin-honored (positive control)",
+			pinned:    fairCand("pinned", freshWin(100, 0)),
+			alt:       fairCand("alt", freshWin(10_000, 0)),
+			pinnedAt:  drrTestNow,
+			evalAt:    drrTestNow,
+			pinName:   "pinned",
+			wantHonor: true,
+		},
+		{
+			name:      "ttl-expired",
+			pinned:    fairCand("pinned", freshWinAt(100, 0, later)),
+			alt:       fairCand("alt", freshWinAt(10_000, 0, later)),
+			pinnedAt:  drrTestNow,
+			evalAt:    later,
+			pinName:   "pinned",
+			wantHonor: false,
+		},
+		{
+			name: "unhealthy",
+			pinned: func() CandidateOffering {
+				c := fairCand("pinned", freshWin(100, 0))
+				c.AccountHealth = accountsdomain.HealthDegraded
+				return c
+			}(),
+			alt:       fairCand("alt", freshWin(10_000, 0)),
+			pinnedAt:  drrTestNow,
+			evalAt:    drrTestNow,
+			pinName:   "pinned",
+			wantHonor: false,
+		},
+		{
+			name: "cooling",
+			pinned: func() CandidateOffering {
+				c := fairCand("pinned", freshWin(100, 0))
+				c.Cooling = true
+				return c
+			}(),
+			alt:       fairCand("alt", freshWin(10_000, 0)),
+			pinnedAt:  drrTestNow,
+			evalAt:    drrTestNow,
+			pinName:   "pinned",
+			wantHonor: false,
+		},
+		{
+			name:      "left-the-group",
+			pinned:    fairCand("pinned", freshWin(100, 0)),
+			alt:       fairCand("alt", freshWin(10_000, 0)),
+			pinnedAt:  drrTestNow,
+			evalAt:    drrTestNow,
+			pinName:   "departed", // not a member of the group any more
+			wantHonor: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			group := RouteGroup{Members: []CandidateOffering{tc.pinned, tc.alt}}
+			cache := NewStickinessCache(8)
+			cache.Pin(key, tc.pinName, tc.pinnedAt)
+
+			chosen, _, ok := SelectAccount(TierPro, group, key, cache, DRRState{}, 1, tc.evalAt, testStale)
+			if !ok {
+				t.Fatalf("expected a selection")
+			}
+			if tc.wantHonor && chosen.AccountID != "pinned" {
+				t.Fatalf("an eligible pin must be honored; got %q", chosen.AccountID)
+			}
+			if !tc.wantHonor && chosen.AccountID == "pinned" {
+				t.Fatalf("the pin must be dropped for %q, yet the pinned account was served", tc.name)
+			}
+		})
+	}
+}
+
+// TestP4Gate_StickinessPinRecordedOnlyOnSuccess proves the pin is written ONLY
+// after a genuinely successful response (05 §2 Step 7: "recorded only on a
+// successful response"), so a failing route can never become the sticky binding
+// that future requests prefer.
+//
+// Mutation T2-M4: move the Cache.Pin call out of RunFallbackLoop's success branch
+// (pin on every attempt) → the exhausted request leaves a pin behind → this test
+// RED. (Verified: with that mutation every other TestP4Gate_* test stays GREEN.)
+func TestP4Gate_StickinessPinRecordedOnlyOnSuccess(t *testing.T) {
+	const key = "sess-pin"
+
+	// (a) Success pins exactly the serving account.
+	hOK := &fakeHarness{script: []scriptedAttempt{{outcome: successOutcome(), verdict: VerdictSuccess}}}
+	inOK := baseInput(t, TierPro, loopGroup("served"), hOK)
+	cacheOK := NewStickinessCache(8)
+	inOK.StickinessKey = key
+	inOK.Cache = cacheOK
+
+	if _, err := RunFallbackLoop(context.Background(), inOK); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	pinned, ok := cacheOK.Lookup(key, drrTestNow)
+	if !ok || pinned != "served" {
+		t.Fatalf("a successful response must pin the serving account; got %q ok=%v", pinned, ok)
+	}
+
+	// (b) An exhausted request pins NOTHING — every attempt failed, so there is no
+	// successful route to remember.
+	hFail := &fakeHarness{script: []scriptedAttempt{
+		retryableUnknown(), retryableUnknown(), retryableUnknown(), retryableUnknown(),
+	}}
+	inFail := baseInput(t, TierPro, loopGroup("bad"), hFail)
+	cacheFail := NewStickinessCache(8)
+	inFail.StickinessKey = key
+	inFail.Cache = cacheFail
+
+	if _, err := RunFallbackLoop(context.Background(), inFail); !errors.Is(err, ErrNoEligibleOffering) {
+		t.Fatalf("expected typed exhaustion, got %v", err)
+	}
+	if got, ok := cacheFail.Lookup(key, drrTestNow); ok {
+		t.Fatalf("a request that never succeeded must leave no pin; got %q", got)
 	}
 }
 

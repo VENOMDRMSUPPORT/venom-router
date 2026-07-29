@@ -1,6 +1,8 @@
 package routing
 
 import (
+	"context"
+	"errors"
 	"math"
 	"testing"
 
@@ -155,6 +157,42 @@ func TestP4Gate_LiteFailsClosedOnFreeExhaustion(t *testing.T) {
 	}
 }
 
+// TestP4Gate_LiteExhaustionIsTypedAndNeverPaid completes the fail-closed gate
+// criterion at the LOOP level: when only paid routes exist, Lite's fallback loop
+// refuses to execute anything at all and returns the typed exhaustion error
+// (05 §1, 05 §2 Step 8.6) — it never "falls back" onto paid to avoid failing.
+//
+// Mutation M2-L1/L2 (relax the funding rule in FilterEligible or ApplyHardGates)
+// → a paid route is executed and the loop succeeds → this test RED.
+func TestP4Gate_LiteExhaustionIsTypedAndNeverPaid(t *testing.T) {
+	paidOnly := RouteGroup{
+		ProviderID: "P1", ProviderModelID: "M1", Funding: accountsdomain.FundingPaid,
+		Members: []CandidateOffering{{
+			AccountID: "aPaid", ProviderID: "P1", ProviderModelID: "M1",
+			Funding: accountsdomain.FundingPaid, AccountHealth: accountsdomain.HealthHealthy,
+			QuotaWindows: []quota.Window{availWindow(10_000)},
+		}},
+	}
+	h := &fakeHarness{script: []scriptedAttempt{{outcome: successOutcome(), verdict: VerdictSuccess}}}
+	in := baseInput(t, TierLite, paidOnly, h)
+
+	res, err := RunFallbackLoop(context.Background(), in)
+
+	if !errors.Is(err, ErrNoEligibleOffering) {
+		t.Fatalf("Lite must fail closed with the typed exhaustion error; got %v", err)
+	}
+	var exhausted *NoEligibleOfferingError
+	if !errors.As(err, &exhausted) {
+		t.Fatalf("the exhaustion error must carry *NoEligibleOfferingError; got %T", err)
+	}
+	if h.execCalls != 0 {
+		t.Fatalf("Lite must never execute a paid route; execCalls=%d accounts=%v", h.execCalls, h.executedAccounts)
+	}
+	if res.Response != nil {
+		t.Fatalf("no response may be produced under free exhaustion; got %v", res.Response)
+	}
+}
+
 // ============================ PRO ===========================================
 
 // TestP4Gate_ProFundingMixConvergesPerBucket is the mechanized Pro convergence
@@ -226,6 +264,64 @@ func TestP4Gate_ProFundingMixConvergesPerBucket(t *testing.T) {
 			t.Fatalf("bucket %s: realized paid share %.4f is outside ±%.2f of %.2f (paid=%d/%d)",
 				bucket, share, gateProTolerancePP, gateProPaidShareTarget, paidByBucket[bucket], total)
 		}
+	}
+}
+
+// TestP4Gate_ProDeficitCellIsolatedPerBucket pins 05 §8.1's load-bearing rule:
+// the controller keeps ONE deficit cell PER workload_profile_bucket — "not one
+// global deficit". The five-bucket convergence test above cannot catch a globally
+// keyed cell: every bucket there sees an identical fleet, so one shared counter
+// still converges to ~25% in each of them.
+//
+// This fixture breaks that symmetry deterministically. Bucket A carries both
+// funding classes in band; bucket B carries FREE ONLY. Interleaved A,B,A,B…, a
+// GLOBAL cell would be diluted by B's free-only selections, so the controller
+// would keep preferring paid in A until the GLOBAL share reached 25% — driving
+// A's own realized paid share to ~50%. With correctly isolated cells, A converges
+// to 25% regardless of what B does.
+//
+// Mutation T1-M6: key the cell globally in PreferByDeficit (e.g. `bucketKey = ""`)
+// → bucket A's paid share climbs to ~0.50 → this test RED. (Verified: with that
+// mutation every other TestP4Gate_* test stays GREEN.)
+func TestP4Gate_ProDeficitCellIsolatedPerBucket(t *testing.T) {
+	pro := mustPolicy(t, TierPro)
+	reqs := Requirements{TextModality: true, ContextTokens: 1_000}
+
+	bothClasses := []CandidateOffering{
+		gateFullyCertified("pFree", "aFree", "m1", accountsdomain.FundingFree, 90, 500),
+		gateFullyCertified("pPaid", "aPaid", "m1", accountsdomain.FundingPaid, 90, 500),
+	}
+	freeOnly := []CandidateOffering{
+		gateFullyCertified("pFree", "aFree", "m1", accountsdomain.FundingFree, 90, 500),
+	}
+
+	state := DeficitState{}
+	paidA, totalA := 0, 0
+	for i := 0; i < gateProConvergenceSamples; i++ {
+		bucket, fleet := "bucketA", bothClasses
+		if i%2 == 1 {
+			bucket, fleet = "bucketB", freeOnly
+		}
+		inBand, _ := gatePipeline(t, fleet, reqs, pro)
+
+		var chosen GroupScore
+		chosen, state = PreferByDeficit(inBand, bucket, state, gateProPaidShareTarget)
+
+		if bucket == "bucketB" && chosen.Group.Funding == accountsdomain.FundingPaid {
+			t.Fatalf("req %d: bucket B has no paid route in band; a paid group was fabricated", i)
+		}
+		if bucket == "bucketA" {
+			totalA++
+			if chosen.Group.Funding == accountsdomain.FundingPaid {
+				paidA++
+			}
+		}
+	}
+
+	shareA := float64(paidA) / float64(totalA)
+	if math.Abs(shareA-gateProPaidShareTarget) > gateProTolerancePP {
+		t.Fatalf("bucket A paid share %.4f is outside ±%.2f of %.2f — a neighbouring bucket's traffic leaked into its deficit cell (paid=%d/%d)",
+			shareA, gateProTolerancePP, gateProPaidShareTarget, paidA, totalA)
 	}
 }
 
