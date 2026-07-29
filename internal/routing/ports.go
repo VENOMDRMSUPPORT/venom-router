@@ -107,6 +107,14 @@ type ExecOutcome struct {
 	ActualCost map[quota.Unit]float64
 	RetryAfter time.Duration
 	Err        error
+	// StreamStarted is true when at least one streaming chunk already reached
+	// the client for this attempt (05 §3 streaming bullet; docs/11 risk R-12).
+	// On a FAILED attempt it forbids any further fallback: a second response
+	// after streaming has begun is illegal. The ZERO VALUE (false) preserves the
+	// exact pre-existing behavior — the non-streaming and pre-first-byte paths
+	// are unaffected. The executor adapter (P5 request path) is what sets it;
+	// nothing in routing produces it.
+	StreamStarted bool
 }
 
 // Executor executes one resolved attempt with NO reservation-mutating call in

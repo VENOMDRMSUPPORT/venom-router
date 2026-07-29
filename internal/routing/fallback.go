@@ -116,6 +116,12 @@ type FallbackResult struct {
 // returns a *NoEligibleOfferingError (wrapping ErrNoEligibleOffering) carrying
 // the earliest retry_after observed. Each attempt's reservation id comes from
 // quota.ReservationID(requestID, attemptID); none is ever inherited.
+//
+// Streaming boundary (05 §3; docs/11 risk R-12): a FAILED attempt whose
+// outcome.StreamStarted is true stops the loop after its terminal reconcile op
+// and its scope-classified steering have run — fallback may happen only before
+// the first byte reaches the client, so once streaming has begun no further
+// attempt runs and no second response is ever produced.
 func RunFallbackLoop(ctx context.Context, in FallbackInput) (FallbackResult, error) {
 	st := loopState{
 		pool:             in.Pool,
@@ -284,6 +290,18 @@ func RunFallbackLoop(ctx context.Context, in FallbackInput) (FallbackResult, err
 			if stop := st.applyScopeAction(in.Scoper.ScopeOf(outcome.Err), chosen, in.Now, outcome.RetryAfter); stop {
 				return st.result(), outcome.Err
 			}
+		}
+
+		// 7. Streaming first-byte boundary (05 §3: "fallback only before the first
+		//    byte reaches the client; never emit a second response after streaming
+		//    has begun"; docs/11 risk R-12). A mid-stream failure is real failure
+		//    evidence, so the terminal reconcile op (step 5) and the scope-steering
+		//    (step 6) above have already recorded the settlement, breaker trip, and
+		//    cooldown for this scope. But NO further attempt may run — a second
+		//    route would produce a second response after the client already began
+		//    receiving one. Stop regardless of the scope action the scoper produced.
+		if outcome.StreamStarted {
+			return st.result(), outcome.Err
 		}
 	}
 
