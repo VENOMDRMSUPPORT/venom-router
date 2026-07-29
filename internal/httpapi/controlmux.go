@@ -44,7 +44,32 @@ import (
 // OAuthEnrollmentService's PKCE-verifier and credential envelope
 // encryption — the same keyring internal/app.Boot already loads at its
 // load_keyring stage.
-func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secrets.Keyring) http.Handler {
+// ControlMuxOption tunes ControlMux without changing its (widely-called)
+// positional signature — existing four-arg call sites compile unchanged.
+type ControlMuxOption func(*controlMuxOptions)
+
+type controlMuxOptions struct {
+	omitPublicRoutes bool
+}
+
+// WithoutPublicRoutes tells ControlMux NOT to mount the vk-gated /v1/* public
+// surface on the control listener. Boot passes this ONLY when a separate
+// data-plane bind is configured, so the public /v1 API lives solely on that
+// second, public-only listener and the control listener serves control routes
+// alone (01 §6b: "each serves only its own surface"). In the default
+// shared-listener case the option is absent and /v1/* is mounted here, behind
+// the same loopback + Host-allowlist gate as every control route but gated by
+// vk auth instead of the owner session.
+func WithoutPublicRoutes() ControlMuxOption {
+	return func(o *controlMuxOptions) { o.omitPublicRoutes = true }
+}
+
+func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secrets.Keyring, opts ...ControlMuxOption) http.Handler {
+	var o controlMuxOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/health", networkGate(allowedHost, http.HandlerFunc(healthHandler)))
 
@@ -282,6 +307,20 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	diagnosticsHandler := NewDiagnosticsHandler(reconciliationRepo, quotaLifecycleRepo, audit)
 	mux.Handle("/api/control/v1/diagnostics/reconciliation", gated(diagnosticsHandler.ServeList))
 	mux.Handle("/api/control/v1/diagnostics/reconciliation/{reservation_id}", gated(diagnosticsHandler.ServeAction))
+
+	// Public data-plane surface (P5-PAPI-001, 01 §6b): the vk-gated /v1/*
+	// routes. In the default local-only case they share THIS control listener,
+	// behind the identical loopback + Host-allowlist network gate (the `outer`
+	// wrapper below) but authenticated by a Venom API key instead of the owner
+	// session — never owner-session gated, and an owner session alone never
+	// authenticates /v1. When Boot opens a separate data-plane listener it
+	// passes WithoutPublicRoutes() here so /v1 lives only there. The vk
+	// authenticator uses the wall clock in production; tests that need a
+	// deterministic RPM clock exercise vkAuthenticator / PublicMux directly.
+	if !o.omitPublicRoutes {
+		vk := newVKAuthenticator(storage.NewAPIKeyRepo(db), nil)
+		registerPublicRoutes(mux, func(h http.Handler) http.Handler { return networkGate(allowedHost, h) }, vk)
+	}
 
 	mux.Handle("/", networkGate(allowedHost, spa))
 	return mux

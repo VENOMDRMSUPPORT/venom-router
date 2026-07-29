@@ -43,6 +43,13 @@ const (
 type BootConfig struct {
 	// Bind is the TCP address to listen on (e.g. from config.Config.Bind).
 	Bind string
+	// DataPlaneBind is the OPTIONAL public data-plane bind (config.Config.
+	// DataPlaneBind, 01 §6b). Empty, or equal to Bind, means the public /v1
+	// API shares the control listener. When set and different from Bind, Boot
+	// opens a SECOND, public-only listener there serving only /v1/*. Unlike
+	// Bind it MAY be non-loopback — it is the one surface the owner may expose
+	// off-host, so isLoopbackBind is deliberately NOT applied to it.
+	DataPlaneBind string
 	// Logger receives one "startup stage" record per stage, in order. If
 	// nil, observability.Default() is used.
 	Logger *observability.Logger
@@ -186,9 +193,20 @@ type Server struct {
 	lock            *Lock
 	http            *http.Server
 	ln              net.Listener
+	dataHTTP        *http.Server // the separate public data-plane server, nil when /v1 shares the control listener
+	dataLn          net.Listener
 	keyring         *secrets.Keyring
 	scheduler       *Scheduler
 	cancelScheduler context.CancelFunc
+}
+
+// DataPlaneAddr is the resolved address of the separate public data-plane
+// listener, or "" when the public /v1 API shares the control listener.
+func (s *Server) DataPlaneAddr() string {
+	if s.dataLn == nil {
+		return ""
+	}
+	return s.dataLn.Addr().String()
 }
 
 // Shutdown gracefully stops the listener, stops the background
@@ -200,6 +218,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	var errs []error
 	if err := s.http.Shutdown(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("http shutdown: %w", err))
+	}
+	if s.dataHTTP != nil {
+		if err := s.dataHTTP.Shutdown(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("data-plane http shutdown: %w", err))
+		}
 	}
 	if s.cancelScheduler != nil {
 		s.cancelScheduler()
@@ -360,7 +383,16 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 	// liveness surface. The dashboard SPA built at stage 1 joins it on
 	// the same mux, behind the identical gate (P2a-UI-001, 01 §1/§3).
 	logStage(StageMountHTTPMux)
-	mux := httpapi.ControlMux(cfg.Bind, spa, db, kr)
+	// separateDataPlane is true only when a distinct data-plane bind is
+	// configured. In that case the public /v1 surface moves to its own
+	// listener (below) and the control mux omits it, so each listener serves
+	// only its own surface (01 §6b).
+	separateDataPlane := cfg.DataPlaneBind != "" && cfg.DataPlaneBind != cfg.Bind
+	var muxOpts []httpapi.ControlMuxOption
+	if separateDataPlane {
+		muxOpts = append(muxOpts, httpapi.WithoutPublicRoutes())
+	}
+	mux := httpapi.ControlMux(cfg.Bind, spa, db, kr, muxOpts...)
 
 	// 10. Listen. The control plane must never bind off-host (01 §6a/§8,
 	// P2b-CAPI-001): the network gate's loopback check only ever sees
@@ -385,6 +417,29 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		_ = httpServer.Serve(ln)
 	}()
 
+	// 10b. Open the separate public data-plane listener when configured
+	// (P5-PAPI-001, 01 §6b). It serves the PUBLIC-ONLY mux — /v1/* and nothing
+	// else — and is the ONE listener permitted off-host, so isLoopbackBind is
+	// deliberately NOT applied to it (the control bind above still is, with no
+	// escape hatch). A failure to open it aborts boot like every other stage:
+	// no half-open process where the control plane is up but the data plane
+	// silently failed to bind.
+	var dataHTTP *http.Server
+	var dataLn net.Listener
+	if separateDataPlane {
+		dataLn, err = net.Listen("tcp", cfg.DataPlaneBind)
+		if err != nil {
+			_ = httpServer.Close()
+			closeDB()
+			release()
+			return nil, fmt.Errorf("app: listen on data-plane %q: %w", cfg.DataPlaneBind, err)
+		}
+		dataHTTP = &http.Server{Handler: httpapi.PublicMux(db, nil)}
+		go func() {
+			_ = dataHTTP.Serve(dataLn)
+		}()
+	}
+
 	// 11. Start the background scheduler (P3c-JOBS-001 GOVERNOR DECISION):
 	// P3b's ReconcileTick/JanitorTick and P3c's DrainTick/RecertifyTick/
 	// ReclaimTick, all previously fully tested but never scheduled by
@@ -398,6 +453,9 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 	quotaWorkers, probeWorkers, err := httpapi.BuildSchedulerWorkers(db, "scheduler", time.Now, nil)
 	if err != nil {
 		_ = httpServer.Close()
+		if dataHTTP != nil {
+			_ = dataHTTP.Close()
+		}
 		closeDB()
 		release()
 		return nil, fmt.Errorf("app: build scheduler workers: %w", err)
@@ -419,6 +477,8 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		lock:            lock,
 		http:            httpServer,
 		ln:              ln,
+		dataHTTP:        dataHTTP,
+		dataLn:          dataLn,
 		keyring:         kr,
 		scheduler:       scheduler,
 		cancelScheduler: cancelScheduler,

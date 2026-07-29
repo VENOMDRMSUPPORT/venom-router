@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/httpapi"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/httpui"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
@@ -638,4 +639,145 @@ func freeLoopbackAddr(t *testing.T) string {
 		t.Fatalf("close temp listener: %v", err)
 	}
 	return addr
+}
+
+// bootSeedAPIKey creates a valid vk key directly in a booted server's database
+// (boot_test is package app, so srv.db is reachable), storing only its hash —
+// so a data-plane request can authenticate against the real, booted listener.
+func bootSeedAPIKey(t *testing.T, srv *Server, id, raw string) {
+	t.Helper()
+	repo := storage.NewAPIKeyRepo(srv.db)
+	if err := repo.Create(context.Background(), storage.CreateAPIKeyParams{
+		ID: id, Label: id, KeyHash: httpapi.HashAPIKey(raw), KeyPrefix: raw[:12], CreatedAt: time.Unix(1, 0),
+	}); err != nil {
+		t.Fatalf("seed api key: %v", err)
+	}
+}
+
+// bootGet issues a GET against a fully-booted listener. host is the Host header
+// (use "localhost" for the gated control listener; anything for the ungated
+// data-plane listener); bearer, when non-empty, is the vk key.
+func bootGet(t *testing.T, addr, path, host, bearer string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr+path, nil)
+	if err != nil {
+		t.Fatalf("build request %s: %v", path, err)
+	}
+	if host != "" {
+		req.Host = host
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s error = %v", path, err)
+	}
+	return resp
+}
+
+// TestBoot_SharedListenerServesV1 proves the default (no data-plane bind): a
+// single listener, and /v1/models is reachable on it behind vk auth.
+func TestBoot_SharedListenerServesV1(t *testing.T) {
+	setDataDirEnv(t)
+
+	srv, err := Boot(context.Background(), BootConfig{Bind: "127.0.0.1:0", SPAHandler: fakeSPA()})
+	if err != nil {
+		t.Fatalf("Boot() error = %v", err)
+	}
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	if srv.DataPlaneAddr() != "" {
+		t.Fatalf("no data-plane bind configured, want a single listener; got data-plane addr %q", srv.DataPlaneAddr())
+	}
+
+	bootSeedAPIKey(t, srv, "k-1", "vk_live_shared00")
+	resp := bootGet(t, srv.Addr, "/v1/models", "localhost", "vk_live_shared00")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/models on the shared listener = %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestBoot_SeparateDataPlaneListener proves a configured, distinct data-plane
+// bind opens a SECOND listener that serves ONLY /v1/* (control paths 404),
+// while the control listener serves control but NOT /v1 (each serves only its
+// own surface, 01 §6b), and both shut down cleanly.
+//
+// Mutation U2-M5 (mount control/SPA on the public mux) → the data-plane control
+// path stops 404-ing → RED here too.
+func TestBoot_SeparateDataPlaneListener(t *testing.T) {
+	setDataDirEnv(t)
+
+	ctrlBind := freeLoopbackAddr(t)
+	dataBind := freeLoopbackAddr(t)
+
+	srv, err := Boot(context.Background(), BootConfig{Bind: ctrlBind, DataPlaneBind: dataBind, SPAHandler: fakeSPA()})
+	if err != nil {
+		t.Fatalf("Boot() error = %v", err)
+	}
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	if srv.DataPlaneAddr() == "" || srv.DataPlaneAddr() == srv.Addr {
+		t.Fatalf("want a distinct second listener; control=%q data=%q", srv.Addr, srv.DataPlaneAddr())
+	}
+	bootSeedAPIKey(t, srv, "k-1", "vk_live_separate")
+
+	// Data-plane listener (ungated): /v1/models needs a key (401 without, 200
+	// with), and control paths do not exist there (404).
+	noKey := bootGet(t, srv.DataPlaneAddr(), "/v1/models", "", "")
+	_ = noKey.Body.Close()
+	if noKey.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("data-plane /v1/models without a key = %d, want 401", noKey.StatusCode)
+	}
+	withKey := bootGet(t, srv.DataPlaneAddr(), "/v1/models", "", "vk_live_separate")
+	_ = withKey.Body.Close()
+	if withKey.StatusCode != http.StatusOK {
+		t.Fatalf("data-plane /v1/models with a key = %d, want 200", withKey.StatusCode)
+	}
+	for _, controlPath := range []string{"/api/control/v1/accounts", "/health", "/"} {
+		resp := bootGet(t, srv.DataPlaneAddr(), controlPath, "", "")
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("data-plane %s = %d, want 404 (no control surface on the data plane)", controlPath, resp.StatusCode)
+		}
+	}
+
+	// Control listener: /health works; /v1 does NOT live here in separate mode.
+	health := bootGet(t, srv.Addr, "/health", "localhost", "")
+	_ = health.Body.Close()
+	if health.StatusCode != http.StatusOK {
+		t.Fatalf("control /health = %d, want 200", health.StatusCode)
+	}
+	// In separate mode the control listener does NOT expose the /v1 API: the
+	// vk-gated route is absent, so /v1/models falls through to the SPA catch-all
+	// and returns the dashboard HTML — never the models JSON. (The models API
+	// lives solely on the data-plane listener, proved above.)
+	v1 := bootGet(t, srv.Addr, "/v1/models", "localhost", "vk_live_separate")
+	v1Body, _ := io.ReadAll(v1.Body)
+	_ = v1.Body.Close()
+	if bytes.Contains(v1Body, []byte("venom/lite")) {
+		t.Fatalf("control /v1/models in separate mode served the models API — the data plane must own /v1")
+	}
+}
+
+// TestBoot_NonLoopbackDataPlaneAccepted proves the data-plane bind is NOT
+// subject to the control plane's loopback-only rule: a non-loopback data-plane
+// bind boots successfully (a second listener comes up) while the control bind
+// stays loopback.
+//
+// Mutation U2-M6 (apply isLoopbackBind to the data-plane bind) → Boot rejects
+// the non-loopback data-plane bind → RED.
+func TestBoot_NonLoopbackDataPlaneAccepted(t *testing.T) {
+	setDataDirEnv(t)
+
+	srv, err := Boot(context.Background(), BootConfig{Bind: "127.0.0.1:0", DataPlaneBind: "0.0.0.0:0", SPAHandler: fakeSPA()})
+	if err != nil {
+		t.Fatalf("Boot() with a non-loopback data-plane bind error = %v, want success (the data plane may be off-host)", err)
+	}
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	if srv.DataPlaneAddr() == "" {
+		t.Fatalf("want a second data-plane listener to have opened")
+	}
 }
