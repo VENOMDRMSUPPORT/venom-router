@@ -3,6 +3,7 @@ package routing
 import (
 	accountsdomain "github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/domain"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 )
 
 // CandidateOffering is one account's exposure of a model offering, carrying
@@ -45,6 +46,22 @@ type CandidateOffering struct {
 	EvidenceConfidence *float64
 	CostClass          *float64
 	LatencyScore       *float64
+
+	// QuotaWindows holds this account's applicable quota windows (provider
+	// evidence + mandatory local-safety), consumed by Max's Step-7 DRR
+	// distribution (05 §2 Step 7 stage 2). A nil/empty slice means "no window
+	// data" — treated as UNKNOWN and therefore SATURATED (fail closed), never
+	// as unlimited capacity. Steps 2–6 ignore this field; only SelectMaxAccount
+	// reads it. QuotaHeadroom above stays the coarse Step-5 scoring signal;
+	// this is the richer per-window data DRR needs.
+	QuotaWindows []quota.Window
+
+	// InFlightCount is the account's current number of in-flight requests, the
+	// primary P2C live signal for Max's final pick (05 §2 Step 7 stage 3:
+	// "fewer in-flight requests"). Zero is a legitimate value (idle account);
+	// the auto-expiring in-flight lease that maintains this count is
+	// P4-ROUTE-012's scope — this field is just the injected count.
+	InFlightCount int
 }
 
 // BuildCandidatePool builds the Step-2 candidate pool (05 §2 Step 2): a
