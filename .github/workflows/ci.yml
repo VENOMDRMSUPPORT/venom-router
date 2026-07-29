@@ -22,6 +22,11 @@ env:
 jobs:
   gate:
     name: gate (self-hosted Linux)
+    # SECURITY (public repo + self-hosted runners): never let a fork's PR execute
+    # code on the runner host. Run only for non-PR events (push/schedule/dispatch)
+    # or PRs whose head branch lives in THIS repo (i.e. not a fork). GitHub cannot
+    # express "same-repo PRs only" at the trigger level, so it is gated per job.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64, venom-linux]
     timeout-minutes: 8
     steps:
@@ -79,6 +84,8 @@ jobs:
 
   windows-smoke:
     name: windows smoke (self-hosted)
+    # SECURITY (public repo + self-hosted runners): same fork-PR guard as `gate`.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Windows, X64, venom]
     timeout-minutes: 6
     env:
