@@ -9,10 +9,19 @@ import (
 )
 
 // freshWin builds a fresh provider-evidence window with the given remaining
-// capacity and reserved amount (headroom = remaining - reserved).
+// capacity and reserved amount (headroom = remaining - reserved), observed at
+// drrTestNow — the instant every test below evaluates at, except the TTL test.
 func freshWin(remaining, reserved float64) quota.Window {
+	return freshWinAt(remaining, reserved, drrTestNow)
+}
+
+// freshWinAt is freshWin with an explicit observation instant. Needed by the
+// TTL test, which evaluates at a LATER instant: a window observed at
+// drrTestNow would be quota-STALE (and therefore saturated) by then, which
+// would drop the pin for a reason unrelated to the stickiness TTL.
+func freshWinAt(remaining, reserved float64, observedAt time.Time) quota.Window {
 	r := remaining
-	return quota.Window{Remaining: &r, Reserved: reserved, Freshness: quota.FreshnessFresh, ObservedAt: drrTestNow}
+	return quota.Window{Remaining: &r, Reserved: reserved, Freshness: quota.FreshnessFresh, ObservedAt: observedAt}
 }
 
 // staleWin builds a stale window: nominal headroom but StateStale ⇒ saturated.
@@ -191,15 +200,33 @@ func TestSelectAccount_StickyDroppedOnLeftPool(t *testing.T) {
 
 // TestSelectAccount_StickyDroppedOnTTL proves a pin older than the TTL is
 // dropped (the cache lookup returns ok=false).
+//
+// GOVERNOR CORRECTION: the original version built both accounts with
+// freshWin(...) — i.e. windows observed at drrTestNow — and then evaluated at
+// `later` (drrTestNow + TTL + 1min). By that instant those windows are older
+// than quota.DefaultStalenessWindow, so BOTH accounts were quota-STALE and the
+// pinned one was already saturated: the pin was dropped by the saturation gate,
+// not by the stickiness TTL. The test therefore passed with the TTL check
+// entirely removed from Lookup (confirmed by hand), making it vacuous against
+// its own stated invariant. Both windows are now observed AT `later`, so they
+// are quota-fresh at evaluation time and the ONLY thing that can drop the pin
+// is the stickiness TTL.
+//
+// Mutation row S-M1 (at this level): remove the TTL check in Lookup → the pin
+// is honored and "sticky" is returned instead of "alt" → this test RED.
 func TestSelectAccount_StickyDroppedOnTTL(t *testing.T) {
-	sticky := fairCand("sticky", freshWin(100, 0))
-	group, want := stickyGroup(sticky)
+	later := drrTestNow.Add(StickinessTTL + time.Minute)
+
+	// Both windows are observed at `later` ⇒ quota-fresh when evaluated there,
+	// so neither account is saturated and staleness cannot confound the drop.
+	sticky := fairCand("sticky", freshWinAt(100, 0, later))
+	alt := fairCand("alt", freshWinAt(10_000, 0, later))
+	group := RouteGroup{Members: []CandidateOffering{sticky, alt}}
 	cache := pinnedCache("sticky")
 
-	later := drrTestNow.Add(StickinessTTL + time.Minute)
 	chosen, _, ok := SelectAccount(TierPro, group, "sticky-key", cache, nil, 1, later, testStale)
-	if !ok || chosen.AccountID != want {
-		t.Fatalf("expired pin must be dropped → %q; got %q", want, chosen.AccountID)
+	if !ok || chosen.AccountID != "alt" {
+		t.Fatalf("expired pin must be dropped → alt; got %q", chosen.AccountID)
 	}
 }
 
