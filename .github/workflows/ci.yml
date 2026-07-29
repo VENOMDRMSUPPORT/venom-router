@@ -1,38 +1,5 @@
 name: CI
 
-# Speed structure (why this shape):
-#   - The full static gate (`task gate`: gofmt, goimports, go vet, golangci-lint,
-#     go test — incl. the layering + no-slug-switch tests) runs on LINUX ONLY.
-#     gofmt/goimports are OS-independent: they format every .go file by name
-#     regardless of build tags, so windows-tagged files (platform_windows.go,
-#     the windows lock, keyring_windows_test.go, …) ARE format-checked here.
-#   - The race job runs on BOTH Linux and Windows. `go test -race ./...` COMPILES
-#     AND RUNS every test, so the windows race job is the full compile+test
-#     coverage of windows-tagged code — it is what keeps the Windows build/tests
-#     green now that the (slow) windows static-gate job has been dropped.
-#   Accepted tradeoff for speed: golangci-lint / go vet STATIC ANALYSIS is not run
-#   on windows-ONLY-tagged source files (they are still compiled + tested on Windows
-#   by the race job, and format-checked on Linux). Reinstate a windows gate job if a
-#   windows-only lint regression ever slips through.
-#   Gate LOGIC still lives entirely in Taskfile.yml (`task gate` / `task test-race`) —
-#   the P0-TEST-001 "one command, no gate logic in the workflow" invariant holds.
-#
-# 2026-07-28 GOVERNOR DECISION — self-hosted runner (owner-authorized, cost-driven):
-#   GitHub-hosted minutes were exhausted (private repo, 2000 min/month free tier;
-#   windows-latest costs 2x). Owner chose the fast path over standing up a second
-#   genuine-Linux self-hosted runner: ALL FOUR jobs below now run on ONE Windows
-#   self-hosted runner (label `venom`) instead of GitHub-hosted ubuntu-latest/
-#   windows-latest. Zero GitHub Actions minutes are billed for self-hosted runners
-#   regardless of OS or duration.
-#   ⚠️ KNOWN, DISCLOSED GAP: this means NOTHING in CI runs on genuine Linux anymore.
-#   The project has been bitten by this exact class of bug before (a `*_windows.go`
-#   filename carries an implicit GOOS build constraint invisible to a Windows-only
-#   gate — see venom-review-heuristics memory) — that failure mode can now ONLY be
-#   caught by an eventual real Linux runner (e.g. a WSL2 Ubuntu self-hosted runner,
-#   deferred; or restoring ubuntu-latest once billing allows). Until then, run
-#   `GOOS=linux go vet ./...` / `GOOS=linux go build ./...` locally before trusting
-#   any change that touches build-tagged files.
-
 on:
   push:
     branches: [main]
@@ -42,229 +9,97 @@ on:
     paths-ignore:
       - "**/*.md"
 
-# A new push to a ref cancels an in-progress run for that same ref, so rapid
-# pushes don't queue up redundant runs.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   GO_VERSION: "1.26.5"
-  # Pinned tool versions. Bumping any of these rotates the tool cache key below,
-  # forcing a one-time rebuild of that tool.
-  GOLANGCI_LINT_VERSION: "v2.12.2"
-  GOIMPORTS_VERSION: "v0.48.0"
-  TASK_VERSION: "3.52.0"
 
 jobs:
-  # The single blocking static-invariants gate (P0-TEST-001), Linux-only — see the
-  # header note for why one OS is sufficient for the STATIC checks. All gate logic
-  # lives in Taskfile.yml's `gate` target; this job only invokes it.
   gate:
-    name: gate (self-hosted)
-    runs-on: [self-hosted, venom]
+    name: gate (self-hosted Linux)
+    runs-on: [self-hosted, Linux, X64, venom-linux]
+    timeout-minutes: 8
     steps:
-      - name: Checkout (with submodules, for the pinned third_party/bifrost)
+      - name: Checkout with pinned Bifrost submodule
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          # Build + module cache keyed on go.sum: makes go vet / go test /
-          # golangci-lint reuse compiled packages (incl. the Bifrost submodule)
-          # across runs instead of recompiling everything cold.
-          cache: true
+      - name: Verify CI workflow contract
+        run: node .github/scripts/verify-ci-contract.mjs
 
-      # arduino/setup-task@v2 (a prebuilt-binary download + Expand-Archive) fails
-      # on this self-hosted Windows runner: @actions/tool-cache's temp download
-      # file has no .zip extension, and Expand-Archive refuses to extract it
-      # ("... is not a supported archive file format") — a known self-hosted/
-      # Windows PowerShell incompatibility that GitHub-hosted runners never hit.
-      # `go install` sidesteps it entirely (Go is already set up above) and is
-      # equally pinned/reproducible via TASK_VERSION.
-      - name: Set up Task (go install, pinned — arduino/setup-task fails on this self-hosted Windows runner)
-        shell: powershell
-        run: go install github.com/go-task/task/v3/cmd/task@v${{ env.TASK_VERSION }}
-
-      - name: Locate GOPATH/bin (where go install places the pinned tools)
-        id: gobin
-        shell: powershell
-        run: '"dir=$(go env GOPATH)/bin" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'
-
-      - name: Cache the pinned lint tools (golangci-lint, goimports)
-        id: lint-tools-cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.gobin.outputs.dir }}
-          key: lint-tools-${{ runner.os }}-go${{ env.GO_VERSION }}-glci${{ env.GOLANGCI_LINT_VERSION }}-goimports${{ env.GOIMPORTS_VERSION }}
-
-      - name: Install the pinned lint tools (only on a cache miss)
-        if: steps.lint-tools-cache.outputs.cache-hit != 'true'
-        shell: powershell
+      - name: Verify pinned Linux toolchain
+        shell: bash
         run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }}
-          go install golang.org/x/tools/cmd/goimports@${{ env.GOIMPORTS_VERSION }}
+          set -euo pipefail
+          test "$(go version)" = "go version go1.26.5 linux/amd64"
+          node --version | grep -E "^v20\."
+          task --version | grep -F "3.52.0"
+          golangci-lint --version | grep -F "2.12.2"
+          go version -m "$(command -v goimports)" | grep -E "golang.org/x/tools[[:space:]]+v0.48.0"
+          git --version
 
-      - name: Cache the golangci-lint analysis cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/golangci-lint
-          key: golangci-analysis-${{ runner.os }}-glci${{ env.GOLANGCI_LINT_VERSION }}-${{ hashFiles('go.sum', '.golangci.yml') }}
-          restore-keys: |
-            golangci-analysis-${{ runner.os }}-glci${{ env.GOLANGCI_LINT_VERSION }}-
-
-      - name: Run the static gate
+      - name: Run the authoritative static gate
         run: task gate
 
-  # Race detector on BOTH OSes. CGO_ENABLED=1 is a build requirement of Go's race
-  # detector itself. `go test -race ./...` compiles AND runs every test, so the
-  # windows leg is the full compile+test coverage of windows-tagged code.
-  race:
-    name: race detector (self-hosted)
-    runs-on: [self-hosted, venom]
-    steps:
-      - name: Checkout (with submodules, for the pinned third_party/bifrost)
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      # arduino/setup-task@v2 (a prebuilt-binary download + Expand-Archive) fails
-      # on this self-hosted Windows runner: @actions/tool-cache's temp download
-      # file has no .zip extension, and Expand-Archive refuses to extract it
-      # ("... is not a supported archive file format") — a known self-hosted/
-      # Windows PowerShell incompatibility that GitHub-hosted runners never hit.
-      # `go install` sidesteps it entirely (Go is already set up above) and is
-      # equally pinned/reproducible via TASK_VERSION.
-      - name: Set up Task (go install, pinned — arduino/setup-task fails on this self-hosted Windows runner)
-        shell: powershell
-        run: go install github.com/go-task/task/v3/cmd/task@v${{ env.TASK_VERSION }}
-
-      # This self-hosted Windows box has a MinGW-w64 gcc toolchain installed
-      # as a one-time host setup step (it's a persistent machine, not a
-      # fresh-per-run VM, so the toolchain doesn't need reinstalling every
-      # run). We set CC to gcc's absolute path (via GITHUB_ENV) rather than
-      # relying on PATH resolution: the runner service's process environment
-      # is a snapshot the Service Control Manager took independently of any
-      # later machine-PATH change, so `gcc` on PATH is not a reliable check
-      # under a Windows Service. Chocolatey is NOT installed on this host
-      # (that was a GitHub-hosted-runner assumption that doesn't hold here)
-      # — winget is what's actually available, and only runs as a last
-      # resort if gcc can't be found by any other means.
-      - name: Ensure a C toolchain is available for cgo (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          $gcc = Get-Command gcc -ErrorAction SilentlyContinue
-          if ($gcc) {
-            $gccPath = $gcc.Source
-          } else {
-            $known = Get-ChildItem "$env:SystemDrive\Users\*\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs*\mingw64\bin\gcc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($known) {
-              $gccPath = $known.FullName
-            } else {
-              winget install --id BrechtSanders.WinLibs.POSIX.UCRT -e --accept-package-agreements --accept-source-agreements
-              $gccPath = (Get-ChildItem "$env:SystemDrive\Users\*\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs*\mingw64\bin\gcc.exe" -ErrorAction Stop | Select-Object -First 1).FullName
-            }
-          }
-          "CC=$gccPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Run the race detector
-        run: task test-race
-
-  # P2a-DS-004: continuous CI coverage for the frontend, finally wired in.
-  # A SEPARATE job from `gate`/`race` — it runs in PARALLEL with them (no
-  # `needs:`), so the Go jobs above stay exactly as fast as before; nothing
-  # here folds into `task gate`. Design_System/dist is not committed, so it
-  # must be built here (npm ci + npm run build) before the dashboard's
-  # `file:` dependency on it will resolve. Also re-verifies the Design
-  # System's own 12/12 gate (`npm run validate`) as a pinned prerequisite,
-  # then builds + embeds the dashboard into internal/httpui/dist and runs
-  # the one Go test that proves the real embed is served end-to-end
-  # (P2a-UI-001) — the only place this repo's CI touches both Node and Go
-  # in the same job, and only for that one narrow, targeted test run.
-  dashboard:
-    name: dashboard (design system + app)
-    runs-on: [self-hosted, venom]
-    steps:
-      - name: Checkout (with submodules, for the pinned third_party/bifrost)
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: |
-            Design_System/package-lock.json
-            dashboard/package-lock.json
-
-      # P2a-DS-005: fail fast, before anything is installed/built — this
-      # script has zero deps (Node stdlib + git only). Checks (1) no
-      # internal-path imports, (2) no vendored DS component/source copies,
-      # (3) Design_System/ is byte-clean (read-only), (4) the pinned
-      # version hasn't silently drifted. See dashboard/CONSUMPTION.md.
-      - name: Check @venom/design-system adherence (read-only, public exports only)
+      - name: Check Design System adherence
         working-directory: dashboard
         run: npm run check:ds-adherence
 
-      - name: Install Design_System dependencies
+      - name: Install Design System dependencies
         working-directory: Design_System
         run: npm ci
-
-      - name: "Build Design_System (dist/ — the dashboard's file: dependency needs it)"
-        working-directory: Design_System
-        run: npm run build
-
-      - name: Re-verify the Design System gate (12/12, pinned prerequisite)
-        working-directory: Design_System
-        run: npm run validate
 
       - name: Install dashboard dependencies
         working-directory: dashboard
         run: npm ci
 
-      - name: Build the dashboard
-        working-directory: dashboard
-        run: npm run build
+      - name: Build and embed dashboard once
+        run: task dashboard:build-embed
 
-      - name: Lint the dashboard (incl. the no-raw-values guardrail, P2a-DS-003)
+      - name: Validate Design System
+        working-directory: Design_System
+        run: npm run validate
+
+      - name: Lint dashboard
         working-directory: dashboard
         run: npm run lint
 
-      - name: Test the dashboard (theme/density runtime + smoke inventory, 3 themes x 2 densities)
+      - name: Test dashboard
         working-directory: dashboard
         run: npm run test
 
-      - name: Set up Go (for the embed pipeline's Go-side test only)
+      - name: Prove the embedded dashboard is served
+        run: go test ./internal/httpui/... ./internal/app/... -run 'TestBoot_ServesEmbeddedDashboardSPA|TestNew_UsesEmbeddedDist' -v
+
+  windows-smoke:
+    name: windows smoke (self-hosted)
+    runs-on: [self-hosted, Windows, X64, venom]
+    timeout-minutes: 6
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - name: Checkout with pinned Bifrost submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up pinned Go without Actions cache
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache: false
 
-      # arduino/setup-task@v2 (a prebuilt-binary download + Expand-Archive) fails
-      # on this self-hosted Windows runner: @actions/tool-cache's temp download
-      # file has no .zip extension, and Expand-Archive refuses to extract it
-      # ("... is not a supported archive file format") — a known self-hosted/
-      # Windows PowerShell incompatibility that GitHub-hosted runners never hit.
-      # `go install` sidesteps it entirely (Go is already set up above) and is
-      # equally pinned/reproducible via TASK_VERSION.
-      - name: Set up Task (go install, pinned — arduino/setup-task fails on this self-hosted Windows runner)
+      - name: Verify Windows prerequisites
         shell: powershell
-        run: go install github.com/go-task/task/v3/cmd/task@v${{ env.TASK_VERSION }}
+        run: |
+          if ((go version) -ne 'go version go1.26.5 windows/amd64') { throw "Unexpected Go: $(go version)" }
+          git --version
 
-      - name: Build + embed the dashboard into internal/httpui/dist (P2a-UI-001)
-        run: task dashboard:build-embed
-
-      - name: Run the real-embed Go test (proves the SPA is served end-to-end)
-        run: go test ./internal/httpui/... ./internal/app/... -run 'TestBoot_ServesEmbeddedDashboardSPA|TestNew_UsesEmbeddedDist' -v
+      - name: Run Windows smoke tests
+        run: go test ./...

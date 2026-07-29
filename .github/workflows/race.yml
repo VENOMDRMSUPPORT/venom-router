@@ -1,0 +1,71 @@
+name: Race
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 1 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: race-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.26.5"
+
+jobs:
+  linux-race:
+    name: race detector (self-hosted Linux)
+    runs-on: [self-hosted, Linux, X64, venom-linux]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout with pinned Bifrost submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Verify CI workflow contract
+        run: node .github/scripts/verify-ci-contract.mjs
+
+      - name: Verify Linux race prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(go version)" = "go version go1.26.5 linux/amd64"
+          task --version | grep -F "3.52.0"
+          gcc --version | head -n 1
+
+      - name: Run Linux race detector
+        run: task test-race
+
+  windows-race:
+    name: race detector (self-hosted Windows)
+    runs-on: [self-hosted, Windows, X64, venom]
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: "1"
+      CC: 'C:\ProgramData\VenomCI\mingw64\bin\gcc.exe'
+    steps:
+      - name: Checkout with pinned Bifrost submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up pinned Go without Actions cache
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Verify Windows race prerequisites
+        shell: powershell
+        run: |
+          if ((go version) -ne 'go version go1.26.5 windows/amd64') { throw "Unexpected Go: $(go version)" }
+          & $env:CC --version
+          & 'C:\ProgramData\VenomCI\bin\task.exe' --version
+
+      - name: Run Windows race detector
+        shell: powershell
+        run: '& ''C:\ProgramData\VenomCI\bin\task.exe'' test-race'
