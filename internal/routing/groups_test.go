@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"fmt"
 	"testing"
 
 	accountsdomain "github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/domain"
@@ -28,7 +29,16 @@ func TestBuildRouteGroups_AntiInflation(t *testing.T) {
 	const N = 5
 	var eligible []CandidateOffering
 	for i := 0; i < N; i++ {
-		eligible = append(eligible, makeCandidate("prov1", "model1", accountsdomain.FundingFree, nil))
+		// Distinct AccountID per candidate: the grouping key is
+		// (ProviderID, ProviderModelID, Funding) and must NOT include
+		// AccountID, or N distinct accounts of the same offering would
+		// wrongly form N groups instead of collapsing into one — the exact
+		// anti-inflation property this test exists to prove. Identical
+		// AccountIDs across all N would let a key-on-AccountID regression
+		// pass unnoticed.
+		c := makeCandidate("prov1", "model1", accountsdomain.FundingFree, nil)
+		c.AccountID = fmt.Sprintf("acct-%d", i)
+		eligible = append(eligible, c)
 	}
 
 	groups := BuildRouteGroups(eligible)
