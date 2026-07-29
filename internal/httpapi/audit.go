@@ -39,6 +39,11 @@ const (
 	// P3b-CAPI-002 reconciliation diagnostics action codes.
 	AuditActionReconciliationResync         = "reconciliation_resync"          // POST /diagnostics/reconciliation/{id} {action:"resync"}
 	AuditActionReconciliationAcceptEstimate = "reconciliation_accept_estimate" // POST /diagnostics/reconciliation/{id} {action:"accept_estimate"}
+
+	// P5-CAPI-001 Venom API-key management action codes. resource_id is always
+	// the KEY id, never the raw key or its hash.
+	AuditActionKeyCreate = "key_create" // POST /keys
+	AuditActionKeyRevoke = "key_revoke" // DELETE /keys/{id}
 )
 
 // Audit result codes.
@@ -54,6 +59,7 @@ const (
 	AuditResourceSettings    = "settings"
 	AuditResourceOffering    = "offering"
 	AuditResourceReservation = "quota_reservation"
+	AuditResourceAPIKey      = "api_key"
 )
 
 // auditEmitter records one audit_events row per mutating control call

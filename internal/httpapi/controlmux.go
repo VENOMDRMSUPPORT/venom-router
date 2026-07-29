@@ -308,6 +308,15 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	mux.Handle("/api/control/v1/diagnostics/reconciliation", gated(diagnosticsHandler.ServeList))
 	mux.Handle("/api/control/v1/diagnostics/reconciliation/{reservation_id}", gated(diagnosticsHandler.ServeAction))
 
+	// Venom API-key management (P5-CAPI-001, 09 §3.11): POST/GET /keys and
+	// DELETE /keys/{id}, owner-session + CSRF gated like every other mutating
+	// control route, and Idempotency-Key aware on create via the shared `idem`
+	// store. The DELETE is a method-specific pattern (like /accounts/{id}) so it
+	// reaches ServeDelete rather than the method-less collection handler.
+	keysHandler := NewKeysHandler(storage.NewAPIKeyRepo(db), idem, audit, nil, newOAuthTransactionID)
+	mux.Handle("/api/control/v1/keys", gated(keysHandler.ServeCollection))
+	mux.Handle("DELETE /api/control/v1/keys/{id}", gated(keysHandler.ServeDelete))
+
 	// Public data-plane surface (P5-PAPI-001, 01 §6b): the vk-gated /v1/*
 	// routes. In the default local-only case they share THIS control listener,
 	// behind the identical loopback + Host-allowlist network gate (the `outer`
