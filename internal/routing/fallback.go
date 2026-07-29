@@ -80,7 +80,12 @@ type FallbackResult struct {
 //     debited, so DO NOT release — re-evaluate the pool from a fresh snapshot
 //     and continue (this attempt consumed one budget slot, never executed);
 //  4. mark dispatched, THEN execute (nothing reservation-mutating in flight);
-//  5. reconcile on exactly one branch by verdict.
+//  5. reconcile on exactly one branch: success iff outcome.Err == nil (never the
+//     classifier's word, whose zero value is VerdictSuccess), otherwise by
+//     verdict, with any unrecognized verdict failing closed to pending.
+//
+// On success the stickiness pin is recorded (05 §2 Step 7: "recorded only on a
+// successful response") — this loop is the caller P4-ROUTE-012 delegated that to.
 //
 // On request-scope the loop stops and returns the failure. On exhaustion it
 // returns a *NoEligibleOfferingError (wrapping ErrNoEligibleOffering) carrying
@@ -161,16 +166,30 @@ func RunFallbackLoop(ctx context.Context, in FallbackInput) (FallbackResult, err
 		}
 
 		// 5. Reconcile on exactly one branch.
-		verdict := VerdictSuccess
-		if outcome.Err != nil {
-			verdict = in.Classifier.Classify(outcome.Err)
-		}
-		switch verdict {
-		case VerdictSuccess:
+		//
+		// Success is decided SOLELY by outcome.Err == nil, never by the
+		// classifier. VerdictSuccess is ReconcileVerdict's zero value, so a
+		// classifier or adapter with a forgotten switch case returns it by
+		// accident — and trusting that would settle a FAILED attempt's quota as
+		// consumed and hand the caller the failure body with a nil error. The
+		// classifier is consulted only for a genuine error, and a VerdictSuccess
+		// answer there is treated as unrecognized (fail closed, below).
+		if outcome.Err == nil {
 			if err := settleOutcome(ctx, in.Lifecycle, reservationID, outcome); err != nil {
 				return FallbackResult{}, err
 			}
+			// The stickiness pin is recorded ONLY on a successful response
+			// (05 §2 Step 7). This loop is the "caller" P4-ROUTE-012 delegated
+			// pinning to — SelectAccount deliberately never pins, so without
+			// this the LRU would never be populated and stickiness would be
+			// inert in production.
+			if in.Cache != nil && in.StickinessKey != "" {
+				in.Cache.Pin(in.StickinessKey, chosen.AccountID, in.Now)
+			}
 			return FallbackResult{Response: outcome.Response, AccountID: chosen.AccountID, ReservationID: reservationID, Attempts: i}, nil
+		}
+
+		switch in.Classifier.Classify(outcome.Err) {
 		case VerdictPreConsumptionFailure:
 			if err := in.Lifecycle.Release(ctx, reservationID); err != nil {
 				return FallbackResult{}, err
@@ -192,7 +211,10 @@ func RunFallbackLoop(ctx context.Context, in FallbackInput) (FallbackResult, err
 			}
 			return FallbackResult{}, outcome.Err
 		default:
-			// Unrecognized verdict → fail closed to reconciliation_pending.
+			// Unrecognized verdict — INCLUDING VerdictSuccess, which a classifier
+			// must never return for a real error — fails closed to
+			// reconciliation_pending: headroom stays debited and the loop
+			// continues, rather than charging or freeing on a guess.
 			if err := in.Lifecycle.MarkReconciliationPending(ctx, reservationID); err != nil {
 				return FallbackResult{}, err
 			}

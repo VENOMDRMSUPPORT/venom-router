@@ -489,6 +489,102 @@ func TestRunFallbackLoop_SuccessReturnsResponse(t *testing.T) {
 	}
 }
 
+// TestRunFallbackLoop_ZeroVerdictOnErrorFailsClosed is a GOVERNOR-ADDED
+// regression test for a real fail-open defect found in review.
+//
+// VerdictSuccess is ReconcileVerdict's ZERO VALUE, so a classifier or adapter
+// with a forgotten switch case returns it by accident for a genuine error. The
+// original loop seeded `verdict := VerdictSuccess` and only overwrote it when
+// outcome.Err != nil, then switched on the result — so a zero-value answer for a
+// REAL error took the success branch: it settled the failed attempt's quota as
+// consumed, returned the provider's failure body as the response, and reported
+// err == nil to the caller. Confirmed by hand before the fix (settleEstimate=1,
+// err=nil, response=the failure body) with the whole package still green.
+//
+// Success is now decided solely by outcome.Err == nil, and a VerdictSuccess
+// answer for an error is unrecognized ⇒ fails closed to reconciliation_pending
+// (headroom stays debited, loop continues to exhaustion).
+//
+// Mutation: restore `verdict := VerdictSuccess` + `case VerdictSuccess:` ahead of
+// the error switch → this test RED (err becomes nil and settle happens).
+func TestRunFallbackLoop_ZeroVerdictOnErrorFailsClosed(t *testing.T) {
+	group := RouteGroup{Members: []CandidateOffering{fairCand("A", freshWin(1000, 0))}}
+	failing := ExecOutcome{Response: "POISONED-FAILURE-BODY", Err: errors.New("real provider failure")}
+
+	h := &fakeHarness{}
+	for i := 0; i < mustPolicy(t, TierPro).AttemptBudget; i++ {
+		// verdict is deliberately the ZERO VALUE (VerdictSuccess) for an error.
+		h.script = append(h.script, scriptedAttempt{outcome: failing, verdict: ReconcileVerdict(0)})
+	}
+
+	res, err := RunFallbackLoop(context.Background(), baseInput(t, TierPro, group, h))
+
+	if err == nil {
+		t.Fatalf("fail-open: a FAILED execution returned err=nil (response=%v)", res.Response)
+	}
+	if !errors.Is(err, ErrNoEligibleOffering) {
+		t.Fatalf("expected exhaustion sentinel, got %v", err)
+	}
+	if h.settle != 0 || h.settleEstimate != 0 {
+		t.Fatalf("a failed attempt must never settle: settle=%d settleEstimate=%d", h.settle, h.settleEstimate)
+	}
+	if h.release != 0 {
+		t.Fatalf("an unclassifiable failure must not release (fail closed): release=%d", h.release)
+	}
+	if want := mustPolicy(t, TierPro).AttemptBudget; h.markPending != want {
+		t.Fatalf("expected %d mark-pending (fail closed per attempt), got %d", want, h.markPending)
+	}
+}
+
+// TestRunFallbackLoop_PinsOnSuccessOnly is a GOVERNOR-ADDED regression test for a
+// real functional gap found in review: nothing in production ever called
+// StickinessCache.Pin, so the LRU was never populated, every Lookup missed, and
+// session stickiness was entirely inert. P4-ROUTE-012 deliberately made
+// SelectAccount never pin and named this loop as the caller that pins on a
+// genuinely successful response (05 §2 Step 7: "recorded only on a successful
+// response").
+//
+// Mutation: delete the Cache.Pin call on the success branch → the first
+// assertion RED (key absent after a successful route).
+func TestRunFallbackLoop_PinsOnSuccessOnly(t *testing.T) {
+	group := RouteGroup{Members: []CandidateOffering{fairCand("A", freshWin(1000, 0))}}
+
+	// Success ⇒ the winning account is pinned under the stickiness key.
+	h := &fakeHarness{script: []scriptedAttempt{{outcome: successOutcome()}}}
+	cache := NewStickinessCache(8)
+	in := baseInput(t, TierPro, group, h)
+	in.StickinessKey = "key-1"
+	in.Cache = cache
+
+	if _, err := RunFallbackLoop(context.Background(), in); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	pinned, ok := cache.Lookup("key-1", drrTestNow)
+	if !ok || pinned != "A" {
+		t.Fatalf("success must pin the winning account: got %q (ok=%v)", pinned, ok)
+	}
+
+	// Failure/exhaustion ⇒ NOTHING is pinned (the pin is success-only).
+	h2 := &fakeHarness{}
+	for i := 0; i < mustPolicy(t, TierPro).AttemptBudget; i++ {
+		h2.script = append(h2.script, scriptedAttempt{
+			outcome: ExecOutcome{Err: errors.New("boom")},
+			verdict: VerdictPreConsumptionFailure,
+		})
+	}
+	cache2 := NewStickinessCache(8)
+	in2 := baseInput(t, TierPro, group, h2)
+	in2.StickinessKey = "key-2"
+	in2.Cache = cache2
+
+	if _, err := RunFallbackLoop(context.Background(), in2); !errors.Is(err, ErrNoEligibleOffering) {
+		t.Fatalf("expected exhaustion, got %v", err)
+	}
+	if _, ok := cache2.Lookup("key-2", drrTestNow); ok {
+		t.Fatalf("an exhausted request must never pin")
+	}
+}
+
 func indexOf(xs []string, target string) int {
 	for i, x := range xs {
 		if x == target {
