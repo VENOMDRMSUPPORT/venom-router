@@ -321,14 +321,15 @@ Expected: the generated `actions.runner.VENOMDRMSUPPORT-venom-router.venom-linux
 ```powershell
 $taskName = 'Venom-CI-WSL-Runner'
 $service = 'actions.runner.VENOMDRMSUPPORT-venom-router.venom-linux-selfhosted.service'
-$action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wsl.exe" -Argument "-d Ubuntu-24.04 -u root -- /bin/systemctl start $service"
+$actionArgument = '-d Ubuntu-24.04 -u root -- /bin/bash -lc "systemctl start {0}; exec /usr/bin/sleep infinity"' -f $service
+$action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wsl.exe" -Argument $actionArgument
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+$settings = New-ScheduledTaskSettingsSet -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'Start the Venom GitHub Actions runner inside Ubuntu WSL' -Force
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'Start and keep alive the Venom GitHub Actions runner inside Ubuntu WSL' -Force
 ```
 
-Expected: task registration succeeds under the current Windows user and does not store an additional password.
+Expected: task registration succeeds under the current Windows user, remains hidden with `Interactive`/`Limited` privileges, stores no additional password, and has no execution timeout. The persistent `sleep` keeps the WSL client attached because a systemd service alone does not keep a WSL instance alive.
 
 - [ ] **Step 6: Prove cold-start recovery without rebooting Windows**
 
@@ -341,10 +342,21 @@ do {
   $linux = (gh api repos/VENOMDRMSUPPORT/venom-router/actions/runners | ConvertFrom-Json).runners | Where-Object name -eq 'venom-linux-selfhosted'
 } until (($linux.status -eq 'online' -and -not $linux.busy) -or (Get-Date) -ge $deadline)
 if ($linux.status -ne 'online' -or $linux.busy) { throw 'WSL runner did not recover online within 90 seconds' }
+if ((Get-ScheduledTask -TaskName 'Venom-CI-WSL-Runner').State -ne 'Running') { throw 'WSL keepalive task exited after startup' }
 $linux | Select-Object name,os,status,busy,@{n='labels';e={$_.labels.name -join ','}}
+
+$sustainDeadline = (Get-Date).AddMinutes(5)
+do {
+  Start-Sleep -Seconds 15
+  $linux = (gh api repos/VENOMDRMSUPPORT/venom-router/actions/runners | ConvertFrom-Json).runners | Where-Object name -eq 'venom-linux-selfhosted'
+  if ($linux.status -ne 'online' -or $linux.busy) { throw 'WSL runner did not remain online and idle' }
+} until ((Get-Date) -ge $sustainDeadline)
+$wslState = ((wsl -l -v) -join "`n") -replace "`0", ''
+if ($wslState -notmatch 'Ubuntu-24\.04\s+Running\s+2') { throw 'Ubuntu stopped during the sustained runner check' }
+if ((Get-ScheduledTask -TaskName 'Venom-CI-WSL-Runner').State -ne 'Running') { throw 'WSL keepalive task did not remain running' }
 ```
 
-Expected: WSL cold-starts and GitHub reports `venom-linux-selfhosted` online and idle within 90 seconds.
+Expected: WSL cold-starts and GitHub reports `venom-linux-selfhosted` online and idle within 90 seconds; five minutes of Windows-only GitHub polling leave the runner online/idle, Ubuntu running, and the hidden scheduled task running.
 
 ---
 
@@ -980,9 +992,20 @@ do {
   $linux = (gh api repos/VENOMDRMSUPPORT/venom-router/actions/runners | ConvertFrom-Json).runners | Where-Object name -eq 'venom-linux-selfhosted'
 } until (($linux.status -eq 'online' -and -not $linux.busy) -or (Get-Date) -ge $deadline)
 if ($linux.status -ne 'online' -or $linux.busy) { throw 'Merged WSL runner did not recover after cold start' }
+if ((Get-ScheduledTask -TaskName 'Venom-CI-WSL-Runner').State -ne 'Running') { throw 'Merged WSL keepalive task exited after startup' }
+
+$sustainDeadline = (Get-Date).AddMinutes(5)
+do {
+  Start-Sleep -Seconds 15
+  $linux = (gh api repos/VENOMDRMSUPPORT/venom-router/actions/runners | ConvertFrom-Json).runners | Where-Object name -eq 'venom-linux-selfhosted'
+  if ($linux.status -ne 'online' -or $linux.busy) { throw 'Merged WSL runner did not remain online and idle' }
+} until ((Get-Date) -ge $sustainDeadline)
+$wslState = ((wsl -l -v) -join "`n") -replace "`0", ''
+if ($wslState -notmatch 'Ubuntu-24\.04\s+Running\s+2') { throw 'Ubuntu stopped during merged cold-start validation' }
+if ((Get-ScheduledTask -TaskName 'Venom-CI-WSL-Runner').State -ne 'Running') { throw 'Merged WSL keepalive task did not remain running' }
 ```
 
-Expected: Linux runner returns online and idle.
+Expected: Linux runner returns online and idle within 90 seconds, then remains online/idle for five minutes of Windows-only polling while Ubuntu and the hidden keepalive task remain running.
 
 - [ ] **Step 6: Run final repository and cost-boundary checks**
 

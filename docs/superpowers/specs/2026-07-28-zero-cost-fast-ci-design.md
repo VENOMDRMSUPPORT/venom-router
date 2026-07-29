@@ -56,7 +56,7 @@ Docker isolation could work later, but the Docker daemon is currently stopped an
 - Runner directory: `/opt/actions-runner-venom`.
 - Work directory: `_work` beneath the runner directory.
 - Service management: GitHub runner `svc.sh` under systemd.
-- Startup recovery: a Windows scheduled task launches the Ubuntu distribution at user logon and starts/verifies the runner service. The task must run hidden and must not depend on Docker Desktop.
+- Startup recovery: a hidden current-user Windows scheduled task launches Ubuntu at logon, starts the runner service, and keeps a WSL client attached for the runner's lifetime. Microsoft documents that systemd services alone do not keep a WSL instance alive, so the task must remain running with no execution timeout; it must not depend on Docker Desktop or store an additional password.
 - Tooling is provisioned once and verified before runner registration: Git, GCC/build-essential, Go 1.26.5, Node 20, Task 3.52.0, golangci-lint v2.12.2, and goimports v0.48.0.
 
 ### Windows smoke runner
@@ -113,7 +113,7 @@ The workflow retains markdown-only `paths-ignore` rules and `cancel-in-progress:
 - Each blocking job has a hard timeout, preventing another multi-hour in-progress job.
 - `cancel-in-progress` removes obsolete runs after newer pushes.
 - Runner health verification checks Windows service state, WSL distribution state, GitHub runner online/busy status, and the newest runner diagnostic log.
-- The scheduled startup task restores the WSL runner after Windows sign-in and verifies that GitHub reports it online.
+- The scheduled startup task restores the WSL runner after Windows sign-in, remains running without a visible console, and keeps GitHub reporting the runner online during a five-minute Windows-only observation.
 
 ## Security and Isolation
 
@@ -152,7 +152,7 @@ The workflow retains markdown-only `paths-ignore` rules and `cancel-in-progress:
 - Windows smoke completes without Task, GCC, winget, Chocolatey, or race setup.
 - A deliberately unavailable prerequisite fails in the preflight stage within 30 seconds; it does not start an installer.
 - The race workflow is manually dispatchable, scheduled, bounded by 20-minute job timeouts, and not required for merging.
-- A fresh Windows sign-in brings the WSL runner online without opening a visible console.
+- A fresh Windows sign-in brings the WSL runner online without opening a visible console, and the persistent task keeps Ubuntu and the runner online for at least five minutes without a Linux-side probe.
 - GitHub Actions billed minutes remain zero because all jobs use self-hosted runners.
 - `Design_System/` remains byte-clean before and after rollout.
 
