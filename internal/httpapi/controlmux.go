@@ -328,7 +328,8 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// deterministic RPM clock exercise vkAuthenticator / PublicMux directly.
 	if !o.omitPublicRoutes {
 		vk := newVKAuthenticator(storage.NewAPIKeyRepo(db), nil)
-		registerPublicRoutes(mux, func(h http.Handler) http.Handler { return networkGate(allowedHost, h) }, vk)
+		chat := buildChatCompletionsHandler(db, kr, reg)
+		registerPublicRoutes(mux, func(h http.Handler) http.Handler { return networkGate(allowedHost, h) }, vk, chat)
 	}
 
 	mux.Handle("/", networkGate(allowedHost, spa))

@@ -65,9 +65,16 @@ func publicNotFound(w http.ResponseWriter, _ *http.Request) {
 // data-plane listener) and THEN by vk authentication. The /v1/ catch-all sits
 // behind outer only (an unknown path is a 404 regardless of key), so a probe
 // of a bogus /v1 path learns nothing.
-func registerPublicRoutes(mux *http.ServeMux, outer func(http.Handler) http.Handler, vk *vkAuthenticator) {
+// chat, when non-nil, is the vk-gated POST /v1/chat/completions handler
+// (P5-PAPI-002). It is nil on a standalone data-plane listener that has no
+// keyring wired (see PublicMux's note), and non-nil on the shared control
+// listener where ControlMux composes the full engine.
+func registerPublicRoutes(mux *http.ServeMux, outer func(http.Handler) http.Handler, vk *vkAuthenticator, chat http.Handler) {
 	models := newModelsListHandler()
 	mux.Handle("GET /v1/models", outer(vk.Middleware(http.HandlerFunc(models.ServeModels))))
+	if chat != nil {
+		mux.Handle("POST /v1/chat/completions", outer(vk.Middleware(chat)))
+	}
 	mux.Handle("/v1/", outer(http.HandlerFunc(publicNotFound)))
 }
 
@@ -77,6 +84,13 @@ func registerPublicRoutes(mux *http.ServeMux, outer func(http.Handler) http.Hand
 // gate here (the data-plane bind may be off-host), so vk auth is the sole
 // authenticator; the outer wrapper is the identity. now is injectable for
 // deterministic RPM tests; nil uses the wall clock.
+//
+// NOTE: the standalone data-plane mux serves /v1/models but NOT
+// /v1/chat/completions, because the chat handler needs the process keyring to
+// decrypt credentials and Boot calls PublicMux without one (threading the
+// keyring through PublicMux touches internal/app.boot, outside this unit's file
+// set — a one-line follow-up). The shared control listener (ControlMux) wires
+// chat fully; that is the default local-only mode of 01 §6b.
 func PublicMux(db *storage.DB, now func() time.Time) http.Handler {
 	return publicMux(db, now)
 }
@@ -85,6 +99,6 @@ func PublicMux(db *storage.DB, now func() time.Time) http.Handler {
 func publicMux(db *storage.DB, now func() time.Time) http.Handler {
 	mux := http.NewServeMux()
 	vk := newVKAuthenticator(storage.NewAPIKeyRepo(db), now)
-	registerPublicRoutes(mux, func(h http.Handler) http.Handler { return h }, vk)
+	registerPublicRoutes(mux, func(h http.Handler) http.Handler { return h }, vk, nil)
 	return mux
 }
