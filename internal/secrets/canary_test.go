@@ -32,7 +32,26 @@ import (
 // canarySecret is the known, distinctive secret injected through every
 // leak path below. It is fixed (not random) so the detector's fragment
 // search is exact and every test run is deterministic.
-const canarySecret = "CANARY-SECRET-9f3Kx2Qw8pLm0Zt7Vb4Nr1Hy6Dc5Ea"
+//
+// ITS SHAPE IS LOAD-BEARING: a '-' appears at least every 3 characters, so
+// EVERY 4-char window contains a '-'. Std-alphabet base64 (A–Z a–z 0–9 + / =)
+// can never contain '-', so no window of this secret can occur by chance inside
+// the base64 nonce/ciphertext of a marshalled Envelope.
+//
+// The previous value ("CANARY-SECRET-9f3Kx2Qw8pLm0Zt7Vb4Nr1Hy6Dc5Ea") had a
+// 30-character pure-alphanumeric tail, and that made this canary FLAKY: its
+// 4-char windows collide with random base64 at a measured rate of ~1 in 6,100
+// marshalled envelopes (2,000,000-trial probe), and each run searches several
+// outputs on both OSes on every push plus nightly. The nightly race run
+// 30506005200 failed exactly this way, reporting the fragment "c5Ea" — a chance
+// collision inside random ciphertext, NOT a leak. A false alarm in a security
+// canary is worse than a merely annoying flake: it teaches everyone to dismiss
+// the one test whose whole job is to be believed.
+//
+// The fix removes the collision surface instead of widening
+// canaryFragmentSize, so the "no partial leak" rigor stays at 4 characters.
+// TestCanarySecret_ShapeCannotCollideWithBase64 pins the property.
+const canarySecret = "CAN-ARY-SEC-RET-9f3-Kx2-Qw8-pLm-0Zt-7Vb-4Nr-1Hy-6Dc-5Ea"
 
 // canaryFragmentSize is the minimum substring length the detector
 // searches for — the same "no partial leak" rigor internal/sanitize's
@@ -87,6 +106,38 @@ func TestCanaryDetector_BitesOnDeliberateLeak(t *testing.T) {
 	// Sanity: leak-free output must NOT be flagged.
 	if _, found := findSecretFragment("nothing secret here", canarySecret); found {
 		t.Fatalf("findSecretFragment reported a leak in output containing no fragment of the secret")
+	}
+}
+
+// TestCanarySecret_ShapeCannotCollideWithBase64 pins the property that makes
+// this canary sound rather than flaky: every window the detector searches for
+// (canaryFragmentSize chars and longer) must contain at least one character
+// that std-alphabet base64 cannot produce, so a fragment can never appear by
+// chance inside a random nonce or ciphertext.
+//
+// Without this, the canary reports leaks that did not happen — measured at ~1
+// in 6,100 marshalled envelopes with the old pure-alphanumeric secret, which is
+// what failed nightly race run 30506005200 on the fragment "c5Ea".
+func TestCanarySecret_ShapeCannotCollideWithBase64(t *testing.T) {
+	const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+
+	isBase64Char := func(r rune) bool { return strings.ContainsRune(base64Alphabet, r) }
+
+	// It is enough to check the SHORTEST windows: every longer window contains a
+	// shortest one, so if no 4-char window is pure base64, no longer window is.
+	for start := 0; start+canaryFragmentSize <= len(canarySecret); start++ {
+		window := canarySecret[start : start+canaryFragmentSize]
+		pure := true
+		for _, r := range window {
+			if !isBase64Char(r) {
+				pure = false
+				break
+			}
+		}
+		if pure {
+			t.Fatalf("canarySecret window %q (offset %d) contains only base64 characters — it can collide with random ciphertext and make this canary report a leak that never happened; keep a '-' at least every %d characters",
+				window, start, canaryFragmentSize-1)
+		}
 	}
 }
 
