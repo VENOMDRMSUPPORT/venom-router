@@ -18,6 +18,12 @@ import (
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
+// usageWriteTimeout bounds the detached usage accounting write. It deliberately
+// outlives a cancelled client request (see run's comment on why the usage
+// context must not be the request context), so it needs its own deadline rather
+// than inheriting the request's.
+const usageWriteTimeout = 5 * time.Second
+
 // buildChatCompletionsHandler composes the real request-path engine + the chat
 // handler for the shared control listener. It builds the request-path
 // dispatcher (openai_compatible + native_oauth transports), the failure
@@ -52,7 +58,7 @@ func buildChatCompletionsHandler(db *storage.DB, kr *secrets.Keyring, reg *provi
 		Cache:         routing.NewStickinessCache(0),
 		Now:           time.Now,
 	}
-	return NewChatCompletionsHandler(engine, storage.NewUsageRecordRepo(db), nil, nil)
+	return NewChatCompletionsHandler(engine, storage.NewUsageRecordRepo(db), nil, nil, nil)
 }
 
 // ChatCompletionsHandler serves POST /v1/chat/completions (P5-PAPI-002): the
@@ -65,18 +71,23 @@ type ChatCompletionsHandler struct {
 	usage  usageRecorder
 	now    func() time.Time
 	newID  func() string
+	log    *observability.Logger
 }
 
 // NewChatCompletionsHandler builds the handler. now/newID default to time.Now /
-// newOAuthTransactionID (the generic id minter) when nil.
-func NewChatCompletionsHandler(engine *EngineDeps, usage usageRecorder, now func() time.Time, newID func() string) *ChatCompletionsHandler {
+// newOAuthTransactionID (the generic id minter) when nil; log defaults to
+// observability.Default().
+func NewChatCompletionsHandler(engine *EngineDeps, usage usageRecorder, now func() time.Time, newID func() string, log *observability.Logger) *ChatCompletionsHandler {
 	if now == nil {
 		now = time.Now
 	}
 	if newID == nil {
 		newID = newOAuthTransactionID
 	}
-	return &ChatCompletionsHandler{engine: engine, usage: usage, now: now, newID: newID}
+	if log == nil {
+		log = observability.Default()
+	}
+	return &ChatCompletionsHandler{engine: engine, usage: usage, now: now, newID: newID, log: log}
 }
 
 // --- request wire types ----------------------------------------------------
@@ -227,11 +238,33 @@ func (h *ChatCompletionsHandler) run(w http.ResponseWriter, r *http.Request, p r
 	res, lerr := routing.RunFallbackLoop(ctx, in)
 
 	// Usage on EVERY terminal path — surfaced, never swallowed. On the
-	// non-streaming path a write failure becomes a 500 before any body is sent;
-	// on the streaming path (headers already flushed) it is logged loudly.
-	usageErr := h.usage.Insert(ctx, buildUsageRecord(h.newID(), p.requestID, p.apiKeyID, string(p.tier), res, lerr))
+	// non-streaming path a write failure becomes a 500 before any body is sent.
+	//
+	// THE CONTEXT MUST BE DETACHED FROM THE CLIENT CONNECTION. Using ctx here
+	// loses the row on exactly the path that most needs it: when the client
+	// disconnects mid-request, ctx is already cancelled, so the INSERT fails with
+	// context.Canceled and the request is served (partially) with no usage/billing
+	// record at all — the card's "never swallowed (the old build's bug)" failure,
+	// reintroduced by cancellation rather than by a missing call. Cancellation must
+	// abort the PROVIDER call (it does, via ctx) but never the accounting write.
+	// Same reasoning as P3a-CAPI-002's detached discovery context.
+	usageCtx, cancelUsage := context.WithTimeout(context.WithoutCancel(ctx), usageWriteTimeout)
+	defer cancelUsage()
+	usageErr := h.usage.Insert(usageCtx, buildUsageRecord(h.newID(), p.requestID, p.apiKeyID, string(p.tier), res, lerr))
 
 	if p.req.Stream {
+		// A streaming response cannot become a 500 once frames have been flushed,
+		// so the write failure is LOGGED here rather than returned. It must never
+		// simply vanish: an unrecorded usage row is silent revenue/quota loss, and
+		// "never swallowed" is this card's explicit requirement. (Before this, the
+		// error was assigned and then discarded on this branch, with a comment
+		// claiming it was logged — it was not.)
+		if usageErr != nil {
+			h.log.Error("usage record write failed on the streaming path",
+				observability.Err(usageErr),
+				observability.String("request_id", p.requestID),
+				observability.String("tier", string(p.tier)))
+		}
 		h.finishStream(w, sink, lerr)
 		return
 	}

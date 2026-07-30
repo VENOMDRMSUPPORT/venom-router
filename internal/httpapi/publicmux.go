@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/routing"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
@@ -66,9 +68,11 @@ func publicNotFound(w http.ResponseWriter, _ *http.Request) {
 // behind outer only (an unknown path is a 404 regardless of key), so a probe
 // of a bogus /v1 path learns nothing.
 // chat, when non-nil, is the vk-gated POST /v1/chat/completions handler
-// (P5-PAPI-002). It is nil on a standalone data-plane listener that has no
-// keyring wired (see PublicMux's note), and non-nil on the shared control
-// listener where ControlMux composes the full engine.
+// (P5-PAPI-002). Both listeners wire it in production — the shared control
+// listener via ControlMux and a standalone data-plane listener via PublicMux
+// (which needs the keyring for credential decryption). It is nil only when no
+// keyring is available, in which case the route is absent rather than present
+// and broken.
 func registerPublicRoutes(mux *http.ServeMux, outer func(http.Handler) http.Handler, vk *vkAuthenticator, chat http.Handler) {
 	models := newModelsListHandler()
 	mux.Handle("GET /v1/models", outer(vk.Middleware(http.HandlerFunc(models.ServeModels))))
@@ -85,20 +89,30 @@ func registerPublicRoutes(mux *http.ServeMux, outer func(http.Handler) http.Hand
 // authenticator; the outer wrapper is the identity. now is injectable for
 // deterministic RPM tests; nil uses the wall clock.
 //
-// NOTE: the standalone data-plane mux serves /v1/models but NOT
-// /v1/chat/completions, because the chat handler needs the process keyring to
-// decrypt credentials and Boot calls PublicMux without one (threading the
-// keyring through PublicMux touches internal/app.boot, outside this unit's file
-// set — a one-line follow-up). The shared control listener (ControlMux) wires
-// chat fully; that is the default local-only mode of 01 §6b.
-func PublicMux(db *storage.DB, now func() time.Time) http.Handler {
-	return publicMux(db, now)
+// kr is the process keyring the chat handler needs to decrypt credentials. It
+// MUST be threaded here: a standalone data-plane listener exists precisely to
+// serve the public inference API, so omitting the chat route would 404 the
+// PRIMARY endpoint (POST /v1/chat/completions) in exactly the mode the separate
+// bind is for — while /v1/models kept working, which makes the hole look like a
+// routing quirk rather than a missing feature. A nil kr still yields a mux (with
+// /v1/models only) rather than panicking, but production always passes one.
+func PublicMux(db *storage.DB, kr *secrets.Keyring, reg *providers.Registry, now func() time.Time) http.Handler {
+	return publicMux(db, kr, reg, now)
 }
 
 // publicMux is PublicMux's clock-injectable core.
-func publicMux(db *storage.DB, now func() time.Time) http.Handler {
+func publicMux(db *storage.DB, kr *secrets.Keyring, reg *providers.Registry, now func() time.Time) http.Handler {
 	mux := http.NewServeMux()
 	vk := newVKAuthenticator(storage.NewAPIKeyRepo(db), now)
-	registerPublicRoutes(mux, func(h http.Handler) http.Handler { return h }, vk, nil)
+	var chat http.Handler
+	if kr != nil {
+		if reg == nil {
+			reg = providers.NewRegistry()
+			_ = registerOpenCodeZen(reg)
+			_ = registerAntigravityIfConfigured(reg)
+		}
+		chat = buildChatCompletionsHandler(db, kr, reg)
+	}
+	registerPublicRoutes(mux, func(h http.Handler) http.Handler { return h }, vk, chat)
 	return mux
 }

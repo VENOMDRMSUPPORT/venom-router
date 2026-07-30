@@ -21,7 +21,7 @@ import (
 // of these paths stops 404-ing → RED.
 func TestPublicMux_NoControlSurface(t *testing.T) {
 	db := testControlDB(t)
-	mux := PublicMux(db, func() time.Time { return vkFixedNow })
+	mux := PublicMux(db, nil, nil, func() time.Time { return vkFixedNow })
 
 	for _, path := range []string{
 		"/api/control/v1/auth/login",
@@ -150,7 +150,7 @@ func TestModels_NoFleetInternals(t *testing.T) {
 		t.Fatalf("seed account: %v", err)
 	}
 
-	mux := PublicMux(db, func() time.Time { return vkFixedNow })
+	mux := PublicMux(db, nil, nil, func() time.Time { return vkFixedNow })
 	seedAPIKey(t, db, "k-1", "vk_live_models00", nil, false)
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	req.Header.Set("Authorization", "Bearer vk_live_models00")
@@ -201,7 +201,7 @@ func TestModels_NoFleetInternals(t *testing.T) {
 // request reaches 200 → RED.
 func TestModels_RequiresVKAuth(t *testing.T) {
 	db := testControlDB(t)
-	mux := PublicMux(db, func() time.Time { return vkFixedNow })
+	mux := PublicMux(db, nil, nil, func() time.Time { return vkFixedNow })
 	seedAPIKey(t, db, "k-1", "vk_live_models01", nil, false)
 
 	noKey := httptest.NewRequest(http.MethodGet, "/v1/models", nil)

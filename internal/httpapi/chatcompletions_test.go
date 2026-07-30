@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -147,7 +149,7 @@ func newE2EHandler(t *testing.T, db *storage.DB, kr *secrets.Keyring, upstreamUR
 	if usage == nil {
 		usage = storage.NewUsageRecordRepo(db)
 	}
-	return NewChatCompletionsHandler(engine, usage, func() time.Time { return time.Unix(0, 0) }, counterID())
+	return NewChatCompletionsHandler(engine, usage, func() time.Time { return time.Unix(0, 0) }, counterID(), nil)
 }
 
 func e2eEnv(t *testing.T, upstreamURL string) (*storage.DB, *secrets.Keyring) {
@@ -503,5 +505,207 @@ func TestChatCompletions_RouteRegistrationNoOverlap(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
 	if chatHit || rec.Code != 204 {
 		t.Fatalf("GET /v1/models routing overlapped chat (code %d, chatHit %v)", rec.Code, chatHit)
+	}
+}
+
+// --- governor review additions ---------------------------------------------
+
+// TestChatCompletions_UsageOnProviderFailure closes the terminal-path matrix the
+// card demands ("usage recorded on EVERY terminal path"). The delivered suite
+// covered only success and exhaustion; this adds the PROVIDER-FAILURE class,
+// where the loop really executed, the provider rejected, and the attempt budget
+// ran out. A billing/quota row must exist for it.
+//
+// Mutation P2-M1 (skip the usage write when lerr != nil) → RED here too, so this
+// row is independently load-bearing and not a duplicate of the exhaustion test.
+func TestChatCompletions_UsageOnProviderFailure(t *testing.T) {
+	_, srv := newUpstream(t, func(w http.ResponseWriter, _ []byte) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"upstream exploded"}}`))
+	})
+	db, kr := e2eEnv(t, srv.URL)
+	seedCredentialedOffering(t, db, kr, "acct-1", "model-a", "m-a")
+	h := newE2EHandler(t, db, kr, srv.URL, nil)
+
+	rec := postChat(t, h, `{"model":"venom/pro","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("expected a failure status, got 200: %s", rec.Body.String())
+	}
+
+	var count int
+	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM usage_records`).Scan(&count); err != nil {
+		t.Fatalf("count usage: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("usage_records = %d, want 1 (a provider failure is a terminal path and must be billed/recorded)", count)
+	}
+	var status string
+	if err := db.Conn().QueryRow(`SELECT status FROM usage_records`).Scan(&status); err != nil {
+		t.Fatalf("read status: %v", err)
+	}
+	if status == "success" {
+		t.Fatalf("usage status = %q for a failed request, want a failure status", status)
+	}
+}
+
+// TestChatCompletions_ClientCancellationAbortsUpstream pins the card's
+// "client cancellation aborts the in-flight stream" requirement, which the
+// delivered suite did not cover at all.
+//
+// There is no Dispatcher.Cancel call to assert (the frozen loop never exposes
+// the chosen route id), so cancellation rides on request-context propagation:
+// r.Context() → RunFallbackLoop → executor → Dispatcher.Stream → the transport's
+// HTTP request. This test proves that chain is real by cancelling mid-stream and
+// observing the upstream handler's own request context report cancellation, then
+// proving usage was still recorded for the terminal path.
+//
+// Mutation: pass context.Background() instead of ctx anywhere in that chain →
+// the upstream never observes cancellation → RED.
+func TestChatCompletions_ClientCancellationAbortsUpstream(t *testing.T) {
+	upstreamCanceled := make(chan struct{}, 1)
+	firstChunkSent := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"one\"}}]}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		select {
+		case firstChunkSent <- struct{}{}:
+		default:
+		}
+		// Hold the stream open until the client's cancellation propagates here.
+		select {
+		case <-r.Context().Done():
+			select {
+			case upstreamCanceled <- struct{}{}:
+			default:
+			}
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	db, kr := e2eEnv(t, srv.URL)
+	seedCredentialedOffering(t, db, kr, "acct-1", "model-a", "m-a")
+	certifyOperation(t, db, "acct-1", "model-a", "streaming")
+	h := newE2EHandler(t, db, kr, srv.URL, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"venom/pro","stream":true,"messages":[{"role":"user","content":"hi"}]}`)).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		h.ServeChat(rec, req)
+		close(done)
+	}()
+
+	select {
+	case <-firstChunkSent:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("upstream never sent the first chunk")
+	}
+	cancel() // the client disconnects mid-stream
+
+	select {
+	case <-upstreamCanceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("client cancellation did not reach the upstream — the in-flight call was not aborted")
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not return after cancellation")
+	}
+
+	var count int
+	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM usage_records`).Scan(&count); err != nil {
+		t.Fatalf("count usage: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("usage_records = %d, want 1 (cancellation is a terminal path)", count)
+	}
+}
+
+// TestPublicMux_StandaloneServesChat proves the STANDALONE data-plane listener
+// serves POST /v1/chat/completions, not just /v1/models.
+//
+// Governor fix: the delivered mux passed a nil chat handler because PublicMux had
+// no keyring, so in separate-bind mode — the only mode that listener exists for —
+// the PRIMARY inference endpoint fell through to the /v1/ catch-all and 404'd,
+// while /v1/models kept working (making it look like a routing quirk rather than
+// a missing endpoint).
+//
+// Mutation: pass nil for chat in publicMux again → 404 → RED.
+func TestPublicMux_StandaloneServesChat(t *testing.T) {
+	_, srv := newUpstream(t, func(w http.ResponseWriter, _ []byte) {
+		_, _ = w.Write([]byte(completionJSON("ok")))
+	})
+	db, kr := e2eEnv(t, srv.URL)
+	seedAPIKey(t, db, "k-1", "vk_live_standalone", nil, false)
+
+	mux := PublicMux(db, kr, nil, func() time.Time { return vkFixedNow })
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"venom/pro","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer vk_live_standalone")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	// The route must EXIST (no 404/405 from the catch-all). Whether this
+	// particular fixture routes successfully is covered by the e2e tests; here the
+	// claim is that the endpoint is mounted and vk-gated on the standalone mux.
+	if rec.Code == http.StatusNotFound || rec.Code == http.StatusMethodNotAllowed {
+		t.Fatalf("standalone data-plane mux does not serve POST /v1/chat/completions (status %d) — the primary endpoint must exist in separate-bind mode; body=%s", rec.Code, rec.Body.String())
+	}
+	// And it is still vk-gated.
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"venom/pro","messages":[{"role":"user","content":"hi"}]}`))
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("standalone chat without a vk key = %d, want 401", rec2.Code)
+	}
+}
+
+// TestChatCompletions_StreamingUsageFailureIsLogged pins the streaming half of
+// "never swallowed". A streaming response cannot become a 500 once frames are
+// flushed, so the only honest alternative is a loud log — and an unasserted log
+// is an unproven one.
+//
+// This is the governor-review companion to the non-streaming
+// UsageWriteFailureSurfaced test: before the fix, usageErr was assigned and then
+// discarded on the streaming branch (with a comment claiming it was logged), so a
+// usage-write failure during streaming vanished without a trace.
+//
+// Mutation GOV-M2: guard the log with `&& false` → no record → RED.
+func TestChatCompletions_StreamingUsageFailureIsLogged(t *testing.T) {
+	_, srv := newUpstream(t, func(w http.ResponseWriter, _ []byte) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	})
+	db, kr := e2eEnv(t, srv.URL)
+	seedCredentialedOffering(t, db, kr, "acct-1", "model-a", "m-a")
+	certifyOperation(t, db, "acct-1", "model-a", "streaming")
+
+	var logBuf bytes.Buffer
+	h := newE2EHandler(t, db, kr, srv.URL, failingUsage{})
+	h.log = observability.New(slog.NewJSONHandler(&logBuf, nil))
+
+	rec := postChat(t, h, `{"model":"venom/pro","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("streaming status = %d, want 200 (frames already flushed); body=%s", rec.Code, rec.Body.String())
+	}
+	out := logBuf.String()
+	if !strings.Contains(out, "usage record write failed") {
+		t.Fatalf("a streaming usage-write failure must be logged loudly, got log output %q", out)
+	}
+	if !strings.Contains(out, "request_id") {
+		t.Fatalf("the usage-failure log must carry the request_id correlation field, got %q", out)
 	}
 }

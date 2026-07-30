@@ -434,7 +434,7 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 			release()
 			return nil, fmt.Errorf("app: listen on data-plane %q: %w", cfg.DataPlaneBind, err)
 		}
-		dataHTTP = &http.Server{Handler: httpapi.PublicMux(db, nil)}
+		dataHTTP = &http.Server{Handler: httpapi.PublicMux(db, kr, nil, nil)}
 		go func() {
 			_ = dataHTTP.Serve(dataLn)
 		}()
