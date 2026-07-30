@@ -271,3 +271,159 @@ func TestOpenAICompatible_TimeoutAndNetworkAreTyped(t *testing.T) {
 		}
 	})
 }
+
+// --- P5-EXEC-004: tools + multimodal content ------------------------------
+
+// TestOpenAICompatible_TextOnlyBodyUnchanged proves a text-only request
+// serializes exactly as before P5-EXEC-004: content is a plain JSON string and
+// there is no tools key.
+//
+// Mutation E4-M3: emit the array content form even when Parts is empty → the
+// content stops being a string → RED.
+func TestOpenAICompatible_TextOnlyBodyUnchanged(t *testing.T) {
+	var got map[string]any
+	srv := decodedRequestServer(t, &got)
+
+	transport := NewOpenAICompatibleTransport(&http.Client{}, 5*time.Second)
+	if _, err := transport.Execute(context.Background(), newOpenAICompatTestRoute(srv.URL), NormalizedRequest{
+		Messages: []Message{{Role: "user", Content: "the sky is blue"}},
+	}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if _, ok := got["tools"]; ok {
+		t.Fatalf("text-only body must have no tools key; body = %+v", got)
+	}
+	msgs, _ := got["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %+v, want 1", got["messages"])
+	}
+	m0, _ := msgs[0].(map[string]any)
+	if _, isString := m0["content"].(string); !isString {
+		t.Fatalf("text-only content must serialize as a JSON string, got %T (%v)", m0["content"], m0["content"])
+	}
+}
+
+// TestOpenAICompatible_ToolsRoundTrip proves tools reach the wire with the exact
+// name/description and the parameters as an embedded JSON OBJECT (not a string).
+//
+// Mutation E4-M1: drop tools from the body → the tools key is absent → RED.
+// Mutation E4-M2: re-encode parameters as a JSON string → the object assertion → RED.
+func TestOpenAICompatible_ToolsRoundTrip(t *testing.T) {
+	var got map[string]any
+	srv := decodedRequestServer(t, &got)
+
+	transport := NewOpenAICompatibleTransport(&http.Client{}, 5*time.Second)
+	if _, err := transport.Execute(context.Background(), newOpenAICompatTestRoute(srv.URL), NormalizedRequest{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+		Tools: []ToolDefinition{{
+			Name:           "get_weather",
+			Description:    "look up the weather",
+			ParametersJSON: `{"type":"object","properties":{"city":{"type":"string"}}}`,
+		}},
+	}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	tools, _ := got["tools"].([]any)
+	if len(tools) != 1 {
+		t.Fatalf("tools = %+v, want 1", got["tools"])
+	}
+	tool, _ := tools[0].(map[string]any)
+	if tool["type"] != "function" {
+		t.Fatalf("tool type = %v, want function", tool["type"])
+	}
+	fn, _ := tool["function"].(map[string]any)
+	if fn["name"] != "get_weather" || fn["description"] != "look up the weather" {
+		t.Fatalf("tool function = %+v, want name/description round-tripped", fn)
+	}
+	params, isObject := fn["parameters"].(map[string]any)
+	if !isObject {
+		t.Fatalf("parameters must be an embedded JSON object, got %T (%v)", fn["parameters"], fn["parameters"])
+	}
+	if params["type"] != "object" {
+		t.Fatalf("parameters.type = %v, want object", params["type"])
+	}
+}
+
+// TestOpenAICompatible_ToolChoiceOnlyWhenSet proves tool_choice is on the wire
+// only when set.
+func TestOpenAICompatible_ToolChoiceOnlyWhenSet(t *testing.T) {
+	transport := NewOpenAICompatibleTransport(&http.Client{}, 5*time.Second)
+
+	var withChoice map[string]any
+	srv1 := decodedRequestServer(t, &withChoice)
+	if _, err := transport.Execute(context.Background(), newOpenAICompatTestRoute(srv1.URL), NormalizedRequest{
+		Messages:   []Message{{Role: "user", Content: "hi"}},
+		ToolChoice: "auto",
+	}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if withChoice["tool_choice"] != "auto" {
+		t.Fatalf("tool_choice = %v, want auto", withChoice["tool_choice"])
+	}
+
+	var without map[string]any
+	srv2 := decodedRequestServer(t, &without)
+	if _, err := transport.Execute(context.Background(), newOpenAICompatTestRoute(srv2.URL), NormalizedRequest{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if _, ok := without["tool_choice"]; ok {
+		t.Fatalf("tool_choice must be absent when unset; body = %+v", without)
+	}
+}
+
+// TestOpenAICompatible_VisionArrayForm proves a multimodal message serializes as
+// the OpenAI array content form and a base64 image becomes a correct data: URL.
+func TestOpenAICompatible_VisionArrayForm(t *testing.T) {
+	var got map[string]any
+	srv := decodedRequestServer(t, &got)
+
+	transport := NewOpenAICompatibleTransport(&http.Client{}, 5*time.Second)
+	if _, err := transport.Execute(context.Background(), newOpenAICompatTestRoute(srv.URL), NormalizedRequest{
+		Messages: []Message{{Role: "user", Parts: []ContentPart{
+			{Kind: ContentPartText, Text: "what is this?"},
+			{Kind: ContentPartImage, ImageBase64: "aGVsbG8=", MediaType: "image/png"},
+		}}},
+	}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	msgs, _ := got["messages"].([]any)
+	m0, _ := msgs[0].(map[string]any)
+	parts, isArray := m0["content"].([]any)
+	if !isArray || len(parts) != 2 {
+		t.Fatalf("content must be a 2-element array, got %T (%v)", m0["content"], m0["content"])
+	}
+	p0, _ := parts[0].(map[string]any)
+	if p0["type"] != "text" || p0["text"] != "what is this?" {
+		t.Fatalf("first part = %+v, want text", p0)
+	}
+	p1, _ := parts[1].(map[string]any)
+	imageURL, _ := p1["image_url"].(map[string]any)
+	if p1["type"] != "image_url" || imageURL["url"] != "data:image/png;base64,aGVsbG8=" {
+		t.Fatalf("image part = %+v, want a data: URL with media type", p1)
+	}
+}
+
+// TestOpenAICompatible_UnknownPartKindFailsClosed proves an unknown content-part
+// kind is rejected with a typed error and NO request is sent.
+//
+// Mutation E4-M4: silently skip an unknown ContentPartKind → Execute succeeds
+// and the fake upstream receives a request → RED.
+func TestOpenAICompatible_UnknownPartKindFailsClosed(t *testing.T) {
+	srv, count := newFakeOpenAIServer(t, "should never be returned")
+	transport := NewOpenAICompatibleTransport(&http.Client{}, 5*time.Second)
+
+	_, err := transport.Execute(context.Background(), newOpenAICompatTestRoute(srv.URL), NormalizedRequest{
+		Messages: []Message{{Role: "user", Parts: []ContentPart{{Kind: ContentPartKind("hologram"), Text: "x"}}}},
+	})
+	if !errors.Is(err, ErrRequestFeatureUnsupported) {
+		t.Fatalf("Execute() error = %v, want ErrRequestFeatureUnsupported", err)
+	}
+	if n := count.Load(); n != 0 {
+		t.Fatalf("fake upstream received %d requests, want 0 (fail closed before any network call)", n)
+	}
+}

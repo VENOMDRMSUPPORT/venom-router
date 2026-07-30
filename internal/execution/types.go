@@ -8,6 +8,7 @@ package execution
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -50,10 +51,45 @@ const (
 	OperationVision    Operation = "vision"
 )
 
-// Message is a single normalized chat message.
+// ContentPartKind is the closed vocabulary of multimodal content-part kinds
+// (P5-EXEC-004). A transport fails CLOSED on any value outside it — an
+// unrecognized part is never silently dropped.
+type ContentPartKind string
+
+const (
+	ContentPartText  ContentPartKind = "text"
+	ContentPartImage ContentPartKind = "image"
+)
+
+// ContentPart is one part of a multimodal message (P5-EXEC-004). For an image,
+// exactly one of ImageURL or (ImageBase64 + MediaType) is populated; a
+// transport that cannot faithfully express the part returns
+// ErrRequestFeatureUnsupported rather than guessing or dropping it.
+type ContentPart struct {
+	Kind        ContentPartKind
+	Text        string
+	ImageURL    string
+	ImageBase64 string
+	MediaType   string
+}
+
+// ToolDefinition is a client-declared function tool (P5-EXEC-004). ParametersJSON
+// is the function's JSON Schema as an OPAQUE JSON string — this seam never
+// interprets a client's schema, it only forwards it verbatim as embedded JSON.
+type ToolDefinition struct {
+	Name           string
+	Description    string
+	ParametersJSON string
+}
+
+// Message is a single normalized chat message. When Parts is empty, Content is
+// authoritative (the plain-string form), so every pre-P5-EXEC-004 construction
+// keeps its exact meaning. When Parts is non-empty it carries the multimodal
+// content and Content is ignored.
 type Message struct {
 	Role    string
 	Content string
+	Parts   []ContentPart
 }
 
 // NormalizedRequest is Venom's provider-agnostic representation of an
@@ -74,6 +110,37 @@ type NormalizedRequest struct {
 	// — context cancellation still works. Transports index in-flight calls
 	// by this id when non-empty (P4-EXEC-003).
 	RequestID string
+	// Tools are client-declared function tools (P5-EXEC-004). Empty = unset,
+	// so the serialized body is byte-identical to a pre-P5 request. A
+	// transport that cannot express tools returns ErrRequestFeatureUnsupported.
+	Tools []ToolDefinition
+	// ToolChoice is the OpenAI tool_choice directive (P5-EXEC-004). Empty =
+	// unset (omitted from the wire body).
+	ToolChoice string
+}
+
+// ErrRequestFeatureUnsupported is the typed sentinel a transport returns when
+// it cannot faithfully express a requested feature — a tool definition, an
+// image part, or a tool_choice it has no mapping for (P5-EXEC-004). Silently
+// dropping such a feature is forbidden: the model would answer as if the client
+// never asked, which is worse than a clean, typed failure. Its message names
+// the FEATURE only — never the tool description or image URL (those are content).
+var ErrRequestFeatureUnsupported = errors.New("execution: request feature not supported by this transport")
+
+// requestCarriesRichFeatures reports whether req uses any P5-EXEC-004 feature a
+// minimal transport cannot express (tools, tool_choice, or multimodal parts).
+// Transports that only speak plain text (bifrost's smoke shim) use it to fail
+// closed before any network call.
+func requestCarriesRichFeatures(req NormalizedRequest) bool {
+	if len(req.Tools) > 0 || req.ToolChoice != "" {
+		return true
+	}
+	for _, m := range req.Messages {
+		if len(m.Parts) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // ToolCall is one tool invocation a provider's response carries — the

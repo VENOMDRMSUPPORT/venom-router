@@ -36,13 +36,34 @@ func (e *nativeOAuthHTTPError) Error() string {
 // Gemini generateContent request/response wire types ----------------------
 
 type geminiPart struct {
-	Text         *string       `json:"text,omitempty"`
-	FunctionCall *geminiFnCall `json:"functionCall,omitempty"`
+	Text         *string           `json:"text,omitempty"`
+	InlineData   *geminiInlineData `json:"inlineData,omitempty"`
+	FunctionCall *geminiFnCall     `json:"functionCall,omitempty"`
+}
+
+// geminiInlineData carries an inline (base64) image for a multimodal part
+// (P5-EXEC-004). Gemini's REST inlineData requires the bytes inline — a bare
+// image URL is NOT expressible here, so a URL-only image fails closed.
+type geminiInlineData struct {
+	MimeType string `json:"mimeType"`
+	Data     string `json:"data"`
 }
 
 type geminiFnCall struct {
 	Name string          `json:"name"`
 	Args json.RawMessage `json:"args,omitempty"`
+}
+
+// geminiFunctionDeclaration is one declared tool (P5-EXEC-004). Parameters is
+// embedded raw JSON — the client's schema is forwarded verbatim.
+type geminiFunctionDeclaration struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+type geminiTool struct {
+	FunctionDeclarations []geminiFunctionDeclaration `json:"functionDeclarations"`
 }
 
 type geminiContent struct {
@@ -56,7 +77,72 @@ type geminiGenerationConfig struct {
 
 type geminiGenerateReq struct {
 	Contents         []geminiContent         `json:"contents"`
+	Tools            []geminiTool            `json:"tools,omitempty"`
 	GenerationConfig *geminiGenerationConfig `json:"generationConfig,omitempty"`
+}
+
+// buildGeminiRequest maps a normalized request onto Gemini's generateContent
+// shape, failing CLOSED (ErrRequestFeatureUnsupported) on anything it cannot
+// faithfully express — a URL-only image (inlineData needs the bytes), an
+// unknown content-part kind, or a tool_choice directive (Gemini's
+// functionCallingConfig has no faithful mapping for an arbitrary OpenAI
+// tool_choice string). A text-only request produces exactly the pre-P5-EXEC-004
+// shape. The error names the FEATURE only, never the tool description or URL.
+func buildGeminiRequest(req NormalizedRequest) (geminiGenerateReq, error) {
+	if req.ToolChoice != "" {
+		return geminiGenerateReq{}, fmt.Errorf("%w: tool_choice", ErrRequestFeatureUnsupported)
+	}
+	contents := make([]geminiContent, 0, len(req.Messages))
+	for _, m := range req.Messages {
+		parts, err := geminiPartsFor(m)
+		if err != nil {
+			return geminiGenerateReq{}, err
+		}
+		contents = append(contents, geminiContent{Role: geminiRoleFor(m.Role), Parts: parts})
+	}
+	out := geminiGenerateReq{Contents: contents}
+	if len(req.Tools) > 0 {
+		decls := make([]geminiFunctionDeclaration, 0, len(req.Tools))
+		for _, td := range req.Tools {
+			d := geminiFunctionDeclaration{Name: td.Name, Description: td.Description}
+			if td.ParametersJSON != "" {
+				d.Parameters = json.RawMessage(td.ParametersJSON)
+			}
+			decls = append(decls, d)
+		}
+		out.Tools = []geminiTool{{FunctionDeclarations: decls}}
+	}
+	if req.MaxTokens != nil {
+		out.GenerationConfig = &geminiGenerationConfig{MaxOutputTokens: req.MaxTokens}
+	}
+	return out, nil
+}
+
+// geminiPartsFor maps one message's content to Gemini parts. A message with no
+// Parts keeps the single-text-part shape used before P5-EXEC-004.
+func geminiPartsFor(m Message) ([]geminiPart, error) {
+	if len(m.Parts) == 0 {
+		text := m.Content
+		return []geminiPart{{Text: &text}}, nil
+	}
+	parts := make([]geminiPart, 0, len(m.Parts))
+	for _, p := range m.Parts {
+		switch p.Kind {
+		case ContentPartText:
+			text := p.Text
+			parts = append(parts, geminiPart{Text: &text})
+		case ContentPartImage:
+			if p.ImageBase64 == "" || p.MediaType == "" {
+				// A bare URL (or an image missing its media type) cannot be
+				// expressed as inlineData — fail closed rather than drop it.
+				return nil, fmt.Errorf("%w: image part requires inline base64 data and a media type", ErrRequestFeatureUnsupported)
+			}
+			parts = append(parts, geminiPart{InlineData: &geminiInlineData{MimeType: p.MediaType, Data: p.ImageBase64}})
+		default:
+			return nil, fmt.Errorf("%w: content part kind %q", ErrRequestFeatureUnsupported, p.Kind)
+		}
+	}
+	return parts, nil
 }
 
 type geminiCandidate struct {
@@ -131,20 +217,10 @@ func (t *NativeOAuthTransport) Execute(ctx context.Context, route ResolvedRoute,
 	reqCtx, cancel := context.WithTimeout(ctx, t.timeout)
 	defer cancel()
 
-	contents := make([]geminiContent, 0, len(req.Messages))
-	for _, m := range req.Messages {
-		text := m.Content
-		contents = append(contents, geminiContent{
-			Role:  geminiRoleFor(m.Role),
-			Parts: []geminiPart{{Text: &text}},
-		})
+	genReq, err := buildGeminiRequest(req)
+	if err != nil {
+		return nil, err
 	}
-
-	genReq := geminiGenerateReq{Contents: contents}
-	if req.MaxTokens != nil {
-		genReq.GenerationConfig = &geminiGenerationConfig{MaxOutputTokens: req.MaxTokens}
-	}
-
 	payload, err := json.Marshal(genReq)
 	if err != nil {
 		return nil, fmt.Errorf("execution: native-oauth transport: encode request: %w", err)
@@ -219,19 +295,11 @@ func (t *NativeOAuthTransport) Execute(ctx context.Context, route ResolvedRoute,
 func (t *NativeOAuthTransport) Stream(ctx context.Context, route ResolvedRoute, req NormalizedRequest) (<-chan Chunk, error) {
 	streamCtx, cancel := context.WithCancel(ctx)
 
-	contents := make([]geminiContent, 0, len(req.Messages))
-	for _, m := range req.Messages {
-		text := m.Content
-		contents = append(contents, geminiContent{
-			Role:  geminiRoleFor(m.Role),
-			Parts: []geminiPart{{Text: &text}},
-		})
+	genReq, err := buildGeminiRequest(req)
+	if err != nil {
+		cancel()
+		return nil, err
 	}
-	genReq := geminiGenerateReq{Contents: contents}
-	if req.MaxTokens != nil {
-		genReq.GenerationConfig = &geminiGenerationConfig{MaxOutputTokens: req.MaxTokens}
-	}
-
 	payload, err := json.Marshal(genReq)
 	if err != nil {
 		cancel()

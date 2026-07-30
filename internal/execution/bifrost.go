@@ -138,6 +138,12 @@ func (t *BifrostTransport) Execute(ctx context.Context, route ResolvedRoute, req
 	if err := t.checkRoute(route); err != nil {
 		return nil, err
 	}
+	if requestCarriesRichFeatures(req) {
+		// The smoke shim speaks plain text only; fail closed BEFORE any
+		// network call rather than silently dropping tools or image parts
+		// (P5-EXEC-004). No V1 provider resolves to bifrost.
+		return nil, fmt.Errorf("%w: bifrost transport carries only plain text (no tools or multimodal parts)", ErrRequestFeatureUnsupported)
+	}
 
 	messages := make([]schemas.ChatMessage, 0, len(req.Messages))
 	for _, m := range req.Messages {
@@ -214,9 +220,12 @@ func (t *BifrostTransport) Failure(err error, _ ResolvedRoute) TypedFailure {
 }
 
 // Stream is not implemented by this smoke-test shim — streaming is P4.
-func (t *BifrostTransport) Stream(_ context.Context, route ResolvedRoute, _ NormalizedRequest) (<-chan Chunk, error) {
+func (t *BifrostTransport) Stream(_ context.Context, route ResolvedRoute, req NormalizedRequest) (<-chan Chunk, error) {
 	if err := t.checkRoute(route); err != nil {
 		return nil, err
+	}
+	if requestCarriesRichFeatures(req) {
+		return nil, fmt.Errorf("%w: bifrost transport carries only plain text (no tools or multimodal parts)", ErrRequestFeatureUnsupported)
 	}
 	return nil, errors.New("execution: bifrost transport streaming is not implemented by the P0-EXEC-003 smoke shim (P4)")
 }

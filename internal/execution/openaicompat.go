@@ -42,19 +42,52 @@ func (e *openAICompatHTTPError) Error() string {
 	return fmt.Sprintf("execution: openai-compatible transport: http %d", e.status)
 }
 
+// chatReqMessage's Content is `any` so it can be EITHER the plain string form
+// (when a message has no Parts — byte-identical to the pre-P5-EXEC-004 wire
+// body) OR the OpenAI array form (when Parts is non-empty). A JSON string and
+// an `any` holding that same string marshal identically, so text-only requests
+// are unchanged.
 type chatReqMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
+}
+
+// chatReqContentPart is one element of the OpenAI array content form.
+type chatReqContentPart struct {
+	Type     string           `json:"type"`
+	Text     string           `json:"text,omitempty"`
+	ImageURL *chatReqImageURL `json:"image_url,omitempty"`
+}
+
+type chatReqImageURL struct {
+	URL string `json:"url"`
+}
+
+// chatReqTool is one element of the OpenAI tools array. Parameters is embedded
+// as raw JSON (never re-encoded as a string), so the client's schema reaches
+// the provider verbatim.
+type chatReqTool struct {
+	Type     string          `json:"type"`
+	Function chatReqToolFunc `json:"function"`
+}
+
+type chatReqToolFunc struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
 }
 
 // chatCompletionRequestBody is the OpenAI-compatible chat completion
-// request this transport sends. Stream and MaxTokens use omitempty so
-// they are absent from the wire body when zero/nil.
+// request this transport sends. Stream, MaxTokens, Tools, and ToolChoice use
+// omitempty so they are absent from the wire body when zero/nil/empty — a
+// text-only request therefore serializes exactly as it did before P5-EXEC-004.
 type chatCompletionRequestBody struct {
-	Model     string           `json:"model"`
-	Messages  []chatReqMessage `json:"messages"`
-	MaxTokens *int             `json:"max_tokens,omitempty"`
-	Stream    bool             `json:"stream,omitempty"`
+	Model      string           `json:"model"`
+	Messages   []chatReqMessage `json:"messages"`
+	MaxTokens  *int             `json:"max_tokens,omitempty"`
+	Stream     bool             `json:"stream,omitempty"`
+	Tools      []chatReqTool    `json:"tools,omitempty"`
+	ToolChoice string           `json:"tool_choice,omitempty"`
 }
 
 type chatCompletionToolCall struct {
@@ -134,10 +167,76 @@ func newOpenAICompatibleTransport(client *http.Client, timeout, firstByteTimeout
 	}
 }
 
-func toChatReqMessages(msgs []Message) []chatReqMessage {
+// buildChatMessages maps normalized messages to the wire form, failing CLOSED
+// (ErrRequestFeatureUnsupported) on any content part it cannot express — never
+// dropping one. A message with no Parts keeps the plain-string content form
+// exactly as before P5-EXEC-004.
+func buildChatMessages(msgs []Message) ([]chatReqMessage, error) {
 	out := make([]chatReqMessage, 0, len(msgs))
 	for _, m := range msgs {
-		out = append(out, chatReqMessage(m))
+		content, err := chatContentFor(m)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, chatReqMessage{Role: m.Role, Content: content})
+	}
+	return out, nil
+}
+
+// chatContentFor returns m's content as either the plain string (no Parts) or
+// the OpenAI array form (Parts present).
+func chatContentFor(m Message) (any, error) {
+	if len(m.Parts) == 0 {
+		return m.Content, nil
+	}
+	parts := make([]chatReqContentPart, 0, len(m.Parts))
+	for _, p := range m.Parts {
+		switch p.Kind {
+		case ContentPartText:
+			parts = append(parts, chatReqContentPart{Type: "text", Text: p.Text})
+		case ContentPartImage:
+			url, err := imageURLFor(p)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, chatReqContentPart{Type: "image_url", ImageURL: &chatReqImageURL{URL: url}})
+		default:
+			// Fail closed on an unknown kind — never silently skip it. The
+			// message names the KIND only, never any content.
+			return nil, fmt.Errorf("%w: content part kind %q", ErrRequestFeatureUnsupported, p.Kind)
+		}
+	}
+	return parts, nil
+}
+
+// imageURLFor derives the OpenAI image_url URL: a direct URL when set, else a
+// data: URL from base64 + media type. It fails closed when neither is
+// expressible — the error names the missing field, never the URL itself.
+func imageURLFor(p ContentPart) (string, error) {
+	switch {
+	case p.ImageURL != "":
+		return p.ImageURL, nil
+	case p.ImageBase64 != "" && p.MediaType != "":
+		return "data:" + p.MediaType + ";base64," + p.ImageBase64, nil
+	default:
+		return "", fmt.Errorf("%w: image part missing url or (base64 + media type)", ErrRequestFeatureUnsupported)
+	}
+}
+
+// buildChatTools maps tool definitions to the OpenAI tools array, embedding
+// each parameters schema as raw JSON. Returns nil for no tools so the wire body
+// is unchanged.
+func buildChatTools(tools []ToolDefinition) []chatReqTool {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]chatReqTool, 0, len(tools))
+	for _, td := range tools {
+		fn := chatReqToolFunc{Name: td.Name, Description: td.Description}
+		if td.ParametersJSON != "" {
+			fn.Parameters = json.RawMessage(td.ParametersJSON)
+		}
+		out = append(out, chatReqTool{Type: "function", Function: fn})
 	}
 	return out
 }
@@ -147,10 +246,16 @@ func (t *OpenAICompatibleTransport) Execute(ctx context.Context, route ResolvedR
 	reqCtx, cancel := context.WithTimeout(ctx, t.timeout)
 	defer cancel()
 
+	messages, err := buildChatMessages(req.Messages)
+	if err != nil {
+		return nil, err
+	}
 	payload, err := json.Marshal(chatCompletionRequestBody{
-		Model:     route.ModelID,
-		Messages:  toChatReqMessages(req.Messages),
-		MaxTokens: req.MaxTokens,
+		Model:      route.ModelID,
+		Messages:   messages,
+		MaxTokens:  req.MaxTokens,
+		Tools:      buildChatTools(req.Tools),
+		ToolChoice: req.ToolChoice,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("execution: openai-compatible transport: encode request: %w", err)
@@ -217,11 +322,18 @@ func (t *OpenAICompatibleTransport) Execute(ctx context.Context, route ResolvedR
 func (t *OpenAICompatibleTransport) Stream(ctx context.Context, route ResolvedRoute, req NormalizedRequest) (<-chan Chunk, error) {
 	streamCtx, cancel := context.WithCancel(ctx)
 
+	messages, err := buildChatMessages(req.Messages)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
 	payload, err := json.Marshal(chatCompletionRequestBody{
-		Model:     route.ModelID,
-		Messages:  toChatReqMessages(req.Messages),
-		MaxTokens: req.MaxTokens,
-		Stream:    true,
+		Model:      route.ModelID,
+		Messages:   messages,
+		MaxTokens:  req.MaxTokens,
+		Stream:     true,
+		Tools:      buildChatTools(req.Tools),
+		ToolChoice: req.ToolChoice,
 	})
 	if err != nil {
 		cancel()

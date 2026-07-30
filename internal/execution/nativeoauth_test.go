@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -359,4 +360,112 @@ func TestNativeOAuth_SupportedCapabilities_IncludesChat(t *testing.T) {
 		}
 	}
 	t.Fatalf("SupportedCapabilities = %v, want to include OperationChat", caps)
+}
+
+// --- P5-EXEC-004: tools + multimodal content ------------------------------
+
+// nativeOAuthCountingServer counts every request it receives (any path), so a
+// fail-closed test can assert ZERO upstream calls.
+func nativeOAuthCountingServer(t *testing.T) (*httptest.Server, *int64) {
+	t.Helper()
+	var count int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt64(&count, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(geminiGenerateResp{Candidates: []geminiCandidate{{Content: geminiContent{Role: "model", Parts: []geminiPart{{Text: strPtr("x")}}}, FinishReason: "STOP"}}})
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &count
+}
+
+// TestNativeOAuth_ToolsMapToFunctionDeclarations proves tools reach Gemini as
+// functionDeclarations with the parameters embedded as a JSON object.
+func TestNativeOAuth_ToolsMapToFunctionDeclarations(t *testing.T) {
+	var got geminiGenerateReq
+	srv := nativeOAuthSingleCandidateServer(t, &got)
+
+	transport := NewNativeOAuthTransport(&http.Client{}, 5*time.Second)
+	if _, err := transport.Execute(context.Background(), newNativeOAuthTestRoute(srv.URL), NormalizedRequest{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+		Tools:    []ToolDefinition{{Name: "get_weather", Description: "look up", ParametersJSON: `{"type":"object"}`}},
+	}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(got.Tools) != 1 || len(got.Tools[0].FunctionDeclarations) != 1 {
+		t.Fatalf("tools = %+v, want one functionDeclarations entry", got.Tools)
+	}
+	decl := got.Tools[0].FunctionDeclarations[0]
+	if decl.Name != "get_weather" || decl.Description != "look up" {
+		t.Fatalf("declaration = %+v, want name/description round-tripped", decl)
+	}
+	var params map[string]any
+	if err := json.Unmarshal(decl.Parameters, &params); err != nil || params["type"] != "object" {
+		t.Fatalf("parameters must be embedded JSON object, got %s (err=%v)", decl.Parameters, err)
+	}
+}
+
+// TestNativeOAuth_InlineImagePart proves a base64 image maps to inlineData with
+// its media type and data.
+func TestNativeOAuth_InlineImagePart(t *testing.T) {
+	var got geminiGenerateReq
+	srv := nativeOAuthSingleCandidateServer(t, &got)
+
+	transport := NewNativeOAuthTransport(&http.Client{}, 5*time.Second)
+	if _, err := transport.Execute(context.Background(), newNativeOAuthTestRoute(srv.URL), NormalizedRequest{
+		Messages: []Message{{Role: "user", Parts: []ContentPart{
+			{Kind: ContentPartText, Text: "what is this?"},
+			{Kind: ContentPartImage, ImageBase64: "aGVsbG8=", MediaType: "image/png"},
+		}}},
+	}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(got.Contents) != 1 || len(got.Contents[0].Parts) != 2 {
+		t.Fatalf("contents = %+v, want 1 content with 2 parts", got.Contents)
+	}
+	img := got.Contents[0].Parts[1].InlineData
+	if img == nil || img.MimeType != "image/png" || img.Data != "aGVsbG8=" {
+		t.Fatalf("inlineData = %+v, want image/png + base64 data", img)
+	}
+}
+
+// TestNativeOAuth_URLImageFailsClosed proves a URL-only image (inexpressible as
+// Gemini inlineData) is rejected with the typed error and NO request is sent.
+//
+// Mutation E4-M5: silently skip the inexpressible image part instead of
+// returning the typed error → Execute proceeds and the upstream is called → RED.
+// (The prompt's "drop tools silently" maps here to the image half of "silently
+// dropping a tool definition OR an image is a rejectable defect"; native-OAuth
+// DOES express tools via functionDeclarations, so the inexpressible feature
+// tested is the URL image — see the report's ambiguity note.)
+func TestNativeOAuth_URLImageFailsClosed(t *testing.T) {
+	srv, count := nativeOAuthCountingServer(t)
+	transport := NewNativeOAuthTransport(&http.Client{}, 5*time.Second)
+
+	_, err := transport.Execute(context.Background(), newNativeOAuthTestRoute(srv.URL), NormalizedRequest{
+		Messages: []Message{{Role: "user", Parts: []ContentPart{{Kind: ContentPartImage, ImageURL: "https://example.com/cat.png"}}}},
+	})
+	if !errors.Is(err, ErrRequestFeatureUnsupported) {
+		t.Fatalf("Execute() error = %v, want ErrRequestFeatureUnsupported", err)
+	}
+	if atomic.LoadInt64(count) != 0 {
+		t.Fatalf("upstream received %d requests, want 0", atomic.LoadInt64(count))
+	}
+}
+
+// TestNativeOAuth_ToolChoiceFailsClosed proves a tool_choice directive, which
+// has no faithful Gemini mapping, is rejected with the typed error and no call.
+func TestNativeOAuth_ToolChoiceFailsClosed(t *testing.T) {
+	srv, count := nativeOAuthCountingServer(t)
+	transport := NewNativeOAuthTransport(&http.Client{}, 5*time.Second)
+
+	_, err := transport.Execute(context.Background(), newNativeOAuthTestRoute(srv.URL), NormalizedRequest{
+		Messages:   []Message{{Role: "user", Content: "hi"}},
+		ToolChoice: "required",
+	})
+	if !errors.Is(err, ErrRequestFeatureUnsupported) {
+		t.Fatalf("Execute() error = %v, want ErrRequestFeatureUnsupported", err)
+	}
+	if atomic.LoadInt64(count) != 0 {
+		t.Fatalf("upstream received %d requests, want 0", atomic.LoadInt64(count))
+	}
 }
