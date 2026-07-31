@@ -111,3 +111,19 @@ func TestAcquireLock_StaleLockRecovered(t *testing.T) {
 		t.Fatalf("lock file pid = %d, want %d (own pid, overwriting the stale one)", gotPID, os.Getpid())
 	}
 }
+
+func TestAcquireLock_SeparateDataDirsDoNotCollide(t *testing.T) {
+	t.Setenv("VENOM_DATA_DIR", filepath.Join(t.TempDir(), "a"))
+	l1, err := AcquireLock()
+	if err != nil {
+		t.Fatalf("first AcquireLock() error = %v", err)
+	}
+	defer func() { _ = l1.Release() }()
+
+	t.Setenv("VENOM_DATA_DIR", filepath.Join(t.TempDir(), "b"))
+	l2, err := AcquireLock()
+	if err != nil {
+		t.Fatalf("AcquireLock() in a second data dir error = %v, want success (dev backend isolation)", err)
+	}
+	defer func() { _ = l2.Release() }()
+}

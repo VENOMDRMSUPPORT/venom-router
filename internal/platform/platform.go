@@ -31,16 +31,33 @@ var ErrLocked = errors.New("platform: file is already locked")
 // by OS convention — no custom ACL manipulation is applied here.
 const dirPerm = 0o700
 
-// EnsureDataDir resolves the OS-specific application data directory (via
-// the platform-specific DataDir) and creates it, and any missing parents,
-// if it does not already exist. Creation is idempotent.
+// EnsureDataDir resolves the application data directory and creates it, and
+// any missing parents, if it does not already exist. Creation is idempotent.
+//
+// Resolution order: the VENOM_DATA_DIR environment variable when set and
+// non-empty (a dev/ops override — the tray's Development section uses it to
+// give the supervised dev backend a fully isolated lock/DB/keyring), then the
+// OS-specific DataDir default.
 func EnsureDataDir() (string, error) {
-	dir, err := DataDir()
-	if err != nil {
-		return "", err
+	dir, ok := os.LookupEnv("VENOM_DATA_DIR")
+	if !ok || dir == "" {
+		var err error
+		dir, err = DataDir()
+		if err != nil {
+			return "", err
+		}
 	}
 	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return "", fmt.Errorf("platform: create data dir %q: %w", dir, err)
 	}
 	return dir, nil
+}
+
+// DevRoot returns the VENOM_DEV_ROOT override for the tray's Development
+// section, or "" when unset or empty. The env read lives here because
+// forbidigo confines os.Getenv/os.LookupEnv to internal/config and
+// internal/platform.
+func DevRoot() string {
+	v, _ := os.LookupEnv("VENOM_DEV_ROOT")
+	return v
 }
