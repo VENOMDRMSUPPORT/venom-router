@@ -238,7 +238,7 @@ func (s *DevSupervisor) frontendSpec() ProcessSpec {
 	return ProcessSpec{
 		Dir:      filepath.Join(s.root, "dashboard"),
 		Name:     "cmd",
-		Args:     []string{"/c", "npm", "run", "dev", "--", "--port", "5173", "--strictPort"},
+		Args:     []string{"/c", "npm", "run", "dev", "--", "--port", "5173", "--strictPort", "--host", "127.0.0.1"},
 		ExtraEnv: []string{devAPITarget},
 	}
 }

@@ -110,7 +110,9 @@ func TestDevSupervisor_StartSpawnsBothComponentsWithApprovedSpecs(t *testing.T) 
 	if fe.Name != "cmd" {
 		t.Errorf("frontend command = %q, want cmd (npm runs through cmd /c on Windows)", fe.Name)
 	}
-	wantArgs := []string{"/c", "npm", "run", "dev", "--", "--port", "5173", "--strictPort"}
+	// --host 127.0.0.1 pins vite to the IPv4 loopback the health probe and
+	// dashboard URL use (Node otherwise resolves localhost to ::1 only).
+	wantArgs := []string{"/c", "npm", "run", "dev", "--", "--port", "5173", "--strictPort", "--host", "127.0.0.1"}
 	if strings.Join(fe.Args, " ") != strings.Join(wantArgs, " ") {
 		t.Errorf("frontend args = %v, want %v", fe.Args, wantArgs)
 	}
