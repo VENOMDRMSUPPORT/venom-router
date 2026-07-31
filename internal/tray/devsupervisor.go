@@ -187,19 +187,43 @@ func NewDevSupervisor(opts DevSupervisorOptions) *DevSupervisor {
 	return s
 }
 
-// ResolveDevRoot returns the repo root the Development section controls:
-// platform.DevRoot() when set, else the current working directory when it
-// holds both go.mod and dashboard/package.json, else "" (unavailable).
+// ResolveDevRoot returns the repo root the Development section controls.
+// Resolution order (see resolveDevRoot): the VENOM_DEV_ROOT override, then
+// the first of {cwd, exe dir, parent of exe dir} holding both go.mod and
+// dashboard/package.json — the parent covers the shipped layout
+// <repo>\dist\venom.exe, so a double-clicked bundle finds its repo without
+// any env var or repo cwd. "" means unavailable.
 func ResolveDevRoot() string {
-	if root := platform.DevRoot(); root != "" {
-		return root
-	}
-	wd, err := os.Getwd()
+	cwd, err := os.Getwd()
 	if err != nil {
-		return ""
+		cwd = ""
 	}
-	if fileExists(filepath.Join(wd, "go.mod")) && fileExists(filepath.Join(wd, "dashboard", "package.json")) {
-		return wd
+	exeDir := ""
+	if exe, err := os.Executable(); err == nil {
+		exeDir = filepath.Dir(exe)
+	}
+	return resolveDevRoot(platform.DevRoot(), cwd, exeDir)
+}
+
+// resolveDevRoot is the pure core of ResolveDevRoot. envRoot, when non-empty,
+// wins as-is with NO marker check — an explicit override is trusted. The
+// remaining candidates are tried in order and must contain BOTH repo markers;
+// empty candidates (e.g. exeDir when os.Executable failed) are skipped.
+func resolveDevRoot(envRoot, cwd, exeDir string) string {
+	if envRoot != "" {
+		return envRoot
+	}
+	candidates := []string{cwd, exeDir}
+	if exeDir != "" {
+		candidates = append(candidates, filepath.Dir(exeDir))
+	}
+	for _, dir := range candidates {
+		if dir == "" {
+			continue
+		}
+		if fileExists(filepath.Join(dir, "go.mod")) && fileExists(filepath.Join(dir, "dashboard", "package.json")) {
+			return dir
+		}
 	}
 	return ""
 }

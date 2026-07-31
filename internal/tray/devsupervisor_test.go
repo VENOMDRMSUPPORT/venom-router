@@ -3,6 +3,7 @@ package tray
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -90,6 +91,53 @@ func eventually(t *testing.T, cond func() bool, msg string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal(msg)
+}
+
+// writeDevRootMarkers stamps dir with both repo markers the resolver checks:
+// go.mod and dashboard/package.json.
+func writeDevRootMarkers(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "dashboard"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{filepath.Join(dir, "go.mod"), filepath.Join(dir, "dashboard", "package.json")} {
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestResolveDevRoot_Pure pins the resolution order of the pure core:
+// env override (as-is, no marker check) > cwd > exeDir > parent(exeDir),
+// where the last three must contain BOTH go.mod and dashboard/package.json.
+// parent(exeDir) is the shipped layout: <repo>\dist\venom.exe double-clicked.
+func TestResolveDevRoot_Pure(t *testing.T) {
+	repo := t.TempDir()
+	writeDevRootMarkers(t, repo)
+	dist := filepath.Join(repo, "dist") // exeDir in the shipped layout; no markers itself
+	if err := os.MkdirAll(dist, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	noRepo := t.TempDir() // valid directory, no markers
+
+	cases := []struct {
+		name                 string
+		envRoot, cwd, exeDir string
+		want                 string
+	}{
+		{"env wins even over a valid cwd, no marker check", filepath.Join("C:", "explicit"), repo, dist, filepath.Join("C:", "explicit")},
+		{"cwd wins when it has both markers", "", repo, dist, repo},
+		{"exeDir used when cwd lacks markers", "", noRepo, repo, repo},
+		{"parent of exeDir covers repo\\dist\\venom.exe", "", noRepo, dist, repo},
+		{"empty when nothing qualifies", "", noRepo, filepath.Join(noRepo, "dist"), ""},
+		{"empty candidates are skipped", "", "", "", ""},
+	}
+	for _, tc := range cases {
+		if got := resolveDevRoot(tc.envRoot, tc.cwd, tc.exeDir); got != tc.want {
+			t.Errorf("%s: resolveDevRoot(%q, %q, %q) = %q, want %q",
+				tc.name, tc.envRoot, tc.cwd, tc.exeDir, got, tc.want)
+		}
+	}
 }
 
 func TestDevSupervisor_StartSpawnsBothComponentsWithApprovedSpecs(t *testing.T) {

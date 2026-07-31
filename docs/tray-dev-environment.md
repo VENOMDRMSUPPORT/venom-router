@@ -39,18 +39,28 @@ The Development section needs the repo root to run `npm run dev` (in
 `<root>/dashboard`) and `go run ./cmd/venom` (in `<root>`). Resolution order
 (`ResolveDevRoot` in `internal/tray/devsupervisor.go`):
 
-1. The `VENOM_DEV_ROOT` environment variable, when set and non-empty.
-2. Otherwise the tray process's current working directory, if it contains both
-   `go.mod` and `dashboard/package.json`.
+1. The `VENOM_DEV_ROOT` environment variable, when set and non-empty
+   (an explicit override — taken as-is, no marker check).
+2. Otherwise the first of the following directories containing both `go.mod`
+   and `dashboard/package.json`:
+   1. the tray process's current working directory;
+   2. the directory holding `venom.exe` itself;
+   3. that directory's parent — this covers the shipped layout
+      `<repo>\dist\venom.exe`, so a double-clicked bundle finds its repo
+      automatically.
 3. Otherwise the section is disabled and the menu shows
    `Dev Status: unavailable`.
 
-A double-clicked or autostarted `venom.exe` does not start in the repo, so set
-the override once (new processes pick it up after a re-login or new shell):
+Because of step 2, `VENOM_DEV_ROOT` is now **optional**: it is only needed
+when the exe lives outside the repo (and its parent). To set it once (new
+processes pick it up after a re-login or new shell):
 
 ```
 setx VENOM_DEV_ROOT "C:\Users\hamee\Desktop\venom-router"
 ```
+
+The tray logs the resolved value at boot as `tray: dev root` in
+`%LOCALAPPDATA%\venom-router\logs\venom.log`.
 
 ## Isolation: dev state never touches production state
 

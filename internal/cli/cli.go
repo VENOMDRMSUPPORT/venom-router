@@ -195,13 +195,18 @@ func runTrayLoop(parent context.Context, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("cli: resolve data dir: %w", err)
 	}
+	devRoot := tray.ResolveDevRoot()
 	dev := tray.NewDevSupervisor(tray.DevSupervisorOptions{
-		Root:    tray.ResolveDevRoot(),
+		Root:    devRoot,
 		DataDir: dataDir,
 		Runner:  tray.NewProcessRunner(),
 		Probe:   tray.DefaultHealthProbe,
 		Logger:  logger,
 	})
+	if devRoot == "" {
+		devRoot = "unavailable"
+	}
+	logger.Info("tray: dev root", observability.String("root", devRoot))
 
 	if err := lc.Boot(ctx); err != nil {
 		// Bare tray mode has no console: a double-click user whose boot
