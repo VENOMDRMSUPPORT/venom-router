@@ -198,6 +198,11 @@ func (h *ChatCompletionsHandler) ServeChat(w http.ResponseWriter, r *http.Reques
 	}
 
 	requestID := h.newID()
+	// Stamp the request id as soon as it exists, BEFORE anything can fail. Every
+	// later error response reuses it (writePublicErrorRetryable reads it back), so
+	// the request_id a client sees on a failure is the SAME id written to
+	// usage_records / route_decisions / route_attempts and is therefore findable.
+	stampRequestID(w.Header(), requestID)
 	apiKeyID := apiKeyIDPtr(r.Context())
 
 	h.run(w, r, runParams{

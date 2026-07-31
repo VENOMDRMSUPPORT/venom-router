@@ -204,7 +204,16 @@ func writePublicError(w http.ResponseWriter, status int, code, message string) {
 // routing path passes RoutingErrorEnvelope.Retryable so a routing code's
 // retryability is authoritative, never re-derived.
 func writePublicErrorRetryable(w http.ResponseWriter, status int, code, message string, retryable bool) {
-	requestID := newRequestID()
+	// REUSE the id this request already carries when the handler has stamped one.
+	// Minting a fresh id here would make every failure's request_id unfindable:
+	// the value the client reports would match no usage_records / route_decisions
+	// / route_attempts row, defeating the entire point of returning it (05 §5).
+	// Only a failure that happens BEFORE the request id exists (a malformed body,
+	// an unknown model, an unauthenticated key) mints one.
+	requestID := requestIDFromHeader(w.Header())
+	if requestID == "" {
+		requestID = newRequestID()
+	}
 	stampRequestID(w.Header(), requestID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

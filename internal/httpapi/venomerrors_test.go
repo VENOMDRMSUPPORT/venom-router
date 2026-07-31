@@ -219,3 +219,58 @@ func TestChat_IdempotencyKeyNotHonored(t *testing.T) {
 		t.Fatalf("usage_records = %d, want 2 — both requests record usage", n)
 	}
 }
+
+// TestPublicEnvelope_RequestIDCorrelatesWithRecords is the governor-review
+// addition that makes request_id actually useful. The delivered code minted a
+// FRESH id inside writePublicError, so on a failure the id in the body (and in
+// X-Venom-Request-Id) matched NO row in usage_records / route_decisions /
+// route_attempts — a client quoting it could never be traced, which is the whole
+// reason 05 §5 puts it in the envelope. The prior test only compared the body id
+// against the header id, and both came from the same fresh mint, so it passed.
+//
+// Mutation: mint a new id in writePublicErrorRetryable instead of reusing the
+// stamped one → the id stops matching the recorded rows → RED.
+func TestPublicEnvelope_RequestIDCorrelatesWithRecords(t *testing.T) {
+	// An upstream that always fails, so the request takes a terminal FAILURE path
+	// (the path whose request_id most needs to be traceable).
+	_, srv := newUpstream(t, func(w http.ResponseWriter, _ []byte) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"upstream down"}}`))
+	})
+	db, kr := e2eEnv(t, srv.URL)
+	seedCredentialedOffering(t, db, kr, "acct-1", "model-a", "m-a")
+	h := newE2EHandler(t, db, kr, srv.URL, nil)
+
+	rec := postChat(t, h, `{"model":"venom/pro","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("expected a failure status, got 200")
+	}
+
+	env := decodePublicError(t, rec.Body.Bytes())
+	if env.RequestID == "" {
+		t.Fatalf("failure envelope carries no request_id")
+	}
+	if got := rec.Result().Header.Get("X-Venom-Request-Id"); got != env.RequestID {
+		t.Fatalf("header request id %q != body request_id %q", got, env.RequestID)
+	}
+
+	// THE POINT: that id must be findable in what the request actually recorded.
+	var usage int
+	if err := db.Conn().QueryRow(
+		`SELECT COUNT(*) FROM usage_records WHERE request_id = ?`, env.RequestID,
+	).Scan(&usage); err != nil {
+		t.Fatalf("query usage: %v", err)
+	}
+	if usage != 1 {
+		t.Fatalf("usage_records rows for request_id %q = %d, want 1 — the id a client is told must resolve to the rows the request wrote", env.RequestID, usage)
+	}
+	var decisions int
+	if err := db.Conn().QueryRow(
+		`SELECT COUNT(*) FROM route_decisions WHERE request_id = ?`, env.RequestID,
+	).Scan(&decisions); err != nil {
+		t.Fatalf("query decisions: %v", err)
+	}
+	if decisions != 1 {
+		t.Fatalf("route_decisions rows for request_id %q = %d, want 1", env.RequestID, decisions)
+	}
+}

@@ -84,6 +84,17 @@ func stampRequestID(h http.Header, id string) {
 	setSanitized(h, "X-Venom-Request-Id", id)
 }
 
+// requestIDFromHeader reads back an already-stamped X-Venom-Request-Id, so an
+// error writer can REUSE the id the handler minted for this request instead of
+// inventing a second one. That reuse is what makes the id in an error body
+// findable in usage_records / route_decisions / route_attempts: a support request
+// quoting it must resolve to the rows the request actually wrote. Keeping the
+// read here (rather than in the error writer) keeps the header literal confined
+// to this file, satisfying the single-builder repo-shape guard.
+func requestIDFromHeader(h http.Header) string {
+	return h.Get("X-Venom-Request-Id")
+}
+
 // setSanitized writes a header only when the value is non-empty, passing it
 // through sanitize.Text first. An empty value is an UNKNOWN dimension and its
 // header is omitted rather than emitted blank.
