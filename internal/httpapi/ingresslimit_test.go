@@ -110,8 +110,13 @@ func TestIngress_EnvelopePerSurface(t *testing.T) {
 	if pubBody["error"]["code"] != publicErrRateLimited {
 		t.Fatalf("public envelope code = %v, want %s", pubBody["error"]["code"], publicErrRateLimited)
 	}
-	if _, hasRequestID := pubBody["error"]["request_id"]; hasRequestID {
-		t.Fatalf("public shape must NOT carry the control envelope's request_id bookkeeping")
+	// The public envelope carries request_id (P5-PAPI-006), correlating with the
+	// X-Venom-Request-Id header. rate_limited is retryable.
+	if rid, _ := pubBody["error"]["request_id"].(string); rid == "" || rid != pub.Header().Get("X-Venom-Request-Id") {
+		t.Fatalf("public request_id must be present and equal X-Venom-Request-Id: body=%v header=%q", pubBody["error"]["request_id"], pub.Header().Get("X-Venom-Request-Id"))
+	}
+	if pubBody["error"]["retryable"] != true {
+		t.Fatalf("rate_limited must be retryable, got %v", pubBody["error"]["retryable"])
 	}
 
 	// Control surface.

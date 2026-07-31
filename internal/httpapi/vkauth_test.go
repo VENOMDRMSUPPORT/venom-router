@@ -111,8 +111,16 @@ func TestVKAuth_RejectsBadKeys(t *testing.T) {
 }
 
 // TestVKAuth_UnknownVsRevokedNoOracle proves the 401 for an unknown key is
-// byte-identical (status AND body) to the 401 for a revoked key — no
-// enumeration oracle tells them apart.
+// indistinguishable (status AND every error field) from the 401 for a revoked
+// key — no enumeration oracle tells them apart.
+//
+// P5-PAPI-006 added a per-request request_id to the public envelope (05 §5).
+// That id is random and independent of unknown-vs-revoked, so it is NOT an
+// oracle — but it does make the raw bodies differ. The comparison therefore
+// covers status + code + message + retryable (the oracle-relevant fields),
+// requires request_id to be PRESENT in both, and confirms the two ids DIFFER
+// (proving it is a genuine per-request id, not a constant that could itself leak
+// state).
 //
 // Mutation U2-M9: return a different status/body for revoked vs unknown → RED.
 func TestVKAuth_UnknownVsRevokedNoOracle(t *testing.T) {
@@ -128,8 +136,16 @@ func TestVKAuth_UnknownVsRevokedNoOracle(t *testing.T) {
 	if unknownRec.Code != revokedRec.Code {
 		t.Fatalf("status differs: unknown=%d revoked=%d (enumeration oracle)", unknownRec.Code, revokedRec.Code)
 	}
-	if unknownRec.Body.String() != revokedRec.Body.String() {
-		t.Fatalf("body differs:\n unknown=%q\n revoked=%q\n(enumeration oracle)", unknownRec.Body.String(), revokedRec.Body.String())
+	u := decodePublicError(t, unknownRec.Body.Bytes())
+	r := decodePublicError(t, revokedRec.Body.Bytes())
+	if u.Code != r.Code || u.Message != r.Message || u.Retryable != r.Retryable {
+		t.Fatalf("oracle-relevant fields differ:\n unknown=%+v\n revoked=%+v", u, r)
+	}
+	if u.RequestID == "" || r.RequestID == "" {
+		t.Fatalf("both errors must carry a request_id (05 §5): unknown=%q revoked=%q", u.RequestID, r.RequestID)
+	}
+	if u.RequestID == r.RequestID {
+		t.Fatalf("request_id is identical across requests (%q) — it must be per-request", u.RequestID)
 	}
 }
 

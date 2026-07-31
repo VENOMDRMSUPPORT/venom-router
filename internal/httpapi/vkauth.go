@@ -187,17 +187,42 @@ func bearerToken(r *http.Request) (string, bool) {
 	return token, true
 }
 
-// writePublicError writes the minimal public data-plane error shape
-// (01 §6b). It is intentionally a small, self-contained JSON object rather
-// than the control-plane envelope (writeAuthError) — the public plane is
-// OpenAI-compatible and must not leak the control envelope's request_id
-// bookkeeping. The FULL public error envelope (every code, OpenAI parity) is
-// P5-PAPI-006; this unit ships only invalid_api_key / rate_limited. message is
-// always a fixed, caller-supplied string — never the presented key.
+// writePublicError writes the COMPLETE public data-plane error envelope
+// (05 §5, P5-PAPI-006): {"error":{"code","message","request_id","retryable"}}.
+// It always mints a request_id and stamps the SAME value on X-Venom-Request-Id,
+// so the body and header always correlate. retryable is derived from the code
+// via publicRetryable — a definitional per-code property for the fixed
+// auth/limit/validation codes. Routing errors do NOT use this derivation: they
+// go through writePublicErrorRetryable with the RoutingErrorEnvelope's own
+// Retryable (never guessed). message is always a fixed, caller-supplied string —
+// never the presented key or any raw provider text.
 func writePublicError(w http.ResponseWriter, status int, code, message string) {
+	writePublicErrorRetryable(w, status, code, message, publicRetryable(code))
+}
+
+// writePublicErrorRetryable is writePublicError with an EXPLICIT retryable — the
+// routing path passes RoutingErrorEnvelope.Retryable so a routing code's
+// retryability is authoritative, never re-derived.
+func writePublicErrorRetryable(w http.ResponseWriter, status int, code, message string, retryable bool) {
+	requestID := newRequestID()
+	stampRequestID(w.Header(), requestID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error": map[string]any{"code": code, "message": message},
+		"error": map[string]any{
+			"code":       code,
+			"message":    message,
+			"request_id": requestID,
+			"retryable":  retryable,
+		},
 	})
+}
+
+// publicRetryable is the definitional retryability of a fixed public error code
+// (05 §5): only the transient back-pressure code rate_limited is retryable; an
+// invalid key, an invalid request, an invalid extension, a method/path error,
+// and an internal error are not. Routing codes carry their own Retryable and
+// never reach this table (see writePublicErrorRetryable).
+func publicRetryable(code string) bool {
+	return code == publicErrRateLimited
 }

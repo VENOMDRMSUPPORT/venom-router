@@ -136,6 +136,14 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 }
 
 // ServeChat is the handler entrypoint.
+//
+// Idempotency boundary (P5-PAPI-006): unlike the control plane's mutations,
+// /v1/chat/completions deliberately does NOT honor an Idempotency-Key. Inference
+// is not replay-idempotent — usage is recorded per terminal path, so replaying a
+// completion would double-bill or resurrect a stale response. The header is
+// ignored (never read), so two identical requests with the same key both
+// execute and both record usage. Making the choice explicit here keeps it a
+// decision rather than an accident.
 func (h *ChatCompletionsHandler) ServeChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writePublicError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
@@ -540,7 +548,8 @@ func (h *ChatCompletionsHandler) writePublicRoutingError(w http.ResponseWriter, 
 	if env.RetryAfter != nil {
 		w.Header().Set("Retry-After", strconv.Itoa(*env.RetryAfter))
 	}
-	writePublicError(w, env.HTTPStatus, env.Code, env.Message)
+	// Retryable comes from the routing envelope, never re-derived from the code.
+	writePublicErrorRetryable(w, env.HTTPStatus, env.Code, env.Message, env.Retryable)
 	return true
 }
 

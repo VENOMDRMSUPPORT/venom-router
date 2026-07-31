@@ -77,6 +77,13 @@ func writeVenomHeaders(h http.Header, t venomTelemetry) {
 	h.Set("X-Venom-Version", venomVersion)
 }
 
+// stampRequestID writes X-Venom-Request-Id through the single builder, so an
+// error response can carry (and correlate) a request id without any other file
+// naming the header literal — the repo-shape guard stays satisfied.
+func stampRequestID(h http.Header, id string) {
+	setSanitized(h, "X-Venom-Request-Id", id)
+}
+
 // setSanitized writes a header only when the value is non-empty, passing it
 // through sanitize.Text first. An empty value is an UNKNOWN dimension and its
 // header is omitted rather than emitted blank.
