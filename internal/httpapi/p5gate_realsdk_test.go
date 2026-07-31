@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
 )
 
 // P5-TEST-001 real-SDK opt-in harness. CI stays CREDENTIAL-FREE: with neither
@@ -17,36 +18,28 @@ import (
 // dated procedure is docs/evidence/P5-TEST-001-real-sdk-runbook.md. This harness
 // uses a plain net/http client (no `openai` dependency may be added, GOVERNOR
 // DECISION), which is exactly what a real SDK does on the wire.
-const (
-	envRealSDKBaseURL = "VENOM_E2E_REAL_SDK_BASE_URL" // e.g. http://127.0.0.1:8081
-	envRealSDKKey     = "VENOM_E2E_REAL_SDK_KEY"      // a vk_live_* key from POST /keys
-)
-
 // realSDKConfig reports the opt-in configuration and whether BOTH values are
 // present. ok=false is the CI default and makes the harness skip.
 //
-// It scans os.Environ rather than calling os.Getenv/os.LookupEnv: forbidigo
-// forbids those two outside internal/config and internal/platform, and this
-// opt-in test harness cannot add a platform accessor within its own file set.
-// os.Environ carries no such restriction and yields the same values.
+// The env read lives in internal/platform (RealSDKE2EConfig), the ONE place
+// forbidigo permits it, exactly as P2b-TEST-003's real-account harness does via
+// platform.OpenCodeZenE2ECredential. An earlier revision scanned os.Environ()
+// from this file instead: that returns the same values while stepping around an
+// intact lint rule rather than honoring it, so it was replaced with the narrow
+// accessor the rule intends.
 func realSDKConfig() (baseURL, key string, ok bool) {
-	for _, kv := range os.Environ() {
-		if v, found := strings.CutPrefix(kv, envRealSDKBaseURL+"="); found {
-			baseURL = strings.TrimSpace(v)
-		}
-		if v, found := strings.CutPrefix(kv, envRealSDKKey+"="); found {
-			key = strings.TrimSpace(v)
-		}
-	}
-	return baseURL, key, baseURL != "" && key != ""
+	return platform.RealSDKE2EConfig()
 }
 
 // TestP5Gate_RealSDKHarnessSkipsWithoutEnv proves the opt-in harness is inert in
 // CI: with the env vars cleared, realSDKConfig reports ok=false, so
 // TestP5Gate_RealSDK_OptIn skips and no credential is ever required.
 func TestP5Gate_RealSDKHarnessSkipsWithoutEnv(t *testing.T) {
-	t.Setenv(envRealSDKBaseURL, "")
-	t.Setenv(envRealSDKKey, "")
+	// The variable NAMES are owned by internal/platform; clearing them here by
+	// their literal wire names keeps this test independent of that package's
+	// unexported constants while still proving the harness is inert.
+	t.Setenv("VENOM_E2E_REAL_SDK_BASE_URL", "")
+	t.Setenv("VENOM_E2E_REAL_SDK_KEY", "")
 	if _, _, ok := realSDKConfig(); ok {
 		t.Fatalf("realSDKConfig must report ok=false with no env set — CI must stay credential-free")
 	}
@@ -58,7 +51,7 @@ func TestP5Gate_RealSDKHarnessSkipsWithoutEnv(t *testing.T) {
 func TestP5Gate_RealSDK_OptIn(t *testing.T) {
 	baseURL, key, ok := realSDKConfig()
 	if !ok {
-		t.Skipf("opt-in: set %s and %s to run against a live Venom (see docs/evidence/P5-TEST-001-real-sdk-runbook.md)", envRealSDKBaseURL, envRealSDKKey)
+		t.Skipf("opt-in: set %s and %s to run against a live Venom (see docs/evidence/P5-TEST-001-real-sdk-runbook.md)", "VENOM_E2E_REAL_SDK_BASE_URL", "VENOM_E2E_REAL_SDK_KEY")
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
