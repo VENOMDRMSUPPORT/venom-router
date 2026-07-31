@@ -191,6 +191,18 @@ func runTrayLoop(parent context.Context, stdout io.Writer) error {
 		LogPath:         logPath,
 	})
 
+	dataDir, err := platform.EnsureDataDir()
+	if err != nil {
+		return fmt.Errorf("cli: resolve data dir: %w", err)
+	}
+	dev := tray.NewDevSupervisor(tray.DevSupervisorOptions{
+		Root:    tray.ResolveDevRoot(),
+		DataDir: dataDir,
+		Runner:  tray.NewProcessRunner(),
+		Probe:   tray.DefaultHealthProbe,
+		Logger:  logger,
+	})
+
 	if err := lc.Boot(ctx); err != nil {
 		return fmt.Errorf("cli: boot: %w", err)
 	}
@@ -204,7 +216,7 @@ func runTrayLoop(parent context.Context, stdout io.Writer) error {
 		ctrl.ShutdownAndExit()
 	}()
 
-	if err := tray.RunNativeUI(ctx, cancel, ctrl); err != nil {
+	if err := tray.RunNativeUI(ctx, cancel, ctrl, dev); err != nil {
 		return err
 	}
 	// Termination is owned by the ctx.Done() watcher above (watchdog-first

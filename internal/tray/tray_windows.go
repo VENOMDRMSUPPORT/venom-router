@@ -25,7 +25,7 @@ func (winOpener) Open(target string) error { return shellOpen(target) }
 // that calls Controller.ShutdownAndExit. This function locks the OS thread,
 // captures its id for WM_QUIT, installs the UIStop hook, hides the console when
 // solely owned, and blocks in systray.Run until Quit/onExit cancel ctx.
-func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller) error {
+func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller, dev *DevSupervisor) error {
 	runtime.LockOSThread()
 	tid := windows.GetCurrentThreadId()
 	c.SetUIStop(func() {
@@ -39,30 +39,49 @@ func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller) 
 		systray.SetTitle("Venom Router")
 		systray.SetTooltip("Venom Router")
 
-		mStatus := systray.AddMenuItem("Status: starting…", "")
+		mOpenProd := systray.AddMenuItem("Open Production Dashboard", "Open the production dashboard in your browser")
+		mStatus := systray.AddMenuItem(statusTitle(c.Status()), "")
 		mStatus.Disable()
+		mStartProd := systray.AddMenuItem("Start Production", "Start the production server")
+		mStopProd := systray.AddMenuItem("Stop Production", "Stop the production server without exiting")
+		mRestartProd := systray.AddMenuItem("Restart Production", "Restart the production server")
 		systray.AddSeparator()
-		mOpen := systray.AddMenuItem("Open Dashboard", "Open the dashboard in your browser")
-		mStart := systray.AddMenuItem("Start", "Start the server")
-		mStop := systray.AddMenuItem("Stop", "Stop the server without exiting")
-		mRestart := systray.AddMenuItem("Restart", "Restart the server")
+		mOpenDev := systray.AddMenuItem("Open Development Dashboard", "Open the vite dev server in your browser")
+		mDevStatus := systray.AddMenuItem(dev.StatusLine(), "")
+		mDevStatus.Disable()
+		mStartDev := systray.AddMenuItem("Start Development", "Start the dev frontend (vite) and dev backend")
+		mStopDev := systray.AddMenuItem("Stop Development", "Stop the dev frontend and backend")
+		mRestartDev := systray.AddMenuItem("Restart Development", "Restart the dev frontend and backend")
+		systray.AddSeparator()
 		mLogs := systray.AddMenuItem("View Logs", "Open the log file")
 		mAutostart := systray.AddMenuItemCheckbox("Start with Windows", "Launch Venom Router automatically when you sign in", autostartEnabled())
 		systray.AddSeparator()
 		mQuit := systray.AddMenuItem("Quit", "Stop the server and exit")
 
-		// Reflects the current state onto Start/Stop's enabled-ness so the menu
-		// never offers a Start while already Running or a Stop while not.
-		syncStartStopEnabled := func() {
-			if c.Status().State == StateRunning {
-				mStop.Enable()
-				mStart.Disable()
-				return
+		apply := func(items [4]*systray.MenuItem, e menuEnablement) {
+			set := func(m *systray.MenuItem, on bool) {
+				if on {
+					m.Enable()
+					return
+				}
+				m.Disable()
 			}
-			mStart.Enable()
-			mStop.Disable()
+			set(items[0], e.Open)
+			set(items[1], e.Start)
+			set(items[2], e.Stop)
+			set(items[3], e.Restart)
 		}
-		syncStartStopEnabled()
+		prodItems := [4]*systray.MenuItem{mOpenProd, mStartProd, mStopProd, mRestartProd}
+		devItems := [4]*systray.MenuItem{mOpenDev, mStartDev, mStopDev, mRestartDev}
+
+		syncMenu := func() {
+			apply(prodItems, prodEnablement(c.Status().State))
+			apply(devItems, devEnablement(dev.Available(), dev.Status()))
+			mStatus.SetTitle(statusTitle(c.Status()))
+			mDevStatus.SetTitle(dev.StatusLine())
+			systray.SetTooltip(statusTitle(c.Status()))
+		}
+		syncMenu()
 
 		go func() {
 			ticker := time.NewTicker(2 * time.Second)
@@ -71,42 +90,33 @@ func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller) 
 				select {
 				case <-ctx.Done():
 					return
-				case <-mOpen.ClickedCh:
+				case <-mOpenProd.ClickedCh:
 					c.OpenDashboard()
-				case <-mStart.ClickedCh:
+				case <-mStartProd.ClickedCh:
 					go c.Start(ctx) // don't block the UI goroutine
-				case <-mStop.ClickedCh:
-					go c.Stop() // don't block the UI goroutine
-				case <-mRestart.ClickedCh:
-					go c.Restart(ctx) // don't block the UI goroutine
+				case <-mStopProd.ClickedCh:
+					go c.Stop()
+				case <-mRestartProd.ClickedCh:
+					go c.Restart(ctx)
+				case <-mOpenDev.ClickedCh:
+					c.OpenURL(dev.DashboardURL())
+				case <-mStartDev.ClickedCh:
+					go dev.Start()
+				case <-mStopDev.ClickedCh:
+					go dev.Stop()
+				case <-mRestartDev.ClickedCh:
+					go dev.Restart()
 				case <-mLogs.ClickedCh:
 					c.OpenLogs()
 				case <-mAutostart.ClickedCh:
-					go func() {
-						var err error
-						if mAutostart.Checked() {
-							err = disableAutostart()
-						} else {
-							err = enableAutostart()
-						}
-						if err != nil {
-							c.log.Error("tray: toggling start-with-Windows failed",
-								observability.String("err", err.Error()))
-						}
-						if autostartEnabled() {
-							mAutostart.Check()
-						} else {
-							mAutostart.Uncheck()
-						}
-					}()
+					go toggleAutostart(c, mAutostart)
 				case <-mQuit.ClickedCh:
 					cancel() // funnel into the single ctx.Done() watcher
 					return
 				case <-ticker.C:
 					c.Refresh(ctx)
-					mStatus.SetTitle(statusTitle(c.Status()))
-					systray.SetTooltip(statusTitle(c.Status()))
-					syncStartStopEnabled()
+					dev.Refresh(ctx)
+					syncMenu()
 				}
 			}
 		}()
@@ -128,13 +138,22 @@ func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller) 
 	return nil
 }
 
-func statusTitle(s StatusView) string {
-	switch s.State {
-	case StateRunning:
-		return "Status: running — " + s.Detail
-	case StateError:
-		return "Status: error (see Logs)"
-	default:
-		return "Status: stopped"
+// toggleAutostart flips the start-with-Windows registration and re-syncs the
+// checkbox from the actual registry state.
+func toggleAutostart(c *Controller, m *systray.MenuItem) {
+	var err error
+	if m.Checked() {
+		err = disableAutostart()
+	} else {
+		err = enableAutostart()
 	}
+	if err != nil {
+		c.log.Error("tray: toggling start-with-Windows failed",
+			observability.String("err", err.Error()))
+	}
+	if autostartEnabled() {
+		m.Check()
+		return
+	}
+	m.Uncheck()
 }

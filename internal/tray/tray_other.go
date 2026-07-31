@@ -10,7 +10,7 @@ import (
 
 // RunNativeUI on non-Windows has no tray: it logs and blocks until ctx is
 // cancelled (headless fallback). The server booted by the caller keeps running.
-func RunNativeUI(ctx context.Context, _ context.CancelFunc, c *Controller) error {
+func RunNativeUI(ctx context.Context, _ context.CancelFunc, c *Controller, _ *DevSupervisor) error {
 	c.log.Info("tray: system tray unavailable on this platform; running headless",
 		observability.String("mode", "headless-fallback"))
 	<-ctx.Done()

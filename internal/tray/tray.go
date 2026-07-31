@@ -162,12 +162,16 @@ func (c *Controller) Refresh(ctx context.Context) {
 	}
 }
 
-// OpenDashboard opens the dashboard URL in the default browser.
-func (c *Controller) OpenDashboard() {
-	if err := c.op.Open(c.lc.DashboardURL()); err != nil {
-		c.log.Error("tray: open dashboard failed", observability.String("err", err.Error()))
+// OpenURL opens an arbitrary URL with the OS opener (used by the menu's
+// dashboard entries).
+func (c *Controller) OpenURL(url string) {
+	if err := c.op.Open(url); err != nil {
+		c.log.Error("tray: open url failed", observability.String("err", err.Error()))
 	}
 }
+
+// OpenDashboard opens the production dashboard URL in the default browser.
+func (c *Controller) OpenDashboard() { c.OpenURL(c.lc.DashboardURL()) }
 
 // OpenLogs opens the append-only log file in the default editor.
 func (c *Controller) OpenLogs() {

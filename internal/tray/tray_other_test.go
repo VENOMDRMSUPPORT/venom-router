@@ -12,7 +12,7 @@ func TestRunNativeUI_Other_BlocksUntilCtxThenReturns(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- RunNativeUI(ctx, cancel, NewController(fakeLC{}, noopOpener{}, Options{Exit: func(int) {}}))
+		done <- RunNativeUI(ctx, cancel, NewController(fakeLC{}, noopOpener{}, Options{Exit: func(int) {}}), NewDevSupervisor(DevSupervisorOptions{}))
 	}()
 	cancel()
 	select {
