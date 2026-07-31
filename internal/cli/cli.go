@@ -204,6 +204,13 @@ func runTrayLoop(parent context.Context, stdout io.Writer) error {
 	})
 
 	if err := lc.Boot(ctx); err != nil {
+		// Bare tray mode has no console: a double-click user whose boot
+		// fails (e.g. a corrupt keyring) would otherwise see NOTHING — the
+		// process dies before the tray icon appears. Surface the failure
+		// visibly (a MessageBox on Windows, no-op elsewhere) before
+		// returning the error. Serve mode intentionally does NOT do this:
+		// it runs in a terminal where the error is already visible.
+		notifyStartupFailure(err.Error())
 		return fmt.Errorf("cli: boot: %w", err)
 	}
 	ctrl.MarkRunning()
@@ -229,6 +236,11 @@ func runTrayLoop(parent context.Context, stdout io.Writer) error {
 // runTrayLoopFn indirects runTrayLoop so tests can assert bare-mode routing
 // without entering the real tray UI / bounded-exit path (mirrors bootFunc).
 var runTrayLoopFn = runTrayLoop
+
+// notifyStartupFailure indirects tray.NotifyStartupFailure (a blocking
+// MessageBox on Windows) so the bare-mode boot-failure test can record
+// the notification instead of popping a real dialog (mirrors bootFunc).
+var notifyStartupFailure = tray.NotifyStartupFailure
 
 // openTrayLog opens <dataDir>/logs/venom.log APPEND-ONLY (never truncated or
 // rotated — owner condition 3 / spec 4.3) and returns a JSON logger over it.

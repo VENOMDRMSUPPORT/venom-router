@@ -346,6 +346,54 @@ func TestDispatch_BareMode_RoutesToTrayNotServe(t *testing.T) {
 	}
 }
 
+// TestDispatch_BareMode_BootFailureNotifiesVisibly pins the owner-facing
+// fix for silent tray death: when bare tray mode's boot fails (e.g. a
+// corrupt production keyring), a double-click user previously saw NOTHING
+// — the process died before the tray icon appeared. runTrayLoop must call
+// the platform notifier (a MessageBox on Windows) with the boot error
+// before returning it.
+//
+// This exercises the REAL runTrayLoop (bare mode routes through
+// runTrayLoopFn, which is not overridden here). The deterministic boot
+// failure is injected by holding the single-instance lock, exactly like
+// TestResetOwner_RefusesWhileServerRunning: ServerAdapter.Boot calls
+// app.Boot directly (NOT this package's bootFunc), and app.Boot fails
+// with ErrAlreadyRunning before any tray UI or listener can start.
+func TestDispatch_BareMode_BootFailureNotifiesVisibly(t *testing.T) {
+	setTestDataDir(t)
+	// runTrayLoop's config.Load(nil) reads the host environment; pin both
+	// keys so the test cannot depend on (or collide with) real VENOM_* env.
+	// Empty VENOM_DATA_PLANE_BIND is treated as unset by config.Load.
+	t.Setenv("VENOM_BIND", freeLoopbackAddr(t))
+	t.Setenv("VENOM_DATA_PLANE_BIND", "")
+
+	lock, err := app.AcquireLock()
+	if err != nil {
+		t.Fatalf("AcquireLock: %v", err)
+	}
+	defer func() { _ = lock.Release() }()
+
+	var recorded []string
+	prevNotify := notifyStartupFailure
+	t.Cleanup(func() { notifyStartupFailure = prevNotify })
+	notifyStartupFailure = func(detail string) { recorded = append(recorded, detail) }
+
+	var stdout, stderr bytes.Buffer
+	err = Dispatch(context.Background(), nil, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("Dispatch(bare) succeeded while the lock was held, want a boot failure")
+	}
+	if !errors.Is(err, app.ErrAlreadyRunning) {
+		t.Fatalf("Dispatch(bare) error = %v, want the boot error (app.ErrAlreadyRunning)", err)
+	}
+	if len(recorded) != 1 {
+		t.Fatalf("notifier called %d times, want exactly 1 (boot-failure path only)", len(recorded))
+	}
+	if !strings.Contains(recorded[0], app.ErrAlreadyRunning.Error()) {
+		t.Fatalf("notified detail = %q, want it to contain the boot error text %q", recorded[0], app.ErrAlreadyRunning.Error())
+	}
+}
+
 // TestDispatch_Serve_EndToEnd_BootsHealthAndShutsDownCleanly is the P0
 // gate's deliverable proof: `venom serve` genuinely boots the real
 // composition root (not the old NoopDrainer stub), a real HTTP client
