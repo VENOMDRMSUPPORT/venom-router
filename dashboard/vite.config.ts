@@ -14,6 +14,16 @@ const apiTarget = process.env.VENOM_DEV_API_TARGET ?? "http://127.0.0.1:8081";
 export default defineConfig({
   plugins: [react()],
   server: {
+    // @venom/design-system is a file:../Design_System dependency, so its
+    // icon CSS (icons.css) references SVGs that live OUTSIDE this package —
+    // vite dev rewrites those urls to /@fs/ absolute-path requests. The
+    // default fs.allow list is the workspace root, and this repo has no npm
+    // workspace at the top level, so vite only allowed dashboard/ and
+    // answered every /@fs/ icon request with 403. Allow the repo root
+    // ("../" from this config's root) so the design-system assets are
+    // servable in dev. Production is unaffected either way: `vite build`
+    // bundles the assets into dist/.
+    fs: { allow: [".."] },
     proxy: {
       "/api": { target: apiTarget, changeOrigin: true },
     },
