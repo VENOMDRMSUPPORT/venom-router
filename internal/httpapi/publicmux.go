@@ -114,5 +114,7 @@ func publicMux(db *storage.DB, kr *secrets.Keyring, reg *providers.Registry, now
 		chat = buildChatCompletionsHandler(db, kr, reg)
 	}
 	registerPublicRoutes(mux, func(h http.Handler) http.Handler { return h }, vk, chat)
-	return mux
+	// Per-path per-IP ingress limiter (P5-PAPI-005, 05 §6): same contract as the
+	// control listener, independent of the per-key RPM vk auth enforces here.
+	return newIngressLimiter(0, 0, nil).Middleware(mux)
 }

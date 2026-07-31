@@ -333,5 +333,9 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	}
 
 	mux.Handle("/", networkGate(allowedHost, spa))
-	return mux
+	// Per-path per-IP ingress limiter (P5-PAPI-005, 05 §6) wraps the WHOLE mux,
+	// so it runs before the network gate, auth, and any handler — an ingress
+	// rejection never reaches the engine or quota. It is independent of the
+	// per-key RPM enforced inside vk auth on /v1/*; a request must satisfy both.
+	return newIngressLimiter(0, 0, nil).Middleware(mux)
 }
