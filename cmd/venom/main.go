@@ -3,6 +3,19 @@
 // dispatch and translates a returned error into a non-zero exit code.
 // All actual behavior — config loading, the composition-root boot,
 // graceful shutdown — lives in internal/cli and internal/app.
+//
+// rsrc_windows_amd64.syso (committed alongside this file) embeds
+// internal/tray/assets/venom.ico as the Windows resource icon, so
+// Explorer shows the Venom icon on venom.exe itself. The Go linker picks
+// it up automatically on windows/amd64 builds; the arch-suffixed name
+// keeps it ignored everywhere else. Whenever the icon changes,
+// regenerate both artifacts from the repo root:
+//
+//	go run ./tools/genicon
+//	go run github.com/akavel/rsrc@v0.10.2 -ico internal/tray/assets/venom.ico -o cmd/venom/rsrc_windows_amd64.syso
+//
+// (go run with a full module@version never touches go.mod — no
+// dependency is added.)
 package main
 
 import (
