@@ -16,7 +16,7 @@ import (
 // Windows desktop affordance; the frontend spec deliberately runs npm through
 // cmd /c. Ports are fixed by the approved design.
 const (
-	devFrontendURL   = "http://127.0.0.1:5173/"
+	devFrontendURL   = "http://127.0.0.1:8088/"
 	devBackendBind   = "127.0.0.1:8082"
 	devBackendHealth = "http://" + devBackendBind + "/health"
 	devAPITarget     = "VENOM_DEV_API_TARGET=http://" + devBackendBind
@@ -238,7 +238,7 @@ func (s *DevSupervisor) frontendSpec() ProcessSpec {
 	return ProcessSpec{
 		Dir:      filepath.Join(s.root, "dashboard"),
 		Name:     "cmd",
-		Args:     []string{"/c", "npm", "run", "dev", "--", "--port", "5173", "--strictPort", "--host", "127.0.0.1"},
+		Args:     []string{"/c", "npm", "run", "dev", "--", "--port", "8088", "--strictPort", "--host", "127.0.0.1"},
 		ExtraEnv: []string{devAPITarget},
 	}
 }

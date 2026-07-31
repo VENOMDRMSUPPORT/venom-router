@@ -112,7 +112,7 @@ func TestDevSupervisor_StartSpawnsBothComponentsWithApprovedSpecs(t *testing.T) 
 	}
 	// --host 127.0.0.1 pins vite to the IPv4 loopback the health probe and
 	// dashboard URL use (Node otherwise resolves localhost to ::1 only).
-	wantArgs := []string{"/c", "npm", "run", "dev", "--", "--port", "5173", "--strictPort", "--host", "127.0.0.1"}
+	wantArgs := []string{"/c", "npm", "run", "dev", "--", "--port", "8088", "--strictPort", "--host", "127.0.0.1"}
 	if strings.Join(fe.Args, " ") != strings.Join(wantArgs, " ") {
 		t.Errorf("frontend args = %v, want %v", fe.Args, wantArgs)
 	}
@@ -220,7 +220,7 @@ func TestDevSupervisor_StopKillsBothAndStaysStopped(t *testing.T) {
 
 // TestDevSupervisor_RefreshNeverResurrectsStoppedOrErrored pins the Starting
 // gate in refreshComponent: a foreign process answering on a dev port (for
-// example another repo's vite already sitting on 5173) must not make a
+// example another repo's vite already sitting on 8088) must not make a
 // component this supervisor did NOT start — or one that crashed — report
 // Running. Only Starting may be promoted by a healthy probe.
 func TestDevSupervisor_RefreshNeverResurrectsStoppedOrErrored(t *testing.T) {
