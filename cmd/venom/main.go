@@ -28,6 +28,11 @@ import (
 )
 
 func main() {
+	// FIRST: in the `-H windowsgui` bundle, re-attach to the parent
+	// terminal's console (when launched from one) so CLI modes still
+	// print. No-op for console builds and for double-click launches.
+	attachParentConsole()
+
 	ctx, stop := app.NotifyContext(context.Background())
 	defer stop()
 

@@ -9,11 +9,21 @@ tasks:
   bundle:
     desc: >
       Build the single double-clickable venom.exe with the dashboard embedded:
-      dashboard:build-embed, then `go build`. Run it and double-click the exe —
-      bare `venom` starts the server + system tray (P6-FND-001).
+      dashboard:build-embed, then `go build -ldflags "-H windowsgui"`. Run it
+      and double-click the exe — bare `venom` starts the server + system tray
+      (P6-FND-001). The GUI subsystem has two consequences: (a) double-click /
+      autostart launch is fully silent — no console and no Windows Terminal
+      window (ShowWindow-based hiding cannot touch WT, the Win11 default
+      console host); (b) CLI modes (serve, version, help, reset-owner) run
+      from a terminal still PRINT via the parent-console attach in
+      cmd/venom/console_windows.go, but the shell prompt does not wait for a
+      GUI-subsystem process — PowerShell users who need blocking should use
+      `Start-Process -Wait` or a console build via plain `go build`. Plain
+      `go build ./cmd/venom` (dev/CI) stays console-subsystem — CI is
+      untouched.
     cmds:
       - task: dashboard:build-embed
-      - go build -o dist/venom.exe ./cmd/venom
+      - go build -ldflags "-H windowsgui" -o dist/venom.exe ./cmd/venom
       - 'echo "built dist/venom.exe — double-click it to start Venom in the tray"'
 
   lint:

@@ -40,6 +40,15 @@ func shouldHideConsole() bool {
 }
 
 // hideConsoleIfOwned hides the console window only when solely owned.
+//
+// LIMITATION: this only helps console-subsystem builds running under the
+// classic conhost. It cannot hide Windows Terminal (the Win11 default
+// console host) — there GetConsoleWindow returns the pseudoconsole's
+// hidden window, not the WT window, so the terminal stays visible for
+// the tray's whole lifetime. That is why the shipped bundle is linked
+// `-H windowsgui` instead (see Taskfile.yml's bundle task and
+// cmd/venom/console_windows.go); this remains as a best-effort cleanup
+// for plain console-subsystem `go build` runs under conhost.
 func hideConsoleIfOwned() {
 	if !shouldHideConsole() {
 		return
