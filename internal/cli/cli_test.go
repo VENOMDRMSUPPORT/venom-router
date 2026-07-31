@@ -354,11 +354,16 @@ func TestDispatch_BareMode_RoutesToTrayNotServe(t *testing.T) {
 // before returning it.
 //
 // This exercises the REAL runTrayLoop (bare mode routes through
-// runTrayLoopFn, which is not overridden here). The deterministic boot
-// failure is injected by holding the single-instance lock, exactly like
+// runTrayLoopFn, which is not overridden here). A boot failure is
+// guaranteed by holding the single-instance lock, exactly like
 // TestResetOwner_RefusesWhileServerRunning: ServerAdapter.Boot calls
-// app.Boot directly (NOT this package's bootFunc), and app.Boot fails
-// with ErrAlreadyRunning before any tray UI or listener can start.
+// app.Boot directly (NOT this package's bootFunc), and app.Boot cannot
+// succeed while the lock is held. The test deliberately does NOT pin
+// WHICH boot failure fires: app.Boot validates embedded dashboard assets
+// BEFORE the lock, so a fresh CI checkout (placeholder .buildmarker only)
+// fails there, while a working tree holding a real dashboard build
+// reaches the lock and fails with ErrAlreadyRunning. The invariant this
+// test's name claims is "a boot failure notifies visibly" — true in both.
 func TestDispatch_BareMode_BootFailureNotifiesVisibly(t *testing.T) {
 	setTestDataDir(t)
 	// runTrayLoop's config.Load(nil) reads the host environment; pin both
@@ -383,14 +388,14 @@ func TestDispatch_BareMode_BootFailureNotifiesVisibly(t *testing.T) {
 	if err == nil {
 		t.Fatal("Dispatch(bare) succeeded while the lock was held, want a boot failure")
 	}
-	if !errors.Is(err, app.ErrAlreadyRunning) {
-		t.Fatalf("Dispatch(bare) error = %v, want the boot error (app.ErrAlreadyRunning)", err)
-	}
 	if len(recorded) != 1 {
 		t.Fatalf("notifier called %d times, want exactly 1 (boot-failure path only)", len(recorded))
 	}
-	if !strings.Contains(recorded[0], app.ErrAlreadyRunning.Error()) {
-		t.Fatalf("notified detail = %q, want it to contain the boot error text %q", recorded[0], app.ErrAlreadyRunning.Error())
+	// The notified detail must be the boot error itself: runTrayLoop wraps
+	// the inner error as "cli: boot: <inner>" and notifies with the inner
+	// text, so the returned error must contain exactly what was notified.
+	if recorded[0] == "" || !strings.Contains(err.Error(), recorded[0]) {
+		t.Fatalf("notified detail = %q, want the boot error text (returned error %q)", recorded[0], err.Error())
 	}
 }
 
