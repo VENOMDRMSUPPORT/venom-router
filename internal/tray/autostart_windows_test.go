@@ -5,9 +5,10 @@ package tray
 import "testing"
 
 // TestAutostart_EnableDisable_RoundTrip points autostartValueName at a
-// throwaway Run-key value name (never the real "VenomRouter") so this test
-// can never clobber the owner's actual autostart entry, and always cleans up
-// via t.Cleanup regardless of pass/fail.
+// throwaway Run-key value name (never the real "venom-router", and never the
+// old install's "VenomRouter") so this test can never clobber the owner's
+// actual autostart entries, and always cleans up via t.Cleanup regardless of
+// pass/fail.
 func TestAutostart_EnableDisable_RoundTrip(t *testing.T) {
 	orig := autostartValueName
 	autostartValueName = "VenomRouterTest"

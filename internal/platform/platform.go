@@ -2,8 +2,13 @@
 // ensures it exists with owner-only permissions, and provides the
 // OS-specific primitives internal/app's single-instance lock is built on.
 //
-// Windows: %LOCALAPPDATA%\VenomRouter.
-// Linux:   $XDG_DATA_HOME/venom-router, falling back to the XDG Base
+// Windows: %LOCALAPPDATA%\venom-router (NOT the old VenomRouter name —
+//
+//	that directory belongs to the owner's separate live install at
+//	G:\Venom-Router and must never be read or written by this project;
+//	see DataDir in platform_windows.go).
+//
+// Linux: $XDG_DATA_HOME/venom-router, falling back to the XDG Base
 //
 //	Directory Specification default $HOME/.local/share/venom-router
 //	when XDG_DATA_HOME is unset or empty. That fallback is the

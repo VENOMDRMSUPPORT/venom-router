@@ -72,7 +72,7 @@ Dependency direction is acyclic and enforced by a test. Suggested Go layout unde
 | `app` | Composition root: startup order, dependency wiring, HTTP mux, graceful shutdown. |
 | `cli` | Command dispatch (`serve`/`version`/`help`/bare→tray), config + data-dir loading. |
 | `config` | Typed config + precedence (defaults → env → flags); default bind `127.0.0.1:8081`. |
-| `platform` | OS-specific paths (`%LOCALAPPDATA%\\VenomRouter`, `$XDG_DATA_HOME/venom-router`). |
+| `platform` | OS-specific paths (`%LOCALAPPDATA%\\venom-router`, `$XDG_DATA_HOME/venom-router`). |
 | `tray` | OS-independent lifecycle manager + Windows systray UI. |
 | `secrets` | AES-256-GCM keyring (stored outside SQLite), encrypt/decrypt with bound AAD, rotation barrier, startup reconciliation. |
 | `sanitize` | Secret redaction for logs/errors/traces (full `[REDACTED]`, never partial). |

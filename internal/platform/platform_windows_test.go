@@ -17,7 +17,12 @@ func TestDataDir_Windows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DataDir() error = %v", err)
 	}
-	want := filepath.Join(dir, "VenomRouter")
+	// Lowercase-hyphen, matching the Linux dir name and the module name.
+	// The owner's SEPARATE live install at G:\Venom-Router owns the old
+	// %LOCALAPPDATA%\VenomRouter directory (its keyring is schema-
+	// incompatible with our reader); this project must never read or
+	// write that directory again.
+	want := filepath.Join(dir, "venom-router")
 	if got != want {
 		t.Fatalf("DataDir() = %q, want %q", got, want)
 	}

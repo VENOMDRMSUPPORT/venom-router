@@ -14,13 +14,19 @@ import (
 // ErrLocalAppDataUnset is returned when %LOCALAPPDATA% is unset or empty.
 var ErrLocalAppDataUnset = errors.New("platform: LOCALAPPDATA is unset")
 
-// DataDir returns %LOCALAPPDATA%\VenomRouter.
+// DataDir returns %LOCALAPPDATA%\venom-router (lowercase-hyphen, matching
+// the Linux dir name and the module name). Deliberately NOT the old
+// %LOCALAPPDATA%\VenomRouter: that directory belongs to the owner's
+// separate live install at G:\Venom-Router, whose keyring is
+// schema-incompatible with this project's reader (it blocked bare tray
+// boot). This project must never read or write that directory again, so
+// no migration or fallback to the old name exists on purpose.
 func DataDir() (string, error) {
 	base, ok := os.LookupEnv("LOCALAPPDATA")
 	if !ok || base == "" {
 		return "", ErrLocalAppDataUnset
 	}
-	return filepath.Join(base, "VenomRouter"), nil
+	return filepath.Join(base, "venom-router"), nil
 }
 
 // TryLockFile acquires an exclusive, non-blocking OS-level lock on f via

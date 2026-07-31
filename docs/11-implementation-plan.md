@@ -427,7 +427,7 @@ DoD: precedence proven; bind default correct; no `os.Getenv` outside `config` (f
 Purpose: OS-correct data dirs.
 References: [`01 §3`](01-architecture.md#3-components-package-boundaries).
 Preconditions: P0-FND-001.
-Scope: `%LOCALAPPDATA%\VenomRouter` (Windows), `$XDG_DATA_HOME/venom-router` (Linux) resolution; data-dir creation with correct perms.
+Scope: `%LOCALAPPDATA%\venom-router` (Windows), `$XDG_DATA_HOME/venom-router` (Linux) resolution; data-dir creation with correct perms.
 Non-goals: keyring file (P1).
 Boundaries: `internal/platform`. Data/API impact: none. Security: dir perms owner-only. Failure/rollback: unwritable dir aborts startup.
 Tests: unit per-OS path resolution (build-tagged).
