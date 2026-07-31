@@ -149,7 +149,15 @@ func newE2EHandler(t *testing.T, db *storage.DB, kr *secrets.Keyring, upstreamUR
 	if usage == nil {
 		usage = storage.NewUsageRecordRepo(db)
 	}
-	return NewChatCompletionsHandler(engine, usage, func() time.Time { return time.Unix(0, 0) }, counterID(), nil)
+	return NewChatCompletionsHandler(engine, usage, advancingClock(), counterID(), nil)
+}
+
+// advancingClock returns a clock that advances 1ms per call, so a latency
+// measured across two calls is deterministically positive (a fixed clock would
+// measure 0 and mask a hardcoded-zero regression).
+func advancingClock() func() time.Time {
+	n := int64(0)
+	return func() time.Time { n++; return time.Unix(0, 0).Add(time.Duration(n) * time.Millisecond) }
 }
 
 func e2eEnv(t *testing.T, upstreamURL string) (*storage.DB, *secrets.Keyring) {

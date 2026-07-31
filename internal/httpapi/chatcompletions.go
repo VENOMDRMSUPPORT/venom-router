@@ -230,12 +230,19 @@ func (h *ChatCompletionsHandler) run(w http.ResponseWriter, r *http.Request, p r
 		Content:       p.content, Stream: p.req.Stream,
 	}
 	if p.req.Stream {
-		sink = newSSESink(w, p.req.Model, p.requestID)
+		sink = newSSESink(w, p.req.Model, string(p.tier), p.requestID)
 		plan.Sink = sink
 	}
 
+	start := h.now()
 	in := h.engine.BuildFallbackInput(plan, snap)
 	res, lerr := routing.RunFallbackLoop(ctx, in)
+	// Latency is a REAL measurement across the executed loop (never hardcoded);
+	// floored at 0 so a non-monotonic injected clock can never go negative.
+	latencyMS := h.now().Sub(start).Milliseconds()
+	if latencyMS < 0 {
+		latencyMS = 0
+	}
 
 	// Usage on EVERY terminal path — surfaced, never swallowed. On the
 	// non-streaming path a write failure becomes a 500 before any body is sent.
@@ -252,6 +259,8 @@ func (h *ChatCompletionsHandler) run(w http.ResponseWriter, r *http.Request, p r
 	defer cancelUsage()
 	usageErr := h.usage.Insert(usageCtx, buildUsageRecord(h.newID(), p.requestID, p.apiKeyID, string(p.tier), res, lerr))
 
+	tel := h.telemetryFor(p, res, latencyMS)
+
 	if p.req.Stream {
 		// A streaming response cannot become a 500 once frames have been flushed,
 		// so the write failure is LOGGED here rather than returned. It must never
@@ -265,7 +274,7 @@ func (h *ChatCompletionsHandler) run(w http.ResponseWriter, r *http.Request, p r
 				observability.String("request_id", p.requestID),
 				observability.String("tier", string(p.tier)))
 		}
-		h.finishStream(w, sink, lerr)
+		h.finishStream(w, sink, lerr, tel)
 		return
 	}
 	if usageErr != nil {
@@ -278,12 +287,35 @@ func (h *ChatCompletionsHandler) run(w http.ResponseWriter, r *http.Request, p r
 		}
 		return
 	}
-	h.writeCompletion(w, p, res)
+	h.writeCompletion(w, p, res, tel)
 }
 
-// finishStream terminates a streaming response: a clean [DONE] when the stream
-// completed, or — if nothing was ever flushed — a mapped public error.
-func (h *ChatCompletionsHandler) finishStream(w http.ResponseWriter, sink *sseSink, lerr error) {
+// telemetryFor assembles the X-Venom-* fact set from the served result. Tokens
+// are UNKNOWN on this path (no provider-reported usage is plumbed yet), so their
+// pointers stay nil and their headers are omitted — never fabricated as 0.
+// Funding is likewise not carried on FallbackResult (the authorized PAPI-004
+// additive change is thinking-only), so it is omitted. AccountID is deliberately
+// never read here.
+func (h *ChatCompletionsHandler) telemetryFor(p runParams, res routing.FallbackResult, latencyMS int64) venomTelemetry {
+	tel := venomTelemetry{
+		RequestID: p.requestID,
+		Tier:      string(p.tier),
+		Provider:  res.ProviderID,
+		Model:     p.req.Model,
+		LatencyMS: &latencyMS,
+	}
+	if res.Attempts > 0 {
+		n := res.Attempts
+		tel.Attempts = &n
+	}
+	return tel
+}
+
+// finishStream terminates a streaming response: the FINAL telemetry as a
+// trailing SSE comment and then a clean [DONE] when the stream completed, or —
+// if nothing was ever flushed — a mapped public error. The trailer is written
+// BEFORE [DONE] so [DONE] stays the last frame a plain OpenAI SDK sees.
+func (h *ChatCompletionsHandler) finishStream(w http.ResponseWriter, sink *sseSink, lerr error, tel venomTelemetry) {
 	if !sink.headersWritten {
 		if lerr != nil {
 			if !h.writePublicRoutingError(w, lerr) {
@@ -293,11 +325,12 @@ func (h *ChatCompletionsHandler) finishStream(w http.ResponseWriter, sink *sseSi
 		}
 		sink.ensureHeaders()
 	}
+	sink.writeTrailer(tel)
 	sink.writeDone()
 }
 
 // writeCompletion writes the non-streaming OpenAI chat.completion body.
-func (h *ChatCompletionsHandler) writeCompletion(w http.ResponseWriter, p runParams, res routing.FallbackResult) {
+func (h *ChatCompletionsHandler) writeCompletion(w http.ResponseWriter, p runParams, res routing.FallbackResult, tel venomTelemetry) {
 	resp, _ := res.Response.(*execution.NormalizedResponse)
 	if resp == nil {
 		writePublicError(w, http.StatusInternalServerError, "internal_error", "an internal error occurred")
@@ -314,6 +347,11 @@ func (h *ChatCompletionsHandler) writeCompletion(w http.ResponseWriter, p runPar
 	if len(toolCalls) > 0 {
 		message["tool_calls"] = toolCalls
 	}
+	// Stamp the FULL X-Venom-* set BEFORE WriteHeader so the client sees the
+	// routing outcome on the completion response. The response BODY below never
+	// carries the provider or account id (privacy split, 01 §6c / constraint 3);
+	// the header set does carry provider + model.
+	writeVenomHeaders(w.Header(), tel)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -481,24 +519,41 @@ type sseSink struct {
 	w              http.ResponseWriter
 	flusher        http.Flusher
 	model          string
+	tier           string
 	id             string
 	headersWritten bool
 }
 
-func newSSESink(w http.ResponseWriter, model, id string) *sseSink {
+func newSSESink(w http.ResponseWriter, model, tier, id string) *sseSink {
 	f, _ := w.(http.Flusher)
-	return &sseSink{w: w, flusher: f, model: model, id: id}
+	return &sseSink{w: w, flusher: f, model: model, tier: tier, id: id}
 }
 
 func (s *sseSink) ensureHeaders() {
 	if s.headersWritten {
 		return
 	}
+	// Stream-start X-Venom-* set (01 §6c): the known identity facts plus ZEROED
+	// metrics (the documented exception to the omit-unknown rule) — the true
+	// metrics arrive in the trailing comment once the stream completes. Stamped
+	// BEFORE WriteHeader so they reach the client with the first byte.
+	writeVenomHeaders(s.w.Header(), streamStartTelemetry(s.id, s.tier, s.model))
 	s.w.Header().Set("Content-Type", "text/event-stream")
 	s.w.Header().Set("Cache-Control", "no-cache")
 	s.w.Header().Set("Connection", "keep-alive")
 	s.w.WriteHeader(http.StatusOK)
 	s.headersWritten = true
+	if s.flusher != nil {
+		s.flusher.Flush()
+	}
+}
+
+// writeTrailer emits the FINAL telemetry as a trailing SSE comment line. It is
+// called immediately before writeDone, so the comment precedes data: [DONE] and
+// a comment-ignoring SSE reader still sees [DONE] as the last event.
+func (s *sseSink) writeTrailer(t venomTelemetry) {
+	s.ensureHeaders()
+	_, _ = s.w.Write([]byte(venomTrailerComment(t)))
 	if s.flusher != nil {
 		s.flusher.Flush()
 	}
