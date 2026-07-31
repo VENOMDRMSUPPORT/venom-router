@@ -87,6 +87,16 @@ type FallbackResult struct {
 	Breakers          BreakerSet
 	Cooldowns         []quota.CooldownTrigger
 	TransientBackoffs []time.Duration
+
+	// ThinkingApplied / ThinkingTierClamped / ThinkingCertifiedClamped carry the
+	// NormalizeThinking decision for the SERVED attempt (P5-PAPI-004), so the
+	// composition layer can report the applied level and each clamp on the
+	// X-Venom-* headers and the route-decision row. They are populated ONLY on a
+	// successful attempt; the zero value (ThinkingNone, false, false) reproduces
+	// the pre-P5 behavior exactly and nothing in routing consumes them.
+	ThinkingApplied          ThinkingLevel
+	ThinkingTierClamped      bool
+	ThinkingCertifiedClamped bool
 }
 
 // RunFallbackLoop runs Step 8's per-attempt reserve→execute→reconcile cycle
@@ -252,6 +262,18 @@ func RunFallbackLoop(ctx context.Context, in FallbackInput) (FallbackResult, err
 			res.AccountID = chosen.AccountID
 			res.ProviderID = chosen.ProviderID
 			res.ReservationID = reservationID
+			// The thinking decision for the SERVED candidate (05 §1a), re-clamped
+			// against THIS offering's certified maximum — so the header/decision
+			// report the level actually driven, not the requested one.
+			thinking := NormalizeThinking(
+				in.Requirements.RequestedThinking,
+				hasCapability(in.Requirements.Capabilities, CapabilityReasoning),
+				in.Policy,
+				ThinkingCandidate{ReasoningCertified: chosen.ReasoningCertified, CertifiedMax: chosen.ReasoningCertifiedMax},
+			)
+			res.ThinkingApplied = thinking.Applied
+			res.ThinkingTierClamped = thinking.TierClamped
+			res.ThinkingCertifiedClamped = thinking.CertifiedClamped
 			return res, nil
 		}
 

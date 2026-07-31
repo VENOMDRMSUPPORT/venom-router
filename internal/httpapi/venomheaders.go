@@ -33,6 +33,12 @@ type venomTelemetry struct {
 	TokensIn  *int   // nil ⇒ omit
 	TokensOut *int   // nil ⇒ omit
 	Attempts  *int   // nil ⇒ omit
+
+	// Thinking is the APPLIED thinking level for the served attempt (P5-PAPI-004,
+	// 05 §1a); "" ⇒ omit. ThinkingClamped is the clamp indicator (tier-ceiling OR
+	// per-offering certified-max); nil ⇒ omit (not applicable / unknown).
+	Thinking        string
+	ThinkingClamped *bool
 }
 
 // writeVenomHeaders is the ONE place any X-Venom-* header is written (a
@@ -63,6 +69,10 @@ func writeVenomHeaders(h http.Header, t venomTelemetry) {
 	}
 	if t.Attempts != nil {
 		h.Set("X-Venom-Fallback-Attempts", strconv.Itoa(*t.Attempts))
+	}
+	setSanitized(h, "X-Venom-Thinking-Applied", t.Thinking)
+	if t.ThinkingClamped != nil {
+		h.Set("X-Venom-Thinking-Clamped", strconv.FormatBool(*t.ThinkingClamped))
 	}
 	h.Set("X-Venom-Version", venomVersion)
 }
@@ -126,6 +136,10 @@ func venomTrailerComment(t venomTelemetry) string {
 	}
 	if t.Attempts != nil {
 		add("x-venom-fallback-attempts", strconv.Itoa(*t.Attempts))
+	}
+	add("x-venom-thinking-applied", t.Thinking)
+	if t.ThinkingClamped != nil {
+		add("x-venom-thinking-clamped", strconv.FormatBool(*t.ThinkingClamped))
 	}
 	add("x-venom-version", venomVersion)
 	sort.Strings(pairs)

@@ -31,6 +31,7 @@ const upstreamCredential = "sk-upstream-SECRET-cred"
 type capturingUpstream struct {
 	lastBody   []byte
 	lastAuth   string
+	calls      int
 	handleFunc func(w http.ResponseWriter, body []byte)
 }
 
@@ -49,6 +50,7 @@ func newUpstream(t *testing.T, handle func(w http.ResponseWriter, body []byte)) 
 		}
 		u.lastBody = b
 		u.lastAuth = r.Header.Get("Authorization")
+		u.calls++
 		u.handleFunc(w, b)
 	}))
 	t.Cleanup(srv.Close)

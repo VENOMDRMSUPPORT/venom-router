@@ -99,6 +99,12 @@ type chatReq struct {
 	MaxTokens  *int             `json:"max_tokens"`
 	Tools      []chatReqToolIn  `json:"tools"`
 	ToolChoice *json.RawMessage `json:"tool_choice"`
+	// Venom is the OPTIONAL venom request extension (05 §1b), parsed strictly
+	// (unknown fields rejected) by parseVenomExtension. It is a RawMessage so
+	// the OUTER decode stays lenient (unknown top-level OpenAI fields ignored,
+	// SDK parity) while the sub-object alone is validated with
+	// DisallowUnknownFields.
+	Venom json.RawMessage `json:"venom"`
 }
 
 type chatReqMsg struct {
@@ -157,6 +163,17 @@ func (h *ChatCompletionsHandler) ServeChat(w http.ResponseWriter, r *http.Reques
 		writePublicError(w, http.StatusBadRequest, "invalid_request", "invalid message content")
 		return
 	}
+
+	// Parse + validate the optional venom extension BEFORE any routing runs, so
+	// an invalid extension is a 400 that executes NOTHING. Unknown fields inside
+	// venom are rejected here (naming the field); the outer body decode above
+	// stayed lenient for unknown top-level fields (SDK parity).
+	ext, err := parseVenomExtension(req.Venom)
+	if err != nil {
+		writePublicError(w, http.StatusBadRequest, CodeInvalidExtension, venomExtErrorMessage(err))
+		return
+	}
+	reqShape.Venom = ext
 
 	reqs, err := routing.Normalize(reqShape)
 	if err != nil {
@@ -303,10 +320,18 @@ func (h *ChatCompletionsHandler) telemetryFor(p runParams, res routing.FallbackR
 		Provider:  res.ProviderID,
 		Model:     p.req.Model,
 		LatencyMS: &latencyMS,
+		Thinking:  string(res.ThinkingApplied),
 	}
 	if res.Attempts > 0 {
 		n := res.Attempts
 		tel.Attempts = &n
+	}
+	// The clamp indicator is meaningful only for a served attempt (one that
+	// produced a thinking decision, i.e. a provider was chosen). It is the OR of
+	// the tier-ceiling and per-offering certified-max clamps.
+	if res.ProviderID != "" {
+		clamped := res.ThinkingTierClamped || res.ThinkingCertifiedClamped
+		tel.ThinkingClamped = &clamped
 	}
 	return tel
 }
@@ -370,6 +395,15 @@ func (h *ChatCompletionsHandler) writeCompletion(w http.ResponseWriter, p runPar
 // recordDecisionBestEffort records one route_decision (RouteRecorder swallows
 // its own write error — that is the route-record contract, distinct from usage).
 func (h *ChatCompletionsHandler) recordDecisionBestEffort(ctx context.Context, decisionID string, p runParams, snap SnapshotResult) {
+	// RequestedThinking is known pre-loop (from the normalized request) and is
+	// recorded now. The APPLIED level + clamp flags are known only after the
+	// served attempt and are reported on the X-Venom-* headers/trailer; stamping
+	// them onto this row follows the same post-loop decision-update path as
+	// ChosenProviderID (OBS-001), which the pre-loop FK ordering defers.
+	var requested string
+	if p.reqs.RequestedThinking != nil {
+		requested = string(*p.reqs.RequestedThinking)
+	}
 	_ = h.engine.RouteRecorder.RecordDecision(ctx, observability.RouteDecision{
 		ID:                    decisionID,
 		RequestID:             p.requestID,
@@ -377,6 +411,7 @@ func (h *ChatCompletionsHandler) recordDecisionBestEffort(ctx context.Context, d
 		WorkloadProfileBucket: "",
 		CandidateSummary:      snap.Summary,
 		ExclusionReasons:      snap.ExclusionReasons,
+		RequestedThinking:     requested,
 		CreatedAt:             h.now(),
 	})
 }
