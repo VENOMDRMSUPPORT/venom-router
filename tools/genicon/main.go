@@ -143,10 +143,10 @@ func encodeICO(pngs [][]byte) []byte {
 	offset := 6 + 16*len(pngs)
 	for i, p := range pngs {
 		n := sizes[i]
-		buf.WriteByte(byte(n)) // width (256 would be 0; we stay below)
-		buf.WriteByte(byte(n)) // height
-		buf.WriteByte(0)       // palette colors
-		buf.WriteByte(0)       // reserved
+		buf.WriteByte(byte(n))                 // width (256 would be 0; we stay below)
+		buf.WriteByte(byte(n))                 // height
+		buf.WriteByte(0)                       // palette colors
+		buf.WriteByte(0)                       // reserved
 		_ = binary.Write(&buf, le, uint16(1))  // color planes
 		_ = binary.Write(&buf, le, uint16(32)) // bits per pixel
 		_ = binary.Write(&buf, le, uint32(len(p)))
