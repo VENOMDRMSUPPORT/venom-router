@@ -218,6 +218,39 @@ func TestDevSupervisor_StopKillsBothAndStaysStopped(t *testing.T) {
 	}
 }
 
+// TestDevSupervisor_RefreshNeverResurrectsStoppedOrErrored pins the Starting
+// gate in refreshComponent: a foreign process answering on a dev port (for
+// example another repo's vite already sitting on 5173) must not make a
+// component this supervisor did NOT start — or one that crashed — report
+// Running. Only Starting may be promoted by a healthy probe.
+func TestDevSupervisor_RefreshNeverResurrectsStoppedOrErrored(t *testing.T) {
+	r := &fakeRunner{}
+	s := newTestSupervisor(t, r, probeAlways(true))
+
+	// Never started: everything Stopped while the probe answers.
+	s.Refresh(context.Background())
+	if v := s.Status(); v.Frontend != DevStopped || v.Backend != DevStopped {
+		t.Fatalf("Refresh resurrected a never-started component: %+v", v)
+	}
+
+	// Crashed while starting: Error must survive a healthy probe.
+	s.Start()
+	r.handle(0).exit(errors.New("crash"))
+	eventually(t, func() bool { return s.Status().Frontend == DevError },
+		"frontend never reached Error after its process exited")
+	s.Refresh(context.Background())
+	if got := s.Status().Frontend; got != DevError {
+		t.Fatalf("Refresh flipped a crashed component from Error to %v", got)
+	}
+
+	// Deliberately stopped: Stopped must survive a healthy probe.
+	s.Stop()
+	s.Refresh(context.Background())
+	if v := s.Status(); v.Frontend != DevStopped || v.Backend != DevStopped {
+		t.Fatalf("Refresh resurrected a stopped component: %+v", v)
+	}
+}
+
 func TestDevSupervisor_RestartAfterErrorSpawnsFreshProcesses(t *testing.T) {
 	r := &fakeRunner{}
 	s := newTestSupervisor(t, r, probeAlways(false))
