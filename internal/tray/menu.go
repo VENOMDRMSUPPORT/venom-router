@@ -35,8 +35,11 @@ func prodEnablement(s State) menuEnablement {
 }
 
 // devEnablement: everything disabled when no dev repo was found. Otherwise
-// Start is offered from Stopped/Error; Stop/Restart whenever anything is
-// live or wedged; Open as soon as the frontend (vite) itself is up.
+// the buttons follow the current state (owner rule): Start is offered ONLY
+// when both components are fully Stopped; Stop/Restart whenever anything is
+// live or wedged; Open as soon as the frontend (vite) itself is up. Error
+// never offers Start — recovery is Restart (a clean recycle of both
+// components) or Stop (clears the error state).
 func devEnablement(available bool, v DevStatusView) menuEnablement {
 	if !available {
 		return menuEnablement{}
@@ -44,7 +47,7 @@ func devEnablement(available bool, v DevStatusView) menuEnablement {
 	anyActive := v.Frontend != DevStopped || v.Backend != DevStopped
 	return menuEnablement{
 		Open:    v.Frontend == DevRunning,
-		Start:   v.Overall == DevStopped || v.Overall == DevError,
+		Start:   !anyActive,
 		Stop:    anyActive,
 		Restart: anyActive,
 	}

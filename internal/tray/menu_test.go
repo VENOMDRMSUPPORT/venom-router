@@ -51,8 +51,15 @@ func TestDevEnablement(t *testing.T) {
 			menuEnablement{Open: true, Start: false, Stop: true, Restart: true}},
 		{"running", DevStatusView{Overall: DevRunning, Frontend: DevRunning, Backend: DevRunning},
 			menuEnablement{Open: true, Start: false, Stop: true, Restart: true}},
-		{"error", DevStatusView{Overall: DevError, Frontend: DevError, Backend: DevRunning},
-			menuEnablement{Open: false, Start: true, Stop: true, Restart: true}},
+		// Error states never offer Start: recovery is Restart (clean recycle
+		// of both components) or Stop (clears the error state). Offering
+		// Start alongside Stop+Restart is the owner-reported UX bug.
+		{"error with backend stopped", DevStatusView{Overall: DevError, Frontend: DevError, Backend: DevStopped},
+			menuEnablement{Open: false, Start: false, Stop: true, Restart: true}},
+		{"owner screenshot: frontend error, backend running", DevStatusView{Overall: DevError, Frontend: DevError, Backend: DevRunning},
+			menuEnablement{Open: false, Start: false, Stop: true, Restart: true}},
+		{"both components errored", DevStatusView{Overall: DevError, Frontend: DevError, Backend: DevError},
+			menuEnablement{Open: false, Start: false, Stop: true, Restart: true}},
 	}
 	for _, tc := range cases {
 		if got := devEnablement(true, tc.v); got != tc.want {
