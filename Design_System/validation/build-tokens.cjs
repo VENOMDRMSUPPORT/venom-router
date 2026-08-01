@@ -134,11 +134,17 @@ async function buildVenomTokens(io) {
     return out;
   }
   const dens = flattenDensity(densityDoc);
+  // Spacing-type density tokens (pads, gaps) are multiplied by the runtime spacing scale
+  // --vn-spacing-scale (default 1; set via applySpacing from src/customizer.ts, clamped
+  // 0.75-1.25). Control/row HEIGHTS are deliberately excluded: they are density-owned
+  // control metrics, not layout spacing. At the default scale the computed values are
+  // byte-for-byte today's px values.
+  const densityValue = (key, raw) => (/height/.test(key) ? raw : `calc(${raw} * var(--vn-spacing-scale, 1))`);
   let dcss = HEADER('tokens/tokens.density.json');
   dcss += ':root,\n[data-density="comfortable"] {\n';
-  for (const [k, v] of dens) dcss += `  ${cssName('density.' + k)}: ${v.comfortable};\n`;
+  for (const [k, v] of dens) dcss += `  ${cssName('density.' + k)}: ${densityValue(k, v.comfortable)};\n`;
   dcss += '}\n[data-density="compact"] {\n';
-  for (const [k, v] of dens) dcss += `  ${cssName('density.' + k)}: ${v.compact};\n`;
+  for (const [k, v] of dens) dcss += `  ${cssName('density.' + k)}: ${densityValue(k, v.compact)};\n`;
   dcss += '}\n';
   await saveFile('tokens/density.css', dcss);
 

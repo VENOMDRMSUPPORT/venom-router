@@ -111,12 +111,12 @@
   --space-20: 80px;
   --space-24: 96px;
   --space-32: 128px;
-  --radius-xs: 2px;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius-2xl: 16px;
+  --radius-xs: calc(var(--vn-radius-base, 6px) * 2 / 6);
+  --radius-sm: calc(var(--vn-radius-base, 6px) * 4 / 6);
+  --radius-md: var(--vn-radius-base, 6px);
+  --radius-lg: calc(var(--vn-radius-base, 6px) * 8 / 6);
+  --radius-xl: calc(var(--vn-radius-base, 6px) * 12 / 6);
+  --radius-2xl: calc(var(--vn-radius-base, 6px) * 16 / 6);
   --radius-full: 999px;
   --border-hairline: 1px;
   --border-thick: 2px;
