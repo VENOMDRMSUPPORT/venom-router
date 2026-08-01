@@ -25,6 +25,7 @@ import ApiKeysSurface from "../keys/ApiKeysSurface";
 import ModelsSurface from "../models/ModelsSurface";
 import OverviewSurface from "../overview/OverviewSurface";
 import QuotaSurface from "../quota/QuotaSurface";
+import PlaygroundSurface from "../playground/PlaygroundSurface";
 import RoutingSurface from "../routing/RoutingSurface";
 import SettingsSurface from "../settings/SettingsSurface";
 import {
@@ -491,6 +492,11 @@ function renderSurface(
   // P6-UI-010: Settings.
   if (navKey === "settings") {
     return <SettingsSurface csrfToken={csrfToken} onSessionExpired={onSessionExpired} />;
+  }
+
+  // P6-UI-004: Playground.
+  if (navKey === "playground") {
+    return <PlaygroundSurface />;
   }
 
   // P6-UI-011: Connect a client. Reached from Overview's Quick Start rather than
