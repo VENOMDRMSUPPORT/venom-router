@@ -54,6 +54,72 @@ export async function putSettings(next: SettingsResponse, csrfToken: string): Pr
   return body.data;
 }
 
+// --- Full settings (P6-CAPI-001 / P2b-CAPI-005, enables P6-UI-010) ---
+
+/** The boot-resolved listen addresses, READ-ONLY (01 §6b). `data_plane_bind` is
+ * null when the public /v1 API shares the control listener — its documented
+ * default, not a missing value. These come from config.Load's
+ * default -> env -> flag precedence and cannot be set over the API. */
+export interface EffectiveConfig {
+  bind: string;
+  data_plane_bind: string | null;
+}
+
+/** GET /settings' full payload (internal/httpapi/settings.go's settingsJSON).
+ *
+ * The five appearance fields are REQUIRED on PUT; the operational fields and the
+ * enrichment toggle are OPTIONAL pointers server-side where ABSENT MEANS
+ * UNCHANGED — never "reset to the default", and a JSON null is a 400. Sending an
+ * untouched field back, even at its current value, turns a read into a write. */
+export interface FullSettings {
+  theme: ThemeName;
+  density: DensityName;
+  accent: AccentName;
+  radius_px: number;
+  spacing_scale: number;
+  enrichment_enabled: boolean;
+  quota_staleness_seconds: number;
+  probe_max_in_flight_per_provider: number;
+  probe_expensive_enabled: boolean;
+  probe_per_account_window_seconds: number;
+  effective_config: EffectiveConfig;
+}
+
+/** PUT /settings' body. The appearance five are required; every operational field
+ * is optional and must be OMITTED (not null) when unchanged. `effective_config` is
+ * deliberately absent from this type — it is read-only and a PUT carrying it is
+ * rejected. */
+export interface SettingsUpdate {
+  theme: ThemeName;
+  density: DensityName;
+  accent: AccentName;
+  radius_px: number;
+  spacing_scale: number;
+  enrichment_enabled?: boolean;
+  quota_staleness_seconds?: number;
+  probe_max_in_flight_per_provider?: number;
+  probe_expensive_enabled?: boolean;
+  probe_per_account_window_seconds?: number;
+}
+
+/** GET /settings — the full owner settings including the read-only binds. */
+export async function getFullSettings(): Promise<FullSettings> {
+  const body = await request<{ data: FullSettings }>("/settings", { method: "GET" });
+  return body.data;
+}
+
+/** PUT /settings — persists the appearance five plus whichever operational fields
+ * the caller included. Typed error to expect: `validation_error` (400), whose
+ * message NAMES the offending field. */
+export async function putFullSettings(next: SettingsUpdate, csrfToken: string): Promise<FullSettings> {
+  const body = await request<{ data: FullSettings }>("/settings", {
+    method: "PUT",
+    headers: { [CSRF_HEADER]: csrfToken },
+    body: JSON.stringify(next),
+  });
+  return body.data;
+}
+
 // --- Providers (P2b-PROV-002, read-only catalog) ---
 
 /** One provider catalog entry (GET /providers, GET /providers/{id}).
@@ -705,6 +771,179 @@ export async function listRouteDecisions(params: ListPageParams = {}): Promise<R
     { method: "GET" },
   );
   return { decisions: body.data ?? [], nextCursor: body.meta?.next_cursor };
+}
+
+/** One attempt under a decision (internal/httpapi/diagnostics.go's
+ * routeAttemptJSON). `status` is the CLOSED normalized vocabulary — a value that
+ * reached the column by any other path surfaces as `unknown`, never as free
+ * provider text. `latency_ms` and `finished_at` are null when unknown.
+ *
+ * NOTE the two fields deliberately absent: an attempt's failure SCOPE and
+ * RETRY-AFTER are not columns on the frozen route_attempts table, so they are
+ * omitted rather than fabricated from a proxy. */
+export interface RouteAttempt {
+  attempt: number;
+  provider_id: string;
+  account_id: string;
+  offering_operation_id: string;
+  status: string;
+  latency_ms: number | null;
+  thinking_clamped: boolean;
+  reservation_id: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/** GET /diagnostics/routes/{request_id}'s payload: the decision's shared fields
+ * plus every attempt made under it. It carries NO `outcome` rollup — the attempts
+ * array IS the answer at this level, and a summary beside it could drift. */
+export interface RouteExplanation extends Omit<RouteDecisionEntry, "outcome"> {
+  attempts: RouteAttempt[];
+}
+
+/** GET /diagnostics/routes/{request_id} — one request's full "why this route?".
+ * An unknown request id is a typed 404 (`not_found`), never an empty 200. */
+export async function getRouteExplanation(requestID: string): Promise<RouteExplanation> {
+  const body = await request<{ data: RouteExplanation }>(
+    `/diagnostics/routes/${encodeURIComponent(requestID)}`,
+    { method: "GET" },
+  );
+  return body.data;
+}
+
+// --- Reconciliation diagnostics (P3b-CAPI-002, enables P6-UI-008) ---
+
+/** One allocation under a reservation (05 §4). `actual_cost` and
+ * `actual_confidence` are null until the reservation settles — never 0, which
+ * would claim a measured cost of nothing. */
+export interface ReconciliationAllocation {
+  window_id: string;
+  unit: string;
+  estimated_cost: number;
+  actual_cost: number | null;
+  actual_confidence: string | null;
+  state: string;
+}
+
+/** One reservation as GET /diagnostics/reconciliation lists it
+ * (internal/httpapi/diagnostics.go's reconciliationItemJSON). Epoch seconds;
+ * `dispatched_at` is null when it was never dispatched. */
+export interface ReconciliationItem {
+  reservation_id: string;
+  account_id: string;
+  request_id: string;
+  attempt_id: string;
+  state: string;
+  attempts: number;
+  leased: boolean;
+  dispatched_at: number | null;
+  expires_at: number;
+  rebaseline_flagged: boolean;
+  allocations: ReconciliationAllocation[];
+}
+
+export interface ReconciliationPage {
+  items: ReconciliationItem[];
+  nextCursor?: string;
+}
+
+/** GET /diagnostics/reconciliation — the reconciliation_pending /
+ * unknown_consumption read model. A read, so no CSRF token. */
+export async function listReconciliation(params: ListPageParams = {}): Promise<ReconciliationPage> {
+  const body = await request<{ data: ReconciliationItem[]; meta?: { next_cursor?: string } }>(
+    `/diagnostics/reconciliation${pageQuery(params)}`,
+    { method: "GET" },
+  );
+  return { items: body.data ?? [], nextCursor: body.meta?.next_cursor };
+}
+
+export type ReconciliationAction = "resync" | "accept_estimate";
+
+/** POST /diagnostics/reconciliation/{reservation_id} — manual recovery (05 §4).
+ *
+ * Typed errors to expect: `reservation_terminal` (409) for a reservation that
+ * reached the terminal `unknown_consumption` state — no manual action can
+ * un-terminalize it — or one that is simply not `reconciliation_pending`;
+ * `not_found` (404). */
+export async function actOnReconciliation(
+  reservationID: string,
+  action: ReconciliationAction,
+  csrfToken: string,
+): Promise<{ reservation_id: string; account_id: string; action: string }> {
+  const resp = await request<{ data: { reservation_id: string; account_id: string; action: string } }>(
+    `/diagnostics/reconciliation/${encodeURIComponent(reservationID)}`,
+    {
+      method: "POST",
+      headers: { [CSRF_HEADER]: csrfToken },
+      body: JSON.stringify({ action }),
+    },
+  );
+  return resp.data;
+}
+
+// --- Usage aggregate (P6-CAPI-EXTRA-2, enables P6-UI-005) ---
+
+/** One summed numeric dimension (internal/httpapi/usageread.go's
+ * usageMetricJSON).
+ *
+ * THE FOUR FIELDS EXIST TO PREVENT FOUR DIFFERENT LIES:
+ *   sum            null when NO contributing row reported a value. Rendering it as
+ *                  0 would claim a measured absence of consumption.
+ *   average        sum / known_count, or null. Never sum / requests — dividing by
+ *                  rows that measured nothing drags the average down.
+ *   known_count    how many rows reported a value (the honest denominator).
+ *   unknown_count  how many did not. Without it a FLOOR cannot be told from a
+ *                  TOTAL, so a partial number reads as complete. */
+export interface UsageMetric {
+  sum: number | null;
+  average: number | null;
+  known_count: number;
+  unknown_count: number;
+}
+
+/** One grouping bucket. `key` is null for the UNATTRIBUTED bucket — account_id and
+ * provider_model_id are nullable columns, so a row can belong to no account or no
+ * model, and folding it into a named group would misattribute consumption.
+ * `requests` is a row count and is therefore always known. */
+export interface UsageGroup {
+  key: string | null;
+  requests: number;
+  tokens_in: UsageMetric;
+  tokens_out: UsageMetric;
+  latency_ms: UsageMetric;
+}
+
+/** GET /usage's payload. `truncated` says the bounded scan stopped at `limit`,
+ * which makes every number a floor. Window ends are epoch seconds, null when
+ * unbounded. */
+export interface UsageAggregate {
+  window: { from: number | null; to: number | null };
+  scanned: number;
+  limit: number;
+  truncated: boolean;
+  totals: UsageGroup;
+  by_account: UsageGroup[];
+  by_model: UsageGroup[];
+  by_tier: UsageGroup[];
+}
+
+export interface UsageQueryParams {
+  /** Epoch seconds, inclusive. */
+  from?: number;
+  /** Epoch seconds, exclusive. */
+  to?: number;
+  limit?: number;
+}
+
+/** GET /usage — the consumption aggregate. A read, so no CSRF token. */
+export async function getUsage(params: UsageQueryParams = {}): Promise<UsageAggregate> {
+  const query = new URLSearchParams();
+  if (params.from !== undefined) query.set("from", String(params.from));
+  if (params.to !== undefined) query.set("to", String(params.to));
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  const qs = query.toString();
+  const body = await request<{ data: UsageAggregate }>(`/usage${qs ? `?${qs}` : ""}`, { method: "GET" });
+  return body.data;
 }
 
 // --- Probe trigger (P3c-CAPI-001, enables P3c-UI-001) ---

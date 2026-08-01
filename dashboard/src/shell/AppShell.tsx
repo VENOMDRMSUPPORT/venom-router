@@ -19,6 +19,7 @@ import { logout, type SessionTimes } from "../auth/authClient";
 import FleetBreadcrumbChips, { type FleetView } from "../fleet/FleetBreadcrumbChips";
 import FleetOverview from "../fleet/FleetOverview";
 import TokenHealthSurface from "../health/TokenHealthSurface";
+import DiagnosticsSurface from "../diagnostics/DiagnosticsSurface";
 import ApiKeysSurface from "../keys/ApiKeysSurface";
 import ModelsSurface from "../models/ModelsSurface";
 import OverviewSurface from "../overview/OverviewSurface";
@@ -110,7 +111,16 @@ function appearanceToSettings(appearance: Appearance): SettingsResponse {
 export default function AppShell(props: AppShellProps) {
   const { session, csrfToken, onSessionExpired, onLoggedOut } = props;
 
-  const [activeNav, setActiveNav] = useState(DEFAULT_NAV_KEY);
+  // The location hash, read ONCE at mount. The Overview surface links to a single
+  // request's route explanation as `#diagnostics/routes/{request_id}`, so the
+  // shell has to honour that shape — otherwise the link lands on the bare list and
+  // silently discards which request the operator asked about. Any other hash falls
+  // through to the default surface.
+  const [initialRoute] = useState(parseInitialHash);
+  const [activeNav, setActiveNav] = useState(initialRoute.navKey);
+  // Cleared the first time the owner navigates by hand, so a deep link opens once
+  // rather than re-asserting itself every time they return to Diagnostics.
+  const [deepLinkRequestID, setDeepLinkRequestID] = useState(initialRoute.requestID);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [appearance, setAppearanceState] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [appearanceNotice, setAppearanceNotice] = useState<string | null>(null);
@@ -219,6 +229,9 @@ export default function AppShell(props: AppShellProps) {
 
   function handleNavigate(next: string) {
     if (next !== "api-keys") setApiKeyCreateOpen(false);
+    // A hand navigation supersedes the deep link: the operator is asking for the
+    // surface, not for the one request the hash named.
+    setDeepLinkRequestID(undefined);
     setActiveNav(next);
   }
 
@@ -333,7 +346,16 @@ export default function AppShell(props: AppShellProps) {
             ) : undefined}
           />
 
-          {renderSurface(activeNav, csrfToken, onSessionExpired, setFleetCounts, fleetView, apiKeyCreateOpen, setApiKeyCreateOpen)}
+          {renderSurface(
+            activeNav,
+            csrfToken,
+            onSessionExpired,
+            setFleetCounts,
+            fleetView,
+            apiKeyCreateOpen,
+            setApiKeyCreateOpen,
+            deepLinkRequestID,
+          )}
         </div>
       </main>
 
@@ -344,6 +366,39 @@ export default function AppShell(props: AppShellProps) {
       />
     </div>
   );
+}
+
+/** What an initial location hash resolved to. */
+interface InitialRoute {
+  navKey: string;
+  requestID?: string;
+}
+
+/**
+ * Parses the location hash ONCE at mount.
+ *
+ * Two shapes are recognised, and nothing else:
+ *
+ *   #diagnostics/routes/{request_id}  -> the Diagnostics surface, opened on that
+ *                                        request (the link Overview emits)
+ *   #{navKey}                         -> that nav destination
+ *
+ * An unrecognised hash falls through to DEFAULT_NAV_KEY rather than to a blank
+ * surface. The request id is decoded, because it travels through
+ * encodeURIComponent on the way out.
+ */
+function parseInitialHash(): InitialRoute {
+  const raw = typeof window === "undefined" ? "" : window.location.hash.replace(/^#/, "");
+  if (raw === "") return { navKey: DEFAULT_NAV_KEY };
+
+  const segments = raw.split("/").filter((s) => s !== "");
+  if (segments[0] === "diagnostics" && segments[1] === "routes" && segments[2]) {
+    return { navKey: "diagnostics", requestID: decodeURIComponent(segments[2]) };
+  }
+  if (segments.length === 1 && navItemByKey(segments[0])) {
+    return { navKey: segments[0] };
+  }
+  return { navKey: DEFAULT_NAV_KEY };
 }
 
 // Mounts each nav destination's real surface, falling through to an honest
@@ -360,6 +415,7 @@ function renderSurface(
   fleetView: FleetView,
   apiKeyCreateOpen: boolean,
   onApiKeyCreateOpenChange: (open: boolean) => void,
+  deepLinkRequestID?: string,
 ): ReactNode {
   if (navKey === "providers") {
     return (
@@ -402,6 +458,19 @@ function renderSurface(
   // P6-UI-003: Routing (the existing `routing` nav key).
   if (navKey === "routing") {
     return <RoutingSurface onSessionExpired={onSessionExpired} />;
+  }
+
+  // P6-UI-008: Diagnostics (RouteExplain + reconciliation). deepLinkRequestID
+  // carries the request id from a `#diagnostics/routes/{request_id}` hash so an
+  // Overview activity link opens that request's explanation directly.
+  if (navKey === "diagnostics") {
+    return (
+      <DiagnosticsSurface
+        csrfToken={csrfToken}
+        onSessionExpired={onSessionExpired}
+        deepLinkRequestID={deepLinkRequestID}
+      />
+    );
   }
 
   // P6-UI-001: Overview — the default landing surface, replacing the
