@@ -19,6 +19,7 @@ import { logout, type SessionTimes } from "../auth/authClient";
 import FleetBreadcrumbChips, { type FleetView } from "../fleet/FleetBreadcrumbChips";
 import FleetOverview from "../fleet/FleetOverview";
 import TokenHealthSurface from "../health/TokenHealthSurface";
+import ConnectClientPage from "../connect/ConnectClientPage";
 import DiagnosticsSurface from "../diagnostics/DiagnosticsSurface";
 import ApiKeysSurface from "../keys/ApiKeysSurface";
 import ModelsSurface from "../models/ModelsSurface";
@@ -355,6 +356,7 @@ export default function AppShell(props: AppShellProps) {
             fleetView,
             apiKeyCreateOpen,
             setApiKeyCreateOpen,
+            handleNavigate,
             deepLinkRequestID,
           )}
         </div>
@@ -368,6 +370,17 @@ export default function AppShell(props: AppShellProps) {
     </div>
   );
 }
+
+/**
+ * The Connect-a-client page's internal route key (P6-UI-011).
+ *
+ * It is deliberately NOT a nav.ts entry: the card reaches this page from
+ * Overview's Quick Start, and nav.ts is owned elsewhere. The `__` prefix keeps it
+ * from ever colliding with a real nav key, and navItemByKey returns undefined for
+ * it — which is why the page supplies its own header rather than relying on the
+ * shared nav metadata.
+ */
+export const CONNECT_CLIENT_KEY = "__connect-client";
 
 /** What an initial location hash resolved to. */
 interface InitialRoute {
@@ -416,6 +429,7 @@ function renderSurface(
   fleetView: FleetView,
   apiKeyCreateOpen: boolean,
   onApiKeyCreateOpenChange: (open: boolean) => void,
+  onNavigate: (navKey: string) => void,
   deepLinkRequestID?: string,
 ): ReactNode {
   if (navKey === "providers") {
@@ -479,10 +493,23 @@ function renderSurface(
     return <SettingsSurface csrfToken={csrfToken} onSessionExpired={onSessionExpired} />;
   }
 
+  // P6-UI-011: Connect a client. Reached from Overview's Quick Start rather than
+  // from a nav entry (nav.ts is unchanged), so it has no nav key of its own — the
+  // shell routes to it through this internal pseudo-key.
+  if (navKey === CONNECT_CLIENT_KEY) {
+    return <ConnectClientPage csrfToken={csrfToken} onSessionExpired={onSessionExpired} />;
+  }
+
   // P6-UI-001: Overview — the default landing surface, replacing the
   // placeholder this key used to fall through to.
   if (navKey === "overview") {
-    return <OverviewSurface csrfToken={csrfToken} onSessionExpired={onSessionExpired} />;
+    return (
+      <OverviewSurface
+        csrfToken={csrfToken}
+        onSessionExpired={onSessionExpired}
+        onOpenQuickStart={() => onNavigate(CONNECT_CLIENT_KEY)}
+      />
+    );
   }
 
   const item = navItemByKey(navKey);

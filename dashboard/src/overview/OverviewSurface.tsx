@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Badge, Card, ErrorState, Link, Spinner, StatCard } from "@venom/design-system/primitives";
+import { Badge, Button, Card, ErrorState, Link, Spinner, StatCard } from "@venom/design-system/primitives";
 import { AccountStatus, TierBadge, type DisplayStatus as DSDisplayStatus, type Tier as DSTier } from "@venom/design-system/domain";
 import {
   isSessionExpired,
@@ -21,6 +21,9 @@ import ReviewQueueBanner from "../models/ReviewQueueBanner";
 export interface OverviewSurfaceProps {
   csrfToken: string;
   onSessionExpired: () => void;
+  /** Opens the Connect-a-client page (P6-UI-011). That page is reached from here
+   * rather than from a nav entry, so the shell hands Overview the navigation. */
+  onOpenQuickStart?: () => void;
 }
 
 /**
@@ -263,7 +266,7 @@ function ActivityRow(props: { entry: RouteDecisionEntry }) {
  * a literal list of three names.
  */
 export default function OverviewSurface(props: OverviewSurfaceProps) {
-  const { onSessionExpired } = props;
+  const { onSessionExpired, onOpenQuickStart } = props;
 
   const providers = useCardData<Provider[]>(() => listProviders(), onSessionExpired);
   const accounts = useCardData<AccountProjection[]>(() => fetchAllAccounts(), onSessionExpired);
@@ -297,6 +300,22 @@ export default function OverviewSurface(props: OverviewSurfaceProps) {
         // here, and the banner only offers it when a backlog exists.
         onReviewBacklog={() => {}}
       />
+
+      {onOpenQuickStart ? (
+        <Card data-testid="overview-quick-start">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="vn-title-sub">Connect a client</span>
+              <span className="vn-caption">
+                Create a key, point your editor or SDK at this router, and watch the requests arrive.
+              </span>
+            </div>
+            <Button variant="secondary" onClick={onOpenQuickStart}>
+              Open quick start
+            </Button>
+          </div>
+        </Card>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <OverviewCard
