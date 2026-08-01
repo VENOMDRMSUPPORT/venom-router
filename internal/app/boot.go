@@ -392,6 +392,13 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 	if separateDataPlane {
 		muxOpts = append(muxOpts, httpapi.WithoutPublicRoutes())
 	}
+	// Boot is the ONLY place that knows the resolved listen addresses (they
+	// come from config.Load's default -> env -> flag precedence), so it hands
+	// them to the mux for GET /settings to report read-only under
+	// `effective_config` (P6-CAPI-001, 01 §6b). Without this the endpoint
+	// would report a fallback rather than what the process is actually
+	// listening on.
+	muxOpts = append(muxOpts, httpapi.WithEffectiveBinds(cfg.Bind, cfg.DataPlaneBind))
 	mux := httpapi.ControlMux(cfg.Bind, spa, db, kr, muxOpts...)
 
 	// 10. Listen. The control plane must never bind off-host (01 §6a/§8,

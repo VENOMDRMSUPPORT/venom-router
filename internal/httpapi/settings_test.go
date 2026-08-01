@@ -29,7 +29,14 @@ func newTestSettingsHandler(t *testing.T, clock func() time.Time) (*SettingsHand
 	t.Helper()
 	db := testControlDB(t)
 	audit := newAuditEmitter(db, nil)
-	return NewSettingsHandler(storage.NewSettingsRepo(db), audit, clock), db
+	return NewSettingsHandler(storage.NewSettingsRepo(db), audit, clock, testEffectiveConfig()), db
+}
+
+// testEffectiveConfig is the boot-resolved bind pair the settings tests report
+// under `effective_config`. It uses a data-plane bind DIFFERENT from the
+// control bind so the two fields can never be confused for one another.
+func testEffectiveConfig() effectiveConfigJSON {
+	return newEffectiveConfig("127.0.0.1:8081", "0.0.0.0:9090")
 }
 
 func fixedSettingsClock() time.Time {

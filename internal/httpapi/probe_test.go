@@ -121,6 +121,14 @@ type probeFixture struct {
 // operation + its certification row + generous local-safety quota
 // windows + every repo/adapter ProbeHandler needs, wired over a fake,
 // controllable transport.
+// staticProbePolicy adapts a fixed ProbeSafetyPolicy to the per-request
+// provider NewProbeHandler now takes (P6-CAPI-001 made the caps
+// owner-configurable). Tests that do not exercise owner configuration keep
+// asserting against exactly the policy they built.
+func staticProbePolicy(p intelligence.ProbeSafetyPolicy) func(context.Context) intelligence.ProbeSafetyPolicy {
+	return func(context.Context) intelligence.ProbeSafetyPolicy { return p }
+}
+
 func newProbeFixture(t *testing.T, opts probeFixtureOpts) *probeFixture {
 	t.Helper()
 	if opts.Operation == "" {
@@ -188,7 +196,7 @@ func newProbeFixture(t *testing.T, opts probeFixtureOpts) *probeFixture {
 	idem := newIdempotencyStore()
 	handler := NewProbeHandler(
 		accountRepo, credentialRepo, catalogRepo, jobRepo, certRepo, probeRunRepo,
-		reserver, transport, driver, policy, audit, idem, probeIDCounter(), clock,
+		reserver, transport, driver, staticProbePolicy(policy), audit, idem, probeIDCounter(), clock,
 	)
 
 	return &probeFixture{

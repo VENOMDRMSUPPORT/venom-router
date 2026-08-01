@@ -40,6 +40,10 @@ type AccountsHandler struct {
 	funding      *storage.FundingEvidenceRepo
 	quotaWindows *storage.QuotaWindowRepo
 	credService  *application.CredentialService
+	// ops resolves the owner's operational settings (P6-CAPI-001). Read ONCE
+	// per list/detail request, then handed to every window projected by that
+	// request — never once per window.
+	ops          *operationalSettings
 	audit        *auditEmitter
 	revealLimit  *fixedWindowLimiter
 	now          func() time.Time
@@ -58,6 +62,7 @@ func NewAccountsHandler(
 	funding *storage.FundingEvidenceRepo,
 	quotaWindows *storage.QuotaWindowRepo,
 	credService *application.CredentialService,
+	ops *operationalSettings,
 	audit *auditEmitter,
 	now func() time.Time,
 	newFundingID func() string,
@@ -74,6 +79,7 @@ func NewAccountsHandler(
 		funding:      funding,
 		quotaWindows: quotaWindows,
 		credService:  credService,
+		ops:          ops,
 		audit:        audit,
 		revealLimit:  newFixedWindowLimiter(revealLimiterMaxPerWindow, revealLimiterWindow),
 		now:          now,
@@ -150,13 +156,15 @@ type quotaWindowJSON struct {
 }
 
 // quotaWindowsToJSON projects windows for the wire. State is computed HERE,
-// on the server, via w.State(0, now, quota.DefaultStalenessWindow) — need
-// is 0 because this is a display projection (05 §4's "does this window
-// have room for N units" admission question does not apply to rendering a
-// meter), never an admission decision; the client renders the state it is
-// given and never recomputes it. Always returns a non-nil slice (possibly
-// empty) so the JSON field serializes as [], never null.
-func quotaWindowsToJSON(windows []quota.Window, now time.Time) []quotaWindowJSON {
+// on the server, via w.State(0, now, staleAfter) — need is 0 because this is a
+// display projection (05 §4's "does this window have room for N units"
+// admission question does not apply to rendering a meter), never an admission
+// decision; the client renders the state it is given and never recomputes it.
+// staleAfter is the OWNER'S configured window (P6-CAPI-001), resolved once by
+// the calling handler and passed in, so every window in one response is judged
+// against the same instant and the same threshold. Always returns a non-nil
+// slice (possibly empty) so the JSON field serializes as [], never null.
+func quotaWindowsToJSON(windows []quota.Window, now time.Time, staleAfter time.Duration) []quotaWindowJSON {
 	out := make([]quotaWindowJSON, 0, len(windows))
 	for _, w := range windows {
 		out = append(out, quotaWindowJSON{
@@ -164,7 +172,7 @@ func quotaWindowsToJSON(windows []quota.Window, now time.Time) []quotaWindowJSON
 			Unit:       string(w.Unit),
 			WindowType: w.WindowType,
 			WindowKey:  w.Key,
-			State:      string(w.State(0, now, quota.DefaultStalenessWindow)),
+			State:      string(w.State(0, now, staleAfter)),
 			Freshness:  string(w.Freshness),
 			Used:       w.Used,
 			Remaining:  w.Remaining,
@@ -230,14 +238,18 @@ func (h *AccountsHandler) projectAccount(ctx context.Context, a domain.Account, 
 	if err != nil {
 		windows = nil
 	}
-	return h.projectAccountWithWindows(ctx, a, now, includeFundingVersion, windows)
+	// ONE settings read for this single-account response. ServeList does NOT
+	// come through here: it resolves the window once for the whole page and
+	// calls projectAccountWithWindows directly, so paging 200 accounts is
+	// still one settings read, not 200.
+	return h.projectAccountWithWindows(ctx, a, now, includeFundingVersion, windows, h.ops.stalenessWindow(ctx))
 }
 
 // projectAccountWithWindows is projectAccount's shared body, taking the
 // account's quota windows as an already-fetched parameter so ServeList can
 // supply them from ONE batched ListByAccounts call across the whole page
 // instead of querying per row.
-func (h *AccountsHandler) projectAccountWithWindows(ctx context.Context, a domain.Account, now time.Time, includeFundingVersion bool, windows []quota.Window) accountProjectionJSON {
+func (h *AccountsHandler) projectAccountWithWindows(ctx context.Context, a domain.Account, now time.Time, includeFundingVersion bool, windows []quota.Window, staleAfter time.Duration) accountProjectionJSON {
 	const cooldownActive = false // P3b introduces cooldowns; none exists this phase.
 
 	credStatus := h.resolveCredentialStatus(ctx, a.ID, now)
@@ -257,7 +269,7 @@ func (h *AccountsHandler) projectAccountWithWindows(ctx context.Context, a domai
 		},
 		DisplayStatus: string(domain.DeriveDisplayStatus(a, cooldownActive)),
 		Eligibility:   eligibilityFromDomain(domain.ProjectEligibility(a, credStatus, cooldownActive)),
-		Quota:         quotaWindowsToJSON(windows, now),
+		Quota:         quotaWindowsToJSON(windows, now, staleAfter),
 		CreatedAt:     a.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:     a.UpdatedAt.Format(time.RFC3339),
 	}
@@ -321,9 +333,13 @@ func (h *AccountsHandler) ServeList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := h.now()
+	// ONE settings read for the whole page: every window on this response is
+	// judged against the same threshold, and paging 200 accounts costs one
+	// settings query, not 200.
+	staleAfter := h.ops.stalenessWindow(ctx)
 	items := make([]accountProjectionJSON, 0, len(accounts))
 	for _, a := range accounts {
-		items = append(items, h.projectAccountWithWindows(ctx, a, now, false, windowsByAccount[a.ID]))
+		items = append(items, h.projectAccountWithWindows(ctx, a, now, false, windowsByAccount[a.ID], staleAfter))
 	}
 
 	writeDataMeta(w, http.StatusOK, map[string]any{"accounts": items}, paginationMeta(nextCursor))

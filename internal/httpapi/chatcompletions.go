@@ -55,8 +55,12 @@ func buildChatCompletionsHandler(db *storage.DB, kr *secrets.Keyring, reg *provi
 		CredService:   application.NewCredentialService(credentialRepo, kr, nil),
 		BaseURLFor:    func(providerID string) string { return baseURLs[providerID] },
 		Inflight:      newInflightCounter(),
-		Cache:         routing.NewStickinessCache(0),
-		Now:           time.Now,
+		// The owner's configured quota-staleness window (P6-CAPI-001, 05 §4),
+		// read once per request inside BuildFallbackInput. Without this the
+		// stored setting would be inert on the request path.
+		StaleAfter: newOperationalSettings(storage.NewSettingsRepo(db)).stalenessWindow,
+		Cache:      routing.NewStickinessCache(0),
+		Now:        time.Now,
 	}
 	return NewChatCompletionsHandler(engine, storage.NewUsageRecordRepo(db), nil, nil, nil)
 }
@@ -265,7 +269,7 @@ func (h *ChatCompletionsHandler) run(w http.ResponseWriter, r *http.Request, p r
 	}
 
 	start := h.now()
-	in := h.engine.BuildFallbackInput(plan, snap)
+	in := h.engine.BuildFallbackInput(ctx, plan, snap)
 	res, lerr := routing.RunFallbackLoop(ctx, in)
 	// Latency is a REAL measurement across the executed loop (never hardcoded);
 	// floored at 0 so a non-monotonic injected clock can never go negative.

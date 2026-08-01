@@ -168,7 +168,7 @@ func newP3cGateFixtureWithDB(t *testing.T, db *storage.DB, opts p3cGateFixtureOp
 	idem := newIdempotencyStore()
 	handler := NewProbeHandler(
 		accountRepo, credRepo, catalogRepo, jobRepo, certRepo, probeRunRepo,
-		reserver, transportAdapter, driver, policy, audit, idem, probeIDCounter(), clock,
+		reserver, transportAdapter, driver, staticProbePolicy(policy), audit, idem, probeIDCounter(), clock,
 	)
 
 	return &p3cGateFixture{

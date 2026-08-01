@@ -368,3 +368,95 @@ func decodeCatalogCursor(cursor string) (accountID, providerModelID string, ok b
 	}
 	return parts[0], parts[1], true
 }
+
+// ---------------------------------------------------------------------------
+// Canonical-model identity + quality rating (P6-CAPI-001, 04 §3)
+//
+// 04 §3: "Canonical model — provider-scoped identity + native facts... The
+// identity key = SHA-256(provider_id, provider_model_id)". So one models row
+// corresponds to one (provider_id, provider_model_id) pair, recorded in
+// provider_model_aliases. The benchmark endpoint needs that pair to look the
+// model up in an analysis leaderboard, and needs somewhere to put the
+// resolved rating — both live here, next to the models-table reads.
+// ---------------------------------------------------------------------------
+
+// CanonicalModelRow is one models row plus the provider identity pair it is
+// keyed by. QualityRating is nil when no quality signal has ever been
+// resolved for this model — 04 §3: "NULL means 'no quality signal
+// available'", never 0.
+type CanonicalModelRow struct {
+	ModelID         string
+	ProviderID      string
+	ProviderModelID string
+	DisplayName     string
+	QualityRating   *float64
+}
+
+// GetCanonicalModel resolves modelID to its canonical identity. ok=false
+// means either the model does not exist or it has no provider alias yet — in
+// both cases there is no (provider_id, provider_model_id) pair to look up, so
+// the caller must treat it as absent rather than guessing one.
+//
+// The ORDER BY makes the answer deterministic if a model somehow carries more
+// than one alias (the schema permits it even though 04 §3's identity rule
+// implies exactly one).
+func (r *CatalogRepo) GetCanonicalModel(ctx context.Context, modelID string) (CanonicalModelRow, bool, error) {
+	var (
+		out         CanonicalModelRow
+		displayName sql.NullString
+		rating      sql.NullFloat64
+	)
+	err := r.db.Conn().QueryRowContext(ctx,
+		`SELECT m.id, a.provider_id, a.provider_model_id, m.display_name, m.quality_rating
+		 FROM models m
+		 JOIN provider_model_aliases a ON a.model_id = m.id
+		 WHERE m.id = ?
+		 ORDER BY a.provider_id ASC, a.provider_model_id ASC
+		 LIMIT 1`,
+		modelID,
+	).Scan(&out.ModelID, &out.ProviderID, &out.ProviderModelID, &displayName, &rating)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CanonicalModelRow{}, false, nil
+	}
+	if err != nil {
+		return CanonicalModelRow{}, false, fmt.Errorf("storage: get canonical model: %w", err)
+	}
+
+	out.DisplayName = displayName.String
+	if rating.Valid {
+		v := rating.Float64
+		out.QualityRating = &v
+	}
+	return out, true, nil
+}
+
+// ErrModelNotFound is returned by SetQualityRating when modelID matches no
+// models row, so a write against a vanished model is a typed error rather
+// than a silent no-op.
+var ErrModelNotFound = errors.New("storage: model not found")
+
+// SetQualityRating persists a RESOLVED canonical quality rating (04 §3's
+// 0-100 scalar) onto modelID, stamping updated_at.
+//
+// There is deliberately no "clear the rating" path here and no zero-value
+// default: this method is only ever called with a value the precedence engine
+// actually resolved. A model with no signal keeps whatever it had — 04 §3's
+// "NULL means no quality signal available" is a state the caller reaches by
+// NOT calling this, never by writing 0.
+func (r *CatalogRepo) SetQualityRating(ctx context.Context, modelID string, rating float64, now time.Time) error {
+	res, err := r.db.Conn().ExecContext(ctx,
+		`UPDATE models SET quality_rating = ?, updated_at = ? WHERE id = ?`,
+		rating, now.Unix(), modelID,
+	)
+	if err != nil {
+		return fmt.Errorf("storage: set quality rating: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("storage: set quality rating: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: %q", ErrModelNotFound, modelID)
+	}
+	return nil
+}

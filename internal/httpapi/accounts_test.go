@@ -99,7 +99,7 @@ func newTestAccountsHandlerV2(t *testing.T, clock *time.Time, canaryKey string) 
 
 	audit := newAuditEmitter(db, nil)
 	quotaWindowRepo := storage.NewQuotaWindowRepo(db, nil, func() time.Time { return *clock })
-	h := NewAccountsHandler(accountRepo, credRepo, fundingRepo, quotaWindowRepo, credSvc, audit, func() time.Time { return *clock }, fundingIDCounter())
+	h := NewAccountsHandler(accountRepo, credRepo, fundingRepo, quotaWindowRepo, credSvc, newOperationalSettings(storage.NewSettingsRepo(db)), audit, func() time.Time { return *clock }, fundingIDCounter())
 	return h, db, accountID, credID
 }
 
@@ -1089,7 +1089,7 @@ func TestAccountsList_DoesNotDeadlockWithManyAccounts(t *testing.T) {
 	kr := testKeyring(t)
 	credSvc := application.NewCredentialService(credRepo, kr, nil)
 	audit := newAuditEmitter(db, nil)
-	h := NewAccountsHandler(accountRepo, credRepo, fundingRepo, quotaWindowRepo, credSvc, audit, nil, nil)
+	h := NewAccountsHandler(accountRepo, credRepo, fundingRepo, quotaWindowRepo, credSvc, newOperationalSettings(storage.NewSettingsRepo(db)), audit, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -34,6 +34,12 @@ const JobKindQuotaSync JobKind = "quota_sync"
 // vocabulary: discovery | probe | benchmark | backup | restore).
 const JobKindProbe JobKind = "probe"
 
+// JobKindBenchmark is the P6-CAPI-001 canonical-quality job kind: one
+// analysis-leaderboard read resolved through the precedence engine for a
+// single canonical model (04 §3/§5). It runs NO inference — it is the third
+// registered member of 09 §3.12's documented kind vocabulary.
+const JobKindBenchmark JobKind = "benchmark"
+
 // ErrUnknownJobKind is returned by ParseJobKind for any value outside the
 // registered vocabulary — fail closed, never silently accept an
 // unrecognized kind.
@@ -41,11 +47,11 @@ var ErrUnknownJobKind = errors.New("storage: unrecognized job kind")
 
 // ParseJobKind fails closed on any value outside the exact registered
 // vocabulary — no case folding, no trimming. "discovery",
-// "reconciliation", "quota_sync", and "probe" are registered;
-// benchmark/backup/restore are later units' concern.
+// "reconciliation", "quota_sync", "probe", and "benchmark" are registered;
+// backup/restore are later units' concern (P8).
 func ParseJobKind(s string) (JobKind, error) {
 	switch JobKind(s) {
-	case JobKindDiscovery, JobKindReconciliation, JobKindQuotaSync, JobKindProbe:
+	case JobKindDiscovery, JobKindReconciliation, JobKindQuotaSync, JobKindProbe, JobKindBenchmark:
 		return JobKind(s), nil
 	default:
 		return "", fmt.Errorf("%w: %q", ErrUnknownJobKind, s)

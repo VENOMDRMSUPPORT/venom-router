@@ -178,11 +178,20 @@ func TestJobKind_ParsesReconciliationAndQuotaSync(t *testing.T) {
 // TestParseJobKind_ProbeRoundTripsAndUnknownStillFails proves
 // P3c-CAPI-001/JOBS-001 registered exactly "probe" alongside the existing
 // three kinds, and that an unregistered kind still fails closed.
+//
+// "benchmark" WAS in the unregistered list below and has been removed by
+// P6-CAPI-001, which registers it (09 §3.12 names benchmark in the documented
+// kind vocabulary, and POST /models/{id}/benchmark now mints jobs of that
+// kind). The entry was a snapshot of what was unregistered at P3c time, not an
+// invariant — the invariant is "an unregistered kind fails closed", which the
+// remaining entries still prove, and TestParseJobKind_AcceptsBenchmark
+// (benchmark_test.go) covers the newly-registered value in both directions.
+// "backup" and "restore" stay unregistered until P8.
 func TestParseJobKind_ProbeRoundTripsAndUnknownStillFails(t *testing.T) {
 	if got, err := ParseJobKind("probe"); err != nil || got != JobKindProbe {
 		t.Fatalf("ParseJobKind(probe) = (%q, %v), want (probe, nil)", got, err)
 	}
-	for _, bad := range []string{"Probe", "probes", "benchmark", "backup", "restore", ""} {
+	for _, bad := range []string{"Probe", "probes", "Benchmark", "benchmarks", "backup", "restore", ""} {
 		if _, err := ParseJobKind(bad); err == nil {
 			t.Fatalf("ParseJobKind(%q) succeeded, want ErrUnknownJobKind", bad)
 		}

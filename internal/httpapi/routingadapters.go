@@ -336,6 +336,23 @@ type EngineDeps struct {
 	Cache       *routing.StickinessCache
 	Now         func() time.Time
 	Minter      routing.AttemptIDMinter
+	// StaleAfter resolves the owner's CURRENT quota-staleness window
+	// (P6-CAPI-001; 05 §4). A function rather than a value because the window
+	// is owner-configurable at runtime. Called ONCE per request, here, and
+	// handed to the whole fallback loop — never re-read per candidate. A nil
+	// provider falls back to quota.DefaultStalenessWindow.
+	StaleAfter func(context.Context) time.Duration
+}
+
+// staleAfter resolves the effective staleness window for one request.
+func (d *EngineDeps) staleAfter(ctx context.Context) time.Duration {
+	if d.StaleAfter == nil {
+		return quota.DefaultStalenessWindow
+	}
+	if v := d.StaleAfter(ctx); v > 0 {
+		return v
+	}
+	return quota.DefaultStalenessWindow
 }
 
 // RequestPlan is one request's already-derived inputs.
@@ -355,7 +372,7 @@ type RequestPlan struct {
 // BuildFallbackInput assembles every routing port over deps + plan + the
 // already-built snapshot into a ready routing.FallbackInput. The ScopeClassifier
 // is reused for BOTH Classifier and Scoper (never a second classifier).
-func (d *EngineDeps) BuildFallbackInput(plan RequestPlan, snap SnapshotResult) routing.FallbackInput {
+func (d *EngineDeps) BuildFallbackInput(ctx context.Context, plan RequestPlan, snap SnapshotResult) routing.FallbackInput {
 	holder := &execution.ResolvedRoute{}
 	classifier := NewScopeClassifier(func(err error) execution.TypedFailure {
 		return d.Classify(*holder, err)
@@ -376,7 +393,7 @@ func (d *EngineDeps) BuildFallbackInput(plan RequestPlan, snap SnapshotResult) r
 		Need:          1,
 		EstimateInput: plan.EstimateInput,
 		Now:           d.Now(),
-		StaleAfter:    quota.DefaultStalenessWindow,
+		StaleAfter:    d.staleAfter(ctx),
 		Recorder:      &attemptRecorderAdapter{rec: d.RouteRecorder, decisionID: plan.DecisionID, now: d.Now},
 		Reserver:      &reserverAdapter{repo: d.Reservations},
 		Lifecycle:     &lifecycleAdapter{repo: d.Lifecycle},

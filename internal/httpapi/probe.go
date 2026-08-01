@@ -135,11 +135,16 @@ type ProbeHandler struct {
 	reserver    intelligence.ProbeReserver
 	transport   probeTransport
 	driver      *intelligence.CertificationDriver
-	policy      intelligence.ProbeSafetyPolicy
-	audit       *auditEmitter
-	idem        *idempotencyStore
-	newID       func() string
-	now         func() time.Time
+	// policyFor resolves the owner's CURRENT probe-safety policy. It is a
+	// function, not a value, because the caps are owner-configurable at
+	// runtime (P6-CAPI-001): a policy snapshotted at boot would ignore every
+	// change until the process restarted. It is called ONCE per probe run,
+	// never per candidate or per row.
+	policyFor func(context.Context) intelligence.ProbeSafetyPolicy
+	audit     *auditEmitter
+	idem      *idempotencyStore
+	newID     func() string
+	now       func() time.Time
 }
 
 // NewProbeHandler builds the handler over every repo/service it needs.
@@ -156,7 +161,7 @@ func NewProbeHandler(
 	reserver intelligence.ProbeReserver,
 	transport probeTransport,
 	driver *intelligence.CertificationDriver,
-	policy intelligence.ProbeSafetyPolicy,
+	policyFor func(context.Context) intelligence.ProbeSafetyPolicy,
 	audit *auditEmitter,
 	idem *idempotencyStore,
 	newID func() string,
@@ -168,10 +173,17 @@ func NewProbeHandler(
 	if now == nil {
 		now = time.Now
 	}
+	if policyFor == nil {
+		// A nil provider falls back to the frozen defaults, so a test that
+		// does not care about owner configuration behaves exactly as before.
+		policyFor = func(context.Context) intelligence.ProbeSafetyPolicy {
+			return intelligence.DefaultProbeSafetyPolicy()
+		}
+	}
 	return &ProbeHandler{
 		accounts: accounts, credentials: credentials, catalog: catalog, jobs: jobs,
 		certs: certs, probeRuns: probeRuns, reserver: reserver, transport: transport,
-		driver: driver, policy: policy, audit: audit, idem: idem, newID: newID, now: now,
+		driver: driver, policyFor: policyFor, audit: audit, idem: idem, newID: newID, now: now,
 	}
 }
 
@@ -461,7 +473,7 @@ func (h *ProbeHandler) runProbe(ctx context.Context, jobID, offeringOperationID,
 		_ = h.probeRuns.Finish(context.WithoutCancel(ctx), runID, runExecution, h.now())
 	}()
 
-	guard, err := intelligence.NewProbeGuard(h.policy, h.reserver, h.probeRuns, inFlightExcluding{runs: h.probeRuns, excludeRun: runID}, cooldown, h.now)
+	guard, err := intelligence.NewProbeGuard(h.policyFor(ctx), h.reserver, h.probeRuns, inFlightExcluding{runs: h.probeRuns, excludeRun: runID}, cooldown, h.now)
 	if err != nil {
 		h.failJob(jobID, "internal", "probe guard construction failed")
 		return

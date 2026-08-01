@@ -6,6 +6,7 @@ import (
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/application"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/execution"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
@@ -50,6 +51,8 @@ type ControlMuxOption func(*controlMuxOptions)
 
 type controlMuxOptions struct {
 	omitPublicRoutes bool
+	bind             string
+	dataPlaneBind    string
 }
 
 // WithoutPublicRoutes tells ControlMux NOT to mount the vk-gated /v1/* public
@@ -64,10 +67,34 @@ func WithoutPublicRoutes() ControlMuxOption {
 	return func(o *controlMuxOptions) { o.omitPublicRoutes = true }
 }
 
+// WithEffectiveBinds supplies the BOOT-RESOLVED listen addresses so
+// GET /settings can report them read-only under `effective_config`
+// (P6-CAPI-001, 01 §6b). Boot is the only place that knows them: they come
+// from config.Load's default -> env -> flag precedence, and this package must
+// never read the environment itself (forbidigo confines that to
+// internal/config and internal/platform).
+//
+// When the option is absent, `bind` falls back to allowedHost — which IS
+// cfg.Bind at the production call site — and `data_plane_bind` reports null,
+// config.Config.DataPlaneBind's documented default meaning "the public /v1 API
+// shares the control listener". Both fallbacks are the true values for a
+// default install, so an omitted option reports honestly rather than
+// fabricating.
+func WithEffectiveBinds(bind, dataPlaneBind string) ControlMuxOption {
+	return func(o *controlMuxOptions) {
+		o.bind = bind
+		o.dataPlaneBind = dataPlaneBind
+	}
+}
+
 func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secrets.Keyring, opts ...ControlMuxOption) http.Handler {
 	var o controlMuxOptions
 	for _, opt := range opts {
 		opt(&o)
+	}
+
+	if o.bind == "" {
+		o.bind = allowedHost
 	}
 
 	mux := http.NewServeMux()
@@ -133,7 +160,14 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// accounts/application port (settings are configuration, not account-
 	// domain orchestration). Owner-session + CSRF gated like every other
 	// authenticated control route.
-	settingsHandler := NewSettingsHandler(storage.NewSettingsRepo(db), audit, nil)
+	settingsRepo := storage.NewSettingsRepo(db)
+	// ops is the SINGLE resolver every owner-configurable operational knob is
+	// read through (staleness window, probe caps). It is shared by the
+	// accounts projection and the probe handler below rather than each
+	// constructing its own, so there is exactly one definition of "the owner's
+	// current operational settings" in the process.
+	ops := newOperationalSettings(settingsRepo)
+	settingsHandler := NewSettingsHandler(settingsRepo, audit, nil, newEffectiveConfig(o.bind, o.dataPlaneBind))
 	mux.Handle("/api/control/v1/settings", gated(settingsHandler.ServeSettings))
 	// PUT /settings/enrichment (P3a-CAPI-003): a distinct, more-specific
 	// pattern than the method-less "/settings" above — Go 1.22's ServeMux
@@ -191,7 +225,7 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// its own — same one-repo-per-underlying-table pattern as accountRepo/
 	// fundingRepo/credentialRepo above.
 	quotaWindowRepo := storage.NewQuotaWindowRepo(db, nil, nil)
-	accountsHandler := NewAccountsHandler(accountRepo, credentialRepo, fundingRepo, quotaWindowRepo, credentialService, audit, nil, newOAuthTransactionID)
+	accountsHandler := NewAccountsHandler(accountRepo, credentialRepo, fundingRepo, quotaWindowRepo, credentialService, ops, audit, nil, newOAuthTransactionID)
 	mux.Handle("/api/control/v1/accounts", gated(accountsHandler.ServeList))
 	mux.Handle("/api/control/v1/accounts/{id}", gated(accountsHandler.ServeGet))
 	// DELETE /accounts/{id} is the soft-disconnect route (09 §2). It is
@@ -224,6 +258,21 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	modelsHandler := NewModelsHandler(catalogRepo, nil)
 	mux.Handle("/api/control/v1/models", gated(modelsHandler.ServeModels))
 	mux.Handle("/api/control/v1/offerings", gated(modelsHandler.ServeOfferings))
+
+	// Canonical quality benchmark (P6-CAPI-001, 04 §3/§5, 09 §3.12): POST
+	// /models/{id}/benchmark, async 202 + the canonical shared job surface.
+	// The QualityIndex seam is nil here for the same reason the metadata
+	// registry seam is: no unit has yet wired a real analysis-leaderboard HTTP
+	// client (04 §2b's pipeline B is owner-enabled and still unwired). A nil
+	// seam behaves as a leaderboard that always misses, so the endpoint
+	// completes its job honestly WITHOUT writing a rating — never a fabricated
+	// one. Wiring a real leaderboard client is a later unit's work and
+	// requires no change here beyond passing it in.
+	benchmarkHandler := NewBenchmarkHandler(
+		catalogRepo, storage.NewJobRepo(db), storage.NewSettingsRepo(db),
+		nil, audit, newOAuthTransactionID, nil,
+	)
+	mux.Handle("/api/control/v1/models/{id}/benchmark", gated(benchmarkHandler.ServeBenchmark))
 
 	// Discovery + certification read (P3a-CAPI-002): POST
 	// /accounts/{id}/discover (async, 202 + the canonical shared job
@@ -271,10 +320,9 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	certDriver, _ := intelligence.NewCertificationDriver(certRepo, certAuditor, intelligence.DefaultProbeRetryBudget, nil)
 	probeReserver := newProbeReserverAdapter(storage.NewQuotaReservationRepo(db, nil))
 	probeTransportAdapterInstance := newProbeTransportAdapter(probeTransports, probeBaseURLs, credentialRepo, credentialService)
-	probeHandler := NewProbeHandler(
+	probeHandler := buildProbeHandler(
 		accountRepo, credentialRepo, catalogRepo, jobRepo, certRepo, probeRunRepo,
-		probeReserver, probeTransportAdapterInstance, certDriver, intelligence.DefaultProbeSafetyPolicy(),
-		audit, idem, newOAuthTransactionID, nil,
+		probeReserver, probeTransportAdapterInstance, certDriver, ops, audit, idem,
 	)
 	mux.Handle("/api/control/v1/offerings/{id}/probe", gated(probeHandler.ServeProbe))
 
@@ -304,9 +352,19 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// accept_estimate). Shares reconciliationRepo/quotaLifecycleRepo with
 	// the quota-refresh route above — both are the same underlying
 	// five-state reservation lifecycle.
-	diagnosticsHandler := NewDiagnosticsHandler(reconciliationRepo, quotaLifecycleRepo, audit)
+	//
+	// Route explanations (P6-CAPI-001, 09 §3.9 / 05 §7) join the SAME handler
+	// via WithRoutes: GET /diagnostics/routes (paginated list) and GET
+	// /diagnostics/routes/{request_id}. The reader is constructed over
+	// db.Conn() exactly as chatcompletions.go constructs the RouteRecorder
+	// that writes these same two tables — one connection pool, one table pair,
+	// a writer and a reader.
+	diagnosticsHandler := NewDiagnosticsHandler(reconciliationRepo, quotaLifecycleRepo, audit).
+		WithRoutes(observability.NewRouteReader(db.Conn()))
 	mux.Handle("/api/control/v1/diagnostics/reconciliation", gated(diagnosticsHandler.ServeList))
 	mux.Handle("/api/control/v1/diagnostics/reconciliation/{reservation_id}", gated(diagnosticsHandler.ServeAction))
+	mux.Handle("/api/control/v1/diagnostics/routes", gated(diagnosticsHandler.ServeRoutes))
+	mux.Handle("/api/control/v1/diagnostics/routes/{request_id}", gated(diagnosticsHandler.ServeRouteExplanation))
 
 	// Venom API-key management (P5-CAPI-001, 09 §3.11): POST/GET /keys and
 	// DELETE /keys/{id}, owner-session + CSRF gated like every other mutating
@@ -338,4 +396,35 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// rejection never reaches the engine or quota. It is independent of the
 	// per-key RPM enforced inside vk auth on /v1/*; a request must satisfy both.
 	return newIngressLimiter(0, 0, nil).Middleware(mux)
+}
+
+// buildProbeHandler is the ONE place the probe handler's dependencies are
+// assembled, extracted from ControlMux's body so the wiring itself is
+// testable (P6-CAPI-001).
+//
+// The extraction is deliberate and load-bearing: the whole point of making
+// the probe caps owner-configurable is that ops.probePolicy — not
+// intelligence.DefaultProbeSafetyPolicy() — is what reaches the admission
+// gate. While that expression lived inline in ControlMux, replacing it with
+// the bare defaults left the entire package green, i.e. the setting could
+// silently go inert. It now has a test of its own.
+func buildProbeHandler(
+	accounts *storage.AccountRepo,
+	credentials *storage.AccountCredentialRepo,
+	catalog *storage.CatalogRepo,
+	jobs *storage.JobRepo,
+	certs *storage.CertificationRepo,
+	probeRuns *storage.ProbeRunRepo,
+	reserver intelligence.ProbeReserver,
+	transport probeTransport,
+	driver *intelligence.CertificationDriver,
+	ops *operationalSettings,
+	audit *auditEmitter,
+	idem *idempotencyStore,
+) *ProbeHandler {
+	return NewProbeHandler(
+		accounts, credentials, catalog, jobs, certs, probeRuns,
+		reserver, transport, driver, ops.probePolicy,
+		audit, idem, newOAuthTransactionID, nil,
+	)
 }

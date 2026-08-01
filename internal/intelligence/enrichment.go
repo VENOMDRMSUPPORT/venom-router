@@ -59,7 +59,7 @@ func (s *EnrichmentService) Enrich(ctx context.Context, scope Scope, providerID,
 		out = append(out, metadataEvidence(scope, entry, now)...)
 	}
 	if entry, ok := s.resolveQuality(ctx, providerID, providerModelID); ok {
-		out = append(out, qualityEvidence(scope, entry, now)...)
+		out = append(out, QualityEvidence(scope, entry, now)...)
 	}
 
 	return out
@@ -199,7 +199,18 @@ func metadataEvidence(scope Scope, entry MetadataEntry, now time.Time) []Evidenc
 	return out
 }
 
-func qualityEvidence(scope Scope, entry QualityEntry, now time.Time) []Evidence {
+// QualityEvidence turns one analysis-leaderboard QualityEntry into
+// precedence-engine Evidence (04 §2b/§4). It is EXPORTED so that every caller
+// that reads the leaderboard — EnrichmentService.Enrich here, and
+// P6-CAPI-001”'s POST /models/{id}/benchmark in internal/httpapi — stamps the
+// identical provenance for the identical row. A second, hand-rolled Evidence
+// literal elsewhere would be a second source of truth for how strong a
+// leaderboard claim is.
+//
+// An entry with a nil Rating yields NO evidence: the leaderboard knowing the
+// model but having no score for it is 04 §3”'s "no quality signal available",
+// which must stay unknown rather than becoming a value.
+func QualityEvidence(scope Scope, entry QualityEntry, now time.Time) []Evidence {
 	if entry.Rating == nil {
 		return nil
 	}
