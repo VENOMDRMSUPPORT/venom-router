@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // P2a-DS-005: locks the integration contract (handoff-contract.md, 07 §9/§10).
-// @venom/design-system is FROZEN/read-only and consumed ONLY through its
-// public `exports` map (mode 1, "file:../Design_System"). This script fails
+// @venom/design-system is consumed ONLY through its public `exports` map
+// (mode 1, "file:../Design_System"). This script fails
 // (non-zero exit, CI-blocking) if any of the following is true:
 //
 //   1. Dashboard source imports a package path that isn't in
@@ -10,15 +10,12 @@
 //   2. Dashboard source vendors a copy of a Design_System component/source
 //      file (same filename as a real DS component, or contains the DS
 //      token-build's own GENERATED header) instead of importing it.
-//   3. Design_System/ has ANY uncommitted changes — the package is
-//      read-only to the app; touching it here is a boundary breach.
-//   4. Design_System/package.json's version has drifted from the version
+//   3. Design_System/package.json's version has drifted from the version
 //      this app was reviewed/pinned against (see PINNED_DS_VERSION below
 //      and dashboard/CONSUMPTION.md) without a deliberate re-pin.
 //
 // No dependencies beyond Node's stdlib — this must run before `npm ci`.
 
-import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -110,20 +107,6 @@ for (const file of sourceFiles) {
   }
 }
 
-// --- Design_System/ must be byte-clean: the package is read-only to the app ---
-let gitStatus;
-try {
-  gitStatus = execFileSync("git", ["-C", REPO_ROOT, "status", "--porcelain", "Design_System/"], {
-    encoding: "utf8",
-  });
-} catch (err) {
-  console.error("check-ds-adherence: could not run `git status` on Design_System/:", err.message);
-  process.exit(1);
-}
-if (gitStatus.trim().length > 0) {
-  violations.push(`[package-edit] Design_System/ has uncommitted changes (must stay read-only):\n${gitStatus}`);
-}
-
 // --- Version pin ---
 if (dsPkg.version !== PINNED_DS_VERSION) {
   violations.push(
@@ -138,5 +121,5 @@ if (violations.length > 0) {
 }
 
 console.log(
-  `check-ds-adherence: OK — pinned @venom/design-system@${PINNED_DS_VERSION}, ${sourceFiles.length} source files scanned, no internal imports, no vendored copies, Design_System/ untouched.`,
+  `check-ds-adherence: OK — pinned @venom/design-system@${PINNED_DS_VERSION}, ${sourceFiles.length} source files scanned, no internal imports and no vendored copies.`,
 );

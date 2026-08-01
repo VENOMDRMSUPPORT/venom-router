@@ -77,18 +77,18 @@ export default function EnterpriseCustomizer(props: EnterpriseCustomizerProps) {
   }
 
   return (
-    <div ref={containerRef} className="fixed bottom-6 right-6 z-50 flex flex-col items-end">
+    <div ref={containerRef} className="vn-enterprise-customizer">
       <IconButton
         icon="sliders-horizontal"
         label="Customize design system"
         variant="primary"
-        className="h-12 w-12 rounded-full shadow-lg"
+        className="vn-enterprise-customizer-trigger"
         aria-expanded={isOpen}
         onClick={() => setIsOpen((open) => !open)}
       />
 
       {isOpen ? (
-        <Card className="mt-3 w-80 shadow-2xl" role="dialog" aria-label="Enterprise customizer">
+        <Card className="vn-enterprise-customizer-panel" role="dialog" aria-label="Enterprise customizer">
           <div className="mb-4 flex items-center justify-between border-b border-border-default pb-3">
             <div className="flex items-center gap-2">
               <Icon name="sliders-horizontal" size={14} />

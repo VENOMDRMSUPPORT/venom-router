@@ -17,12 +17,12 @@ test.describe("Console — all 17 surfaces (venom-dark)", () => {
   }
 });
 
-// ...and a representative subset across all three themes (color/contrast differs per theme;
+// ...and a representative subset across both themes (color/contrast differs per theme;
 // running the full 17x3 matrix is redundant once the shared components are already
 // axe-clean per-card — this catches composition-level regressions, e.g. a page that
 // hardcodes a color the theme can't override).
 const REPRESENTATIVE = ["overview", "providers", "diagnostics", "settings"];
-test.describe("Console — representative surfaces x 3 themes", () => {
+test.describe("Console — representative surfaces x 2 themes", () => {
   for (const screen of REPRESENTATIVE) {
     for (const theme of THEMES) {
       test(`${screen} @ ${theme}`, async ({ page }) => {

@@ -22,6 +22,13 @@ export interface NavItem {
 
 export const NAV_GROUPS = ["Overview", "Operate", "Insights", "Manage"] as const;
 
+const NAV_GROUP_ICONS: Record<(typeof NAV_GROUPS)[number], string> = {
+  Overview: "layout-dashboard",
+  Operate: "server",
+  Insights: "chart-line",
+  Manage: "settings",
+};
+
 export const NAV: NavItem[] = [
   {
     group: "Overview",
@@ -106,6 +113,13 @@ export const NAV: NavItem[] = [
 ];
 
 export const DEFAULT_NAV_KEY = "overview";
+
+export const NAV_SECTIONS = NAV_GROUPS.map((group) => ({
+  key: group.toLowerCase(),
+  label: group,
+  icon: NAV_GROUP_ICONS[group],
+  items: NAV.filter((item) => item.group === group).map(({ key, label, icon }) => ({ key, label, icon })),
+}));
 
 export function navItemByKey(key: string): NavItem | undefined {
   return NAV.find((item) => item.key === key);

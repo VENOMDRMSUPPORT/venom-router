@@ -3,7 +3,6 @@
 //   tokens/primitives.css        (theme-agnostic scales)
 //   themes/venom-dark.css        (default; bound to :root and [data-theme="venom-dark"])
 //   themes/venom-light.css
-//   themes/venom-hc.css
 //   tokens/components.css        (component tokens -> semantic var() references)
 //   tokens/density.css           (comfortable/compact via [data-density])
 //   tokens/accents.css           (optional accent palettes via [data-accent])
@@ -29,7 +28,6 @@ async function buildVenomTokens(io) {
   const themeFiles = {
     'venom-dark': 'tokens/tokens.semantic.venom-dark.json',
     'venom-light': 'tokens/tokens.semantic.venom-light.json',
-    'venom-hc': 'tokens/tokens.semantic.venom-hc.json',
   };
   const componentDoc = await parse('tokens/tokens.component.json');
   const densityDoc = await parse('tokens/tokens.density.json');
@@ -153,9 +151,7 @@ async function buildVenomTokens(io) {
   // the build fails loudly on any other key, so an accent can never restyle surfaces,
   // status colors, or text roles. `base` carries the venom-dark values (dark is the
   // :root default theme); a `themes.<name>` block re-overrides for that theme at higher
-  // attribute specificity ([data-theme="…"][data-accent="…"]). venom-hc's focus ring and
-  // focus border are re-pinned to their HC-owned values at the end: accents must never
-  // lower High Contrast's focus guarantees.
+  // attribute specificity ([data-theme="…"][data-accent="…"]).
   const ACCENT_ALLOWED = [
     'accent.default', 'accent.hover', 'accent.active', 'accent.subtle-bg', 'accent.text',
     'text.on-accent', 'text.link', 'text.link-hover',
@@ -187,8 +183,6 @@ async function buildVenomTokens(io) {
       acss += emitAccentBlock(`[data-theme="${themeName}"][data-accent="${name}"]`, overrides, `accent ${name} (${themeName})`);
     }
   }
-  acss += '/* venom-hc keeps its HC-owned focus ring/border under every accent. */\n';
-  acss += `[data-theme="venom-hc"][data-accent] {\n  --focus-ring: ${resolveRaw('focus.ring', themes['venom-hc'])};\n  --border-focus: ${resolveRaw('border.focus', themes['venom-hc'])};\n}\n`;
   await saveFile('tokens/accents.css', acss);
 
   // ---- emit tokens.ts

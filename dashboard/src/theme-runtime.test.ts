@@ -123,7 +123,7 @@ describe("setAccent / setRadius / setSpacing", () => {
 
 describe("setTheme", () => {
   it("flips data-theme on the root for every shipped theme", () => {
-    expect(THEMES).toEqual(["venom-dark", "venom-light", "venom-hc"]);
+    expect(THEMES).toEqual(["venom-dark", "venom-light"]);
 
     for (const theme of THEMES) {
       const root = freshRoot();

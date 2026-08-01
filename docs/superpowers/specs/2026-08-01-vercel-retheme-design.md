@@ -24,9 +24,9 @@ radius 0–16px, layout spacing 75–125%).
 1. **Full system**: neutrals + mono default accent + 5 accents
    (blue/violet/amber/emerald/rose, emerald & rose have distinct dark values)
    + the floating customizer with all four controls.
-2. **venom-hc stays** as a third theme: it adopts the new neutral identity but
-   keeps maximized contrast. The customizer shows only Light/Dark (1:1 with
-   the screenshot); HC remains selectable from the Settings page as today.
+2. **Theme scope superseded by the responsive-system overhaul:** the runtime now
+   ships only Venom Dark and Venom Light. Saved `venom-hc` preferences migrate
+   to Venom Dark, while both retained themes remain WCAG AA gated.
 3. **Server-side persistence only** (per DS SKILL.md invariant): the owner
    settings API (`internal/httpapi/settings.go`, currently theme+density)
    gains `accent`, `radius_px`, `spacing_scale`. Migration `00013`. No

@@ -15,6 +15,10 @@ export default defineConfig({
   reporter: [["list"]],
   timeout: 30_000,
   expect: {
+    // Screenshot capture can briefly queue behind the preceding a11y suite on
+    // Windows when all eight workers are active. Keep the pixel threshold
+    // strict while allowing the capture itself enough time to complete.
+    timeout: 20_000,
     // Tight on purpose: a real visual regression should fail this. maxDiffPixels (not
     // ratio) so it doesn't scale permissively with full-page screenshot size.
     toHaveScreenshot: { maxDiffPixels: 40 },

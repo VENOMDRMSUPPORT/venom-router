@@ -1,9 +1,9 @@
-# Accessibility contract (WCAG 2.2 AA minimum; AAA where feasible in High Contrast)
+# Accessibility contract (WCAG 2.2 AA minimum)
 
 Mechanically checked where possible (`validation/`); the rest is a binding review rule.
 
 ## Contrast
-Every text/background token pairing meets ≥ 4.5:1 (body) / ≥ 3:1 (large text, UI boundaries) in **all three themes**; High Contrast targets ≥ 7:1 for body text. Enforced by `validation/check-contrast.js` over the resolved theme manifest — pairings validated: text.{primary,secondary,muted} × surface.{canvas,primary,secondary,raised}; status.*.fg × status.*.bg and × surfaces; tier.*.fg × tier.*.bg; action fg × bg; text.link × surfaces; text.on-accent × accent.default. `text.disabled` is exempt per WCAG (disabled controls) but still tuned for legibility.
+Every text/background token pairing meets ≥ 4.5:1 (body) / ≥ 3:1 (large text, UI boundaries) in both themes. Enforced by `validation/check-contrast.js` over the resolved theme manifest — pairings validated: text.{primary,secondary,muted} × surface.{canvas,primary,secondary,raised}; status.*.fg × status.*.bg and × surfaces; tier.*.fg × tier.*.bg; action fg × bg; text.link × surfaces; text.on-accent × accent.default. `text.disabled` is exempt per WCAG (disabled controls) but still tuned for legibility.
 
 ## Keyboard
 - Everything interactive is reachable and operable: buttons/links native; menus and comboboxes use Arrow/Home/End/Enter/Escape with roving tabindex; tabs arrow-navigate; clickable table rows take Enter/Space (tabIndex=0).

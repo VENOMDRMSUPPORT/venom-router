@@ -5,7 +5,7 @@ One set: **Lucide**, pinned `lucide-static@0.453.0` (24px grid, 2px stroke, roun
 **Rules**
 - An icon never carries meaning alone. Critical state = icon + label (+ tooltip/detail where needed).
 - Decorative icons: `aria-hidden="true"`. Meaning-bearing icons standing alone: `role="img"` + `aria-label`.
-- Capability icons may take controlled accent tints (status/tier tokens) but must stay legible in all three themes and never rely on color alone.
+- Capability icons may take controlled accent tints (status/tier tokens) but must stay legible in both themes and never rely on color alone.
 - Never hand-draw replacement glyphs; extend this map from the same pinned set.
 - Offline packaging: the pinned SVGs are vendored into `assets/icons/` and `icons/icons.css` references them locally — no runtime network access. Run `npm run vendor:icons` after adding a new glyph reference (copies from the pinned `lucide-static` devDependency and rewrites the CSS).
 

@@ -13,18 +13,17 @@ describe("ProviderLogo", () => {
     expect(img.tagName).toBe("IMG");
     expect(img.getAttribute("src")).toBe("/providers/opencode-zen.png");
     expect(img.getAttribute("alt")).toBe("OpenCode Zen");
-    // The logo sits in the DS mark frame — same square dimensions and
-    // token-rounded border as the letter avatar it replaces.
-    expect(img.parentElement?.className).toBe("vn-mark vn-mark--lg");
+    expect(img.parentElement?.className).toContain("vn-provider-logo--lg");
   });
 
-  it("falls back to the DS letter mark for a slug with no shipped logo", () => {
-    render(<ProviderLogo slug="agnes-ai" name="Agnes AI" />);
+  it("renders the shipped Agnes logo at the large provider-card size without inline inset padding", () => {
+    render(<ProviderLogo slug="agnes-ai" name="Agnes AI" size="lg" />);
 
-    const mark = screen.getByRole("img", { name: "Agnes AI" });
-    expect(mark.tagName).toBe("SPAN");
-    expect(mark.textContent).toBe("AA");
-    expect(mark.querySelector("img")).toBeNull();
+    const img = screen.getByRole("img", { name: "Agnes AI" });
+    expect(img.tagName).toBe("IMG");
+    expect(img.getAttribute("src")).toBe("/providers/agnes-ai.png");
+    expect(img.getAttribute("style")).toBeNull();
+    expect(img.parentElement?.className).toContain("vn-provider-logo--lg");
   });
 
   it("falls back to the letter mark when the logo image fails to load — never a broken image", () => {
@@ -49,7 +48,7 @@ describe("ProviderLogo", () => {
 
   it("providerLogoSrc is null for unknown slugs and the custom path", () => {
     expect(providerLogoSrc("custom")).toBeNull();
-    expect(providerLogoSrc("agnes-ai")).toBeNull();
+    expect(providerLogoSrc("agnes-ai")).toBe("/providers/agnes-ai.png");
     expect(providerLogoSrc("not-a-provider")).toBeNull();
   });
 });

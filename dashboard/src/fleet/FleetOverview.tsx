@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Button,
   EmptyState,
   ErrorState,
+  FilterBar,
   SegmentedControl,
   Spinner,
   StatCard,
 } from "@venom/design-system/primitives";
-import { Icon } from "@venom/design-system/icons";
 import {
   isSessionExpired,
   listAccounts,
@@ -34,12 +34,12 @@ export interface FleetOverviewProps {
   view?: FleetView;
 }
 
-type AuthCategory = "all" | "oauth" | "api_key";
+type AuthCategory = "all" | "oauth" | "api_key" | "custom";
 
 const CATEGORY_OPTIONS = [
-  { value: "all", label: "All" },
-  { value: "oauth", label: "OAuth" },
-  { value: "api_key", label: "API Key" },
+  { value: "oauth", label: "OAuth Providers" },
+  { value: "api_key", label: "Api key Providers" },
+  { value: "custom", label: "Custom Providers" },
 ];
 
 /** Fetches every account page (bounded — an owner console's account count
@@ -162,7 +162,10 @@ export default function FleetOverview(props: FleetOverviewProps) {
   const connectedProviders = new Set(accountsByProvider.keys());
   const scopedProviders = providers.filter((p) => {
     if (view === "active" && !connectedProviders.has(p.id)) return false;
-    return category === "all" ? true : category === "oauth" ? p.auth_mode === "oauth2" : p.auth_mode === "api_key";
+    if (category === "all") return true;
+    if (category === "oauth") return p.auth_mode === "oauth2";
+    if (category === "custom") return p.auth_mode === "custom_openai";
+    return p.auth_mode === "api_key";
   });
   const query = search.trim().toLowerCase();
   const filteredProviders = query
@@ -173,10 +176,11 @@ export default function FleetOverview(props: FleetOverviewProps) {
           p.description.toLowerCase().includes(query),
       )
     : scopedProviders;
+  const emptyActiveView = view === "active" && category === "all" && query.length === 0;
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-4 gap-3">
+      <div className="vn-provider-stats">
         <StatCard label="Providers" value={providers.length} icon="server" />
         <StatCard label="Accounts" value={accounts.length} icon="user-round" />
         <StatCard label="Healthy" value={healthyCount} tone="healthy" icon="heart-pulse" />
@@ -185,55 +189,40 @@ export default function FleetOverview(props: FleetOverviewProps) {
         <StatCard label="Models" value="—" tone="unknown" icon="box" />
       </div>
 
-      <div className="flex flex-col gap-3 rounded-lg border border-border-default bg-surface-secondary p-3 shadow-sm sm:flex-row sm:items-center sm:gap-4">
-        <div className="vn-search relative block flex-1 sm:max-w-sm">
-          <Icon name="search" size={14} />
-          <input
-            type="search"
-            className="vn-input"
-            aria-label="Search integrations"
-            placeholder="Search integrations…"
-            value={search}
-            onChange={(e: ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
-          />
-          {search ? (
-            <button
-              type="button"
-              aria-label="Clear"
-              onClick={() => setSearch("")}
-              className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center justify-center rounded p-0.5 text-text-muted transition-colors hover:text-text-primary"
-            >
-              <Icon name="x" size={14} />
-            </button>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center">
-          <SegmentedControl
-            label="Filter integrations by authentication type"
-            options={CATEGORY_OPTIONS}
-            value={category}
-            onChange={(value) => setCategory(value as AuthCategory)}
-          />
-        </div>
-      </div>
+      <FilterBar
+        label="Provider filters"
+        searchValue={search}
+        onSearchChange={setSearch}
+        searchLabel="Search integrations"
+        searchPlaceholder="Search integrations…"
+      >
+        <SegmentedControl
+          label="Filter providers by authentication type"
+          options={CATEGORY_OPTIONS}
+          value={category}
+          onChange={(value) => setCategory(value as AuthCategory)}
+        />
+      </FilterBar>
 
       {providers.length === 0 ? (
         <EmptyState icon="server" title="No providers in the catalog" />
       ) : filteredProviders.length === 0 ? (
         <div className="vn-panel p-8">
           <EmptyState
-            icon="search"
-            title="No integrations found"
-            description="Try adjusting your search terms or category filters."
-            action={
+            icon={emptyActiveView ? "circle-check" : "search"}
+            title={emptyActiveView ? "No active providers" : "No integrations found"}
+            description={emptyActiveView
+              ? "No provider accounts are connected yet. Choose All Integrations to browse the catalog."
+              : "Try adjusting your search terms or category filters."}
+            action={emptyActiveView ? undefined : (
               <Button variant="secondary" size="sm" onClick={() => setSearch("")}>
                 Clear Search
               </Button>
-            }
+            )}
           />
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="vn-provider-grid">
           {filteredProviders.map((provider) => (
             <ProviderCard
               key={provider.id}

@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Banner, EmptyState, IconButton, Spinner } from "@venom/design-system/primitives";
+import {
+  Banner,
+  Button,
+  IconButton,
+  PageContextBar,
+  PlannedSurface,
+  SectionDeck,
+  Spinner,
+} from "@venom/design-system/primitives";
 import { Icon } from "@venom/design-system/icons";
 import {
   getSettings,
@@ -30,7 +38,7 @@ import {
 import BreadcrumbBar from "./BreadcrumbBar";
 import ChromeHeader from "./ChromeHeader";
 import EnterpriseCustomizer, { type CustomizerValue } from "./EnterpriseCustomizer";
-import { DEFAULT_NAV_KEY, NAV, NAV_GROUPS, navItemByKey } from "./nav";
+import { DEFAULT_NAV_KEY, NAV, NAV_GROUPS, NAV_SECTIONS, navItemByKey } from "./nav";
 import NotificationBell from "./NotificationBell";
 import OwnerMenu from "./OwnerMenu";
 import ThemeToggle from "./ThemeToggle";
@@ -114,7 +122,8 @@ export default function AppShell(props: AppShellProps) {
   // catalog, default) or "active" (only providers with ≥1 connected
   // account). Owned here so both the chips and FleetOverview share one
   // source of truth.
-  const [fleetView, setFleetView] = useState<FleetView>("all");
+  const [fleetView, setFleetView] = useState<FleetView>("active");
+  const [apiKeyCreateOpen, setApiKeyCreateOpen] = useState(false);
   const appearanceRef = useRef(appearance);
   appearanceRef.current = appearance;
 
@@ -208,6 +217,11 @@ export default function AppShell(props: AppShellProps) {
     }
   }
 
+  function handleNavigate(next: string) {
+    if (next !== "api-keys") setApiKeyCreateOpen(false);
+    setActiveNav(next);
+  }
+
   if (!settingsLoaded) {
     return (
       <div className="vn-shell">
@@ -247,7 +261,7 @@ export default function AppShell(props: AppShellProps) {
                 aria-current={activeNav === item.key ? "page" : undefined}
                 onClick={(e) => {
                   e.preventDefault();
-                  setActiveNav(item.key);
+                  handleNavigate(item.key);
                 }}
               >
                 <Icon name={item.icon} size={15} />
@@ -263,7 +277,19 @@ export default function AppShell(props: AppShellProps) {
         subtitle={activeItem.description}
         icon={activeItem.icon}
       >
-        <ThemeToggle theme={appearance.theme} onChange={handleThemeChange} />
+        <EnterpriseCustomizer
+          value={{
+            theme: appearance.theme,
+            accent: appearance.accent,
+            radiusPx: appearance.radiusPx,
+            spacingScale: appearance.spacingScale,
+          }}
+          onApply={handleCustomizerApply}
+          onPersist={handleCustomizerPersist}
+        />
+        <span className="vn-desktop-theme-toggle">
+          <ThemeToggle theme={appearance.theme} onChange={handleThemeChange} />
+        </span>
         <NotificationBell />
         <OwnerMenu session={session} onSignOut={handleSignOut} />
       </ChromeHeader>
@@ -289,31 +315,32 @@ export default function AppShell(props: AppShellProps) {
           {/* The global breadcrumb row (legacy parity): trail chip on the
               left; on the Providers page, the fleet's Active/All chips on
               the right once the live counts have loaded. */}
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <BreadcrumbBar item={activeItem} onNavigateHome={() => setActiveNav(DEFAULT_NAV_KEY)} />
-            {activeNav === "providers" && fleetCounts ? (
+          <PageContextBar
+            leading={<BreadcrumbBar item={activeItem} onNavigateHome={() => handleNavigate(DEFAULT_NAV_KEY)} />}
+            secondary={activeNav === "providers" && fleetCounts ? (
               <FleetBreadcrumbChips
                 activeCount={fleetCounts.active}
                 totalCount={fleetCounts.total}
                 view={fleetView}
                 onViewChange={setFleetView}
               />
-            ) : null}
-          </div>
+            ) : undefined}
+            actions={activeNav === "api-keys" ? (
+              <Button variant="primary" icon="plus" onClick={() => setApiKeyCreateOpen(true)}>
+                <span className="vn-api-key-action-wide">New API key</span>
+                <span className="vn-api-key-action-compact">New key</span>
+              </Button>
+            ) : undefined}
+          />
 
-          {renderSurface(activeNav, csrfToken, onSessionExpired, setFleetCounts, fleetView)}
+          {renderSurface(activeNav, csrfToken, onSessionExpired, setFleetCounts, fleetView, apiKeyCreateOpen, setApiKeyCreateOpen)}
         </div>
       </main>
 
-      <EnterpriseCustomizer
-        value={{
-          theme: appearance.theme,
-          accent: appearance.accent,
-          radiusPx: appearance.radiusPx,
-          spacingScale: appearance.spacingScale,
-        }}
-        onApply={handleCustomizerApply}
-        onPersist={handleCustomizerPersist}
+      <SectionDeck
+        sections={NAV_SECTIONS}
+        activeKey={activeNav}
+        onNavigate={handleNavigate}
       />
     </div>
   );
@@ -331,6 +358,8 @@ function renderSurface(
   onSessionExpired: () => void,
   onFleetCounts: (counts: { active: number; total: number }) => void,
   fleetView: FleetView,
+  apiKeyCreateOpen: boolean,
+  onApiKeyCreateOpenChange: (open: boolean) => void,
 ): ReactNode {
   if (navKey === "providers") {
     return (
@@ -355,7 +384,14 @@ function renderSurface(
 
   // P6-UI-009: API Keys.
   if (navKey === "api-keys") {
-    return <ApiKeysSurface csrfToken={csrfToken} onSessionExpired={onSessionExpired} />;
+    return (
+      <ApiKeysSurface
+        csrfToken={csrfToken}
+        onSessionExpired={onSessionExpired}
+        createOpen={apiKeyCreateOpen}
+        onCreateOpenChange={onApiKeyCreateOpenChange}
+      />
+    );
   }
 
   // P6-UI-002: Models (the existing `models` nav key — nav.ts is unchanged).
@@ -376,10 +412,10 @@ function renderSurface(
 
   const item = navItemByKey(navKey);
   return (
-    <EmptyState
+    <PlannedSurface
       icon={item?.icon ?? "clock"}
-      title="Coming in a later phase"
-      description={`${item?.label ?? "This surface"} is not built yet — it will land in a later phase of the project.`}
+      title={item?.label ?? "Planned surface"}
+      description={item?.description ?? "This surface is intentionally reserved for a future implementation."}
     />
   );
 }

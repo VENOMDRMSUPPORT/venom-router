@@ -91,7 +91,7 @@ async function main() {
   const { checkVenomHandoff } = require(path.join(ROOT, "validation", "check-handoff.cjs"));
 
   await runIoGate("Token build (schema, completeness, reference legality)", "buildVenomTokens(io)", buildVenomTokens);
-  await runIoGate("Contrast (WCAG AA; AAA core text in venom-hc)", "checkVenomContrast(io)", checkVenomContrast);
+  await runIoGate("Contrast (WCAG AA across dark and light)", "checkVenomContrast(io)", checkVenomContrast);
   await runIoGate(
     "Guardrails (raw-color, terminology, secrets, icon map, state coverage, story coverage, CDN scan, required components)",
     "checkVenomGuardrails(io)",

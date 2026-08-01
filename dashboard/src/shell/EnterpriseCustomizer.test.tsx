@@ -94,15 +94,6 @@ describe("EnterpriseCustomizer — layout", () => {
     expect(screen.queryByRole("dialog", { name: /enterprise customizer/i })).toBeNull();
   });
 
-  it("shows neither Light nor Dark segment active when the current theme is venom-hc", () => {
-    render(<Harness onPersist={vi.fn()} initial={{ ...INITIAL, theme: "venom-hc" }} />);
-    openCustomizer();
-
-    const group = screen.getByRole("group", { name: /theme mode/i });
-    for (const button of Array.from(group.querySelectorAll("button"))) {
-      expect(button.getAttribute("aria-pressed")).toBe("false");
-    }
-  });
 });
 
 describe("EnterpriseCustomizer — accent", () => {

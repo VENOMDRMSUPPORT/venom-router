@@ -125,6 +125,7 @@ function baseHandlers(overrides: Record<string, () => Response> = {}) {
     // file renders it — these are the reads its cards make. Its own behavior is
     // covered in src/overview/*.test.tsx.
     "GET /api/control/v1/diagnostics/routes?limit=10": () => jsonResponse(200, { data: [] }),
+    "GET /api/control/v1/keys": () => jsonResponse(200, { data: [] }),
     ...overrides,
   });
 }
@@ -177,6 +178,70 @@ describe("AppShell — navigation", () => {
       "page",
     );
     expect(screen.getByRole("link", { name: /overview/i }).getAttribute("aria-current")).toBeNull();
+  });
+});
+
+describe("AppShell — responsive section deck", () => {
+  it("opens a section tray, navigates, and collapses it after selection", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole("navigation", { name: /primary/i });
+    const deck = within(screen.getByRole("navigation", { name: /sections/i }));
+
+    fireEvent.click(deck.getByRole("button", { name: /manage/i }));
+    const apiKeys = deck.getByRole("button", { name: /api keys/i });
+    fireEvent.click(apiKeys);
+
+    expect(screen.getByText("API Keys", { selector: "h1" })).toBeTruthy();
+    expect(deck.queryByRole("button", { name: /api keys/i })).toBeNull();
+  });
+
+  it("uses the global planned-surface treatment for unfinished pages", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+
+    const primary = within(await screen.findByRole("navigation", { name: /primary/i }));
+    fireEvent.click(primary.getByRole("link", { name: /playground/i }));
+
+    expect(screen.getByText("Planned surface")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Playground", level: 2 })).toBeTruthy();
+    expect(screen.queryByText(/later phase/i)).toBeNull();
+    expect(screen.queryByText(/roadmap/i)).toBeNull();
+  });
+
+  it("opens API-key creation from the global page context action", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+
+    const primary = within(await screen.findByRole("navigation", { name: /primary/i }));
+    fireEvent.click(primary.getByRole("link", { name: /api keys/i }));
+    fireEvent.click(screen.getByRole("button", { name: /new api key/i }));
+
+    expect(screen.getByRole("dialog", { name: /create an api key/i })).toBeTruthy();
   });
 });
 
@@ -440,34 +505,6 @@ describe("AppShell — settings restore + persistence", () => {
     });
   });
 
-  it("treats venom-hc as a dark appearance (toggle offers light) and toggling back from light lands on venom-dark", async () => {
-    vi.stubGlobal(
-      "fetch",
-      baseHandlers({
-        "GET /api/control/v1/settings": () =>
-          jsonResponse(200, { data: { theme: "venom-hc", density: "comfortable" } }),
-        "PUT /api/control/v1/settings": () =>
-          jsonResponse(200, { data: { theme: "venom-light", density: "comfortable" } }),
-      }),
-    );
-
-    render(
-      <AppShell
-        session={SESSION}
-        csrfToken={CSRF_TOKEN}
-        onSessionExpired={vi.fn()}
-        onLoggedOut={vi.fn()}
-      />,
-    );
-    await screen.findByRole("link", { name: /overview/i });
-
-    fireEvent.click(screen.getByRole("button", { name: /switch to light mode/i }));
-    expect(document.documentElement.getAttribute("data-theme")).toBe("venom-light");
-
-    fireEvent.click(screen.getByRole("button", { name: /switch to dark mode/i }));
-    expect(document.documentElement.getAttribute("data-theme")).toBe("venom-dark");
-  });
-
   it("renders no density control in the header — density is boot-applied from settings only (owner request)", async () => {
     vi.stubGlobal("fetch", baseHandlers());
 
@@ -658,7 +695,7 @@ describe("AppShell — global breadcrumb", () => {
             data: {
               providers: [
                 { id: "opencode-zen", display_name: "OpenCode Zen", description: "API-key.", auth_mode: "api_key", funding: { mode: "owner_policy", locked: false, non_expiring: false, fixed: null }, capabilities: [], configured: true, missing_env: [] },
-                { id: "antigravity", display_name: "Antigravity", description: "OAuth.", auth_mode: "oauth2", funding: { mode: "owner_policy", locked: false, non_expiring: false, fixed: null }, capabilities: [], configured: true, missing_env: [] },
+                { id: "agnes-ai", display_name: "Agnes AI", description: "API-key.", auth_mode: "api_key", funding: { mode: "owner_policy", locked: false, non_expiring: false, fixed: null }, capabilities: [], configured: true, missing_env: [] },
               ],
             },
           }),
@@ -685,26 +722,16 @@ describe("AppShell — global breadcrumb", () => {
     await screen.findByRole("link", { name: /overview/i });
     fireEvent.click(screen.getByRole("link", { name: /providers/i }));
 
-    // Default view is "all": both providers render.
+    // Active Providers is the page-load default: only connected providers render.
     await screen.findByText("OpenCode Zen");
-    screen.getByText("Antigravity");
+    expect(screen.queryByText("Agnes AI")).toBeNull();
 
-    // "All Integrations" is selected by default; "Active Providers" is not.
-    expect(screen.getByRole("button", { name: /all integrations/i }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: /active providers/i }).getAttribute("aria-pressed")).toBe("false");
-
-    // Click "Active Providers" — the grid narrows to connected providers only.
-    fireEvent.click(screen.getByRole("button", { name: /active providers/i }));
-    await waitFor(() => expect(screen.queryByText("Antigravity")).toBeNull());
-    screen.getByText("OpenCode Zen");
-
-    // Selection followed the click.
     expect(screen.getByRole("button", { name: /active providers/i }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: /all integrations/i }).getAttribute("aria-pressed")).toBe("false");
 
     // Click "All Integrations" — the full catalog returns.
     fireEvent.click(screen.getByRole("button", { name: /all integrations/i }));
-    await waitFor(() => screen.getByText("Antigravity"));
+    await waitFor(() => screen.getByText("Agnes AI"));
     screen.getByText("OpenCode Zen");
   });
 
@@ -829,7 +856,7 @@ describe("AppShell — accessibility and storage guarantees", () => {
     const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
     const fetchMock = baseHandlers({
       "PUT /api/control/v1/settings": () =>
-        jsonResponse(200, { data: { theme: "venom-hc", density: "compact" } }),
+        jsonResponse(200, { data: { theme: "venom-light", density: "compact" } }),
     });
     vi.stubGlobal("fetch", fetchMock);
 

@@ -60,12 +60,13 @@ export function FilterBar(props: FilterBarProps) {
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => onSearchChange && onSearchChange(e.target.value)}
           placeholder={searchPlaceholder}
           label={searchLabel || searchPlaceholder}
+          onClear={onSearchChange && searchValue ? () => onSearchChange("") : undefined}
           disabled={isBlocked}
         />
       ) : null}
+      <span className="vn-toolbar-spacer"></span>
       {children ? <div className="vn-filter-bar-controls">{children}</div> : null}
       {loading ? <Spinner label="Filtering" /> : null}
-      <span className="vn-toolbar-spacer"></span>
       {activeFilters.length ? (
         <div className="vn-filter-bar-active" aria-label="Active filters">
           {activeFilters.map((f) => (

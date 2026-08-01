@@ -4,9 +4,7 @@
 import { DEFAULT_ACCENT, DEFAULT_RADIUS_PX, DEFAULT_SPACING_SCALE, type AccentName, type ThemeName } from "../theme-runtime";
 
 /** The four appearance fields the customizer owns (density stays on the
- * Settings page's DensityToggle; venom-hc stays on the Settings page's
- * ThemeSwitcher — when the current theme is venom-hc, neither Light nor
- * Dark segment shows active in the widget). */
+ * Settings page's DensityToggle). */
 export interface CustomizerValue {
   theme: ThemeName;
   accent: AccentName;

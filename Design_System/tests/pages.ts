@@ -1,7 +1,7 @@
 // Shared page inventory for the a11y + visual suites. Kept in one place so both suites
 // exercise the same "every card / every state matrix / representative compositions" set
 // the remediation brief asks for.
-export const THEMES = ["venom-dark", "venom-light", "venom-hc"] as const;
+export const THEMES = ["venom-dark", "venom-light"] as const;
 export const DENSITIES = ["comfortable", "compact"] as const;
 
 export const PRIMITIVE_CARDS = [

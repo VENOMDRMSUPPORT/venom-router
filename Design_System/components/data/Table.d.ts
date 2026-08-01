@@ -7,7 +7,7 @@ export interface TableProps {
 }
 export declare function Table(props: TableProps): React.JSX.Element;
 /** A row is any record — DataTable is generic in the row shape so `render`/`rowKey` stay typed per caller. */
-export type DataTableRow = Record<string, unknown>;
+export type DataTableRow = object;
 export interface DataTableColumn<T extends DataTableRow = DataTableRow> {
     key: string;
     label?: React.ReactNode;
@@ -15,7 +15,8 @@ export interface DataTableColumn<T extends DataTableRow = DataTableRow> {
     mono?: boolean;
     sortable?: boolean;
     width?: string | number;
-    render?: (row: T) => React.ReactNode;
+    /** Render a cell from the row and its zero-based position in the current collection. */
+    render?: (row: T, index: number) => React.ReactNode;
 }
 export interface DataTableSort {
     key: string;
@@ -34,5 +35,6 @@ export interface DataTableProps<T extends DataTableRow = DataTableRow> {
     empty?: React.ReactNode;
     loading?: boolean;
     className?: string;
+    getRowProps?: (row: T) => React.HTMLAttributes<HTMLTableRowElement>;
 }
 export declare function DataTable<T extends DataTableRow = DataTableRow>(props: DataTableProps<T>): React.JSX.Element;

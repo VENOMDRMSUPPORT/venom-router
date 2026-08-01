@@ -16,7 +16,7 @@ const REPRESENTATIVE_PAGES = [
   { name: "routing-outcomes", url: "/states/routing-outcomes.html" },
 ];
 
-test.describe("Visual regression — representative pages x 3 themes", () => {
+test.describe("Visual regression — representative pages x 2 themes", () => {
   for (const { name, url } of REPRESENTATIVE_PAGES) {
     for (const theme of THEMES) {
       test(`${name} @ ${theme}`, async ({ page }) => {

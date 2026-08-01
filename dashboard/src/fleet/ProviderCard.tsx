@@ -25,9 +25,9 @@ function authBadgeLabel(mode: Provider["auth_mode"]): string {
 }
 
 /**
- * One integration card in the Provider Fleet grid (legacy-parity layout):
- * logo tile top-left, auth badge top-right (plus CONNECTED when accounts
- * exist), bold name, muted description, the amber "Setup required.
+ * One integration card in the Provider Fleet grid: a strong identity row
+ * with a large brand mark, compact status metadata, muted description, the
+ * amber "Setup required.
  * Provide: <ENV VARS>." note when applicable, and a full-width bottom
  * action button — "Connect Integration" (enabled), "Setup required"
  * (disabled, warning-tinted) or "Integration unavailable" (disabled,
@@ -48,14 +48,27 @@ export default function ProviderCard(props: ProviderCardProps) {
   const showAccounts = expanded && connected;
 
   return (
-    <div
-      className={"vn-panel flex flex-col gap-4 p-5" + (showAccounts ? " md:col-span-2" : "")}
-      style={connected ? { borderLeftWidth: 2, borderLeftColor: "var(--status-healthy-border)" } : undefined}
+    <article
+      className={[
+        "vn-card vn-provider-card",
+        connected ? "vn-provider-card--connected" : "",
+        showAccounts ? "vn-provider-card--expanded" : "",
+      ].filter(Boolean).join(" ")}
     >
-      <div className="flex items-start justify-between gap-3">
-        <ProviderLogo slug={provider.id} name={provider.display_name} size="lg" />
-        <div className="flex items-start gap-1.5">
-          <div className="flex flex-col items-end gap-1.5">
+      <div className="vn-provider-card-head">
+        <div className="vn-provider-card-identity">
+          <ProviderLogo slug={provider.id} name={provider.display_name} size="lg" />
+          <div className="vn-provider-card-title">
+            <h3>{provider.display_name}</h3>
+            {connected ? (
+              <span className="vn-provider-card-linked">
+                {accounts.length} account{accounts.length === 1 ? "" : "s"} linked
+              </span>
+            ) : <span className="vn-provider-card-linked vn-provider-card-linked--idle">Ready to configure</span>}
+          </div>
+        </div>
+        <div className="vn-provider-card-meta">
+          <div className="vn-provider-card-badges">
             {connected ? (
               <Badge tone="healthy" icon="circle-check" mono>
                 CONNECTED
@@ -77,19 +90,10 @@ export default function ProviderCard(props: ProviderCardProps) {
         </div>
       </div>
 
-      <div className="flex flex-col gap-1">
-        <h3 className="text-md font-semibold text-text-primary">{provider.display_name}</h3>
-        {connected ? (
-          <span className="text-xs font-medium text-status-healthy-fg">
-            {accounts.length} account{accounts.length === 1 ? "" : "s"} linked
-          </span>
-        ) : null}
-      </div>
-
-      {provider.description ? <p className="vn-caption flex-1">{provider.description}</p> : null}
+      {provider.description ? <p className="vn-provider-card-description">{provider.description}</p> : null}
 
       {setupRequired && missingEnv.length > 0 ? (
-        <p className="text-xs leading-relaxed text-status-warning-fg" role="note">
+        <p className="vn-provider-card-setup" role="note">
           Setup required. Provide:{" "}
           {missingEnv.map((v, i) => (
             <span key={v}>
@@ -102,7 +106,7 @@ export default function ProviderCard(props: ProviderCardProps) {
       ) : null}
 
       {showAccounts ? (
-        <div className="vn-fleet-accounts overflow-x-auto rounded-md border border-border-subtle">
+        <div className="vn-fleet-accounts vn-provider-card-accounts">
           {accounts.map((account) => (
             <AccountRow
               key={account.id}
@@ -115,19 +119,21 @@ export default function ProviderCard(props: ProviderCardProps) {
         </div>
       ) : null}
 
-      {setupRequired ? (
-        <Button variant="secondary" icon="plug" disabled className="w-full justify-center text-status-warning-fg">
-          Setup required
-        </Button>
-      ) : !connectable ? (
-        <Button variant="secondary" icon="plug" disabled className="w-full justify-center text-status-healthy-fg">
-          Integration unavailable
-        </Button>
-      ) : (
-        <Button variant="secondary" icon="plug" onClick={onConnect} className="w-full justify-center">
-          Connect Integration
-        </Button>
-      )}
-    </div>
+      <div className="vn-provider-card-actions">
+        {setupRequired ? (
+          <Button variant="secondary" icon="plug" disabled className="w-full justify-center text-status-warning-fg">
+            Setup required
+          </Button>
+        ) : !connectable ? (
+          <Button variant="secondary" icon="plug" disabled className="w-full justify-center text-status-healthy-fg">
+            Integration unavailable
+          </Button>
+        ) : (
+          <Button variant="secondary" icon="plug" onClick={onConnect} className="w-full justify-center">
+            Connect Integration
+          </Button>
+        )}
+      </div>
+    </article>
   );
 }

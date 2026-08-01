@@ -20,7 +20,7 @@ The visual and interaction foundation for **Venom Router** — a private, single
 ## Token architecture (three layers)
 
 1. **Primitive** — raw palette + scales. Authored in `tokens/tokens.primitive.json` (W3C Design Tokens format). Never consumed by components; encodes no product meaning.
-2. **Semantic** — roles (`surface.*`, `text.*`, `border.*`, `status.*`, `tier.*`, `action.*`, `focus.*`, `viz.*`). One complete mapping **per theme**: `tokens/tokens.semantic.venom-dark.json`, `…venom-light.json`, `…venom-hc.json`. Every theme defines the identical token set — validated mechanically (`validation/`).
+2. **Semantic** — roles (`surface.*`, `text.*`, `border.*`, `status.*`, `tier.*`, `action.*`, `focus.*`, `viz.*`). One complete mapping **per theme**: `tokens/tokens.semantic.venom-dark.json` and `…venom-light.json`. Every theme defines the identical token set — validated mechanically (`validation/`).
 3. **Component** — per-part knobs (`button.primary.bg`, `table.row.hover.bg`, `quota.meter.warning.fg`) in `tokens/tokens.component.json`, derived **only** from semantic tokens.
 
 JSON is the sole authored source. `validation/build-tokens.cjs` compiles it to three outputs: CSS custom properties (`tokens/*.css`, `themes/*.css`), a typed object (`tokens/tokens.ts`), and a Tailwind theme extension (`tokens/tailwind-theme.ts`, exposed as the `@venom/design-system/tailwind` subpath) whose values are `var(--…)` references so utilities stay runtime-themed through `data-theme`. Generated files carry a `GENERATED` header — never hand-edit them. Naming grammar: `category.role.variant.state` → CSS var `--category-role-variant-state`.
@@ -31,7 +31,6 @@ JSON is the sole authored source. `validation/build-tokens.cjs` compiles it to t
 |---|---|---|
 | **Venom Dark** | `data-theme="venom-dark"` (default, also `:root`) | Deep neutral canvas, restrained venom-green accent, calm status hues for long sessions. |
 | **Venom Light** | `data-theme="venom-light"` | Full-parity light theme for bright environments/screenshots. |
-| **High Contrast** | `data-theme="venom-hc"` | Maximized contrast, thicker borders, stronger focus ring; AAA where feasible. |
 
 Density is a second axis: `data-density="comfortable"` (default) / `"compact"` — spacing and control heights switch through tokens only; layouts never fork.
 
@@ -42,7 +41,7 @@ Density is a second axis: `data-density="comfortable"` (default) / `"compact"` �
 - **Spacing:** base-4 scale (`--space-1..-32`). No off-scale spacing.
 - **Radius:** small and disciplined — controls 4px, cards/panels 6–8px, popovers 8px. No pill cards; `full` reserved for status dots and count pills.
 - **Elevation:** dark theme layers by surface lightness + hairline borders with subtle shadow; light theme leans on shadow. Semantic steps: card / popover / modal / toast.
-- **Borders:** hairlines everywhere (`border.subtle` for dividers, `default` for containers, `strong` for selection). Focus is one global ring token via `:focus-visible` (2px; 3px in High Contrast).
+- **Borders:** hairlines everywhere (`border.subtle` for dividers, `default` for containers, `strong` for selection). Focus is one global ring token via `:focus-visible` in both themes.
 - **Motion:** restrained and functional. `duration.instant|fast|base|slow` (0/100/160/240ms), `ease.standard|emphasized|exit`. Everything collapses to 0ms under `prefers-reduced-motion`. No bounce, no parallax, no decorative animation.
 - **Hover:** background steps one surface level (or 4–6% lightness), never color-hue changes. Press: one further step, no scale transforms on controls.
 - **Cards:** used only where they express a real boundary (stat tiles, quota windows, enrollment choices). Operational data prefers tables, sections, toolbars, inspectors, drawers, and traces over card grids.

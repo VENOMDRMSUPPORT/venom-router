@@ -1,5 +1,5 @@
 import * as React from "react";
-export type ThemeName = "venom-dark" | "venom-light" | "venom-hc";
+export type ThemeName = "venom-dark" | "venom-light";
 export interface ThemeSwitcherProps {
     /** The theme currently applied to the document root. */
     value: ThemeName;
@@ -9,8 +9,8 @@ export interface ThemeSwitcherProps {
     className?: string;
 }
 /**
- * ThemeSwitcher — a controlled picker for exactly the three shipped themes
- * (`venom-dark` / `venom-light` / `venom-hc`). No hidden storage: this is a pure
+ * ThemeSwitcher — a controlled picker for the two shipped themes
+ * (`venom-dark` / `venom-light`). No hidden storage: this is a pure
  * controlled component, so the host application owns persistence.
  */
 export declare function ThemeSwitcher(props: ThemeSwitcherProps): React.JSX.Element;

@@ -26,7 +26,7 @@ export interface FleetBreadcrumbChipsProps {
 export default function FleetBreadcrumbChips(props: FleetBreadcrumbChipsProps) {
   const { activeCount, totalCount, view, onViewChange } = props;
   return (
-    <div className="flex items-center gap-2" role="group" aria-label="Filter provider fleet by connection state">
+    <div className="vn-provider-view-switch" role="group" aria-label="Filter provider fleet by connection state">
       <ChipButton
         selected={view === "active"}
         onClick={() => onViewChange("active")}
@@ -53,10 +53,9 @@ interface ChipButtonProps {
   count: number;
 }
 
-/** A single toggle chip. Selected = emphasized (strong border, primary
- * surface, accent-tinted count); unselected = subdued (default border,
- * secondary surface, neutral count). aria-pressed exposes the toggle state
- * to assistive tech. */
+/** A single toggle chip. Both states use the same semantic default border;
+ * selection is communicated by surface/text instead of an unrelated dark
+ * outline. aria-pressed exposes the state to assistive tech. */
 function ChipButton(props: ChipButtonProps) {
   const { selected, onClick, icon, label, count } = props;
   return (
@@ -64,20 +63,12 @@ function ChipButton(props: ChipButtonProps) {
       type="button"
       aria-pressed={selected}
       onClick={onClick}
-      className={
-        selected
-          ? "inline-flex items-center gap-1.5 rounded-lg border border-border-strong bg-surface-primary px-3 py-1.5 text-xs font-medium text-text-primary shadow-sm transition-colors"
-          : "inline-flex items-center gap-1.5 rounded-lg border border-border-default bg-surface-secondary px-3 py-1.5 text-xs font-medium text-text-muted shadow-sm transition-colors hover:text-text-secondary"
-      }
+      className="vn-provider-view-chip"
     >
       <Icon name={icon} size={13} />
       {label}
       <span
-        className={
-          selected
-            ? "rounded-md bg-accent-subtle-bg px-1.5 py-0.5 text-2xs font-semibold tabular-nums text-accent-text"
-            : "rounded-md bg-surface-raised px-1.5 py-0.5 text-2xs font-semibold tabular-nums text-text-secondary"
-        }
+        className="vn-provider-view-count"
       >
         {count}
       </span>

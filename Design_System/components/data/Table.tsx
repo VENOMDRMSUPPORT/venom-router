@@ -18,7 +18,7 @@ export function Table(props: TableProps) {
 }
 
 /** A row is any record — DataTable is generic in the row shape so `render`/`rowKey` stay typed per caller. */
-export type DataTableRow = Record<string, unknown>;
+export type DataTableRow = object;
 
 export interface DataTableColumn<T extends DataTableRow = DataTableRow> {
   key: string;
@@ -27,7 +27,8 @@ export interface DataTableColumn<T extends DataTableRow = DataTableRow> {
   mono?: boolean;
   sortable?: boolean;
   width?: string | number;
-  render?: (row: T) => React.ReactNode;
+  /** Render a cell from the row and its zero-based position in the current collection. */
+  render?: (row: T, index: number) => React.ReactNode;
 }
 
 export interface DataTableSort {
@@ -48,10 +49,11 @@ export interface DataTableProps<T extends DataTableRow = DataTableRow> {
   empty?: React.ReactNode;
   loading?: boolean;
   className?: string;
+  getRowProps?: (row: T) => React.HTMLAttributes<HTMLTableRowElement>;
 }
 
 export function DataTable<T extends DataTableRow = DataTableRow>(props: DataTableProps<T>) {
-  const { columns = [], rows = [], rowKey, label, sort, onSort, onRowClick, selectedKey, empty, loading = false, className = "" } = props;
+  const { columns = [], rows = [], rowKey, label, sort, onSort, onRowClick, selectedKey, empty, loading = false, className = "", getRowProps } = props;
   const key = (r: T, i: number): React.Key => (rowKey ? (r[rowKey] as React.Key) : i);
   return (
     <div className={("vn-table-wrap vn-scroll " + className).trim()}>
@@ -74,18 +76,20 @@ export function DataTable<T extends DataTableRow = DataTableRow>(props: DataTabl
             ))
           ) : rows.length === 0 ? (
             <tr><td colSpan={columns.length} style={{ height: "auto", padding: 0 }}>{empty}</td></tr>
-          ) : rows.map((r, i) => (
-            <tr key={key(r, i)} className={onRowClick ? "is-clickable" : undefined} tabIndex={onRowClick ? 0 : undefined}
+          ) : rows.map((r, i) => {
+            const extra = getRowProps ? getRowProps(r) : {};
+            return (
+            <tr {...extra} key={key(r, i)} className={[extra.className ?? "", onRowClick ? "is-clickable" : ""].filter(Boolean).join(" ") || undefined} tabIndex={onRowClick ? 0 : extra.tabIndex}
               aria-selected={selectedKey != null && key(r, i) === selectedKey ? true : undefined}
               onClick={() => onRowClick && onRowClick(r)}
               onKeyDown={(e: React.KeyboardEvent) => { if (onRowClick && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onRowClick(r); } }}>
               {columns.map((c) => (
                 <td key={c.key} className={[c.numeric ? "vn-numeric" : "", c.mono ? "vn-mono" : ""].filter(Boolean).join(" ") || undefined}>
-                  {c.render ? c.render(r) : (r[c.key] as React.ReactNode)}
+                  {c.render ? c.render(r, i) : ((r as Record<string, unknown>)[c.key] as React.ReactNode)}
                 </td>
               ))}
             </tr>
-          ))}
+          )})}
         </tbody>
       </table>
     </div>

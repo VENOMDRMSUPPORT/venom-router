@@ -25,7 +25,6 @@
     "tokens/tokens.density.json",
     "tokens/tokens.primitive.json",
     "tokens/tokens.semantic.venom-dark.json",
-    "tokens/tokens.semantic.venom-hc.json",
     "tokens/tokens.semantic.venom-light.json",
     "tsconfig.build.json",
     "tsconfig.declarations.json",
@@ -46,7 +45,6 @@
     "icons/icons.css",
     "themes/venom-dark.css",
     "themes/venom-light.css",
-    "themes/venom-hc.css",
     "tokens/primitives.css",
     "tokens/components.css",
     "tokens/density.css",
@@ -87,7 +85,6 @@
       "tokens/tokens.primitive.json",
       "tokens/tokens.semantic.venom-dark.json",
       "tokens/tokens.semantic.venom-light.json",
-      "tokens/tokens.semantic.venom-hc.json",
       "tokens/tokens.component.json",
       "tokens/tokens.density.json",
       "tokens/tokens.accents.json"

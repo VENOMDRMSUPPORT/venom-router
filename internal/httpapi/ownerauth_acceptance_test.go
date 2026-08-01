@@ -749,7 +749,7 @@ func TestAcceptance_NegativeMatrix(t *testing.T) {
 			t.Fatalf("decode: %v", err)
 		}
 
-		req := newAuthRequest(t, http.MethodPut, "/api/control/v1/settings", bytesBuffer(mustJSON(t, map[string]string{"theme": "venom-hc", "density": "compact"})))
+		req := newAuthRequest(t, http.MethodPut, "/api/control/v1/settings", bytesBuffer(mustJSON(t, map[string]string{"theme": "venom-light", "density": "compact"})))
 		req.AddCookie(cookieA)
 		req.Header.Set("X-CSRF-Token", loginBody.CSRFToken)
 		rec := httptest.NewRecorder()

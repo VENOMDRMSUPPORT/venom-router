@@ -97,8 +97,3 @@
   --selection-bg: rgba(235, 0, 139, 0.2);
   --selection-fg: var(--text-primary);
 }
-/* venom-hc keeps its HC-owned focus ring/border under every accent. */
-[data-theme="venom-hc"][data-accent] {
-  --focus-ring: #EDD88E;
-  --border-focus: #EDD88E;
-}

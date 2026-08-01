@@ -65,7 +65,7 @@ func TestMigrateOwnerSettings_UpDownUp(t *testing.T) {
 func TestOwnerSettings_ThemeCheck(t *testing.T) {
 	db := migratedOwnerSettingsDB(t)
 
-	for _, theme := range []string{"venom-dark", "venom-light", "venom-hc"} {
+	for _, theme := range []string{"venom-dark", "venom-light"} {
 		if err := insertOwnerSettingsRow(db, theme, "comfortable"); err != nil {
 			t.Fatalf("insert owner_settings with allowed theme %q: %v, want success", theme, err)
 		}
@@ -80,6 +80,9 @@ func TestOwnerSettings_ThemeCheck(t *testing.T) {
 	}
 	if err := insertOwnerSettingsRow(db, "dark", "comfortable"); err == nil {
 		t.Fatalf("insert owner_settings with disallowed theme %q succeeded, want CHECK rejection", "dark")
+	}
+	if err := insertOwnerSettingsRow(db, "venom-hc", "comfortable"); err == nil {
+		t.Fatalf("insert owner_settings with retired theme %q succeeded, want CHECK rejection", "venom-hc")
 	}
 }
 

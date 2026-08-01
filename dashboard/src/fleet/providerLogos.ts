@@ -4,10 +4,10 @@
  * Exported so the asset-presence test can assert this manifest and the
  * shipped files never drift apart, in either direction.
  *
- * Catalog slugs deliberately absent (they fall back to the letter mark):
- * `agnes-ai` (no official logo asset available) and `custom` (a generic
- * OpenAI-compatible path template, not a brand). */
+ * The generic `custom` OpenAI-compatible path is deliberately absent and
+ * falls back to the deterministic letter mark. */
 export const PROVIDER_LOGO_SLUGS = [
+  "agnes-ai",
   "antigravity",
   "claude-code",
   "clinepass",

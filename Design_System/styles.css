@@ -3,7 +3,6 @@
 @import './tokens/primitives.css';
 @import './themes/venom-dark.css';
 @import './themes/venom-light.css';
-@import './themes/venom-hc.css';
 @import './tokens/components.css';
 @import './tokens/density.css';
 @import './tokens/accents.css';

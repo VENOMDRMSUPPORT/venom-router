@@ -35,6 +35,8 @@ export * from "../components/navigation/Breadcrumbs";
 export * from "../components/navigation/Pagination";
 export * from "../components/navigation/SegmentedControl";
 export * from "../components/navigation/Tabs";
+export * from "../components/navigation/SectionDeck";
+export * from "../components/navigation/PageContextBar";
 
 export * from "../components/containers/Accordion";
 export * from "../components/containers/Card";
@@ -44,6 +46,7 @@ export * from "../components/containers/Panel";
 export * from "../components/feedback/Alert";
 export * from "../components/feedback/Banner";
 export * from "../components/feedback/EmptyState";
+export * from "../components/feedback/PlannedSurface";
 export * from "../components/feedback/ErrorState";
 export * from "../components/feedback/Meter";
 export * from "../components/feedback/Progress";
@@ -53,11 +56,13 @@ export * from "../components/feedback/Toast";
 
 export * from "../components/overlay/Dialog";
 export * from "../components/overlay/Drawer";
+export * from "../components/overlay/AdaptiveSheet";
 export * from "../components/overlay/DropdownMenu";
 export * from "../components/overlay/Popover";
 export * from "../components/overlay/Tooltip";
 
 export * from "../components/data/Table";
+export * from "../components/data/ResponsiveCollection";
 
 export * from "../components/actions/ThemeSwitcher";
 export * from "../components/actions/DensityToggle";

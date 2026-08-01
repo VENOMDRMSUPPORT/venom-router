@@ -130,7 +130,6 @@ the token architecture supports unlimited additional themes with **zero componen
 |---|---|---|
 | **Venom Dark** | `venom-dark` | Default. Deep neutral canvas, restrained accent, calm status colors for long monitoring sessions. |
 | **Venom Light** | `venom-light` | Full parity light theme for bright environments and screenshots. |
-| **High Contrast** | `venom-hc` | Accessibility theme: maximized contrast, thicker borders, stronger focus rings; meets AAA where feasible. |
 
 Every theme defines the identical semantic token set — that is the contract in §1.3. Adding a
 "Venom Midnight" or a brand theme later means authoring one more semantic mapping file and adding
@@ -284,8 +283,8 @@ before any screen may use it.
 
 ## 7. Accessibility contract
 
-- **Contrast:** every theme passes WCAG 2.1 AA for all token pairings; High Contrast targets AAA
-  where feasible. Enforced by a CI contrast test over the token matrix, not by review.
+- **Contrast:** both themes pass WCAG 2.1 AA for all token pairings. Enforced by a CI contrast test
+  over the token matrix, not by review.
 - **Keyboard:** every interactive element is reachable and operable by keyboard; visible
   `:focus-visible` ring from the focus token; logical tab order; dialogs trap and restore focus.
 - **Semantics:** correct roles/labels/`aria-*`; status conveyed by text/icon in addition to color;
@@ -308,7 +307,7 @@ the dashboard package and run in CI (cross-referenced by
    classes. CI-blocking.
 2. **Theme completeness test** — a test asserts every theme defines exactly the semantic token set
    (no missing, no extra) and that no component references a primitive.
-3. **Contrast test** — automated AA (AAA for HC) contrast check across all foreground/background
+3. **Contrast test** — automated AA contrast check across all foreground/background
    token pairs in all themes.
 4. **Component-inventory gate** — a new visual component can't be imported by a screen until it has
    a Storybook story covering all states and an a11y annotation; a check enforces "screens import
@@ -354,7 +353,7 @@ planning remediation.
    source; hand-editing generated outputs is forbidden.
 2. **Compiled outputs (generated)** — CSS custom properties (runtime), a typed TypeScript `tokens`
    object, and a Tailwind theme extension.
-3. **Themes** — Venom Dark (default), Venom Light, High Contrast — each a complete semantic mapping
+3. **Themes** — Venom Dark (default) and Venom Light — each a complete semantic mapping
    satisfying the completeness contract (§1.3).
 4. **Base components** — the primitives + composites in §5, each with all interaction states, a
    keyboard model, ARIA roles, and a Storybook story.
@@ -364,7 +363,7 @@ planning remediation.
    in V1** ([05 §9](05-tier-engine.md#9-future-scope-non-v1)).
 6. **Page-level patterns** — the app shell, page anatomy, forms, feedback, density, and loading
    patterns in §6.
-7. **Accessibility validation** — the CI contrast matrix (AA; AAA for HC), axe checks on stories,
+7. **Accessibility validation** — the CI contrast matrix (AA), axe checks on stories,
    keyboard/focus verification.
 8. **Visual regression baseline** — Storybook snapshots per theme × density.
 9. **Integration handoff contract** — how the app consumes the versioned package (import surface,

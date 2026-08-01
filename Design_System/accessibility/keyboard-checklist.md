@@ -1,6 +1,6 @@
 # Keyboard walkthrough checklist (manual verification)
 
-Run in all three themes; confirm the focus ring is visible at every stop.
+Run in both themes; confirm the focus ring is visible at every stop.
 
 **Global**
 - [ ] Tab order follows visual order on every surface; no keyboard trap outside dialogs.

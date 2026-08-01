@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { assertNoAxeViolations } from "../test/axe";
 import { createFetchMock, jsonResponse } from "../test/fetchMock";
 import type { ApiKeySummary } from "../api/controlClient";
@@ -72,6 +72,21 @@ describe("ApiKeysSurface", () => {
     expect(text).toMatch(/60/);
   });
 
+  it("renders a leftmost sequential # column", async () => {
+    mockKeys([
+      key({ id: "key-1", label: "Production" }),
+      key({ id: "key-2", label: "Staging", key_prefix: "vk_live_ab12" }),
+    ]);
+    render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} />);
+    await screen.findByText("Staging");
+
+    const table = screen.getByRole("table", { name: /api keys/i });
+    expect(within(table).getAllByRole("columnheader")[0].textContent).toBe("#");
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(within(rows[0]).getAllByRole("cell")[0].textContent).toBe("1");
+    expect(within(rows[1]).getAllByRole("cell")[0].textContent).toBe("2");
+  });
+
   it("never renders a raw key in the list", async () => {
     // The server cannot return raw_key on a list, but a client bug could
     // stash one from a create and render it here. Seed a list response that
@@ -97,7 +112,7 @@ describe("ApiKeysSurface", () => {
           data: { id: "key-new", label: "CI", rpm_limit: null, raw_key: RAW_KEY },
         }),
     });
-    const { container } = render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} />);
+    const { container } = render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} createOpen />);
     await waitFor(() => expect(screen.getByRole("button", { name: /create key/i })).toBeTruthy());
 
     await submitCreate("CI");
@@ -119,7 +134,7 @@ describe("ApiKeysSurface", () => {
           data: { id: "key-new", label: "CI", rpm_limit: null, raw_key: RAW_KEY },
         }),
     });
-    const { container } = render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} />);
+    const { container } = render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} createOpen />);
     await waitFor(() => expect(screen.getByRole("button", { name: /create key/i })).toBeTruthy());
 
     await submitCreate("CI");
@@ -150,23 +165,46 @@ describe("ApiKeysSurface", () => {
     // The dialog is open but nothing has been called yet.
     expect(deleteCalls).toBe(0);
 
-    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    const confirmation = screen.getByRole("dialog", { name: /revoke this api key/i });
+    fireEvent.click(within(confirmation).getByRole("button", { name: /^cancel$/i }));
     expect(deleteCalls).toBe(0);
 
     // Re-open and confirm this time.
     fireEvent.click(screen.getByRole("button", { name: /revoke/i }));
-    fireEvent.click(screen.getByRole("button", { name: /revoke key/i }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: /revoke this api key/i })).getByRole("button", { name: /revoke key/i }));
     await waitFor(() => expect(deleteCalls).toBe(1));
   });
 
-  it("renders an absent RPM limit as unlimited, never as 0", async () => {
+  it("renders an absent RPM limit as the router default, never as unlimited or 0", async () => {
     mockKeys([key({ id: "key-nolimit", rpm_limit: null })]);
     render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} />);
     await waitFor(() => expect(screen.getByTestId("api-key-key-nolimit")).toBeTruthy());
 
     const rpm = screen.getByTestId("api-key-rpm-key-nolimit");
     expect(rpm.textContent ?? "").not.toMatch(/\b0\b/);
-    expect(rpm.textContent ?? "").toMatch(/no limit/i);
+    expect(rpm.textContent ?? "").not.toMatch(/no limit/i);
+    expect(rpm.textContent ?? "").toMatch(/router default/i);
+  });
+
+  it("does not submit a blank label or an invalid RPM value", async () => {
+    let createCalls = 0;
+    mockKeys([], {
+      [CREATE_URL]: () => {
+        createCalls += 1;
+        return jsonResponse(201, {
+          data: { id: "key-new", label: "CI", rpm_limit: null, raw_key: RAW_KEY },
+        });
+      },
+    });
+    render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} createOpen />);
+    const submit = await screen.findByRole("button", { name: /create key/i });
+
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(/label/i), { target: { value: "CI" } });
+    fireEvent.change(screen.getByLabelText(/requests per minute/i), { target: { value: "1.5" } });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(submit);
+    expect(createCalls).toBe(0);
   });
 
   it("renders an unused key as never used, never as a fabricated timestamp", async () => {
@@ -183,6 +221,25 @@ describe("ApiKeysSurface", () => {
     expect(screen.getByTestId("api-key-key-revoked").textContent ?? "").toMatch(/revoked/i);
   });
 
+  it("uses the card collection automatically below the collection breakpoint", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: true,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    mockKeys([key()]);
+    const { container } = render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText("Production")).toBeTruthy());
+
+    expect(container.querySelector(".vn-responsive-collection-cards")).toBeTruthy();
+    expect(container.querySelector("table")).toBeNull();
+    expect(screen.getByText("#1")).toBeTruthy();
+  });
+
   it("renders a typed field error from the API rather than a raw dump", async () => {
     mockKeys([], {
       [CREATE_URL]: () =>
@@ -195,7 +252,7 @@ describe("ApiKeysSurface", () => {
           },
         }),
     });
-    const { container } = render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} />);
+    const { container } = render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} createOpen />);
     await waitFor(() => expect(screen.getByRole("button", { name: /create key/i })).toBeTruthy());
 
     await submitCreate("bad");
@@ -233,7 +290,7 @@ describe("ApiKeysSurface", () => {
 
   it("has no axe violations on the list and create form", async () => {
     mockKeys([key(), key({ id: "key-2", label: "Staging", rpm_limit: null })]);
-    const { container } = render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} />);
+    const { container } = render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} createOpen />);
     await waitFor(() => expect(screen.getByText("Production")).toBeTruthy());
     await assertNoAxeViolations(container);
   });
@@ -245,7 +302,7 @@ describe("ApiKeysSurface", () => {
           data: { id: "key-new", label: "CI", rpm_limit: null, raw_key: RAW_KEY },
         }),
     });
-    const { container } = render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} />);
+    const { container } = render(<ApiKeysSurface csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} createOpen />);
     await waitFor(() => expect(screen.getByRole("button", { name: /create key/i })).toBeTruthy());
     await submitCreate("CI");
     await waitFor(() => expect(container.textContent ?? "").toContain(RAW_KEY));

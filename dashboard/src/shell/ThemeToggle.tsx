@@ -13,9 +13,7 @@ export interface ThemeToggleProps {
 /**
  * The header's sun/moon theme toggle (legacy console pattern): one button
  * that flips light <-> dark, wired to the existing server-persisted theme
- * setting. venom-hc counts as a dark appearance here (the toggle offers
- * light); high-contrast itself is selected elsewhere, never destroyed by
- * this control unless the owner explicitly toggles.
+ * setting. The design system ships exactly the light and dark themes.
  */
 export default function ThemeToggle(props: ThemeToggleProps) {
   const { theme, onChange } = props;

@@ -250,7 +250,7 @@ func TestSettings_Put_InvalidTheme(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	h.ServeSettings(rec, settingsRequest(http.MethodPut, validSettingsBody(map[string]any{
-		"theme": "dark", // NOT venom-dark — invalid
+		"theme": "venom-hc", // retired theme — invalid
 	})))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid-theme PUT status = %d, want 400; body = %q", rec.Code, rec.Body.String())
@@ -489,7 +489,7 @@ func TestSettings_PutEnrichmentPersistsAndPreservesThemeDensity_HTTP(t *testing.
 	h, _ := newTestSettingsHandler(t, nil)
 
 	putRec := httptest.NewRecorder()
-	h.ServeSettings(putRec, settingsRequest(http.MethodPut, validSettingsBody(map[string]any{"theme": "venom-hc", "density": "compact"})))
+	h.ServeSettings(putRec, settingsRequest(http.MethodPut, validSettingsBody(map[string]any{"theme": "venom-light", "density": "compact"})))
 	if putRec.Code != http.StatusOK {
 		t.Fatalf("PUT /settings status = %d, want 200", putRec.Code)
 	}
@@ -500,8 +500,8 @@ func TestSettings_PutEnrichmentPersistsAndPreservesThemeDensity_HTTP(t *testing.
 		t.Fatalf("PUT /settings/enrichment status = %d, want 200; body = %q", enRec.Code, enRec.Body.String())
 	}
 	theme, density, enrichmentEnabled := decodeSettingsFull(t, enRec.Body.Bytes())
-	if theme != "venom-hc" || density != "compact" {
-		t.Fatalf("theme/density after enrichment toggle = %s/%s, want venom-hc/compact (unchanged)", theme, density)
+	if theme != "venom-light" || density != "compact" {
+		t.Fatalf("theme/density after enrichment toggle = %s/%s, want venom-light/compact (unchanged)", theme, density)
 	}
 	if !enrichmentEnabled {
 		t.Fatalf("enrichment_enabled = false, want true")
@@ -510,8 +510,8 @@ func TestSettings_PutEnrichmentPersistsAndPreservesThemeDensity_HTTP(t *testing.
 	getRec := httptest.NewRecorder()
 	h.ServeSettings(getRec, settingsRequest(http.MethodGet, nil))
 	theme, density, enrichmentEnabled = decodeSettingsFull(t, getRec.Body.Bytes())
-	if theme != "venom-hc" || density != "compact" || !enrichmentEnabled {
-		t.Fatalf("GET /settings after enrichment toggle = %s/%s/%v, want venom-hc/compact/true", theme, density, enrichmentEnabled)
+	if theme != "venom-light" || density != "compact" || !enrichmentEnabled {
+		t.Fatalf("GET /settings after enrichment toggle = %s/%s/%v, want venom-light/compact/true", theme, density, enrichmentEnabled)
 	}
 }
 
@@ -650,7 +650,7 @@ func TestControlMux_SettingsPut_ValidSessionAndCSRF_Succeeds(t *testing.T) {
 	cookie, csrfToken := setupOwnerWithCSRF(t, mux)
 
 	body, _ := json.Marshal(validSettingsBody(map[string]any{
-		"theme": "venom-hc", "density": "compact", "accent": "rose", "radius_px": 0, "spacing_scale": 1.25,
+		"theme": "venom-light", "density": "compact", "accent": "rose", "radius_px": 0, "spacing_scale": 1.25,
 	}))
 	req := newAuthRequest(t, http.MethodPut, "/api/control/v1/settings", bytes.NewBuffer(body))
 	req.AddCookie(cookie)
@@ -662,8 +662,8 @@ func TestControlMux_SettingsPut_ValidSessionAndCSRF_Succeeds(t *testing.T) {
 		t.Fatalf("PUT /settings status = %d, want 200; body = %q", rec.Code, rec.Body.String())
 	}
 	theme, density := decodeSettingsData(t, rec.Body.Bytes())
-	if theme != "venom-hc" || density != "compact" {
-		t.Fatalf("PUT /settings echoed = %s/%s, want venom-hc/compact", theme, density)
+	if theme != "venom-light" || density != "compact" {
+		t.Fatalf("PUT /settings echoed = %s/%s, want venom-light/compact", theme, density)
 	}
 	accent, radiusPx, spacingScale := decodeCustomizerData(t, rec.Body.Bytes())
 	if accent != "rose" || radiusPx != 0 || spacingScale != 1.25 {
@@ -676,8 +676,8 @@ func TestControlMux_SettingsPut_ValidSessionAndCSRF_Succeeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after PUT: %v", err)
 	}
-	if row.Theme != "venom-hc" || row.Density != "compact" {
-		t.Fatalf("DB after PUT = %s/%s, want venom-hc/compact", row.Theme, row.Density)
+	if row.Theme != "venom-light" || row.Density != "compact" {
+		t.Fatalf("DB after PUT = %s/%s, want venom-light/compact", row.Theme, row.Density)
 	}
 	if row.Accent != "rose" || row.RadiusPx != 0 || row.SpacingScale != 1.25 {
 		t.Fatalf("DB after PUT customizer = %s/%d/%v, want rose/0/1.25", row.Accent, row.RadiusPx, row.SpacingScale)

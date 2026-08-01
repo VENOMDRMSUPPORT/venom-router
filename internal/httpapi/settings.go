@@ -30,7 +30,6 @@ var (
 	allowedThemes = map[string]bool{
 		"venom-dark":  true,
 		"venom-light": true,
-		"venom-hc":    true,
 	}
 	allowedDensities = map[string]bool{
 		"comfortable": true,
@@ -269,7 +268,7 @@ func (h *SettingsHandler) servePut(w http.ResponseWriter, r *http.Request) {
 	// client a precise 400 naming the allowed values rather than a raw DB
 	// error.
 	if !allowedThemes[req.Theme] {
-		h.rejectPut(ctx, w, "theme must be one of venom-dark, venom-light, venom-hc")
+		h.rejectPut(ctx, w, "theme must be one of venom-dark, venom-light")
 		return
 	}
 	if !allowedDensities[req.Density] {

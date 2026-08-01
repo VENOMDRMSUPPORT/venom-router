@@ -95,7 +95,7 @@ func TestSettings_SecondPut_UpdatesSameSingleRow(t *testing.T) {
 	if err := repo.Put(ctx, "venom-dark", "comfortable", "mono", 6, 1.0, t0); err != nil {
 		t.Fatalf("first Put: %v", err)
 	}
-	if err := repo.Put(ctx, "venom-hc", "compact", "rose", 0, 1.25, t1); err != nil {
+	if err := repo.Put(ctx, "venom-light", "compact", "rose", 0, 1.25, t1); err != nil {
 		t.Fatalf("second Put: %v", err)
 	}
 
@@ -113,8 +113,8 @@ func TestSettings_SecondPut_UpdatesSameSingleRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after second Put: %v", err)
 	}
-	if row.Theme != "venom-hc" || row.Density != "compact" || !row.UpdatedAt.Equal(t1) {
-		t.Fatalf("row after second Put = %+v, want venom-hc/compact/%v", row, t1)
+	if row.Theme != "venom-light" || row.Density != "compact" || !row.UpdatedAt.Equal(t1) {
+		t.Fatalf("row after second Put = %+v, want venom-light/compact/%v", row, t1)
 	}
 	if row.Accent != "rose" || row.RadiusPx != 0 || row.SpacingScale != 1.25 {
 		t.Fatalf("customizer fields after second Put = %s/%d/%v, want rose/0/1.25", row.Accent, row.RadiusPx, row.SpacingScale)
@@ -171,7 +171,7 @@ func TestSettings_PutEnrichmentPersistsAndPreservesThemeDensity(t *testing.T) {
 	}
 
 	// A later theme/density Put must NOT reset enrichment back to off.
-	if err := repo.Put(ctx, "venom-hc", "comfortable", "mono", 6, 1.0, t2); err != nil {
+	if err := repo.Put(ctx, "venom-dark", "comfortable", "mono", 6, 1.0, t2); err != nil {
 		t.Fatalf("second Put: %v", err)
 	}
 	row, err = repo.Get(ctx)
@@ -181,8 +181,8 @@ func TestSettings_PutEnrichmentPersistsAndPreservesThemeDensity(t *testing.T) {
 	if !row.EnrichmentEnabled {
 		t.Fatalf("EnrichmentEnabled = false after a theme/density Put, want true (still enabled)")
 	}
-	if row.Theme != "venom-hc" || row.Density != "comfortable" {
-		t.Fatalf("theme/density after second Put = %s/%s, want venom-hc/comfortable", row.Theme, row.Density)
+	if row.Theme != "venom-dark" || row.Density != "comfortable" {
+		t.Fatalf("theme/density after second Put = %s/%s, want venom-dark/comfortable", row.Theme, row.Density)
 	}
 }
 

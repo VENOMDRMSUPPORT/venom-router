@@ -190,7 +190,7 @@ func TestSettings_AbsentOperationalFieldsAreLeftUnchanged(t *testing.T) {
 
 	// An appearance-ONLY body: the five required fields and nothing else.
 	rec, out := settingsPut(t, h, map[string]any{
-		"theme":         "venom-hc",
+		"theme":         "venom-light",
 		"density":       "comfortable",
 		"accent":        "rose",
 		"radius_px":     2,
@@ -203,7 +203,7 @@ func TestSettings_AbsentOperationalFieldsAreLeftUnchanged(t *testing.T) {
 
 	for _, data := range []map[string]any{echo, settingsGet(t, h)} {
 		// Appearance changed...
-		if data["theme"] != "venom-hc" || data["accent"] != "rose" {
+		if data["theme"] != "venom-light" || data["accent"] != "rose" {
 			t.Fatalf("appearance was not applied: %#v", data)
 		}
 		// ...and every omitted field kept its seeded, non-default value.

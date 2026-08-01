@@ -54,7 +54,7 @@ export function Settings() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)", alignItems: "start" }}>
         <Panel title="Appearance">
           <div style={{ padding: "var(--space-3) var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-            <FormField label="Theme" description="Stored via PUT /settings — applied before first paint."><Select options={["venom-dark (default)", "venom-light", "venom-hc"]} defaultValue="venom-dark (default)" /></FormField>
+            <FormField label="Theme" description="Stored via PUT /settings — applied before first paint."><Select options={["venom-dark (default)", "venom-light"]} defaultValue="venom-dark (default)" /></FormField>
             <FormField label="Density"><Select options={["comfortable", "compact"]} defaultValue="comfortable" /></FormField>
           </div>
         </Panel>

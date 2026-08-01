@@ -43,12 +43,11 @@ const PROVIDER_CLAUDE_CODE = {
   missing_env: [],
 };
 
-// A real catalog slug that ships NO official logo PNG — proves the
-// letter-mark fallback on the live surface.
+// Agnes ships its official icon in the embedded public provider assets.
 const PROVIDER_AGNES = {
   id: "agnes-ai",
   display_name: "Agnes AI",
-  description: "An API-key provider without a shipped logo.",
+  description: "An API-key provider with an official logo.",
   auth_mode: "api_key" as const,
   funding: { mode: "evidence_required", locked: false, non_expiring: false, fixed: null },
   capabilities: [],
@@ -161,7 +160,7 @@ describe("FleetOverview — rendering", () => {
     expect(screen.getByTitle("display_status: degraded").textContent).toMatch(/degraded/i);
   });
 
-  it("renders official provider logos, with the letter-mark fallback for providers without one", async () => {
+  it("renders official provider logos, including Agnes", async () => {
     await renderFleet();
 
     // Providers with a shipped asset render the real logo img (alt = the
@@ -171,12 +170,9 @@ describe("FleetOverview — rendering", () => {
     expect(logo.getAttribute("src")).toBe("/providers/opencode-zen.png");
     expect(screen.getByRole("img", { name: "Claude Code" }).getAttribute("src")).toBe("/providers/claude-code.png");
 
-    // A provider without a shipped logo keeps the deterministic letter
-    // mark — a SPAN with initials, never a broken <img>.
-    const fallback = screen.getByRole("img", { name: "Agnes AI" });
-    expect(fallback.tagName).toBe("SPAN");
-    expect(fallback.textContent).toBe("AA");
-    expect(fallback.querySelector("img")).toBeNull();
+    const agnes = screen.getByRole("img", { name: "Agnes AI" });
+    expect(agnes.tagName).toBe("IMG");
+    expect(agnes.getAttribute("src")).toBe("/providers/agnes-ai.png");
   });
 
   it("shows the setup-required note naming only the missing env var NAMES, never values", async () => {
@@ -192,42 +188,56 @@ describe("FleetOverview — rendering", () => {
     await renderFleet();
 
     const searchbox = screen.getByRole("searchbox", { name: /search integrations/i });
+    const searchControl = searchbox.closest(".vn-search") as HTMLElement;
     fireEvent.change(searchbox, { target: { value: "claude" } });
     screen.getByText("Claude Code");
     expect(screen.queryByText("OpenCode Zen")).toBeNull();
     expect(screen.queryByText("Agnes AI")).toBeNull();
 
     // The inline × clear button restores the full grid without retyping.
-    fireEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+    fireEvent.click(within(searchControl).getByRole("button", { name: /clear search/i }));
     screen.getByText("OpenCode Zen");
     screen.getByText("Claude Code");
 
     fireEvent.change(searchbox, { target: { value: "no-such-integration" } });
     screen.getByText(/no integrations found/i);
-    fireEvent.click(screen.getByRole("button", { name: /clear search/i }));
+    fireEvent.click(within(searchControl).getByRole("button", { name: /clear search/i }));
     screen.getByText("OpenCode Zen");
     screen.getByText("Claude Code");
   });
 
-  it("scopes the grid by auth kind via the segmented tabs", async () => {
+  it("scopes the grid with the exact OAuth, API key, Custom provider tabs", async () => {
     await renderFleet();
 
-    fireEvent.click(screen.getByRole("button", { name: "OAuth" }));
+    const tabs = screen.getByRole("group", { name: /filter providers/i });
+    expect(within(tabs).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "OAuth Providers",
+      "Api key Providers",
+      "Custom Providers",
+    ]);
+
+    // No auth kind is forced at load; Active/All owns the broad default view.
+    expect(within(tabs).getAllByRole("button").every((button) => button.getAttribute("aria-pressed") === "false")).toBe(true);
+    screen.getByText("OpenCode Zen");
+    screen.getByText("Agnes AI");
+    screen.getByText("Antigravity");
+
+    fireEvent.click(within(tabs).getByRole("button", { name: "OAuth Providers" }));
     screen.getByText("Antigravity");
     screen.getByText("Claude Code");
     expect(screen.queryByText("OpenCode Zen")).toBeNull();
     expect(screen.queryByText("Custom (OpenAI-compatible)")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "API Key" }));
+    fireEvent.click(within(tabs).getByRole("button", { name: "Api key Providers" }));
     screen.getByText("OpenCode Zen");
     screen.getByText("Agnes AI");
     expect(screen.queryByText("Antigravity")).toBeNull();
     expect(screen.queryByText("Custom (OpenAI-compatible)")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    fireEvent.click(within(tabs).getByRole("button", { name: "Custom Providers" }));
     screen.getByText("Custom (OpenAI-compatible)");
-    screen.getByText("Antigravity");
-    screen.getByText("OpenCode Zen");
+    expect(screen.queryByText("Antigravity")).toBeNull();
+    expect(screen.queryByText("OpenCode Zen")).toBeNull();
   });
 
   it("narrows the grid to connected providers only when view is 'active'", async () => {
@@ -243,18 +253,28 @@ describe("FleetOverview — rendering", () => {
     expect(screen.queryByText("Custom (OpenAI-compatible)")).toBeNull();
   });
 
+  it("explains an empty Active view without offering a no-op search reset", async () => {
+    vi.stubGlobal("fetch", baseHandlers({
+      "GET /api/control/v1/accounts?limit=200": () => jsonResponse(200, { data: { accounts: [] } }),
+    }));
+    render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
+
+    await screen.findByText("No active providers");
+    expect(screen.queryByRole("button", { name: /clear search/i })).toBeNull();
+  });
+
   it("renders the per-state action buttons: Connect Integration, Setup required, Integration unavailable", async () => {
     await renderFleet();
 
-    const oczCard = screen.getByText("OpenCode Zen").closest(".vn-panel") as HTMLElement;
+    const oczCard = screen.getByText("OpenCode Zen").closest(".vn-provider-card") as HTMLElement;
     const connectButton = within(oczCard).getByRole("button", { name: /connect integration/i });
     expect((connectButton as HTMLButtonElement).disabled).toBe(false);
 
-    const antigravityCard = screen.getByText("Antigravity").closest(".vn-panel") as HTMLElement;
+    const antigravityCard = screen.getByText("Antigravity").closest(".vn-provider-card") as HTMLElement;
     const setupButton = within(antigravityCard).getByRole("button", { name: /^setup required$/i });
     expect((setupButton as HTMLButtonElement).disabled).toBe(true);
 
-    const customCard = screen.getByText("Custom (OpenAI-compatible)").closest(".vn-panel") as HTMLElement;
+    const customCard = screen.getByText("Custom (OpenAI-compatible)").closest(".vn-provider-card") as HTMLElement;
     const unavailableButton = within(customCard).getByRole("button", { name: /integration unavailable/i });
     expect((unavailableButton as HTMLButtonElement).disabled).toBe(true);
   });
@@ -294,7 +314,7 @@ describe("FleetOverview — API-key connect", () => {
         }),
     });
 
-    const oczCard = screen.getByText("OpenCode Zen").closest(".vn-panel") as HTMLElement;
+    const oczCard = screen.getByText("OpenCode Zen").closest(".vn-provider-card") as HTMLElement;
     const oczConnect = screen.getAllByRole("button", { name: /connect integration/i }).find((b) => oczCard.contains(b));
     fireEvent.click(oczConnect!);
     const dialog = await screen.findByRole("dialog", { name: /connect opencode zen account/i });
@@ -350,7 +370,7 @@ describe("FleetOverview — OAuth connect", () => {
       // scope to the one inside Claude Code's own card (the configured
       // OAuth provider — Antigravity instead renders the disabled "Setup
       // required" action, since it is deliberately setup-required).
-      const claudeCodeCard = screen.getByText("Claude Code").closest(".vn-panel") as HTMLElement;
+      const claudeCodeCard = screen.getByText("Claude Code").closest(".vn-provider-card") as HTMLElement;
       const connectButtons = screen.getAllByRole("button", { name: /connect integration/i });
       const claudeCodeConnect = connectButtons.find((b) => claudeCodeCard.contains(b));
       fireEvent.click(claudeCodeConnect!);

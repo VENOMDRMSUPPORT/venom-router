@@ -1,11 +1,10 @@
-<!-- @dsCard group="Foundations" viewport="700x150" subtitle="One global focus ring via :focus-visible — 3px in High Contrast" name="Focus" -->
+<!-- @dsCard group="Foundations" viewport="700x150" subtitle="One global focus ring via :focus-visible in both themes" name="Focus" -->
 <!doctype html><html lang="en"><head><meta charset="utf-8"><title>Venom DS — Focus</title><link rel="stylesheet" href="../styles.css">
-<style>body{margin:0;padding:0;background:var(--surface-canvas)}.row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.pane{background:var(--surface-canvas);padding:14px;border-radius:6px;border:1px solid var(--border-default);display:flex;gap:14px;align-items:center}.f{outline:var(--focus-ring-width) solid var(--focus-ring);outline-offset:var(--focus-ring-offset);border-radius:var(--radius-xs)}</style>
+<style>body{margin:0;padding:0;background:var(--surface-canvas)}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pane{background:var(--surface-canvas);padding:14px;border-radius:6px;border:1px solid var(--border-default);display:flex;gap:14px;align-items:center}.f{outline:var(--focus-ring-width) solid var(--focus-ring);outline-offset:var(--focus-ring-offset);border-radius:var(--radius-xs)}</style>
 </head><body>
 <div class="row">
   <div class="pane" data-theme="venom-dark"><button class="vn-btn vn-btn--secondary f">venom-dark</button><a href="#" class="f">link</a></div>
   <div class="pane" data-theme="venom-light"><button class="vn-btn vn-btn--secondary f">venom-light</button><a href="#" class="f">link</a></div>
-  <div class="pane" data-theme="venom-hc"><button class="vn-btn vn-btn--secondary f">venom-hc</button><a href="#" class="f">link</a></div>
 </div>
 <p class="vn-caption" style="margin:8px 0 0">focus.ring + focus.ring-width + focus.ring-offset — keyboard focus is always visible; nothing depends on hover alone.</p>
 </body></html>

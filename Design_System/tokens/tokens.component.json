@@ -14,11 +14,11 @@
     "border":        { "default": { "$value": "{border.strong}" }, "focus": { "$value": "{border.focus}" }, "invalid": { "$value": "{status.critical.border}" } },
     "bg-disabled":   { "$value": "{action.disabled.bg}" }
   },
-  "card":  { "surface": { "$value": "{surface.secondary}" }, "border": { "$value": "{border.default}" }, "shadow": { "$value": "{elevation.card}" } },
+  "card":  { "surface": { "$value": "{surface.primary}" }, "border": { "$value": "{border.default}" }, "shadow": { "$value": "{elevation.card}" } },
   "panel": { "surface": { "$value": "{surface.primary}" },   "border": { "$value": "{border.default}" } },
   "table": {
     "header": { "bg": { "$value": "{surface.primary}" }, "fg": { "$value": "{text.secondary}" } },
-    "row":    { "bg": { "$value": "{surface.canvas}" }, "hover": { "bg": { "$value": "{surface.secondary}" } }, "selected": { "bg": { "$value": "{accent.subtle-bg}" } } },
+    "row":    { "bg": { "$value": "{surface.primary}" }, "hover": { "bg": { "$value": "{surface.secondary}" } }, "selected": { "bg": { "$value": "{accent.subtle-bg}" } } },
     "border": { "$value": "{border.default}" }
   },
   "tooltip": { "bg": { "$value": "{surface.inverse}" }, "fg": { "$value": "{text.inverse}" } },

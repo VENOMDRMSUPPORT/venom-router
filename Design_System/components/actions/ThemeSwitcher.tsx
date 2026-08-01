@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Icon } from "../icons/Icon";
 
-export type ThemeName = "venom-dark" | "venom-light" | "venom-hc";
+export type ThemeName = "venom-dark" | "venom-light";
 
 interface ThemeOption {
   value: ThemeName;
@@ -12,7 +12,6 @@ interface ThemeOption {
 const THEME_OPTIONS: ThemeOption[] = [
   { value: "venom-dark", label: "Dark", icon: "moon" },
   { value: "venom-light", label: "Light", icon: "sun" },
-  { value: "venom-hc", label: "High contrast", icon: "contrast" },
 ];
 
 export interface ThemeSwitcherProps {
@@ -25,8 +24,8 @@ export interface ThemeSwitcherProps {
 }
 
 /**
- * ThemeSwitcher — a controlled picker for exactly the three shipped themes
- * (`venom-dark` / `venom-light` / `venom-hc`). No hidden storage: this is a pure
+ * ThemeSwitcher — a controlled picker for the two shipped themes
+ * (`venom-dark` / `venom-light`). No hidden storage: this is a pure
  * controlled component, so the host application owns persistence.
  */
 export function ThemeSwitcher(props: ThemeSwitcherProps) {
