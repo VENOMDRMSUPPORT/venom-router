@@ -205,16 +205,22 @@ describe("AppShell — responsive section deck", () => {
     expect(deck.queryByRole("button", { name: /api keys/i })).toBeNull();
   });
 
-  // NOTE: this test used to navigate to Playground and assert the planned-surface
-  // treatment. Every nav.ts key now mounts a real surface (P6-UI-004/005/008/010
-  // completed the set), so there is no unfinished PAGE left to demonstrate it on.
-  // The treatment itself still matters — it is the fallback for a key with no
-  // surface — so it is asserted on an unrecognised key instead, and the stronger
-  // claim (no nav destination is a placeholder any more) is asserted below.
-  it("uses the global planned-surface treatment for an unrecognised destination", async () => {
+  // GOVERNOR NOTE (review-time fix): this test used to navigate to Playground and
+  // assert the planned-surface treatment. P6-UI-004/005/008/010 gave every nav.ts
+  // key a real surface, so it was renamed to "…for an unrecognised destination" —
+  // but the NAME and the comment then described a path the body never exercises.
+  // parseInitialHash clamps any unrecognised hash to DEFAULT_NAV_KEY (see its
+  // final `return`), so an unknown destination NEVER reaches renderSurface's
+  // PlannedSurface fallback; what the body actually proves is that the operator
+  // lands on the default surface instead of a dead page. Renamed to say exactly
+  // that, so no future reader trusts a coverage claim this file does not make.
+  //
+  // The PlannedSurface fallback is therefore unreachable through the UI while
+  // every nav key has a surface. It is kept as a defensive default, and the guard
+  // that it stays unreachable is the NAV loop below: add a nav key without a
+  // surface and that test fails.
+  it("resolves an unrecognised hash to the default surface, never a dead page", async () => {
     vi.stubGlobal("fetch", baseHandlers());
-    // A hash naming a key that is not in nav.ts falls through to the shared
-    // treatment rather than rendering blank.
     window.location.hash = "#no-such-surface";
     render(
       <AppShell
