@@ -42,6 +42,9 @@ function baseHandlers(overrides: Record<string, () => Response> = {}) {
     // behavior is covered in src/fleet/*.test.tsx.
     "GET /api/control/v1/providers": () => jsonResponse(200, { data: { providers: [] } }),
     "GET /api/control/v1/accounts?limit=200": () => jsonResponse(200, { data: { accounts: [] } }),
+    // Same rationale for the Models destination (P6-UI-002) — its own behavior
+    // is covered in src/models/*.test.tsx.
+    "GET /api/control/v1/models?limit=200": () => jsonResponse(200, { data: [] }),
     ...overrides,
   });
 }
@@ -94,6 +97,33 @@ describe("AppShell — navigation", () => {
       "page",
     );
     expect(screen.getByRole("link", { name: /overview/i }).getAttribute("aria-current")).toBeNull();
+  });
+});
+
+describe("AppShell — surface mounting", () => {
+  // Each of these proves a real surface is mounted on an EXISTING nav key
+  // (nav.ts is never extended by a surface unit), and — just as importantly —
+  // that the "coming in a later phase" placeholder is gone for that key. A
+  // surface built but never wired is invisible, and the placeholder is exactly
+  // what that failure looks like.
+  it("mounts the real Models surface on the models nav key", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    fireEvent.click(screen.getByRole("link", { name: /^models$/i }));
+
+    // The Models surface's own empty state, not the shell placeholder.
+    await screen.findByText(/no models discovered/i);
+    expect(screen.queryByText(/coming in a later phase/i)).toBeNull();
   });
 });
 

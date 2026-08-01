@@ -365,6 +365,200 @@ export async function getCertification(offeringOperationID: string): Promise<Cer
   return body.data;
 }
 
+// --- Effective-offering read model (P3a-CAPI-001, enables P6-UI-002) ---
+//
+// Every interface below is typed against internal/httpapi/models.go's OWN
+// projections (capabilityJSON, costJSON, tierJSON, effectiveOfferingJSON,
+// modelGroupJSON), which are authoritative. Nullable numerics stay
+// `number | null`, never widened to `number`: `null` means the fact is unknown
+// and must be RENDERED as unknown, never coerced to 0. That is 04 §3's central
+// truthfulness invariant, and widening the type here is all it would take to
+// lose it.
+
+/** One offering-operation's capability truth. `routable` is the SERVER's
+ * conjunction (intelligence.Project over models.Routable) — certification state
+ * `certified` AND capability truth `supported`. It is never re-derived client
+ * side; see ModelsSurface's own capabilityRoutability for how the two are
+ * cross-checked rather than recomputed. */
+export interface OfferingCapability {
+  operation: string;
+  effective: boolean;
+  state: "discovered" | "observed" | "probing" | "certified" | "suspended" | "expired";
+  truth: "unknown" | "supported" | "unsupported";
+  routable: boolean;
+}
+
+/** One offering's resolved cost fact. `is_free` is `null` when unknown — which
+ * is NOT the same as `false`, and must never be rendered as "paid". */
+export interface OfferingCost {
+  is_free: boolean | null;
+  source?: string;
+  conflict: boolean;
+  dataset_version?: string;
+  observed_at?: string;
+  confidence: number;
+  exact_identity_match: boolean;
+  stale: boolean;
+}
+
+/** One offering's per-tier eligibility. `reasons` is omitted (not `[]`) by the
+ * server when there are none. */
+export interface OfferingTierEligibility {
+  eligible: boolean;
+  stale: boolean;
+  penalty: boolean;
+  reasons?: string[];
+}
+
+/** The shared effective-offering projection (04 §3) that BOTH GET /offerings and
+ * GET /models return. `effective_context_tokens` is `number | null`: a null
+ * context is unknown and is ineligible for every tier (fail closed) — rendering
+ * it as 0 would claim a verified context of zero tokens. `quality_known` is the
+ * companion flag for `quality_score`: when it is false the score carries no
+ * information and must not be shown as a rating. */
+export interface EffectiveOffering {
+  account_id: string;
+  provider_id: string;
+  provider_model_id: string;
+  display_name?: string;
+  availability: "available" | "withdrawn" | "catalog_only" | "unknown";
+  effective_context_tokens: number | null;
+  context_provenance: string;
+  capabilities: OfferingCapability[];
+  quality_score: number;
+  quality_known: boolean;
+  cost: OfferingCost;
+  classification: string;
+  tiers: Record<string, OfferingTierEligibility>;
+}
+
+/** One canonical model group (GET /models). Grouping is presentation only —
+ * every offering carries exactly the projection GET /offerings returns. */
+export interface ModelGroup {
+  model_id: string;
+  display_name?: string;
+  native_context_tokens: number | null;
+  quality_rating: number | null;
+  offerings: EffectiveOffering[];
+}
+
+export interface ListPageParams {
+  cursor?: string;
+  limit?: number;
+}
+
+/** A cursor-paginated page. `nextCursor` is `undefined` on the LAST page — the
+ * server omits `meta` entirely there. A caller must not treat one page as the
+ * whole catalog; see fetchAllModelGroups in ModelsSurface. */
+export interface ModelGroupsPage {
+  groups: ModelGroup[];
+  nextCursor?: string;
+}
+
+function pageQuery(params: ListPageParams): string {
+  const query = new URLSearchParams();
+  if (params.cursor) query.set("cursor", params.cursor);
+  if (params.limit) query.set("limit", String(params.limit));
+  const qs = query.toString();
+  return qs ? `?${qs}` : "";
+}
+
+/** GET /models — canonical model groups, cursor-paginated (the underlying
+ * offering list is paged and grouping happens WITHIN the page, so a group can
+ * legitimately continue onto the next page). A read — no CSRF token. */
+export async function listModelGroups(params: ListPageParams = {}): Promise<ModelGroupsPage> {
+  const body = await request<{ data: ModelGroup[]; meta?: { next_cursor?: string } }>(
+    `/models${pageQuery(params)}`,
+    { method: "GET" },
+  );
+  return { groups: body.data ?? [], nextCursor: body.meta?.next_cursor };
+}
+
+export interface OfferingsPage {
+  offerings: EffectiveOffering[];
+  nextCursor?: string;
+}
+
+/** GET /offerings — the same projection, ungrouped and cursor-paginated.
+ * Optional `account_id` restricts to one account. */
+export async function listOfferings(
+  params: ListPageParams & { accountId?: string } = {},
+): Promise<OfferingsPage> {
+  const query = new URLSearchParams();
+  if (params.cursor) query.set("cursor", params.cursor);
+  if (params.limit) query.set("limit", String(params.limit));
+  if (params.accountId) query.set("account_id", params.accountId);
+  const qs = query.toString();
+  const body = await request<{ data: EffectiveOffering[]; meta?: { next_cursor?: string } }>(
+    `/offerings${qs ? `?${qs}` : ""}`,
+    { method: "GET" },
+  );
+  return { offerings: body.data ?? [], nextCursor: body.meta?.next_cursor };
+}
+
+// --- Async triggers that return a job (P3a-CAPI-002 / P6-CAPI-001) ---
+
+/** The canonical async-job handle every 202 trigger returns (09 §3.12). Poll
+ * GET /jobs/{job_id} for terminal status — an accepted trigger is NOT a
+ * completed one. */
+export interface AsyncJobHandle {
+  job_id: string;
+  status_url?: string;
+}
+
+/** POST /accounts/{id}/discover — triggers account-scoped catalog discovery
+ * (202 + job). */
+export async function startDiscovery(accountId: string, csrfToken: string): Promise<AsyncJobHandle> {
+  const resp = await request<{ data: AsyncJobHandle }>(
+    `/accounts/${encodeURIComponent(accountId)}/discover`,
+    { method: "POST", headers: { [CSRF_HEADER]: csrfToken } },
+  );
+  return resp.data;
+}
+
+/** POST /models/{id}/benchmark — triggers the canonical quality benchmark
+ * (202 + job).
+ *
+ * HONESTY NOTE, load-bearing for P6-UI-002: this job can reach `succeeded`
+ * WITHOUT producing a rating. The QualityIndex seam is nil in production
+ * (internal/httpapi/controlmux.go), so the leaderboard always misses and the
+ * handler completes the job without writing a rating — deliberately, rather
+ * than fabricating one. A completed benchmark is therefore NOT evidence that a
+ * rating changed, and must never be rendered as though it were.
+ *
+ * A 409 means enrichment is DISABLED — a state conflict the owner can resolve
+ * in settings, not a permission problem. */
+export async function startBenchmark(modelId: string, csrfToken: string): Promise<AsyncJobHandle> {
+  const resp = await request<{ data: AsyncJobHandle }>(
+    `/models/${encodeURIComponent(modelId)}/benchmark`,
+    { method: "POST", headers: { [CSRF_HEADER]: csrfToken } },
+  );
+  return resp.data;
+}
+
+/** GET /jobs/{job_id}'s payload (internal/httpapi/jobs.go's jobJSON) — the
+ * SINGLE canonical async-job status surface (09 §3.12); no per-resource status
+ * route exists. `status` is storage.JobStatus's exact vocabulary. `error` is a
+ * typed code plus a safe message, never raw provider text, and is absent on a
+ * job that has not failed. */
+export interface JobRead {
+  job_id: string;
+  kind: string;
+  status: "pending" | "running" | "completed" | "failed" | "expired";
+  started_at?: string;
+  finished_at?: string;
+  result_ref?: string;
+  error?: { code: string; message: string };
+}
+
+/** GET /jobs/{job_id} — idempotent; polling mutates nothing. */
+export async function getJob(jobId: string): Promise<JobRead> {
+  const resp = await request<{ data: JobRead }>(`/jobs/${encodeURIComponent(jobId)}`, {
+    method: "GET",
+  });
+  return resp.data;
+}
+
 // --- Probe trigger (P3c-CAPI-001, enables P3c-UI-001) ---
 
 export interface StartProbeBody {

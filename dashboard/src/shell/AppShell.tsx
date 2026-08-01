@@ -12,6 +12,7 @@ import FleetBreadcrumbChips, { type FleetView } from "../fleet/FleetBreadcrumbCh
 import FleetOverview from "../fleet/FleetOverview";
 import TokenHealthSurface from "../health/TokenHealthSurface";
 import ApiKeysSurface from "../keys/ApiKeysSurface";
+import ModelsSurface from "../models/ModelsSurface";
 import QuotaSurface from "../quota/QuotaSurface";
 import {
   applyAppearanceSettings,
@@ -316,8 +317,12 @@ export default function AppShell(props: AppShellProps) {
   );
 }
 
-// P2b-UI-001 scope: every nav destination other than Providers is a
-// placeholder. Providers (P2b-UI-003) renders the real Provider Fleet.
+// Mounts each nav destination's real surface, falling through to an honest
+// "not built yet" state for the keys no unit has claimed.
+//
+// Every branch here maps an EXISTING nav.ts key to a shipped surface — no unit
+// adds a nav entry, so a surface that has no key has no home and a key with no
+// surface says so rather than rendering something plausible.
 function renderSurface(
   navKey: string,
   csrfToken: string,
@@ -349,6 +354,11 @@ function renderSurface(
   // P6-UI-009: API Keys.
   if (navKey === "api-keys") {
     return <ApiKeysSurface csrfToken={csrfToken} onSessionExpired={onSessionExpired} />;
+  }
+
+  // P6-UI-002: Models (the existing `models` nav key — nav.ts is unchanged).
+  if (navKey === "models") {
+    return <ModelsSurface csrfToken={csrfToken} onSessionExpired={onSessionExpired} />;
   }
 
   const item = navItemByKey(navKey);
