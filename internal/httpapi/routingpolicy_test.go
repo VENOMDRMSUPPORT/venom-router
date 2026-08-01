@@ -212,33 +212,73 @@ func sortedKeys(m map[string]any) []string {
 // posture: when the engine cannot produce a VALIDATED policy set, the endpoint
 // serves a typed 500 and NO policy data at all. Serving whatever tiers happened
 // to validate would hand the dashboard a policy the router itself rejected.
+// It runs BOTH shapes of a failed policy load, and the second one is the one
+// that actually pins the error check.
+//
+// GOVERNOR NOTE (review-time fix): this test originally used the partial fixture
+// ALONE, and it did not bite. Deleting the `if err != nil` branch entirely left
+// it GREEN — because a map missing pro/max still trips the separate per-tier
+// `!ok` guard further down, which returns the same typed 500. The test was
+// pinning the missing-tier fallback, not the error check it is named for. The
+// COMPLETE fixture below closes that: a full, individually-plausible three-tier
+// map arriving WITH an error is exactly the case where only the error check can
+// save the caller, since every `!ok` lookup succeeds. That is also the realistic
+// case — Policies() validates cross-tier invariants (ascending context ceilings,
+// Lite's product rules), so a complete-but-rejected table is precisely what it
+// returns on failure.
 func TestRoutingPolicy_PolicyErrorServesNoPartialBody(t *testing.T) {
 	sentinel := errors.New("policy validation exploded")
-	h := &RoutingPolicyHandler{policies: func() (map[routing.Tier]routing.TierPolicy, error) {
-		// A PARTIAL, plausible-looking map alongside the error: the handler must
-		// discard it entirely rather than serve the tiers it did receive.
-		return map[routing.Tier]routing.TierPolicy{
-			routing.TierLite: {Tier: routing.TierLite, Funding: routing.FundingFreeOnly, AttemptBudget: 3},
-		}, sentinel
-	}}
 
-	rec, body := servePolicy(t, h, http.MethodGet)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	tests := []struct {
+		name     string
+		policies map[routing.Tier]routing.TierPolicy
+	}{
+		{
+			// A PARTIAL, plausible-looking map alongside the error: the handler
+			// must discard it entirely rather than serve the tiers it received.
+			name: "a partial policy map is discarded, not served",
+			policies: map[routing.Tier]routing.TierPolicy{
+				routing.TierLite: {Tier: routing.TierLite, Funding: routing.FundingFreeOnly, AttemptBudget: 3},
+			},
+		},
+		{
+			// A COMPLETE map alongside the error. Every per-tier lookup succeeds,
+			// so the error check is the ONLY thing standing between the caller and
+			// a 200 carrying a policy set the engine itself rejected.
+			name: "a complete but REJECTED policy map is still refused",
+			policies: map[routing.Tier]routing.TierPolicy{
+				routing.TierLite: {Tier: routing.TierLite, Funding: routing.FundingFreeOnly, AttemptBudget: 3},
+				routing.TierPro:  {Tier: routing.TierPro, Funding: routing.FundingFreeAndPaid, AttemptBudget: 4, Scored: true},
+				routing.TierMax:  {Tier: routing.TierMax, Funding: routing.FundingFreeAndPaid, AttemptBudget: 5, Scored: true},
+			},
+		},
 	}
-	if _, present := body["data"]; present {
-		t.Fatalf("a policy error must carry NO data field, got %#v", body["data"])
-	}
-	errObj, ok := body["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("body has no typed error object: %#v", body)
-	}
-	if errObj["code"] != "internal" {
-		t.Fatalf("error code = %#v, want internal", errObj["code"])
-	}
-	// The engine's own error text must not be echoed to the client.
-	if strings.Contains(rec.Body.String(), sentinel.Error()) || strings.Contains(rec.Body.String(), "lite") {
-		t.Fatalf("the 500 body leaked engine internals: %s", rec.Body.String())
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &RoutingPolicyHandler{policies: func() (map[routing.Tier]routing.TierPolicy, error) {
+				return tt.policies, sentinel
+			}}
+
+			rec, body := servePolicy(t, h, http.MethodGet)
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+			}
+			if _, present := body["data"]; present {
+				t.Fatalf("a policy error must carry NO data field, got %#v", body["data"])
+			}
+			errObj, ok := body["error"].(map[string]any)
+			if !ok {
+				t.Fatalf("body has no typed error object: %#v", body)
+			}
+			if errObj["code"] != "internal" {
+				t.Fatalf("error code = %#v, want internal", errObj["code"])
+			}
+			// The engine's own error text must not be echoed to the client.
+			if strings.Contains(rec.Body.String(), sentinel.Error()) || strings.Contains(rec.Body.String(), "lite") {
+				t.Fatalf("the 500 body leaked engine internals: %s", rec.Body.String())
+			}
+		})
 	}
 }
 
