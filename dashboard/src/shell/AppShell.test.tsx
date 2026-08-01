@@ -234,6 +234,25 @@ describe("AppShell — responsive section deck", () => {
     expect(screen.queryByText(/roadmap/i)).toBeNull();
   });
 
+  it("mounts a real surface for every nav destination — none is a placeholder", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+
+    const primary = within(await screen.findByRole("navigation", { name: /primary/i }));
+    for (const item of NAV) {
+      fireEvent.click(primary.getByRole("link", { name: new RegExp(`^${item.label}$`, "i") }));
+      // The shared planned-surface treatment is the tell that a key has no surface.
+      expect(screen.queryByText("Planned surface"), `${item.key} is still a placeholder`).toBeNull();
+    }
+  });
+
   it("opens API-key creation from the global page context action", async () => {
     vi.stubGlobal("fetch", baseHandlers());
 

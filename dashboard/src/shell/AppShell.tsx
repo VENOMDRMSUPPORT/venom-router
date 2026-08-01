@@ -28,6 +28,7 @@ import QuotaSurface from "../quota/QuotaSurface";
 import PlaygroundSurface from "../playground/PlaygroundSurface";
 import RoutingSurface from "../routing/RoutingSurface";
 import SettingsSurface from "../settings/SettingsSurface";
+import UsageSurface from "../usage/UsageSurface";
 import {
   applyAppearanceSettings,
   DEFAULT_ACCENT,
@@ -497,6 +498,11 @@ function renderSurface(
   // P6-UI-004: Playground.
   if (navKey === "playground") {
     return <PlaygroundSurface />;
+  }
+
+  // P6-UI-005: Usage & Analytics.
+  if (navKey === "usage") {
+    return <UsageSurface onSessionExpired={onSessionExpired} />;
   }
 
   // P6-UI-011: Connect a client. Reached from Overview's Quick Start rather than
