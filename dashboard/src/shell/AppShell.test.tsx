@@ -474,6 +474,33 @@ describe("AppShell — shared chrome header (per-page metadata)", () => {
 });
 
 describe("AppShell — global breadcrumb", () => {
+  it("shows the fleet chips beside the breadcrumb on the Providers page only", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    // Not on Overview.
+    expect(screen.queryByText("All Integrations")).toBeNull();
+
+    fireEvent.click(screen.getByRole("link", { name: /providers/i }));
+
+    // Rendered once the fleet's live counts load (empty fixtures -> 0/0).
+    await screen.findByText("Active Providers");
+    screen.getByText("All Integrations");
+
+    // Gone again after navigating away.
+    fireEvent.click(screen.getByRole("link", { name: /overview/i }));
+    expect(screen.queryByText("All Integrations")).toBeNull();
+  });
+
   it("renders Dashboard / <leaf> on Overview with the leaf marked aria-current=page", async () => {
     vi.stubGlobal("fetch", baseHandlers());
 

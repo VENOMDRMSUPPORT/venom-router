@@ -56,6 +56,20 @@ const PROVIDER_AGNES = {
   missing_env: [],
 };
 
+// The custom OpenAI-compatible path template — the one catalog entry with
+// no connect flow in this console, proving the "Integration unavailable"
+// action state.
+const PROVIDER_CUSTOM = {
+  id: "custom",
+  display_name: "Custom (OpenAI-compatible)",
+  description: "Generic OpenAI-compatible endpoint; configured per account.",
+  auth_mode: "custom_openai" as const,
+  funding: { mode: "evidence_required", locked: false, non_expiring: false, fixed: null },
+  capabilities: [],
+  configured: true,
+  missing_env: [],
+};
+
 function account(overrides: Record<string, unknown>) {
   return {
     id: "acct-default",
@@ -101,7 +115,9 @@ afterEach(() => {
 function baseHandlers(overrides: Record<string, () => Response> = {}) {
   return createFetchMock({
     "GET /api/control/v1/providers": () =>
-      jsonResponse(200, { data: { providers: [PROVIDER_OCZ, PROVIDER_ANTIGRAVITY, PROVIDER_CLAUDE_CODE, PROVIDER_AGNES] } }),
+      jsonResponse(200, {
+        data: { providers: [PROVIDER_OCZ, PROVIDER_ANTIGRAVITY, PROVIDER_CLAUDE_CODE, PROVIDER_AGNES, PROVIDER_CUSTOM] },
+      }),
     "GET /api/control/v1/accounts?limit=200": () =>
       jsonResponse(200, { data: { accounts: [ACCOUNT_HEALTHY, ACCOUNT_DEGRADED, ACCOUNT_UNKNOWN] } }),
     ...overrides,
@@ -163,12 +179,77 @@ describe("FleetOverview — rendering", () => {
     expect(fallback.querySelector("img")).toBeNull();
   });
 
-  it("shows the setup-required state naming only the missing env var NAMES, never values", async () => {
+  it("shows the setup-required note naming only the missing env var NAMES, never values", async () => {
     await renderFleet();
 
-    screen.getByText(/setup required/i);
+    const note = screen.getByRole("note");
+    expect(note.textContent).toMatch(/^Setup required\. Provide: /);
     screen.getByText("VENOM_ANTIGRAVITY_CLIENT_SECRET");
     screen.getByText("VENOM_ANTIGRAVITY_CLIENT_ID");
+  });
+
+  it("filters the integration grid live by search, with a clearable no-match state", async () => {
+    await renderFleet();
+
+    const searchbox = screen.getByRole("searchbox", { name: /search integrations/i });
+    fireEvent.change(searchbox, { target: { value: "claude" } });
+    screen.getByText("Claude Code");
+    expect(screen.queryByText("OpenCode Zen")).toBeNull();
+    expect(screen.queryByText("Agnes AI")).toBeNull();
+
+    fireEvent.change(searchbox, { target: { value: "no-such-integration" } });
+    screen.getByText(/no integrations found/i);
+    fireEvent.click(screen.getByRole("button", { name: /clear search/i }));
+    screen.getByText("OpenCode Zen");
+    screen.getByText("Claude Code");
+  });
+
+  it("scopes the grid by auth kind via the segmented tabs", async () => {
+    await renderFleet();
+
+    fireEvent.click(screen.getByRole("button", { name: "OAuth" }));
+    screen.getByText("Antigravity");
+    screen.getByText("Claude Code");
+    expect(screen.queryByText("OpenCode Zen")).toBeNull();
+    expect(screen.queryByText("Custom (OpenAI-compatible)")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "API Key" }));
+    screen.getByText("OpenCode Zen");
+    screen.getByText("Agnes AI");
+    expect(screen.queryByText("Antigravity")).toBeNull();
+    expect(screen.queryByText("Custom (OpenAI-compatible)")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    screen.getByText("Custom (OpenAI-compatible)");
+    screen.getByText("Antigravity");
+    screen.getByText("OpenCode Zen");
+  });
+
+  it("renders the per-state action buttons: Connect Integration, Setup required, Integration unavailable", async () => {
+    await renderFleet();
+
+    const oczCard = screen.getByText("OpenCode Zen").closest(".vn-panel") as HTMLElement;
+    const connectButton = within(oczCard).getByRole("button", { name: /connect integration/i });
+    expect((connectButton as HTMLButtonElement).disabled).toBe(false);
+
+    const antigravityCard = screen.getByText("Antigravity").closest(".vn-panel") as HTMLElement;
+    const setupButton = within(antigravityCard).getByRole("button", { name: /^setup required$/i });
+    expect((setupButton as HTMLButtonElement).disabled).toBe(true);
+
+    const customCard = screen.getByText("Custom (OpenAI-compatible)").closest(".vn-panel") as HTMLElement;
+    const unavailableButton = within(customCard).getByRole("button", { name: /integration unavailable/i });
+    expect((unavailableButton as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("reports the breadcrumb-chip counts (active providers / all integrations) once data loads", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+    const onCounts = vi.fn();
+    render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onCounts={onCounts} />);
+
+    await screen.findByText("OpenCode Zen");
+    // Only OpenCode Zen has connected accounts in the fixtures; the
+    // catalog ships five integrations in total.
+    await waitFor(() => expect(onCounts).toHaveBeenCalledWith({ active: 1, total: 5 }));
   });
 
   it("has zero axe violations", async () => {
@@ -196,7 +277,7 @@ describe("FleetOverview — API-key connect", () => {
     });
 
     const oczCard = screen.getByText("OpenCode Zen").closest(".vn-panel") as HTMLElement;
-    const oczConnect = screen.getAllByRole("button", { name: /connect account/i }).find((b) => oczCard.contains(b));
+    const oczConnect = screen.getAllByRole("button", { name: /connect integration/i }).find((b) => oczCard.contains(b));
     fireEvent.click(oczConnect!);
     const dialog = await screen.findByRole("dialog", { name: /connect opencode zen account/i });
 
@@ -247,12 +328,12 @@ describe("FleetOverview — OAuth connect", () => {
         "GET /api/control/v1/oauth/tx-1/status": () => jsonResponse(200, { data: { status: "completed", account_id: "acct-new" } }),
       });
 
-      // Every provider fixture renders a "Connect account" button; scope
-      // to the one inside Claude Code's own card (the configured OAuth
-      // provider — Antigravity's equivalent button is disabled, since it
-      // is deliberately setup-required).
+      // Several provider fixtures render a "Connect Integration" button;
+      // scope to the one inside Claude Code's own card (the configured
+      // OAuth provider — Antigravity instead renders the disabled "Setup
+      // required" action, since it is deliberately setup-required).
       const claudeCodeCard = screen.getByText("Claude Code").closest(".vn-panel") as HTMLElement;
-      const connectButtons = screen.getAllByRole("button", { name: /connect account/i });
+      const connectButtons = screen.getAllByRole("button", { name: /connect integration/i });
       const claudeCodeConnect = connectButtons.find((b) => claudeCodeCard.contains(b));
       fireEvent.click(claudeCodeConnect!);
 

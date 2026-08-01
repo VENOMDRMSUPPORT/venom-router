@@ -8,6 +8,7 @@ import {
   type SettingsResponse,
 } from "../api/controlClient";
 import { logout, type SessionTimes } from "../auth/authClient";
+import FleetBreadcrumbChips from "../fleet/FleetBreadcrumbChips";
 import FleetOverview from "../fleet/FleetOverview";
 import {
   applyAppearanceSettings,
@@ -99,6 +100,10 @@ export default function AppShell(props: AppShellProps) {
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [appearance, setAppearanceState] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [appearanceNotice, setAppearanceNotice] = useState<string | null>(null);
+  // The Provider Fleet's breadcrumb-row chip counts (legacy parity),
+  // reported up by FleetOverview once its live data loads; null until then
+  // so the chips never render placeholder values.
+  const [fleetCounts, setFleetCounts] = useState<{ active: number; total: number } | null>(null);
   const appearanceRef = useRef(appearance);
   appearanceRef.current = appearance;
 
@@ -270,9 +275,17 @@ export default function AppShell(props: AppShellProps) {
             </Banner>
           ) : null}
 
-          <BreadcrumbBar item={activeItem} onNavigateHome={() => setActiveNav(DEFAULT_NAV_KEY)} />
+          {/* The global breadcrumb row (legacy parity): trail chip on the
+              left; on the Providers page, the fleet's Active/All chips on
+              the right once the live counts have loaded. */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <BreadcrumbBar item={activeItem} onNavigateHome={() => setActiveNav(DEFAULT_NAV_KEY)} />
+            {activeNav === "providers" && fleetCounts ? (
+              <FleetBreadcrumbChips activeCount={fleetCounts.active} totalCount={fleetCounts.total} />
+            ) : null}
+          </div>
 
-          {renderSurface(activeNav, csrfToken, onSessionExpired)}
+          {renderSurface(activeNav, csrfToken, onSessionExpired, setFleetCounts)}
         </div>
       </main>
 
@@ -292,9 +305,14 @@ export default function AppShell(props: AppShellProps) {
 
 // P2b-UI-001 scope: every nav destination other than Providers is a
 // placeholder. Providers (P2b-UI-003) renders the real Provider Fleet.
-function renderSurface(navKey: string, csrfToken: string, onSessionExpired: () => void): ReactNode {
+function renderSurface(
+  navKey: string,
+  csrfToken: string,
+  onSessionExpired: () => void,
+  onFleetCounts: (counts: { active: number; total: number }) => void,
+): ReactNode {
   if (navKey === "providers") {
-    return <FleetOverview csrfToken={csrfToken} onSessionExpired={onSessionExpired} />;
+    return <FleetOverview csrfToken={csrfToken} onSessionExpired={onSessionExpired} onCounts={onFleetCounts} />;
   }
 
   const item = navItemByKey(navKey);

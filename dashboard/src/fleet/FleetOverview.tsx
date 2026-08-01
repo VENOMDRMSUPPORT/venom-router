@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
-import { EmptyState, ErrorState, Spinner, StatCard } from "@venom/design-system/primitives";
+import { useCallback, useEffect, useState, type ChangeEvent } from "react";
+import {
+  Button,
+  EmptyState,
+  ErrorState,
+  SearchField,
+  SegmentedControl,
+  Spinner,
+  StatCard,
+} from "@venom/design-system/primitives";
 import {
   isSessionExpired,
   listAccounts,
@@ -10,12 +18,24 @@ import {
   type Provider,
 } from "../api/controlClient";
 import ConnectDialog from "./ConnectDialog";
-import ProviderRow from "./ProviderRow";
+import ProviderCard from "./ProviderCard";
 
 export interface FleetOverviewProps {
   csrfToken: string;
   onSessionExpired: () => void;
+  /** Reports the breadcrumb-chip counts (active = providers with at least
+   * one connected account, total = full catalog) to the shell once the
+   * live data has loaded. */
+  onCounts?: (counts: { active: number; total: number }) => void;
 }
+
+type AuthCategory = "all" | "oauth" | "api_key";
+
+const CATEGORY_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "oauth", label: "OAuth" },
+  { value: "api_key", label: "API Key" },
+];
 
 /** Fetches every account page (bounded — an owner console's account count
  * is small; this cap just guards against a pathological infinite cursor
@@ -33,17 +53,22 @@ async function fetchAllAccounts(): Promise<AccountProjection[]> {
 }
 
 /**
- * The Provider Fleet dashboard (P2b-UI-003): stat cards, one provider
- * summary row per catalog provider (ProviderRow — official logo or letter
- * mark, expandable to its ProviderAccountRows), API-key/OAuth connect
- * dialogs, credential reveal,
- * funding override, and lifecycle actions (stop/resume/refresh
- * health/disconnect). Assembled entirely from `@venom/design-system`'s
- * domain components — there is no single shipped ProviderFleet UI
- * component to render, only the domain building blocks this composes.
+ * The Provider Fleet dashboard (P2b-UI-003, legacy-parity layout): stat
+ * cards, a toolbar (live "Search integrations…" filter + All/OAuth/API Key
+ * segmented tabs scoping by auth mode), and the responsive 2-column
+ * integration-card grid (ProviderCard — official logo or letter mark,
+ * legacy auth badges, per-state action button, expandable account rows),
+ * plus the API-key/OAuth connect dialogs, credential reveal, funding
+ * override, and lifecycle actions. Assembled entirely from
+ * `@venom/design-system`'s building blocks — there is no single shipped
+ * ProviderFleet UI component to render.
+ *
+ * Like the legacy category tabs, the OAuth/API Key tabs scope by typed
+ * auth mode only (no slug logic); `custom_openai` stays visible under All
+ * only.
  */
 export default function FleetOverview(props: FleetOverviewProps) {
-  const { csrfToken, onSessionExpired } = props;
+  const { csrfToken, onSessionExpired, onCounts } = props;
 
   const [providers, setProviders] = useState<Provider[] | null>(null);
   const [accounts, setAccounts] = useState<AccountProjection[] | null>(null);
@@ -51,6 +76,8 @@ export default function FleetOverview(props: FleetOverviewProps) {
   const [reloadToken, setReloadToken] = useState(0);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [connectProvider, setConnectProvider] = useState<Provider | null>(null);
+  const [category, setCategory] = useState<AuthCategory>("all");
+  const [search, setSearch] = useState("");
 
   const reload = useCallback(() => setReloadToken((t) => t + 1), []);
 
@@ -79,6 +106,17 @@ export default function FleetOverview(props: FleetOverviewProps) {
       cancelled = true;
     };
   }, [reloadToken, onSessionExpired]);
+
+  // Report the breadcrumb-chip counts from the FULL catalog (never the
+  // search/tab-scoped view) whenever fresh data lands.
+  useEffect(() => {
+    if (!providers || !accounts || !onCounts) return;
+    const withAccounts = new Set(accounts.map((a) => a.provider));
+    onCounts({
+      active: providers.filter((p) => withAccounts.has(p.id)).length,
+      total: providers.length,
+    });
+  }, [providers, accounts, onCounts]);
 
   function toggleExpanded(providerId: string) {
     setExpanded((prev) => {
@@ -113,6 +151,21 @@ export default function FleetOverview(props: FleetOverviewProps) {
 
   const healthyCount = accounts.filter((a) => a.display_status === "healthy").length;
 
+  // Legacy-parity scoping: the segmented tabs filter by typed auth mode;
+  // the search filters the scoped grid live by name/slug/description.
+  const scopedProviders = providers.filter((p) =>
+    category === "all" ? true : category === "oauth" ? p.auth_mode === "oauth2" : p.auth_mode === "api_key",
+  );
+  const query = search.trim().toLowerCase();
+  const filteredProviders = query
+    ? scopedProviders.filter(
+        (p) =>
+          p.display_name.toLowerCase().includes(query) ||
+          p.id.toLowerCase().includes(query) ||
+          p.description.toLowerCase().includes(query),
+      )
+    : scopedProviders;
+
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-4 gap-3">
@@ -124,12 +177,42 @@ export default function FleetOverview(props: FleetOverviewProps) {
         <StatCard label="Models" value="—" tone="unknown" icon="box" />
       </div>
 
+      <div className="flex flex-col gap-3 rounded-lg border border-border-default bg-surface-secondary p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="w-full sm:max-w-xs">
+          <SearchField
+            label="Search integrations"
+            placeholder="Search integrations…"
+            value={search}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
+          />
+        </div>
+        <SegmentedControl
+          label="Filter integrations by authentication type"
+          options={CATEGORY_OPTIONS}
+          value={category}
+          onChange={(value) => setCategory(value as AuthCategory)}
+        />
+      </div>
+
       {providers.length === 0 ? (
         <EmptyState icon="server" title="No providers in the catalog" />
+      ) : filteredProviders.length === 0 ? (
+        <div className="vn-panel p-8">
+          <EmptyState
+            icon="search"
+            title="No integrations found"
+            description="Try adjusting your search terms or category filters."
+            action={
+              <Button variant="secondary" size="sm" onClick={() => setSearch("")}>
+                Clear Search
+              </Button>
+            }
+          />
+        </div>
       ) : (
-        <div className="flex flex-col gap-3">
-          {providers.map((provider) => (
-            <ProviderRow
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          {filteredProviders.map((provider) => (
+            <ProviderCard
               key={provider.id}
               provider={provider}
               accounts={accountsByProvider.get(provider.id) ?? []}
