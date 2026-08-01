@@ -81,48 +81,31 @@ jobs:
 
       # P6-TEST-001 (1b). ONLY chromium: the suites declare a single chromium
       # project, and pulling firefox/webkit would triple the download for
-      # ⛔ THE REAL-BROWSER SUITES ARE NOT WIRED HERE YET, AND THIS IS THE REASON.
+      # nothing. `npm ci` above does not fetch browsers, so the pinned build is
+      # installed explicitly before the suites run.
       #
-      # P6-TEST-001 ships three Playwright suites that DO pass locally
-      # (`cd dashboard && npx playwright test` → 28 passed): real-browser axe
-      # with color-contrast actually evaluated, the five critical flows, and the
-      # theme × density visual matrix. Wiring them into this job was attempted
-      # twice and both attempts are recorded so nobody repeats them:
+      # Do NOT add `--with-deps` to that install: on this runner it re-execs
+      # under sudo to apt-install OS libraries, and the runner has no
+      # passwordless sudo ("sudo: a password is required"). The host's shared
+      # libraries were installed once as root with `npx playwright
+      # install-deps chromium`, so the plain browser install is all CI needs.
       #
-      #   run 30701375330 — `npx playwright install --with-deps chromium`
-      #     fails before downloading a byte: --with-deps re-execs under sudo to
-      #     apt-install OS libraries and this runner has no passwordless sudo
-      #     ("sudo: a password is required").
-      #   run 30701469181 — `npx playwright install chromium` (no --with-deps)
-      #     downloads fine, then every one of the 20 tests dies at launch with
-      #     "libnspr4.so: cannot open shared object file". The browser binary is
-      #     present; the host's shared libraries are not.
-      #
-      # UNBLOCKING IT IS A ONE-TIME HOST CHANGE ON venom-linux, and only the
-      # machine's owner can make it:
-      #
-      #   sudo npx playwright install-deps chromium     # or: sudo apt-get install -y libnspr4 libnss3 libasound2t64
-      #
-      # After that, re-add the two steps below and this job enforces the browser
-      # suites on every push:
-      #
-      #   - name: Install the chromium build Playwright pins
-      #     working-directory: dashboard
-      #     run: npx playwright install chromium
-      #   - name: Dashboard a11y + critical flows (real browser)
-      #     working-directory: dashboard
-      #     run: npm run test:e2e
-      #
-      # The suites are deliberately NOT made `continue-on-error` in the meantime:
-      # a step that reports success while running nothing is worse than an
-      # absent step, because it reads as coverage. Until the libraries land, the
-      # browser layer is LOCAL-ONLY evidence and is recorded as such in
-      # docs/evidence/P6-TEST-002-operate-without-terminal-runbook.md.
-      #
-      # tests/visual needs one further step even after the libraries: Playwright
-      # baselines are per-platform (`-chromium-linux` vs the committed
-      # `-chromium-win32`), so seed them once on venom-linux with
-      # `npm run test:visual:update` before adding `npm run test:visual`.
+      # The suites are deliberately NOT `continue-on-error`: a step that
+      # reports success while running nothing is worse than an absent step,
+      # because it reads as coverage. If the browser layer breaks here, the
+      # build must fail loudly.
+
+      - name: Install the chromium build Playwright pins
+        working-directory: dashboard
+        run: npx playwright install chromium
+
+      - name: Dashboard a11y + critical flows (real browser)
+        working-directory: dashboard
+        run: npm run test:e2e
+
+      - name: Dashboard visual regression (real browser)
+        working-directory: dashboard
+        run: npm run test:visual
 
       - name: Prove the embedded dashboard is served
         run: go test ./internal/httpui/... ./internal/app/... -run 'TestBoot_ServesEmbeddedDashboardSPA|TestNew_UsesEmbeddedDist' -v
