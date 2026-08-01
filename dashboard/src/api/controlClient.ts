@@ -386,6 +386,16 @@ export interface OfferingCapability {
   state: "discovered" | "observed" | "probing" | "certified" | "suspended" | "expired";
   truth: "unknown" | "supported" | "unsupported";
   routable: boolean;
+  /** The offering_operations row this capability's certification belongs to — the
+   * id `POST /offerings/{id}/probe` is keyed by.
+   *
+   * ABSENT means NOT PROBEABLE, and that absence is load-bearing: an operation
+   * reachable only through native/transport support has no offering_operations
+   * row, so there is nothing to probe. The server omits the key rather than
+   * sending `""` (internal/httpapi/models.go's capabilityJSON). Never compose one
+   * from provider_model_id — the real ids are minted randomly by DiscoveryRepo, so
+   * a composed id would address a different row or 404. */
+  offering_operation_id?: string;
 }
 
 /** One offering's resolved cost fact. `is_free` is `null` when unknown — which

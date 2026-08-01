@@ -474,6 +474,133 @@ func TestModels_CostFromPersistedPricingOnly(t *testing.T) {
 // TestControlMux_Models_And_Offerings_AreOwnerGated proves both routes are
 // registered through `gated` (owner session + CSRF middleware): no session
 // -> 401 for both; a valid session -> 200 for both, THROUGH THE MUX.
+// --- offering_operation_id (P6-CAPI-EXTRA-2) ---
+
+// modelsOfferingsCapabilities fetches GET /offerings and returns the first
+// offering's `capabilities` array as decoded objects.
+func modelsOfferingsCapabilities(t *testing.T, h *ModelsHandler) []map[string]any {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.ServeOfferings(rec, modelsRequest(http.MethodGet, "/api/control/v1/offerings"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data []struct {
+			Capabilities []map[string]any `json:"capabilities"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
+	}
+	if len(env.Data) != 1 {
+		t.Fatalf("offerings = %d, want exactly 1", len(env.Data))
+	}
+	return env.Data[0].Capabilities
+}
+
+// TestModels_CapabilityCarriesItsOwnOfferingOperationID is the fix for a REAL
+// shipped gap: GET /models named each operation but never identified its row, so
+// the Models surface's probe control had to ship DISABLED — POST
+// /offerings/{id}/probe is keyed by exactly the id this projection dropped.
+//
+// Two operations are seeded, each with its own offering_operations row, and each
+// capability must report ITS OWN id. Returning the first row's id for every
+// capability — the easy wrong implementation — would point a probe at the wrong
+// operation, so it is caught here by construction.
+func TestModels_CapabilityCarriesItsOwnOfferingOperationID(t *testing.T) {
+	h, db := newTestModelsHandler(t, fixedModelsClock)
+	modelsSeedOffering(t, db, offeringSeed{
+		AccountID: "acct-opid", ProviderID: "prov-opid",
+		ProviderModelID: "pm-opid", ModelID: "model-opid",
+		ContextLength:    modelsIntPtr(100000),
+		CapabilitiesJSON: modelsStrPtr(`["chat","tools"]`),
+		Operations: []offeringOpSeed{
+			{Operation: "chat", Status: "certified", Truth: "supported"},
+			{Operation: "tools", Status: "observed", Truth: "unknown"},
+		},
+	})
+
+	caps := modelsOfferingsCapabilities(t, h)
+	byOp := map[string]map[string]any{}
+	for _, c := range caps {
+		byOp[c["operation"].(string)] = c
+	}
+
+	// The seed's own id convention — the expectation is derived from the SEED,
+	// so it cannot drift from what was actually written.
+	want := map[string]string{
+		"chat":  "pm-opid-op-chat",
+		"tools": "pm-opid-op-tools",
+	}
+	for op, wantID := range want {
+		c, ok := byOp[op]
+		if !ok {
+			t.Fatalf("capability %q missing from the payload: %#v", op, byOp)
+		}
+		got, present := c["offering_operation_id"]
+		if !present {
+			t.Fatalf("capability %q has no offering_operation_id — the probe control cannot be enabled without it", op)
+		}
+		if got != wantID {
+			t.Errorf("capability %q offering_operation_id = %#v, want %q (each capability must carry ITS OWN row's id)", op, got, wantID)
+		}
+	}
+
+	// Cross-check against the projection itself, so the wire value cannot drift
+	// from intelligence.Project's answer.
+	rows, _, err := storage.NewCatalogRepo(db).ListOfferings(context.Background(), storage.CatalogListParams{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListOfferings: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	for _, c := range h.buildProjection(context.Background(), rows[0]).Capabilities {
+		if wantID, tracked := want[string(c.Operation)]; tracked && c.OfferingOperationID != wantID {
+			t.Errorf("projection %q OfferingOperationID = %q, want %q", c.Operation, c.OfferingOperationID, wantID)
+		}
+	}
+}
+
+// TestModels_CapabilityWithoutOperationRowOmitsTheID proves the field is OMITTED
+// — not empty-string, not synthesized — for a capability with no
+// offering_operations row.
+//
+// An operation the provider exposes but that was never turned into an
+// offering_operations row has nothing to probe. `offering_operation_id: ""` would
+// be a present-but-meaningless identifier that a client could pass to
+// POST /offerings/{id}/probe; omitting the key says "not probeable" unambiguously.
+func TestModels_CapabilityWithoutOperationRowOmitsTheID(t *testing.T) {
+	h, db := newTestModelsHandler(t, fixedModelsClock)
+	modelsSeedOffering(t, db, offeringSeed{
+		AccountID: "acct-noop", ProviderID: "prov-noop",
+		ProviderModelID: "pm-noop", ModelID: "model-noop",
+		ContextLength: modelsIntPtr(100000),
+		// The provider exposes chat, but NO offering_operations row is seeded.
+		CapabilitiesJSON: modelsStrPtr(`["chat"]`),
+		Operations:       nil,
+	})
+
+	caps := modelsOfferingsCapabilities(t, h)
+	if len(caps) == 0 {
+		t.Fatalf("no capabilities projected — this test would be vacuous")
+	}
+	for _, c := range caps {
+		if _, present := c["offering_operation_id"]; present {
+			t.Errorf("capability %q carries offering_operation_id = %#v, want the key OMITTED (no row means nothing to probe)",
+				c["operation"], c["offering_operation_id"])
+		}
+	}
+
+	// And the raw body carries no empty-string form of the field either.
+	rec := httptest.NewRecorder()
+	h.ServeOfferings(rec, modelsRequest(http.MethodGet, "/api/control/v1/offerings"))
+	if strings.Contains(rec.Body.String(), `"offering_operation_id":""`) {
+		t.Fatalf("body contains an empty-string offering_operation_id: %s", rec.Body.String())
+	}
+}
+
 func TestControlMux_Models_And_Offerings_AreOwnerGated(t *testing.T) {
 	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
 

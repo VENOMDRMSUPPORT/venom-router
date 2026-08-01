@@ -317,13 +317,63 @@ describe("ModelsSurface — triggers", () => {
     expect(call[1].headers["X-CSRF-Token"]).toBe(CSRF_TOKEN);
   });
 
-  it("offers the probe control disabled, and says why, rather than probing a guessed id", async () => {
-    // GET /models reports each capability by its operation NAME only — the
-    // offering-operation id POST /offerings/{id}/probe needs is not on this
-    // projection, and the real id is a random id minted by DiscoveryRepo. A
-    // guessed id would probe the wrong row or 404, so the control states the
-    // limitation instead of pretending. See this batch's report.
-    const mock = mockModels([group()]);
+  it("probes the offering-operation id the API reported, with CSRF", async () => {
+    // P6-CAPI-EXTRA-2 added `offering_operation_id` to capabilityJSON, which is
+    // what POST /offerings/{id}/probe is keyed by. The control uses THAT id
+    // verbatim — never one composed from the provider_model_id, which would
+    // address a different row.
+    const mock = mockModels(
+      [
+        group({
+          offerings: [
+            offering({
+              capabilities: [capability({ offering_operation_id: "real-op-id-42" })],
+            }),
+          ],
+        }),
+      ],
+      {
+        "POST /api/control/v1/offerings/real-op-id-42/probe": () =>
+          jsonResponse(202, { data: { job_id: "job-probe", status_url: "/api/control/v1/jobs/job-probe" } }),
+        "GET /api/control/v1/jobs/job-probe": () =>
+          jsonResponse(200, { data: { job_id: "job-probe", kind: "probe", status: "running" } }),
+      },
+    );
+    renderSurface();
+    await expandGroup("model-zen-chat");
+
+    const probe = screen.getByTestId("probe-zen-chat-1-chat");
+    expect(probe).toHaveProperty("disabled", false);
+    fireEvent.click(probe);
+
+    await waitFor(() => {
+      const call = mock.mock.calls.find(
+        ([input, init]) =>
+          String(input) === "/api/control/v1/offerings/real-op-id-42/probe" && init?.method === "POST",
+      );
+      expect(call).toBeTruthy();
+    });
+    const call = mock.mock.calls.find(
+      ([input, init]) =>
+        String(input) === "/api/control/v1/offerings/real-op-id-42/probe" && init?.method === "POST",
+    ) as [unknown, RequestInit & { headers: Record<string, string> }];
+    expect(call[1].headers["X-CSRF-Token"]).toBe(CSRF_TOKEN);
+  });
+
+  it("keeps the probe control disabled when the API reports no offering-operation id", async () => {
+    // An operation with no offering_operations row has nothing to probe, and the
+    // API omits the field to say so. Composing an id from the provider_model_id
+    // would address the wrong row or 404 — so the control stays disabled with the
+    // reason stated, exactly as before this field existed.
+    const mock = mockModels([
+      group({
+        offerings: [
+          offering({
+            capabilities: [capability({ offering_operation_id: undefined })],
+          }),
+        ],
+      }),
+    ]);
     renderSurface();
     await expandGroup("model-zen-chat");
 
@@ -332,7 +382,6 @@ describe("ModelsSurface — triggers", () => {
     expect(probe.getAttribute("title") ?? "").toMatch(/offering-operation id/i);
 
     fireEvent.click(probe);
-    // Nothing was sent — not to a guessed id, not to anything.
     await waitFor(() => {
       const probeCall = mock.mock.calls.find(([input]) => String(input).includes("/probe"));
       expect(probeCall).toBeUndefined();

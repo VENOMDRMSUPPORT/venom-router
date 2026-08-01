@@ -137,12 +137,22 @@ func (h *ModelsHandler) buildProjectionInput(ctx context.Context, row storage.Ca
 
 // --- JSON projection ---
 
+// capabilityJSON is one operation's capability truth on the wire.
+//
+// OfferingOperationID is `omitempty` DELIBERATELY, and the omission carries
+// meaning: it identifies the offering_operations row POST /offerings/{id}/probe
+// is keyed by, and an operation with no such row has nothing to probe. Serving
+// `"offering_operation_id": ""` would hand a client a present-but-meaningless
+// identifier it could pass straight to the probe endpoint; omitting the key says
+// "not probeable" unambiguously. The value is never composed here — it comes from
+// the certification row via intelligence.Project.
 type capabilityJSON struct {
-	Operation string `json:"operation"`
-	Effective bool   `json:"effective"`
-	State     string `json:"state"`
-	Truth     string `json:"truth"`
-	Routable  bool   `json:"routable"`
+	Operation           string `json:"operation"`
+	Effective           bool   `json:"effective"`
+	State               string `json:"state"`
+	Truth               string `json:"truth"`
+	Routable            bool   `json:"routable"`
+	OfferingOperationID string `json:"offering_operation_id,omitempty"`
 }
 
 type costJSON struct {
@@ -186,11 +196,12 @@ func toEffectiveOfferingJSON(eo intelligence.EffectiveOffering) effectiveOfferin
 	caps := make([]capabilityJSON, 0, len(eo.Capabilities))
 	for _, c := range eo.Capabilities {
 		caps = append(caps, capabilityJSON{
-			Operation: string(c.Operation),
-			Effective: c.Effective,
-			State:     string(c.State),
-			Truth:     string(c.Truth),
-			Routable:  c.Routable,
+			Operation:           string(c.Operation),
+			Effective:           c.Effective,
+			State:               string(c.State),
+			Truth:               string(c.Truth),
+			Routable:            c.Routable,
+			OfferingOperationID: c.OfferingOperationID,
 		})
 	}
 

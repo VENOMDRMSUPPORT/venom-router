@@ -320,6 +320,84 @@ func TestProject_RoutableRequiresCertifiedSupportedAndEffective(t *testing.T) {
 // output across many calls, and Reasons is always sorted. MUTATION:
 // building Capabilities from a map range (order leaks) or dropping the
 // sort turns this RED.
+// TestProject_CapabilityCarriesItsOfferingOperationID proves each capability
+// carries the offering-operation id of ITS OWN certification row, taken from the
+// Certifications map rather than synthesized.
+//
+// This is the identifier POST /offerings/{id}/probe is keyed by, and it is the
+// one fact the projection previously dropped: the Models surface could name an
+// operation but not identify the row, so its probe control had to ship disabled.
+// Two operations are seeded with DIFFERENT ids precisely so returning "the first
+// id" for every capability — the easy wrong implementation — is caught.
+func TestProject_CapabilityCarriesItsOfferingOperationID(t *testing.T) {
+	in := baseInput()
+	in.NativeCapabilities = []models.Operation{models.OperationChat, models.OperationTools}
+	in.TransportOperations = []models.Operation{models.OperationChat, models.OperationTools}
+	in.Offering.Capabilities = []models.Operation{models.OperationChat, models.OperationTools}
+	in.Certifications = map[models.Operation]models.Certification{
+		models.OperationChat: {
+			OfferingOperationID: "op-chat-7",
+			State:               models.CertCertified,
+			Truth:               models.TruthSupported,
+		},
+		models.OperationTools: {
+			OfferingOperationID: "op-tools-42",
+			State:               models.CertObserved,
+			Truth:               models.TruthUnknown,
+		},
+	}
+
+	got := Project(in)
+
+	byOp := map[models.Operation]EffectiveCapability{}
+	for _, c := range got.Capabilities {
+		byOp[c.Operation] = c
+	}
+
+	want := map[models.Operation]string{
+		models.OperationChat:  "op-chat-7",
+		models.OperationTools: "op-tools-42",
+	}
+	for op, wantID := range want {
+		c, ok := byOp[op]
+		if !ok {
+			t.Fatalf("capability for %q missing from the projection", op)
+		}
+		if c.OfferingOperationID != wantID {
+			t.Errorf("%q OfferingOperationID = %q, want %q (each capability must carry ITS OWN row's id)", op, c.OfferingOperationID, wantID)
+		}
+	}
+}
+
+// TestProject_CapabilityWithoutCertificationHasNoOfferingOperationID proves the
+// id stays EMPTY when there is no certification row for that operation.
+//
+// An operation reachable only through native/transport support has no
+// offering_operations row, so there is no id to report and nothing is probeable.
+// The empty string is the projection's "absent" and the HTTP layer omits the
+// field entirely — a synthesized or borrowed id would point a probe at the wrong
+// row.
+func TestProject_CapabilityWithoutCertificationHasNoOfferingOperationID(t *testing.T) {
+	in := baseInput()
+	// Chat is natively/transport supported but carries NO certification row.
+	in.Certifications = map[models.Operation]models.Certification{}
+
+	got := Project(in)
+
+	if len(got.Capabilities) == 0 {
+		t.Fatalf("no capabilities projected — this test would be vacuous")
+	}
+	for _, c := range got.Capabilities {
+		if c.OfferingOperationID != "" {
+			t.Errorf("%q OfferingOperationID = %q, want \"\" (no certification row means no probeable id)", c.Operation, c.OfferingOperationID)
+		}
+		// Sanity: the rest of the capability still projects normally.
+		if c.State != models.CertDiscovered || c.Truth != models.TruthUnknown {
+			t.Errorf("%q = (%q,%q), want the discovered/unknown fail-closed baseline", c.Operation, c.State, c.Truth)
+		}
+	}
+}
+
 func TestProject_Deterministic(t *testing.T) {
 	in := baseInput()
 	in.NativeCapabilities = []models.Operation{models.OperationVision, models.OperationChat, models.OperationTools}

@@ -14,6 +14,7 @@ import {
   listModelGroups,
   startBenchmark,
   startDiscovery,
+  startProbe,
   toApiError,
   type AuthApiError,
   type EffectiveOffering,
@@ -129,8 +130,12 @@ function CapabilityCell(props: { offeringKey: string; capability: OfferingCapabi
 }
 
 /** One offering row: identity, availability, context, quality, capabilities. */
-function OfferingRow(props: { offering: EffectiveOffering }) {
-  const { offering: o } = props;
+function OfferingRow(props: {
+  offering: EffectiveOffering;
+  busy: boolean;
+  onProbe: (offeringOperationID: string) => void;
+}) {
+  const { offering: o, busy, onProbe } = props;
   const key = o.provider_model_id;
   const catalogOnly = o.availability === "catalog_only";
 
@@ -199,29 +204,38 @@ function OfferingRow(props: { offering: EffectiveOffering }) {
           {o.capabilities.length === 0 ? (
             <span className="vn-caption">No capability has been observed for this offering yet.</span>
           ) : (
-            o.capabilities.map((c) => (
-              <div key={c.operation} className="flex flex-wrap items-center justify-between gap-2">
-                <CapabilityCell offeringKey={key} capability={c} />
-                {/* POST /offerings/{id}/probe is keyed by the OFFERING-OPERATION
-                    id, and this projection does not carry one: 04 §3 groups by
-                    canonical model and reports each capability by its operation
-                    NAME only (internal/httpapi/models.go's capabilityJSON). The
-                    real id is a random id minted by DiscoveryRepo, so it cannot
-                    be composed from anything on this page. The control is
-                    therefore present and DISABLED with the reason stated, rather
-                    than wired to a guessed id that would probe the wrong row or
-                    404. See this batch's report. */}
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled
-                  data-testid={`probe-${key}-${c.operation}`}
-                  title="Probing needs this capability's offering-operation id, which GET /models does not return."
-                >
-                  Probe — unavailable here
-                </Button>
-              </div>
-            ))
+            o.capabilities.map((c) => {
+              // POST /offerings/{id}/probe is keyed by the OFFERING-OPERATION id,
+              // which the projection now reports (P6-CAPI-EXTRA-2). It is used
+              // VERBATIM: the real ids are minted randomly by DiscoveryRepo, so an
+              // id composed from provider_model_id would address a different row
+              // or 404.
+              //
+              // An ABSENT id is not a gap to work around — an operation reachable
+              // only through native/transport support has no offering_operations
+              // row and therefore nothing to probe. The control stays disabled with
+              // the reason stated.
+              const probeID = c.offering_operation_id;
+              return (
+                <div key={c.operation} className="flex flex-wrap items-center justify-between gap-2">
+                  <CapabilityCell offeringKey={key} capability={c} />
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy || !probeID}
+                    data-testid={`probe-${key}-${c.operation}`}
+                    title={
+                      probeID
+                        ? `Probe this operation's capability truth (${probeID}).`
+                        : "This operation has no offering-operation id, so there is nothing to probe."
+                    }
+                    onClick={probeID ? () => onProbe(probeID) : undefined}
+                  >
+                    {probeID ? "Probe" : "Probe — not available for this operation"}
+                  </Button>
+                </div>
+              );
+            })
           )}
         </div>
       </div>
@@ -330,6 +344,16 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
           status === "completed"
             ? "The catalog below has been reloaded from the server."
             : "Discovery runs in the background — this is the job's status, not a result.",
+        tone: status === "failed" ? "critical" : status === "completed" ? "healthy" : "info",
+      })),
+    [csrfToken, runTrigger],
+  );
+
+  const handleProbe = useCallback(
+    (offeringOperationID: string) =>
+      runTrigger("Probe", () => startProbe(offeringOperationID, csrfToken), (status) => ({
+        label: `Probe job ${status}`,
+        note: "A probe measures capability truth; an infrastructure failure never flips it.",
         tone: status === "failed" ? "critical" : status === "completed" ? "healthy" : "info",
       })),
     [csrfToken, runTrigger],
@@ -503,7 +527,12 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
                       </span>
                     ) : (
                       g.offerings.map((o) => (
-                        <OfferingRow key={`${o.account_id}:${o.provider_model_id}`} offering={o} />
+                        <OfferingRow
+                          key={`${o.account_id}:${o.provider_model_id}`}
+                          offering={o}
+                          busy={busy}
+                          onProbe={(id) => void handleProbe(id)}
+                        />
                       ))
                     )}
                   </div>

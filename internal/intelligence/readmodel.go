@@ -42,6 +42,19 @@ type EffectiveCapability struct {
 	State     models.CertificationState
 	Truth     models.CapabilityTruth
 	Routable  bool
+
+	// OfferingOperationID identifies the offering_operations row this
+	// capability's certification belongs to — the key POST
+	// /offerings/{id}/probe is addressed by.
+	//
+	// It is read verbatim from the models.Certification in ProjectionInput and is
+	// EMPTY when this operation has no certification row. That absence is
+	// meaningful, not a gap: an operation reachable only through native or
+	// transport support has no offering_operations row, so there is nothing to
+	// probe. Callers must treat "" as "not probeable" and never substitute a
+	// composed or borrowed id — one that pointed at a different row would probe
+	// the wrong operation.
+	OfferingOperationID string
 }
 
 // TierEligibility is one tier's final eligibility decision plus the
@@ -136,17 +149,22 @@ func projectCapabilities(native, providerExposed, transport []models.Operation, 
 
 		state := models.CertDiscovered
 		truth := models.TruthUnknown
+		// Empty unless THIS operation has its own certification row — never
+		// carried over from another operation's row.
+		offeringOperationID := ""
 		if cert, ok := certs[op]; ok {
 			state = cert.State
 			truth = cert.Truth
+			offeringOperationID = cert.OfferingOperationID
 		}
 
 		out = append(out, EffectiveCapability{
-			Operation: op,
-			Effective: effective,
-			State:     state,
-			Truth:     truth,
-			Routable:  models.Routable(state, truth) && effective,
+			Operation:           op,
+			Effective:           effective,
+			State:               state,
+			Truth:               truth,
+			Routable:            models.Routable(state, truth) && effective,
+			OfferingOperationID: offeringOperationID,
 		})
 	}
 	return out

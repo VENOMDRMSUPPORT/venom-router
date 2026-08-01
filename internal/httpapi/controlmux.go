@@ -347,6 +347,14 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// counting them as zero (see reviewcensus.go's header).
 	mux.Handle("/api/control/v1/certifications/review", gated(NewReviewCensusHandler(certRepo).ServeCensus))
 
+	// Consumption read model (P6-CAPI-EXTRA-2, enables P6-UI-005, 05 §4/§7): GET
+	// /usage over the M7 usage_records table the public data plane writes. Read-only
+	// — the WRITE path stays in the chat-completions handler, which is the only
+	// place that knows a request's terminal outcome. Every NULL metric is reported
+	// as unknown with its own unknown-count rather than summed as 0; see
+	// usageread.go's header.
+	mux.Handle("/api/control/v1/usage", gated(NewUsageHandler(storage.NewUsageRecordRepo(db)).ServeUsage))
+
 	// Quota refresh (P3b-CAPI-001, 09 §2 "Refresh quota snapshot"): POST
 	// /accounts/{id}/quota, async (202 + the canonical shared job
 	// surface) exactly like discovery above. quotaLifecycleRepo backs
