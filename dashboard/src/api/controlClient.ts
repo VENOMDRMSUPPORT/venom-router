@@ -641,6 +641,62 @@ export async function getRoutingPolicy(): Promise<TierPolicy[]> {
   return body.data?.tiers ?? [];
 }
 
+// --- Route diagnostics (P6-CAPI-001 + P6-CAPI-EXTRA, enables P6-UI-001/008) ---
+
+/** The LIST entry's rolled-up attempt outcome (P6-CAPI-EXTRA).
+ *
+ * BOTH fields are `null`-able and both nulls are load-bearing. A null
+ * `terminal_status` means the decision has NO attempt rows — it made no attempt,
+ * which is not a status and above all is not `success`. A null
+ * `total_latency_ms` means at least one attempt's latency is unknown, so the
+ * total is unknown — never 0, and never a sum that dropped the unknown term. */
+export interface RouteOutcome {
+  terminal_status: string | null;
+  total_latency_ms: number | null;
+}
+
+/** One route decision as GET /diagnostics/routes lists it
+ * (internal/httpapi/diagnostics.go's routeDecisionListEntryJSON). Secret-free by
+ * construction: correlation ids, typed codes, counts, scores, clamp flags and
+ * timestamps only — the payload has no field for a prompt, a response, a raw
+ * provider error, a credential, or an account external id. */
+export interface RouteDecisionEntry {
+  request_id: string;
+  decision_id: string;
+  tier: string;
+  workload_profile_bucket: string;
+  created_at: string;
+  candidates: { total: number; eligible_groups: number; group_keys: string[] };
+  exclusion_reasons: Record<string, number>;
+  chosen: {
+    provider_id: string | null;
+    provider_model_id: string | null;
+    funding: string | null;
+  };
+  scores: Record<string, number> | null;
+  thinking: {
+    requested: string | null;
+    applied: string | null;
+    tier_clamped: boolean;
+    certified_clamped: boolean;
+  };
+  outcome: RouteOutcome;
+}
+
+export interface RouteDecisionsPage {
+  decisions: RouteDecisionEntry[];
+  nextCursor?: string;
+}
+
+/** GET /diagnostics/routes — newest first, one entry per routing decision. */
+export async function listRouteDecisions(params: ListPageParams = {}): Promise<RouteDecisionsPage> {
+  const body = await request<{ data: RouteDecisionEntry[]; meta?: { next_cursor?: string } }>(
+    `/diagnostics/routes${pageQuery(params)}`,
+    { method: "GET" },
+  );
+  return { decisions: body.data ?? [], nextCursor: body.meta?.next_cursor };
+}
+
 // --- Probe trigger (P3c-CAPI-001, enables P3c-UI-001) ---
 
 export interface StartProbeBody {

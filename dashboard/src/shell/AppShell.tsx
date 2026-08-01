@@ -13,6 +13,7 @@ import FleetOverview from "../fleet/FleetOverview";
 import TokenHealthSurface from "../health/TokenHealthSurface";
 import ApiKeysSurface from "../keys/ApiKeysSurface";
 import ModelsSurface from "../models/ModelsSurface";
+import OverviewSurface from "../overview/OverviewSurface";
 import QuotaSurface from "../quota/QuotaSurface";
 import RoutingSurface from "../routing/RoutingSurface";
 import {
@@ -365,6 +366,12 @@ function renderSurface(
   // P6-UI-003: Routing (the existing `routing` nav key).
   if (navKey === "routing") {
     return <RoutingSurface onSessionExpired={onSessionExpired} />;
+  }
+
+  // P6-UI-001: Overview — the default landing surface, replacing the
+  // placeholder this key used to fall through to.
+  if (navKey === "overview") {
+    return <OverviewSurface csrfToken={csrfToken} onSessionExpired={onSessionExpired} />;
   }
 
   const item = navItemByKey(navKey);

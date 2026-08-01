@@ -121,6 +121,10 @@ function baseHandlers(overrides: Record<string, () => Response> = {}) {
           ],
         },
       }),
+    // Overview (P6-UI-001) is the DEFAULT landing surface, so every test in this
+    // file renders it — these are the reads its cards make. Its own behavior is
+    // covered in src/overview/*.test.tsx.
+    "GET /api/control/v1/diagnostics/routes?limit=10": () => jsonResponse(200, { data: [] }),
     ...overrides,
   });
 }
@@ -177,6 +181,25 @@ describe("AppShell — navigation", () => {
 });
 
 describe("AppShell — surface mounting", () => {
+  it("mounts the real Overview surface on the default overview nav key", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    const { container } = render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    // Overview is the landing surface, so it renders with no navigation at all.
+    await screen.findByTestId("overview-card-fleet");
+    screen.getByTestId("overview-card-activity");
+    expect(container.textContent ?? "").not.toMatch(/coming in a later phase/i);
+  });
+
   // Each of these proves a real surface is mounted on an EXISTING nav key
   // (nav.ts is never extended by a surface unit), and — just as importantly —
   // that the "coming in a later phase" placeholder is gone for that key. A
