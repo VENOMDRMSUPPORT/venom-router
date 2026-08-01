@@ -1,5 +1,5 @@
 {
-  "$description": "High Contrast (venom-hc) — complete semantic mapping (identical token set; maximized contrast, thicker focus/borders; targets AAA where feasible).",
+  "$description": "High Contrast (venom-hc) — complete semantic mapping (identical token set; maximized contrast, thicker focus/borders; targets AAA where feasible). Adopts the Vercel-neutral identity of the 2026-08-01 retheme, but focus ring/border stay HC-owned (gold) and every contrast guarantee is preserved.",
   "$theme": "venom-hc",
   "surface": {
     "$type": "color",
@@ -19,24 +19,24 @@
     "muted":     { "$value": "{color.gray.200}" },
     "disabled":  { "$value": "{color.gray.500}" },
     "inverse":   { "$value": "{color.gray.1000}" },
-    "link":       { "$value": "{color.sky.200}" },
-    "link-hover": { "$value": "{color.sky.100}" },
+    "link":       { "$value": "{color.gray.0}" },
+    "link-hover": { "$value": "{color.gray.75}" },
     "on-accent": { "$value": "{color.gray.1000}" }
   },
   "border": {
     "$type": "color",
     "subtle":  { "$value": "{color.gray.700}" },
-    "default": { "$value": "{color.gray.500}" },
+    "default": { "$value": "{color.gray.400}" },
     "strong":  { "$value": "{color.gray.200}" },
     "focus":   { "$value": "{color.gold.200}" }
   },
   "accent": {
     "$type": "color",
-    "default":   { "$value": "{color.green.300}" },
-    "hover":     { "$value": "{color.green.200}" },
-    "active":    { "$value": "{color.green.400}" },
-    "subtle-bg": { "$value": "{color.green.900}" },
-    "text":      { "$value": "{color.green.200}" }
+    "default":   { "$value": "{color.gray.0}" },
+    "hover":     { "$value": "{color.gray.75}" },
+    "active":    { "$value": "{color.gray.200}" },
+    "subtle-bg": { "$value": "{color.gray.850}" },
+    "text":      { "$value": "{color.gray.0}" }
   },
   "status": {
     "$type": "color",
@@ -77,7 +77,7 @@
   },
   "selection": {
     "$type": "color",
-    "bg": { "$value": "{color.green.200}" },
+    "bg": { "$value": "{color.gray.200}" },
     "fg": { "$value": "{color.gray.1000}" }
   },
   "tier": {

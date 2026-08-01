@@ -1,42 +1,42 @@
 {
-  "$description": "Venom Light — complete semantic mapping (identical token set to venom-dark; light values).",
+  "$description": "Venom Light — complete semantic mapping (identical token set to venom-dark; light values). Neutrals and the monochrome accent follow the approved Vercel-style retheme (docs/superpowers/specs/2026-08-01-vercel-retheme-design.md).",
   "$theme": "venom-light",
   "surface": {
     "$type": "color",
-    "canvas":   { "$value": "{color.gray.0}" },
-    "primary":  { "$value": "{color.gray.25}" },
-    "secondary":{ "$value": "{color.gray.50}" },
+    "canvas":   { "$value": "{color.gray.50}" },
+    "primary":  { "$value": "{color.gray.0}" },
+    "secondary":{ "$value": "{color.gray.25}" },
     "raised":   { "$value": "{color.gray.0}" },
     "overlay":  { "$value": "{color.gray.0}" },
     "sunken":   { "$value": "{color.gray.100}" },
     "inverse":  { "$value": "{color.gray.900}" },
-    "scrim":    { "$value": "rgba(11, 15, 18, 0.45)" }
+    "scrim":    { "$value": "rgba(9, 9, 11, 0.45)" }
   },
   "text": {
     "$type": "color",
-    "primary":   { "$value": "{color.gray.900}" },
+    "primary":   { "$value": "{color.gray.895}" },
     "secondary": { "$value": "{color.gray.700}" },
-    "muted":     { "$value": "{color.gray.600}" },
-    "disabled":  { "$value": "{color.gray.400}" },
+    "muted":     { "$value": "{color.gray.500}" },
+    "disabled":  { "$value": "{color.gray.300}" },
     "inverse":   { "$value": "{color.gray.0}" },
-    "link":       { "$value": "{color.green.700}" },
-    "link-hover": { "$value": "{color.green.800}" },
+    "link":       { "$value": "{color.gray.895}" },
+    "link-hover": { "$value": "{color.gray.1000}" },
     "on-accent": { "$value": "{color.gray.0}" }
   },
   "border": {
     "$type": "color",
-    "subtle":  { "$value": "{color.gray.100}" },
-    "default": { "$value": "{color.gray.200}" },
-    "strong":  { "$value": "{color.gray.500}" },
-    "focus":   { "$value": "{color.green.600}" }
+    "subtle":  { "$value": "{color.gray.50}" },
+    "default": { "$value": "{color.gray.100}" },
+    "strong":  { "$value": "{color.gray.400}" },
+    "focus":   { "$value": "{color.gray.1000}" }
   },
   "accent": {
     "$type": "color",
-    "default":   { "$value": "{color.green.700}" },
-    "hover":     { "$value": "{color.green.800}" },
-    "active":    { "$value": "{color.green.900}" },
-    "subtle-bg": { "$value": "{color.green.100}" },
-    "text":      { "$value": "{color.green.700}" }
+    "default":   { "$value": "{color.gray.1000}" },
+    "hover":     { "$value": "{color.gray.940}" },
+    "active":    { "$value": "{color.gray.925}" },
+    "subtle-bg": { "$value": "{color.gray.50}" },
+    "text":      { "$value": "{color.gray.1000}" }
   },
   "status": {
     "$type": "color",
@@ -58,8 +58,8 @@
     },
     "secondary": {
       "bg":       { "$value": "{color.gray.0}" },
-      "bg-hover": { "$value": "{color.gray.50}" },
-      "border":   { "$value": "{color.gray.300}" },
+      "bg-hover": { "$value": "{color.gray.25}" },
+      "border":   { "$value": "{color.gray.200}" },
       "fg":       { "$value": "{text.primary}" }
     },
     "destructive": {
@@ -71,14 +71,14 @@
     "disabled": { "bg": { "$value": "{color.gray.100}" }, "fg": { "$value": "{color.gray.400}" } }
   },
   "focus": {
-    "ring":        { "$type": "color", "$value": "{color.green.600}" },
+    "ring":        { "$type": "color", "$value": "{color.gray.1000}" },
     "ring-width":  { "$type": "dimension", "$value": "2px" },
     "ring-offset": { "$type": "dimension", "$value": "2px" }
   },
   "selection": {
     "$type": "color",
-    "bg": { "$value": "{color.green.100}" },
-    "fg": { "$value": "{color.gray.900}" }
+    "bg": { "$value": "{color.gray.200}" },
+    "fg": { "$value": "{color.gray.895}" }
   },
   "tier": {
     "$type": "color",

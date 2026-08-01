@@ -1,42 +1,42 @@
 {
-  "$description": "Venom Dark (default theme) — complete semantic mapping. Every theme file defines EXACTLY this token set; validation/check-themes fails on any missing/extra/divergent name. Components consume these (or component tokens), never primitives.",
+  "$description": "Venom Dark (default theme) — complete semantic mapping. Every theme file defines EXACTLY this token set; validation/check-themes fails on any missing/extra/divergent name. Components consume these (or component tokens), never primitives. Neutrals and the monochrome accent follow the approved Vercel-style retheme (docs/superpowers/specs/2026-08-01-vercel-retheme-design.md).",
   "$theme": "venom-dark",
   "surface": {
     "$type": "color",
     "canvas":   { "$value": "{color.gray.950}" },
-    "primary":  { "$value": "{color.gray.925}" },
-    "secondary":{ "$value": "{color.gray.900}" },
-    "raised":   { "$value": "{color.gray.850}" },
-    "overlay":  { "$value": "{color.gray.850}" },
+    "primary":  { "$value": "{color.gray.900}" },
+    "secondary":{ "$value": "{color.gray.875}" },
+    "raised":   { "$value": "{color.gray.825}" },
+    "overlay":  { "$value": "{color.gray.890}" },
     "sunken":   { "$value": "{color.gray.975}" },
     "inverse":  { "$value": "{color.gray.50}" },
-    "scrim":    { "$value": "rgba(4, 6, 8, 0.62)" }
+    "scrim":    { "$value": "rgba(5, 5, 6, 0.62)" }
   },
   "text": {
     "$type": "color",
-    "primary":   { "$value": "{color.gray.50}" },
-    "secondary": { "$value": "{color.gray.300}" },
-    "muted":     { "$value": "{color.gray.400}" },
+    "primary":   { "$value": "{color.gray.0}" },
+    "secondary": { "$value": "{color.gray.200}" },
+    "muted":     { "$value": "{color.gray.300}" },
     "disabled":  { "$value": "{color.gray.600}" },
     "inverse":   { "$value": "{color.gray.950}" },
-    "link":       { "$value": "{color.green.300}" },
-    "link-hover": { "$value": "{color.green.200}" },
-    "on-accent": { "$value": "{color.gray.950}" }
+    "link":       { "$value": "{color.gray.0}" },
+    "link-hover": { "$value": "{color.gray.75}" },
+    "on-accent": { "$value": "{color.gray.1000}" }
   },
   "border": {
     "$type": "color",
-    "subtle":  { "$value": "{color.gray.850}" },
-    "default": { "$value": "{color.gray.750}" },
-    "strong":  { "$value": "{color.gray.500}" },
-    "focus":   { "$value": "{color.green.300}" }
+    "subtle":  { "$value": "{color.gray.915}" },
+    "default": { "$value": "{color.gray.850}" },
+    "strong":  { "$value": "{color.gray.400}" },
+    "focus":   { "$value": "{color.gray.0}" }
   },
   "accent": {
     "$type": "color",
-    "default":   { "$value": "{color.green.400}" },
-    "hover":     { "$value": "{color.green.300}" },
-    "active":    { "$value": "{color.green.500}" },
-    "subtle-bg": { "$value": "{color.green.900}" },
-    "text":      { "$value": "{color.green.300}" }
+    "default":   { "$value": "{color.gray.0}" },
+    "hover":     { "$value": "{color.gray.75}" },
+    "active":    { "$value": "{color.gray.100}" },
+    "subtle-bg": { "$value": "{color.gray.925}" },
+    "text":      { "$value": "{color.gray.0}" }
   },
   "status": {
     "$type": "color",
@@ -45,8 +45,8 @@
     "warning":  { "fg": { "$value": "{color.amber.300}" },  "bg": { "$value": "{color.amber.900}" },  "border": { "$value": "{color.amber.700}" } },
     "critical": { "fg": { "$value": "{color.red.300}" },    "bg": { "$value": "{color.red.900}" },    "border": { "$value": "{color.red.700}" } },
     "info":     { "fg": { "$value": "{color.blue.300}" },   "bg": { "$value": "{color.blue.900}" },   "border": { "$value": "{color.blue.700}" } },
-    "unknown":  { "fg": { "$value": "{color.gray.300}" },   "bg": { "$value": "{color.gray.850}" },   "border": { "$value": "{color.gray.600}" } },
-    "inactive": { "fg": { "$value": "{color.gray.400}" },   "bg": { "$value": "{color.gray.900}" },   "border": { "$value": "{color.gray.800}" } }
+    "unknown":  { "fg": { "$value": "{color.gray.200}" },   "bg": { "$value": "{color.gray.850}" },   "border": { "$value": "{color.gray.600}" } },
+    "inactive": { "fg": { "$value": "{color.gray.300}" },   "bg": { "$value": "{color.gray.900}" },   "border": { "$value": "{color.gray.800}" } }
   },
   "action": {
     "$type": "color",
@@ -57,9 +57,9 @@
       "fg":        { "$value": "{text.on-accent}" }
     },
     "secondary": {
-      "bg":       { "$value": "{color.gray.850}" },
-      "bg-hover": { "$value": "{color.gray.800}" },
-      "border":   { "$value": "{color.gray.600}" },
+      "bg":       { "$value": "{color.gray.875}" },
+      "bg-hover": { "$value": "{color.gray.825}" },
+      "border":   { "$value": "{color.gray.750}" },
       "fg":       { "$value": "{text.primary}" }
     },
     "destructive": {
@@ -71,14 +71,14 @@
     "disabled": { "bg": { "$value": "{color.gray.850}" }, "fg": { "$value": "{color.gray.600}" } }
   },
   "focus": {
-    "ring":        { "$type": "color", "$value": "{color.green.300}" },
+    "ring":        { "$type": "color", "$value": "{color.gray.0}" },
     "ring-width":  { "$type": "dimension", "$value": "2px" },
     "ring-offset": { "$type": "dimension", "$value": "2px" }
   },
   "selection": {
     "$type": "color",
-    "bg": { "$value": "{color.green.800}" },
-    "fg": { "$value": "{color.gray.50}" }
+    "bg": { "$value": "{color.gray.750}" },
+    "fg": { "$value": "{color.gray.0}" }
   },
   "tier": {
     "$type": "color",
