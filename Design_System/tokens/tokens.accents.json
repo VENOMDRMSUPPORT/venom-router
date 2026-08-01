@@ -1,0 +1,122 @@
+{
+  "$description": "Venom Design System — accent dimension (2026-08-01 Vercel-style retheme). Five optional accents delivered as [data-accent=\"...\"] override blocks in the generated tokens/accents.css. Each block overrides ONLY the accent-derived custom properties (accent.*, text.on-accent, text.link*, border.focus, focus.ring, selection.*); everything else stays theme-owned. `data-accent` absent or \"mono\" keeps the base monochrome themes. Hex values are ported verbatim from the legacy Vercel-style stylesheet; `base` carries the venom-dark values (dark is the :root default theme) and `themes.venom-light` carries per-theme overrides where the legacy palette diverges (emerald and rose). venom-hc additionally re-pins focus.ring/border.focus to its own HC values in the generated CSS — accents never lower HC's focus guarantees.",
+  "$notes": {
+    "accent.active": "The legacy palette defines no pressed shade; the legacy hover value is reused for the active state (no invented colors).",
+    "selection.bg": "The legacy soft focus-ring wash — rgba(accent, 0.2) — reused as the selection wash.",
+    "selection.fg": "var(--text-primary) so selected text keeps the current theme's text color."
+  },
+  "accents": {
+    "blue": {
+      "base": {
+        "accent.default": "#0070f3",
+        "accent.hover": "#005bc4",
+        "accent.active": "#005bc4",
+        "accent.subtle-bg": "rgba(0, 112, 243, 0.08)",
+        "accent.text": "#0070f3",
+        "text.on-accent": "#ffffff",
+        "text.link": "#0070f3",
+        "text.link-hover": "#005bc4",
+        "border.focus": "#0070f3",
+        "focus.ring": "#0070f3",
+        "selection.bg": "rgba(0, 112, 243, 0.2)",
+        "selection.fg": "var(--text-primary)"
+      }
+    },
+    "violet": {
+      "base": {
+        "accent.default": "#8a3ffc",
+        "accent.hover": "#6929c4",
+        "accent.active": "#6929c4",
+        "accent.subtle-bg": "rgba(138, 63, 252, 0.08)",
+        "accent.text": "#8a3ffc",
+        "text.on-accent": "#ffffff",
+        "text.link": "#8a3ffc",
+        "text.link-hover": "#6929c4",
+        "border.focus": "#8a3ffc",
+        "focus.ring": "#8a3ffc",
+        "selection.bg": "rgba(138, 63, 252, 0.2)",
+        "selection.fg": "var(--text-primary)"
+      }
+    },
+    "amber": {
+      "base": {
+        "accent.default": "#f5a623",
+        "accent.hover": "#d48b11",
+        "accent.active": "#d48b11",
+        "accent.subtle-bg": "rgba(245, 166, 35, 0.08)",
+        "accent.text": "#f5a623",
+        "text.on-accent": "#000000",
+        "text.link": "#f5a623",
+        "text.link-hover": "#d48b11",
+        "border.focus": "#f5a623",
+        "focus.ring": "#f5a623",
+        "selection.bg": "rgba(245, 166, 35, 0.2)",
+        "selection.fg": "var(--text-primary)"
+      }
+    },
+    "emerald": {
+      "base": {
+        "accent.default": "#00dfd8",
+        "accent.hover": "#00b3ad",
+        "accent.active": "#00b3ad",
+        "accent.subtle-bg": "rgba(0, 223, 216, 0.08)",
+        "accent.text": "#00dfd8",
+        "text.on-accent": "#000000",
+        "text.link": "#00dfd8",
+        "text.link-hover": "#00b3ad",
+        "border.focus": "#00dfd8",
+        "focus.ring": "#00dfd8",
+        "selection.bg": "rgba(0, 223, 216, 0.2)",
+        "selection.fg": "var(--text-primary)"
+      },
+      "themes": {
+        "venom-light": {
+          "accent.default": "#09a267",
+          "accent.hover": "#077d4f",
+          "accent.active": "#077d4f",
+          "accent.subtle-bg": "rgba(9, 162, 103, 0.08)",
+          "accent.text": "#09a267",
+          "text.on-accent": "#ffffff",
+          "text.link": "#09a267",
+          "text.link-hover": "#077d4f",
+          "border.focus": "#09a267",
+          "focus.ring": "#09a267",
+          "selection.bg": "rgba(9, 162, 103, 0.2)",
+          "selection.fg": "var(--text-primary)"
+        }
+      }
+    },
+    "rose": {
+      "base": {
+        "accent.default": "#f81ce5",
+        "accent.hover": "#c612b4",
+        "accent.active": "#c612b4",
+        "accent.subtle-bg": "rgba(248, 28, 229, 0.08)",
+        "accent.text": "#f81ce5",
+        "text.on-accent": "#ffffff",
+        "text.link": "#f81ce5",
+        "text.link-hover": "#c612b4",
+        "border.focus": "#f81ce5",
+        "focus.ring": "#f81ce5",
+        "selection.bg": "rgba(248, 28, 229, 0.2)",
+        "selection.fg": "var(--text-primary)"
+      },
+      "themes": {
+        "venom-light": {
+          "accent.default": "#eb008b",
+          "accent.hover": "#b8006c",
+          "accent.active": "#b8006c",
+          "accent.subtle-bg": "rgba(235, 0, 139, 0.08)",
+          "accent.text": "#eb008b",
+          "text.on-accent": "#ffffff",
+          "text.link": "#eb008b",
+          "text.link-hover": "#b8006c",
+          "border.focus": "#eb008b",
+          "focus.ring": "#eb008b",
+          "selection.bg": "rgba(235, 0, 139, 0.2)",
+          "selection.fg": "var(--text-primary)"
+        }
+      }
+    }
+  }
+}

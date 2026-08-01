@@ -20,6 +20,7 @@
     "tests/",
     "tokens/base.css",
     "tokens/fonts.css",
+    "tokens/tokens.accents.json",
     "tokens/tokens.component.json",
     "tokens/tokens.density.json",
     "tokens/tokens.primitive.json",
@@ -49,6 +50,7 @@
     "tokens/primitives.css",
     "tokens/components.css",
     "tokens/density.css",
+    "tokens/accents.css",
     "tokens/tokens.ts",
     "tokens/tailwind-theme.ts",
     "components/**/*.d.ts",
@@ -87,7 +89,8 @@
       "tokens/tokens.semantic.venom-light.json",
       "tokens/tokens.semantic.venom-hc.json",
       "tokens/tokens.component.json",
-      "tokens/tokens.density.json"
+      "tokens/tokens.density.json",
+      "tokens/tokens.accents.json"
     ],
     "token_compiler": ["validation/build-tokens.cjs"],
     "icons": ["icons/icons.css", "components/icons/Icon.tsx", "icons/icon-map.md"],
@@ -106,7 +109,7 @@
     "dist/.export-check.mjs"
   ],
   "regeneration_commands": {
-    "tokens/primitives.css, tokens/components.css, tokens/density.css, tokens/tokens.ts, tokens/tailwind-theme.ts, themes/*.css, validation/theme-token-manifest.json": "npm run validate (gate 1: validation/build-tokens.cjs)",
+    "tokens/primitives.css, tokens/components.css, tokens/density.css, tokens/accents.css, tokens/tokens.ts, tokens/tailwind-theme.ts, themes/*.css, validation/theme-token-manifest.json": "npm run validate (gate 1: validation/build-tokens.cjs)",
     "components/**/*.d.ts": "npm run build:declarations",
     "assets/icons/, icons/icons.css (local path rewrite)": "npm run vendor:icons",
     "dist/": "npm run build (or build:types + build:lib)",

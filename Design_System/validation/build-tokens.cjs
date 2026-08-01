@@ -6,6 +6,7 @@
 //   themes/venom-hc.css
 //   tokens/components.css        (component tokens -> semantic var() references)
 //   tokens/density.css           (comfortable/compact via [data-density])
+//   tokens/accents.css           (optional accent palettes via [data-accent])
 //   tokens/tokens.ts             (typed token object)
 //   tokens/tailwind-theme.ts     (Tailwind theme extension — utilities resolve to var(--…))
 //   validation/theme-token-manifest.json (resolved values per theme, for contrast/completeness gates)
@@ -32,6 +33,7 @@ async function buildVenomTokens(io) {
   };
   const componentDoc = await parse('tokens/tokens.component.json');
   const densityDoc = await parse('tokens/tokens.density.json');
+  const accentsDoc = await parse('tokens/tokens.accents.json');
 
   // ---- flatten: {a:{b:{$value:x}}} -> Map("a.b" -> x), skipping $-keys
   function flatten(node, path = [], out = new Map()) {
@@ -140,6 +142,49 @@ async function buildVenomTokens(io) {
   dcss += '}\n';
   await saveFile('tokens/density.css', dcss);
 
+  // ---- emit accents.css — optional accent palettes as [data-accent="…"] override blocks.
+  // Each accent may override ONLY the accent-derived semantic custom properties below —
+  // the build fails loudly on any other key, so an accent can never restyle surfaces,
+  // status colors, or text roles. `base` carries the venom-dark values (dark is the
+  // :root default theme); a `themes.<name>` block re-overrides for that theme at higher
+  // attribute specificity ([data-theme="…"][data-accent="…"]). venom-hc's focus ring and
+  // focus border are re-pinned to their HC-owned values at the end: accents must never
+  // lower High Contrast's focus guarantees.
+  const ACCENT_ALLOWED = [
+    'accent.default', 'accent.hover', 'accent.active', 'accent.subtle-bg', 'accent.text',
+    'text.on-accent', 'text.link', 'text.link-hover',
+    'border.focus', 'focus.ring',
+    'selection.bg', 'selection.fg',
+  ];
+  const accentDefs = accentsDoc.accents || {};
+  let accentBlockCount = 0;
+  const emitAccentBlock = (selector, entries, scopeName) => {
+    const keys = Object.keys(entries);
+    for (const k of keys) {
+      if (!ACCENT_ALLOWED.includes(k)) throw new Error(`ACCENT OVERRIDES A NON-ACCENT-DERIVED TOKEN in ${scopeName}: ${k}`);
+    }
+    const missing = ACCENT_ALLOWED.filter((k) => !keys.includes(k));
+    if (missing.length) throw new Error(`ACCENT BLOCK INCOMPLETE in ${scopeName}: missing [${missing}]`);
+    let block = selector + ' {\n';
+    for (const k of ACCENT_ALLOWED) block += `  ${cssName(k)}: ${toCss(String(entries[k]))};\n`;
+    block += '}\n';
+    accentBlockCount++;
+    return block;
+  };
+  let acss = HEADER('tokens/tokens.accents.json');
+  for (const [name, def] of Object.entries(accentDefs)) {
+    if (!/^[a-z][a-z0-9-]*$/.test(name)) throw new Error('ACCENT NAME MUST BE lowercase kebab: ' + name);
+    if (name === 'mono') throw new Error('ACCENT "mono" is the base theme identity — it must not ship an override block');
+    acss += emitAccentBlock(`[data-accent="${name}"]`, def.base || {}, `accent ${name} (base)`);
+    for (const [themeName, overrides] of Object.entries(def.themes || {})) {
+      if (!themes[themeName]) throw new Error(`ACCENT ${name} TARGETS UNKNOWN THEME: ${themeName}`);
+      acss += emitAccentBlock(`[data-theme="${themeName}"][data-accent="${name}"]`, overrides, `accent ${name} (${themeName})`);
+    }
+  }
+  acss += '/* venom-hc keeps its HC-owned focus ring/border under every accent. */\n';
+  acss += `[data-theme="venom-hc"][data-accent] {\n  --focus-ring: ${resolveRaw('focus.ring', themes['venom-hc'])};\n  --border-focus: ${resolveRaw('border.focus', themes['venom-hc'])};\n}\n`;
+  await saveFile('tokens/accents.css', acss);
+
   // ---- emit tokens.ts
   const tsObj = {
     primitive: Object.fromEntries([...prim.keys()].map((k) => [k, `var(${cssName(k)})`])),
@@ -243,7 +288,7 @@ export type VenomTailwindTheme = typeof venomTailwindTheme;
   }
   await saveFile('validation/theme-token-manifest.json', JSON.stringify(manifest, null, 2));
 
-  log(`OK: ${prim.size} primitives, ${canon.length} semantic tokens x ${Object.keys(themes).length} themes, ${comp.size} component tokens, ${dens.length} density tokens, ${Object.keys(twTheme).length} tailwind theme groups.`);
+  log(`OK: ${prim.size} primitives, ${canon.length} semantic tokens x ${Object.keys(themes).length} themes, ${comp.size} component tokens, ${dens.length} density tokens, ${Object.keys(accentDefs).length} accents (${accentBlockCount} override blocks), ${Object.keys(twTheme).length} tailwind theme groups.`);
   return manifest.completeness;
 }
 
