@@ -43,6 +43,19 @@ const PROVIDER_CLAUDE_CODE = {
   missing_env: [],
 };
 
+// A real catalog slug that ships NO official logo PNG — proves the
+// letter-mark fallback on the live surface.
+const PROVIDER_AGNES = {
+  id: "agnes-ai",
+  display_name: "Agnes AI",
+  description: "An API-key provider without a shipped logo.",
+  auth_mode: "api_key" as const,
+  funding: { mode: "evidence_required", locked: false, non_expiring: false, fixed: null },
+  capabilities: [],
+  configured: true,
+  missing_env: [],
+};
+
 function account(overrides: Record<string, unknown>) {
   return {
     id: "acct-default",
@@ -88,7 +101,7 @@ afterEach(() => {
 function baseHandlers(overrides: Record<string, () => Response> = {}) {
   return createFetchMock({
     "GET /api/control/v1/providers": () =>
-      jsonResponse(200, { data: { providers: [PROVIDER_OCZ, PROVIDER_ANTIGRAVITY, PROVIDER_CLAUDE_CODE] } }),
+      jsonResponse(200, { data: { providers: [PROVIDER_OCZ, PROVIDER_ANTIGRAVITY, PROVIDER_CLAUDE_CODE, PROVIDER_AGNES] } }),
     "GET /api/control/v1/accounts?limit=200": () =>
       jsonResponse(200, { data: { accounts: [ACCOUNT_HEALTHY, ACCOUNT_DEGRADED, ACCOUNT_UNKNOWN] } }),
     ...overrides,
@@ -130,6 +143,24 @@ describe("FleetOverview — rendering", () => {
     // into a single generic state.
     expect(screen.getByTitle("display_status: unknown").textContent).toMatch(/unknown/i);
     expect(screen.getByTitle("display_status: degraded").textContent).toMatch(/degraded/i);
+  });
+
+  it("renders official provider logos, with the letter-mark fallback for providers without one", async () => {
+    await renderFleet();
+
+    // Providers with a shipped asset render the real logo img (alt = the
+    // display name, src = the static /providers/<slug>.png path).
+    const logo = screen.getByRole("img", { name: "OpenCode Zen" });
+    expect(logo.tagName).toBe("IMG");
+    expect(logo.getAttribute("src")).toBe("/providers/opencode-zen.png");
+    expect(screen.getByRole("img", { name: "Claude Code" }).getAttribute("src")).toBe("/providers/claude-code.png");
+
+    // A provider without a shipped logo keeps the deterministic letter
+    // mark — a SPAN with initials, never a broken <img>.
+    const fallback = screen.getByRole("img", { name: "Agnes AI" });
+    expect(fallback.tagName).toBe("SPAN");
+    expect(fallback.textContent).toBe("AA");
+    expect(fallback.querySelector("img")).toBeNull();
   });
 
   it("shows the setup-required state naming only the missing env var NAMES, never values", async () => {

@@ -33,9 +33,10 @@ async function fetchAllAccounts(): Promise<AccountProjection[]> {
 }
 
 /**
- * The Provider Fleet dashboard (P2b-UI-003): stat cards, one
- * ProviderSummaryCard per catalog provider (expandable to its
- * ProviderAccountRows), API-key/OAuth connect dialogs, credential reveal,
+ * The Provider Fleet dashboard (P2b-UI-003): stat cards, one provider
+ * summary row per catalog provider (ProviderRow — official logo or letter
+ * mark, expandable to its ProviderAccountRows), API-key/OAuth connect
+ * dialogs, credential reveal,
  * funding override, and lifecycle actions (stop/resume/refresh
  * health/disconnect). Assembled entirely from `@venom/design-system`'s
  * domain components — there is no single shipped ProviderFleet UI
