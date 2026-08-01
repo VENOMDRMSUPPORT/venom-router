@@ -1,10 +1,21 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Badge, Banner, DensityToggle, EmptyState, IconButton, Spinner, ThemeSwitcher } from "@venom/design-system/primitives";
 import { Icon } from "@venom/design-system/icons";
-import { getSettings, isSessionExpired, putSettings } from "../api/controlClient";
+import { getSettings, isSessionExpired, putSettings, type SettingsResponse } from "../api/controlClient";
 import { logout, type SessionTimes } from "../auth/authClient";
 import FleetOverview from "../fleet/FleetOverview";
-import { DEFAULT_DENSITY, DEFAULT_THEME, setDensity, setTheme, type DensityName, type ThemeName } from "../theme-runtime";
+import {
+  applyAppearanceSettings,
+  DEFAULT_ACCENT,
+  DEFAULT_DENSITY,
+  DEFAULT_RADIUS_PX,
+  DEFAULT_SPACING_SCALE,
+  DEFAULT_THEME,
+  type AccentName,
+  type DensityName,
+  type ThemeName,
+} from "../theme-runtime";
+import EnterpriseCustomizer, { type CustomizerValue } from "./EnterpriseCustomizer";
 import { DEFAULT_NAV_KEY, NAV, NAV_GROUPS, navItemByKey } from "./nav";
 import OwnerMenu from "./OwnerMenu";
 import PageHeader from "./PageHeader";
@@ -21,6 +32,41 @@ export interface AppShellProps {
 interface Appearance {
   theme: ThemeName;
   density: DensityName;
+  accent: AccentName;
+  radiusPx: number;
+  spacingScale: number;
+}
+
+const DEFAULT_APPEARANCE: Appearance = {
+  theme: DEFAULT_THEME,
+  density: DEFAULT_DENSITY,
+  accent: DEFAULT_ACCENT,
+  radiusPx: DEFAULT_RADIUS_PX,
+  spacingScale: DEFAULT_SPACING_SCALE,
+};
+
+/** Maps the GET /settings wire payload to the shell's Appearance state,
+ * falling back to the frozen defaults (mono/6/1.0) for absent customizer
+ * fields. */
+function appearanceFromSettings(settings: SettingsResponse): Appearance {
+  return {
+    theme: settings.theme,
+    density: settings.density,
+    accent: settings.accent ?? DEFAULT_ACCENT,
+    radiusPx: settings.radius_px ?? DEFAULT_RADIUS_PX,
+    spacingScale: settings.spacing_scale ?? DEFAULT_SPACING_SCALE,
+  };
+}
+
+/** Maps the shell's Appearance state to the PUT /settings wire body. */
+function appearanceToSettings(appearance: Appearance): SettingsResponse {
+  return {
+    theme: appearance.theme,
+    density: appearance.density,
+    accent: appearance.accent,
+    radius_px: appearance.radiusPx,
+    spacing_scale: appearance.spacingScale,
+  };
 }
 
 /**
@@ -43,8 +89,10 @@ export default function AppShell(props: AppShellProps) {
 
   const [activeNav, setActiveNav] = useState(DEFAULT_NAV_KEY);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
-  const [appearance, setAppearanceState] = useState<Appearance>({ theme: DEFAULT_THEME, density: DEFAULT_DENSITY });
+  const [appearance, setAppearanceState] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [appearanceNotice, setAppearanceNotice] = useState<string | null>(null);
+  const appearanceRef = useRef(appearance);
+  appearanceRef.current = appearance;
 
   useEffect(() => {
     let cancelled = false;
@@ -53,7 +101,7 @@ export default function AppShell(props: AppShellProps) {
       try {
         const settings = await getSettings();
         if (cancelled) return;
-        applyAppearance(settings);
+        applyAppearance(appearanceFromSettings(settings));
       } catch (err) {
         if (cancelled) return;
         if (isSessionExpired(err)) {
@@ -76,14 +124,15 @@ export default function AppShell(props: AppShellProps) {
   }, []);
 
   function applyAppearance(next: Appearance) {
-    setTheme(next.theme);
-    setDensity(next.density);
+    // ALL five fields go through the DS apply* functions in one shot —
+    // never hand-rolled attribute writes.
+    applyAppearanceSettings(appearanceToSettings(next));
     setAppearanceState(next);
   }
 
   async function persistAppearance(next: Appearance) {
     try {
-      await putSettings(next, csrfToken);
+      await putSettings(appearanceToSettings(next), csrfToken);
     } catch (err) {
       if (isSessionExpired(err)) {
         onSessionExpired();
@@ -103,6 +152,27 @@ export default function AppShell(props: AppShellProps) {
     const next = { ...appearance, density: nextDensity };
     applyAppearance(next);
     void persistAppearance(next);
+  }
+
+  // The customizer owns theme/accent/radius/spacing but NOT density —
+  // merge over the LATEST appearance (via ref) so a debounced slider
+  // persist that fires after a density change never clobbers it.
+  function mergeCustomizerValue(next: CustomizerValue): Appearance {
+    return {
+      ...appearanceRef.current,
+      theme: next.theme,
+      accent: next.accent,
+      radiusPx: next.radiusPx,
+      spacingScale: next.spacingScale,
+    };
+  }
+
+  function handleCustomizerApply(next: CustomizerValue) {
+    applyAppearance(mergeCustomizerValue(next));
+  }
+
+  function handleCustomizerPersist(next: CustomizerValue) {
+    void persistAppearance(mergeCustomizerValue(next));
   }
 
   async function handleSignOut() {
@@ -184,6 +254,17 @@ export default function AppShell(props: AppShellProps) {
           {renderSurface(activeNav, csrfToken, onSessionExpired)}
         </div>
       </main>
+
+      <EnterpriseCustomizer
+        value={{
+          theme: appearance.theme,
+          accent: appearance.accent,
+          radiusPx: appearance.radiusPx,
+          spacingScale: appearance.spacingScale,
+        }}
+        onApply={handleCustomizerApply}
+        onPersist={handleCustomizerPersist}
+      />
     </div>
   );
 }

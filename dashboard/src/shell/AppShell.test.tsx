@@ -12,6 +12,12 @@ const SESSION = {
 };
 const CSRF_TOKEN = "shell-csrf-token";
 
+/** Builds "<n>px" from a number — raw px string literals are banned by the
+ * no-raw-values lint gate. */
+function px(n: number): string {
+  return `${n}px`;
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -20,7 +26,10 @@ afterEach(() => {
 
 function baseHandlers(overrides: Record<string, () => Response> = {}) {
   return createFetchMock({
-    "GET /api/control/v1/settings": () => jsonResponse(200, { data: { theme: "venom-dark", density: "comfortable" } }),
+    "GET /api/control/v1/settings": () =>
+      jsonResponse(200, {
+        data: { theme: "venom-dark", density: "comfortable", accent: "mono", radius_px: 6, spacing_scale: 1 },
+      }),
     "POST /api/control/v1/auth/logout": () => jsonResponse(200, { data: { logged_out: true } }),
     // The Providers nav destination mounts the real Provider Fleet
     // (P2b-UI-003) — these two are here purely so a test that happens to
@@ -68,11 +77,14 @@ describe("AppShell — navigation", () => {
 });
 
 describe("AppShell — settings restore + persistence", () => {
-  it("calls GET /settings on mount and applies the returned theme/density before rendering content", async () => {
+  it("calls GET /settings on mount and applies ALL FIVE returned fields before rendering content", async () => {
     vi.stubGlobal(
       "fetch",
       baseHandlers({
-        "GET /api/control/v1/settings": () => jsonResponse(200, { data: { theme: "venom-light", density: "compact" } }),
+        "GET /api/control/v1/settings": () =>
+          jsonResponse(200, {
+            data: { theme: "venom-light", density: "compact", accent: "amber", radius_px: 14, spacing_scale: 0.8 },
+          }),
       }),
     );
 
@@ -82,6 +94,64 @@ describe("AppShell — settings restore + persistence", () => {
 
     expect(document.documentElement.getAttribute("data-theme")).toBe("venom-light");
     expect(document.documentElement.getAttribute("data-density")).toBe("compact");
+    expect(document.documentElement.getAttribute("data-accent")).toBe("amber");
+    expect(document.documentElement.style.getPropertyValue("--vn-radius-base")).toBe(px(14));
+    expect(document.documentElement.style.getPropertyValue("--vn-spacing-scale")).toBe("0.8");
+  });
+
+  it("falls back to mono / 6 px / 1 when the settings payload omits the customizer fields", async () => {
+    vi.stubGlobal(
+      "fetch",
+      baseHandlers({
+        "GET /api/control/v1/settings": () => jsonResponse(200, { data: { theme: "venom-dark", density: "comfortable" } }),
+      }),
+    );
+
+    render(<AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />);
+
+    await screen.findByRole("link", { name: /overview/i });
+
+    expect(document.documentElement.getAttribute("data-accent")).toBe("mono");
+    expect(document.documentElement.style.getPropertyValue("--vn-radius-base")).toBe(px(6));
+    expect(document.documentElement.style.getPropertyValue("--vn-spacing-scale")).toBe("1");
+  });
+
+  it("clicking an accent swatch in the customizer applies data-accent and PUTs the full five-field body", async () => {
+    const fetchMock = baseHandlers({
+      "PUT /api/control/v1/settings": () =>
+        jsonResponse(200, {
+          data: { theme: "venom-dark", density: "comfortable", accent: "emerald", radius_px: 6, spacing_scale: 1 },
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />);
+    await screen.findByRole("link", { name: /overview/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /customize design system/i }));
+    fireEvent.click(screen.getByRole("button", { name: /emerald accent/i }));
+
+    // Applied immediately, before the PUT settles.
+    expect(document.documentElement.getAttribute("data-accent")).toBe("emerald");
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find(
+        ([input, init]) => String(input) === "/api/control/v1/settings" && init?.method === "PUT",
+      );
+      expect(putCall).toBeTruthy();
+    });
+    const putCall = fetchMock.mock.calls.find(
+      ([input, init]) => String(input) === "/api/control/v1/settings" && init?.method === "PUT",
+    );
+    const [, init] = putCall as [unknown, RequestInit & { headers: Record<string, string> }];
+    expect(init.headers["X-CSRF-Token"]).toBe(CSRF_TOKEN);
+    expect(JSON.parse(init.body as string)).toEqual({
+      theme: "venom-dark",
+      density: "comfortable",
+      accent: "emerald",
+      radius_px: 6,
+      spacing_scale: 1,
+    });
   });
 
   it("falls back to the already-applied defaults and shows a non-blocking notice when GET /settings fails", async () => {
@@ -131,7 +201,15 @@ describe("AppShell — settings restore + persistence", () => {
     );
     const [, init] = putCall as [unknown, RequestInit & { headers: Record<string, string> }];
     expect(init.headers["X-CSRF-Token"]).toBe(CSRF_TOKEN);
-    expect(JSON.parse(init.body as string)).toEqual({ theme: "venom-hc", density: "comfortable" });
+    // PUT /settings is now the FULL five-field appearance contract — the
+    // untouched customizer fields ride along at their defaults.
+    expect(JSON.parse(init.body as string)).toEqual({
+      theme: "venom-hc",
+      density: "comfortable",
+      accent: "mono",
+      radius_px: 6,
+      spacing_scale: 1,
+    });
   });
 
   it("changing the DensityToggle applies immediately and PUTs /settings", async () => {
