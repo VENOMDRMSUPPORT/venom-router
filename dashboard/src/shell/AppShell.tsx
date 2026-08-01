@@ -1,7 +1,18 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Badge, Banner, DensityToggle, EmptyState, IconButton, Spinner, ThemeSwitcher } from "@venom/design-system/primitives";
+import {
+  Banner,
+  DensityToggle,
+  EmptyState,
+  IconButton,
+  Spinner,
+} from "@venom/design-system/primitives";
 import { Icon } from "@venom/design-system/icons";
-import { getSettings, isSessionExpired, putSettings, type SettingsResponse } from "../api/controlClient";
+import {
+  getSettings,
+  isSessionExpired,
+  putSettings,
+  type SettingsResponse,
+} from "../api/controlClient";
 import { logout, type SessionTimes } from "../auth/authClient";
 import FleetOverview from "../fleet/FleetOverview";
 import {
@@ -15,10 +26,13 @@ import {
   type DensityName,
   type ThemeName,
 } from "../theme-runtime";
+import BreadcrumbBar from "./BreadcrumbBar";
+import ChromeHeader from "./ChromeHeader";
 import EnterpriseCustomizer, { type CustomizerValue } from "./EnterpriseCustomizer";
 import { DEFAULT_NAV_KEY, NAV, NAV_GROUPS, navItemByKey } from "./nav";
+import NotificationBell from "./NotificationBell";
 import OwnerMenu from "./OwnerMenu";
-import PageHeader from "./PageHeader";
+import ThemeToggle from "./ThemeToggle";
 
 export interface AppShellProps {
   session: SessionTimes;
@@ -138,7 +152,9 @@ export default function AppShell(props: AppShellProps) {
         onSessionExpired();
         return;
       }
-      setAppearanceNotice("Could not save your appearance settings. Your change is applied for this session only.");
+      setAppearanceNotice(
+        "Could not save your appearance settings. Your change is applied for this session only.",
+      );
     }
   }
 
@@ -196,14 +212,23 @@ export default function AppShell(props: AppShellProps) {
     );
   }
 
-  const activeItem = navItemByKey(activeNav);
+  // The nav model is static and DEFAULT_NAV_KEY is a member of it, so the
+  // active item always resolves; the fallback only guards the type.
+  const activeItem = navItemByKey(activeNav) ?? NAV[0];
 
   return (
     <div className="vn-shell">
       <nav className="vn-shell-nav vn-scroll" aria-label="Primary">
+        {/* Brand block (legacy sidebar-header pattern): accent-tinted logo
+            mark + wordmark with the small-caps slogan line beneath. The
+            mark is the DS route glyph rendered via currentColor, so it
+            follows the customizer's live accent. */}
         <div className="vn-nav-brand">
-          <Icon name="route" size={18} />
-          Venom Router
+          <Icon name="route" size={18} className="flex-none text-accent-text" />
+          <div className="flex min-w-0 flex-col">
+            <span className="truncate">Venom Router</span>
+            <span className="vn-overline truncate">AI Control Center</span>
+          </div>
         </div>
         {NAV_GROUPS.map((group) => (
           <div key={group}>
@@ -227,29 +252,36 @@ export default function AppShell(props: AppShellProps) {
         ))}
       </nav>
 
-      <header className="vn-shell-topbar">
-        <Badge tone="info" icon="server">
-          Owner console
-        </Badge>
-        <span className="vn-caption vn-mono-xs">Loopback-only control plane</span>
-        <span className="flex-1" />
-        <ThemeSwitcher value={appearance.theme} onChange={handleThemeChange} />
+      <ChromeHeader
+        title={activeItem.label}
+        subtitle={activeItem.description}
+        icon={activeItem.icon}
+      >
+        <ThemeToggle theme={appearance.theme} onChange={handleThemeChange} />
+        <NotificationBell />
         <DensityToggle value={appearance.density} onChange={handleDensityChange} />
         <OwnerMenu session={session} onSignOut={handleSignOut} />
-      </header>
+      </ChromeHeader>
 
       <main className="vn-shell-main vn-scroll">
         <div className="vn-shell-content">
           {appearanceNotice ? (
             <Banner
               tone="warning"
-              actions={<IconButton icon="x" label="Dismiss notice" variant="ghost" onClick={() => setAppearanceNotice(null)} />}
+              actions={
+                <IconButton
+                  icon="x"
+                  label="Dismiss notice"
+                  variant="ghost"
+                  onClick={() => setAppearanceNotice(null)}
+                />
+              }
             >
               {appearanceNotice}
             </Banner>
           ) : null}
 
-          <PageHeader title={activeItem?.label ?? "Overview"} />
+          <BreadcrumbBar item={activeItem} onNavigateHome={() => setActiveNav(DEFAULT_NAV_KEY)} />
 
           {renderSurface(activeNav, csrfToken, onSessionExpired)}
         </div>

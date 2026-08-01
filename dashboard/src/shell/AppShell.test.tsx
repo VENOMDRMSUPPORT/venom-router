@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { assertNoAxeViolations } from "../test/axe";
 import { createFetchMock, jsonResponse } from "../test/fetchMock";
-import { DENSITY_LABELS, THEME_LABELS } from "../theme-runtime";
+import { DENSITY_LABELS } from "../theme-runtime";
 import AppShell from "./AppShell";
-import { NAV, NAV_GROUPS } from "./nav";
+import { breadcrumbTrail, NAV, NAV_GROUPS } from "./nav";
 
 const SESSION = {
   idleExpiresAt: new Date(Date.now() + 24 * 60_000).toISOString(),
@@ -28,7 +28,13 @@ function baseHandlers(overrides: Record<string, () => Response> = {}) {
   return createFetchMock({
     "GET /api/control/v1/settings": () =>
       jsonResponse(200, {
-        data: { theme: "venom-dark", density: "comfortable", accent: "mono", radius_px: 6, spacing_scale: 1 },
+        data: {
+          theme: "venom-dark",
+          density: "comfortable",
+          accent: "mono",
+          radius_px: 6,
+          spacing_scale: 1,
+        },
       }),
     "POST /api/control/v1/auth/logout": () => jsonResponse(200, { data: { logged_out: true } }),
     // The Providers nav destination mounts the real Provider Fleet
@@ -45,7 +51,14 @@ describe("AppShell — navigation", () => {
   it("renders all four nav groups and every item within them", async () => {
     vi.stubGlobal("fetch", baseHandlers());
 
-    render(<AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />);
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
 
     await screen.findByRole("link", { name: /overview/i });
 
@@ -61,7 +74,14 @@ describe("AppShell — navigation", () => {
   it("marks the active nav item with aria-current=page and switching nav updates it", async () => {
     vi.stubGlobal("fetch", baseHandlers());
 
-    render(<AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />);
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
 
     const overviewLink = await screen.findByRole("link", { name: /overview/i });
     expect(overviewLink.getAttribute("aria-current")).toBe("page");
@@ -71,7 +91,9 @@ describe("AppShell — navigation", () => {
 
     fireEvent.click(providersLink);
 
-    expect(screen.getByRole("link", { name: /providers/i }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("link", { name: /providers/i }).getAttribute("aria-current")).toBe(
+      "page",
+    );
     expect(screen.getByRole("link", { name: /overview/i }).getAttribute("aria-current")).toBeNull();
   });
 });
@@ -83,12 +105,25 @@ describe("AppShell — settings restore + persistence", () => {
       baseHandlers({
         "GET /api/control/v1/settings": () =>
           jsonResponse(200, {
-            data: { theme: "venom-light", density: "compact", accent: "amber", radius_px: 14, spacing_scale: 0.8 },
+            data: {
+              theme: "venom-light",
+              density: "compact",
+              accent: "amber",
+              radius_px: 14,
+              spacing_scale: 0.8,
+            },
           }),
       }),
     );
 
-    render(<AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />);
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
 
     await screen.findByRole("link", { name: /overview/i });
 
@@ -103,11 +138,19 @@ describe("AppShell — settings restore + persistence", () => {
     vi.stubGlobal(
       "fetch",
       baseHandlers({
-        "GET /api/control/v1/settings": () => jsonResponse(200, { data: { theme: "venom-dark", density: "comfortable" } }),
+        "GET /api/control/v1/settings": () =>
+          jsonResponse(200, { data: { theme: "venom-dark", density: "comfortable" } }),
       }),
     );
 
-    render(<AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />);
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
 
     await screen.findByRole("link", { name: /overview/i });
 
@@ -120,12 +163,25 @@ describe("AppShell — settings restore + persistence", () => {
     const fetchMock = baseHandlers({
       "PUT /api/control/v1/settings": () =>
         jsonResponse(200, {
-          data: { theme: "venom-dark", density: "comfortable", accent: "emerald", radius_px: 6, spacing_scale: 1 },
+          data: {
+            theme: "venom-dark",
+            density: "comfortable",
+            accent: "emerald",
+            radius_px: 6,
+            spacing_scale: 1,
+          },
         }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />);
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
     await screen.findByRole("link", { name: /overview/i });
 
     fireEvent.click(screen.getByRole("button", { name: /customize design system/i }));
@@ -162,11 +218,25 @@ describe("AppShell — settings restore + persistence", () => {
       "fetch",
       baseHandlers({
         "GET /api/control/v1/settings": () =>
-          jsonResponse(500, { error: { code: "internal", message: "internal error", request_id: "r1", retryable: true } }),
+          jsonResponse(500, {
+            error: {
+              code: "internal",
+              message: "internal error",
+              request_id: "r1",
+              retryable: true,
+            },
+          }),
       }),
     );
 
-    render(<AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />);
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
 
     await screen.findByRole("link", { name: /overview/i });
     await screen.findByText(/could not load your saved appearance settings/i);
@@ -175,19 +245,30 @@ describe("AppShell — settings restore + persistence", () => {
     expect(document.documentElement.getAttribute("data-density")).toBe("comfortable");
   });
 
-  it("changing the ThemeSwitcher applies immediately and PUTs /settings with X-CSRF-Token", async () => {
+  it("clicking the header theme toggle flips dark -> light, applies immediately and PUTs /settings with X-CSRF-Token", async () => {
     const fetchMock = baseHandlers({
-      "PUT /api/control/v1/settings": () => jsonResponse(200, { data: { theme: "venom-hc", density: "comfortable" } }),
+      "PUT /api/control/v1/settings": () =>
+        jsonResponse(200, { data: { theme: "venom-light", density: "comfortable" } }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />);
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
     await screen.findByRole("link", { name: /overview/i });
 
-    fireEvent.click(screen.getByRole("radio", { name: THEME_LABELS["venom-hc"] }));
+    // Current theme is venom-dark, so the toggle offers light.
+    fireEvent.click(screen.getByRole("button", { name: /switch to light mode/i }));
 
-    // Applied immediately, before the PUT settles.
-    expect(document.documentElement.getAttribute("data-theme")).toBe("venom-hc");
+    // Applied immediately, before the PUT settles — and the toggle now
+    // offers the way back.
+    expect(document.documentElement.getAttribute("data-theme")).toBe("venom-light");
+    screen.getByRole("button", { name: /switch to dark mode/i });
 
     await waitFor(() => {
       const putCall = fetchMock.mock.calls.find(
@@ -201,10 +282,10 @@ describe("AppShell — settings restore + persistence", () => {
     );
     const [, init] = putCall as [unknown, RequestInit & { headers: Record<string, string> }];
     expect(init.headers["X-CSRF-Token"]).toBe(CSRF_TOKEN);
-    // PUT /settings is now the FULL five-field appearance contract — the
+    // PUT /settings is the FULL five-field appearance contract — the
     // untouched customizer fields ride along at their defaults.
     expect(JSON.parse(init.body as string)).toEqual({
-      theme: "venom-hc",
+      theme: "venom-light",
       density: "comfortable",
       accent: "mono",
       radius_px: 6,
@@ -212,13 +293,49 @@ describe("AppShell — settings restore + persistence", () => {
     });
   });
 
+  it("treats venom-hc as a dark appearance (toggle offers light) and toggling back from light lands on venom-dark", async () => {
+    vi.stubGlobal(
+      "fetch",
+      baseHandlers({
+        "GET /api/control/v1/settings": () =>
+          jsonResponse(200, { data: { theme: "venom-hc", density: "comfortable" } }),
+        "PUT /api/control/v1/settings": () =>
+          jsonResponse(200, { data: { theme: "venom-light", density: "comfortable" } }),
+      }),
+    );
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /switch to light mode/i }));
+    expect(document.documentElement.getAttribute("data-theme")).toBe("venom-light");
+
+    fireEvent.click(screen.getByRole("button", { name: /switch to dark mode/i }));
+    expect(document.documentElement.getAttribute("data-theme")).toBe("venom-dark");
+  });
+
   it("changing the DensityToggle applies immediately and PUTs /settings", async () => {
     const fetchMock = baseHandlers({
-      "PUT /api/control/v1/settings": () => jsonResponse(200, { data: { theme: "venom-dark", density: "compact" } }),
+      "PUT /api/control/v1/settings": () =>
+        jsonResponse(200, { data: { theme: "venom-dark", density: "compact" } }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />);
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
     await screen.findByRole("link", { name: /overview/i });
 
     fireEvent.click(screen.getByRole("radio", { name: DENSITY_LABELS["compact"] }));
@@ -239,14 +356,28 @@ describe("AppShell — settings restore + persistence", () => {
       "fetch",
       baseHandlers({
         "PUT /api/control/v1/settings": () =>
-          jsonResponse(401, { error: { code: "session_expired", message: "session expired", request_id: "r2", retryable: false } }),
+          jsonResponse(401, {
+            error: {
+              code: "session_expired",
+              message: "session expired",
+              request_id: "r2",
+              retryable: false,
+            },
+          }),
       }),
     );
 
-    render(<AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={onSessionExpired} onLoggedOut={vi.fn()} />);
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={onSessionExpired}
+        onLoggedOut={vi.fn()}
+      />,
+    );
     await screen.findByRole("link", { name: /overview/i });
 
-    fireEvent.click(screen.getByRole("radio", { name: THEME_LABELS["venom-light"] }));
+    fireEvent.click(screen.getByRole("button", { name: /switch to light mode/i }));
 
     await waitFor(() => expect(onSessionExpired).toHaveBeenCalledTimes(1));
   });
@@ -258,7 +389,14 @@ describe("AppShell — sign out", () => {
     const fetchMock = baseHandlers();
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={onLoggedOut} />);
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={onLoggedOut}
+      />,
+    );
     await screen.findByRole("link", { name: /overview/i });
 
     fireEvent.click(screen.getByRole("button", { name: /owner menu/i }));
@@ -266,8 +404,183 @@ describe("AppShell — sign out", () => {
 
     await waitFor(() => expect(onLoggedOut).toHaveBeenCalledTimes(1));
 
-    const logoutCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/auth/logout"));
+    const logoutCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith("/auth/logout"),
+    );
     expect(logoutCall).toBeTruthy();
+  });
+});
+
+describe("AppShell — shared chrome header (per-page metadata)", () => {
+  it("renders the page title, one-line description, and accent icon tile from the nav metadata", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    const header = within(screen.getByRole("banner"));
+    expect(header.getByRole("heading", { level: 1 }).textContent).toBe("Overview");
+    header.getByText("Local runtime health and delivery status.");
+    // The icon tile carries the page's own glyph, accent-tinted.
+    expect(screen.getByRole("banner").querySelector(".vn-icon--layout-dashboard")).toBeTruthy();
+  });
+
+  it("updates title/description/icon when navigating to another page", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    fireEvent.click(screen.getByRole("link", { name: /quota & limits/i }));
+
+    const header = within(screen.getByRole("banner"));
+    expect(header.getByRole("heading", { level: 1 }).textContent).toBe("Quota & Limits");
+    header.getByText("Quota windows, reservations, and cooldowns per account.");
+    expect(screen.getByRole("banner").querySelector(".vn-icon--gauge")).toBeTruthy();
+  });
+
+  it("every nav item ships the header metadata (non-empty description + icon)", () => {
+    for (const item of NAV) {
+      expect(item.description.trim().length, `description for ${item.key}`).toBeGreaterThan(0);
+      expect(item.icon.trim().length, `icon for ${item.key}`).toBeGreaterThan(0);
+    }
+  });
+
+  it("the notification bell opens an honest empty state — one disabled entry, no feed", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /notifications/i }));
+
+    const menu = screen.getByRole("menu");
+    const items = within(menu).getAllByRole("menuitem");
+    expect(items).toHaveLength(1);
+    expect(items[0].textContent).toMatch(/no notifications yet/i);
+    expect(items[0]).toHaveProperty("disabled", true);
+  });
+});
+
+describe("AppShell — global breadcrumb", () => {
+  it("renders Dashboard / <leaf> on Overview with the leaf marked aria-current=page", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    const crumbs = screen.getByRole("navigation", { name: /breadcrumb/i });
+    within(crumbs).getByText("Dashboard");
+    const leaf = crumbs.querySelector('[aria-current="page"]');
+    expect(leaf?.textContent).toBe("Overview");
+  });
+
+  it("includes the nav group as the middle crumb on grouped pages", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    fireEvent.click(screen.getByRole("link", { name: /providers/i }));
+
+    const crumbs = screen.getByRole("navigation", { name: /breadcrumb/i });
+    within(crumbs).getByText("Dashboard");
+    within(crumbs).getByText("Operate");
+    expect(crumbs.querySelector('[aria-current="page"]')?.textContent).toBe("Providers");
+  });
+
+  it("derives the trail from the same nav metadata for every page", () => {
+    for (const item of NAV) {
+      const trail = breadcrumbTrail(item);
+      expect(trail[0]).toBe("Dashboard");
+      expect(trail[trail.length - 1]).toBe(item.label);
+      if (item.group !== item.label) expect(trail).toContain(item.group);
+    }
+  });
+
+  it("clicking the Dashboard crumb navigates back to Overview", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    fireEvent.click(screen.getByRole("link", { name: /providers/i }));
+    expect(screen.getByRole("link", { name: /providers/i }).getAttribute("aria-current")).toBe(
+      "page",
+    );
+
+    const crumbs = screen.getByRole("navigation", { name: /breadcrumb/i });
+    fireEvent.click(within(crumbs).getByText("Dashboard"));
+
+    expect(screen.getByRole("link", { name: /overview/i }).getAttribute("aria-current")).toBe(
+      "page",
+    );
+  });
+});
+
+describe("AppShell — sidebar brand", () => {
+  it("renders the wordmark with the AI Control Center slogan and an accent-tinted mark", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    const nav = screen.getByRole("navigation", { name: /primary/i });
+    const brand = nav.querySelector(".vn-nav-brand") as HTMLElement;
+    expect(brand.textContent).toContain("Venom Router");
+    expect(brand.textContent).toContain("AI Control Center");
+    // The mark inherits the live accent via the text-accent-text token class.
+    const mark = brand.querySelector(".vn-icon--route") as HTMLElement;
+    expect(mark.className).toContain("text-accent-text");
   });
 });
 
@@ -276,7 +589,12 @@ describe("AppShell — accessibility and storage guarantees", () => {
     vi.stubGlobal("fetch", baseHandlers());
 
     const { container } = render(
-      <AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />,
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
     );
     await screen.findByRole("link", { name: /overview/i });
 
@@ -286,15 +604,23 @@ describe("AppShell — accessibility and storage guarantees", () => {
   it("never writes to localStorage or sessionStorage across mount, nav, theme/density changes", async () => {
     const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
     const fetchMock = baseHandlers({
-      "PUT /api/control/v1/settings": () => jsonResponse(200, { data: { theme: "venom-hc", density: "compact" } }),
+      "PUT /api/control/v1/settings": () =>
+        jsonResponse(200, { data: { theme: "venom-hc", density: "compact" } }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />);
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
     await screen.findByRole("link", { name: /overview/i });
 
     fireEvent.click(screen.getByRole("link", { name: /providers/i }));
-    fireEvent.click(screen.getByRole("radio", { name: THEME_LABELS["venom-hc"] }));
+    fireEvent.click(screen.getByRole("button", { name: /switch to light mode/i }));
     fireEvent.click(screen.getByRole("radio", { name: DENSITY_LABELS["compact"] }));
 
     await waitFor(() => {
