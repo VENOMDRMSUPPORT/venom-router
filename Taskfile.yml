@@ -138,6 +138,29 @@ tasks:
     cmds:
       - CGO_ENABLED=1 go test -race ./...
 
+  p6-gate:
+    desc: >
+      P6-TEST-002: the operate-without-terminal phase gate, CI-deterministic
+      half — ONE command, as the card asks. Runs the step-ordered lifecycle
+      scenario (setup -> connect a provider -> discover -> probe -> route a
+      request -> read diagnostics -> create a key -> connect a client) against
+      FAKE provider backends with an owner the test provisions itself, plus the
+      byte-level DB canary over the whole run.
+
+      It also runs the OPT-IN live harness, which SKIPS unless
+      VENOM_E2E_REAL_SDK_BASE_URL and VENOM_E2E_REAL_SDK_KEY are both set — the
+      -v flag is deliberate so that skip is visible in the output rather than
+      being mistaken for a pass. The dated manual procedure for the half only a
+      human on a Windows desktop can witness (the tray, silent launch, a real
+      provider account) is
+      docs/evidence/P6-TEST-002-operate-without-terminal-runbook.md.
+
+      `gate`'s own `go test ./...` already runs all of this on every build, on
+      both CI OSes — that is the authoritative always-on gate. This task is the
+      fast, targeted signal.
+    cmds:
+      - go test ./internal/httpapi/ -run '^TestP6Gate_' -v
+
   schema-lint:
     desc: >
       RESERVED placeholder — schema-lint (nullable numerics mean
