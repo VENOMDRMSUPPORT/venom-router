@@ -98,7 +98,7 @@ function AccountHealthRow(props: {
     <Card data-testid={`health-account-${a.id}`}>
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
-          <h3 className="vn-h3">{accountLabel(a)}</h3>
+          <h2 className="vn-h3">{accountLabel(a)}</h2>
           <span className="vn-caption">{a.provider}</span>
         </div>
 

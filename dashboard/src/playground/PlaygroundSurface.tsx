@@ -238,7 +238,7 @@ export default function PlaygroundSurface() {
     <div className="flex flex-col gap-4">
       <Card>
         <div className="flex flex-col gap-3">
-          <h3 className="vn-h3">Compose a request</h3>
+          <h2 className="vn-h3">Compose a request</h2>
 
           <div className="flex flex-col gap-2">
             <label className="vn-caption" htmlFor="playground-key">

@@ -115,10 +115,10 @@ export default function FirstRunSetup(props: FirstRunSetupProps) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-canvas p-4">
+    <main className="flex min-h-screen items-center justify-center bg-surface-canvas p-4">
       <div className="flex w-full max-w-sm flex-col gap-4">
         <div className="text-center">
-          <div className="vn-display">Welcome to Venom Router</div>
+          <h1 className="vn-display">Welcome to Venom Router</h1>
           <p className="vn-caption">
             First run — create the single owner password. There are no users, roles, or teams.
           </p>
@@ -204,6 +204,6 @@ export default function FirstRunSetup(props: FirstRunSetupProps) {
           />
         </div>
       </div>
-    </div>
+    </main>
   );
 }

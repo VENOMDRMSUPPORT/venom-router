@@ -51,10 +51,10 @@ export default function LoginScreen(props: LoginScreenProps) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-canvas p-4">
+    <main className="flex min-h-screen items-center justify-center bg-surface-canvas p-4">
       <div className="flex w-full max-w-sm flex-col gap-4">
         <div className="text-center">
-          <div className="vn-display">Venom Router</div>
+          <h1 className="vn-display">Venom Router</h1>
           <p className="vn-caption">Owner console · single owner, no accounts to pick</p>
         </div>
 
@@ -98,6 +98,6 @@ export default function LoginScreen(props: LoginScreenProps) {
           />
         </div>
       </div>
-    </div>
+    </main>
   );
 }

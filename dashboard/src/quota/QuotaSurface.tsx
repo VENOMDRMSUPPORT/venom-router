@@ -193,7 +193,7 @@ export default function QuotaSurface(props: QuotaSurfaceProps) {
         <Card key={a.id} data-testid={`quota-account-${a.id}`}>
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-1">
-              <h3 className="vn-h3">{accountLabel(a)}</h3>
+              <h2 className="vn-h3">{accountLabel(a)}</h2>
               <span className="vn-caption">{a.provider}</span>
             </div>
             <AccountQuotaWindows windows={a.quota} />

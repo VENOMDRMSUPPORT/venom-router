@@ -319,7 +319,7 @@ export default function SettingsSurface(props: SettingsSurfaceProps) {
     <div className="flex flex-col gap-4">
       <Card>
         <div className="flex flex-col gap-3">
-          <h3 className="vn-h3">Appearance</h3>
+          <h2 className="vn-h3">Appearance</h2>
           <FormField label="Theme" error={fieldError("theme")} required>
             <Select value={form.theme} onChange={(e) => setField("theme", e.target.value as ThemeName)}>
               {/* Straight from the design-system package — never a literal list. */}
@@ -382,7 +382,7 @@ export default function SettingsSurface(props: SettingsSurfaceProps) {
 
       <Card>
         <div className="flex flex-col gap-3">
-          <h3 className="vn-h3">Operational</h3>
+          <h2 className="vn-h3">Operational</h2>
           <span className="vn-caption">
             A setting you do not touch is left out of the save entirely, so it keeps its current
             value rather than being reset.
@@ -459,7 +459,7 @@ export default function SettingsSurface(props: SettingsSurfaceProps) {
           cannot reach a PUT body by accident. */}
       <Card data-testid="effective-config">
         <div className="flex flex-col gap-2">
-          <h3 className="vn-h3">Effective configuration</h3>
+          <h2 className="vn-h3">Effective configuration</h2>
           <span className="vn-caption">
             Read-only. These are resolved at boot from the command line and environment, so they
             change only on restart — there is no endpoint that sets them.

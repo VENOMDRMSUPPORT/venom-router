@@ -79,6 +79,31 @@ jobs:
         working-directory: dashboard
         run: npm run test
 
+      # P6-TEST-001 (1b). ONLY chromium: the suites declare a single chromium
+      # project, and pulling firefox/webkit would triple the download for
+      # browsers nothing runs in. --with-deps installs the shared libraries a
+      # headless chromium needs on a bare Linux host; on this self-hosted
+      # runner the browser is cached under ~/.cache/ms-playwright between runs,
+      # so only the first build pays the download.
+      - name: Install the chromium build Playwright pins
+        working-directory: dashboard
+        run: npx playwright install --with-deps chromium
+
+      # Real-browser accessibility (this is where axe's color-contrast rule
+      # actually runs — jsdom cannot evaluate it) plus the critical flows,
+      # driven against the production build via `vite preview`.
+      #
+      # NOT included here: tests/visual. Playwright screenshot baselines are
+      # per-platform (`-chromium-linux` vs `-chromium-win32`) and the committed
+      # baselines were generated on Windows, so the visual suite cannot pass on
+      # this runner until its Linux baselines are seeded once with
+      # `npm run test:visual:update` on venom-linux. Adding the step before
+      # those exist would fail every build for a reason unrelated to the code
+      # under test.
+      - name: Dashboard a11y + critical flows (real browser)
+        working-directory: dashboard
+        run: npm run test:e2e
+
       - name: Prove the embedded dashboard is served
         run: go test ./internal/httpui/... ./internal/app/... -run 'TestBoot_ServesEmbeddedDashboardSPA|TestNew_UsesEmbeddedDist' -v
 

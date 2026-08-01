@@ -212,7 +212,7 @@ export default function UsageSurface(props: UsageSurfaceProps) {
       <Card data-testid="usage-totals">
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="vn-h3">Totals</h3>
+            <h2 className="vn-h3">Totals</h2>
             {usage.truncated ? (
               <Badge tone="warning" icon="triangle-alert">
                 Scan capped at {usage.limit} rows — every number below is a floor
@@ -247,21 +247,21 @@ export default function UsageSurface(props: UsageSurfaceProps) {
 
       <Card data-testid="usage-by-tier">
         <div className="flex flex-col gap-3">
-          <h3 className="vn-h3">By tier</h3>
+          <h2 className="vn-h3">By tier</h2>
           <UsageTable dimension="tier" label="Tier" groups={usage.by_tier} />
         </div>
       </Card>
 
       <Card data-testid="usage-by-account">
         <div className="flex flex-col gap-3">
-          <h3 className="vn-h3">By account</h3>
+          <h2 className="vn-h3">By account</h2>
           <UsageTable dimension="account" label="Account" groups={usage.by_account} />
         </div>
       </Card>
 
       <Card data-testid="usage-by-model">
         <div className="flex flex-col gap-3">
-          <h3 className="vn-h3">By model</h3>
+          <h2 className="vn-h3">By model</h2>
           <UsageTable dimension="model" label="Model" groups={usage.by_model} />
         </div>
       </Card>

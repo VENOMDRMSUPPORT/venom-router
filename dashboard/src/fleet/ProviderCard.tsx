@@ -59,7 +59,16 @@ export default function ProviderCard(props: ProviderCardProps) {
         <div className="vn-provider-card-identity">
           <ProviderLogo slug={provider.id} name={provider.display_name} size="lg" />
           <div className="vn-provider-card-title">
-            <h3>{provider.display_name}</h3>
+            {/* Level 2, not 3: the shell's ChromeHeader owns the page's only
+                h1, so a card title is the next level down and axe's
+                heading-order rule (rightly) rejects a jump to h3.
+                The ELEMENT stays <h3> because @venom/design-system styles this
+                title through the element selector `.vn-provider-card-title h3`
+                (css/components-core.css) — that package is frozen, so changing
+                the tag here would silently drop the card title's typography.
+                aria-level is what assistive tech and axe actually read, so this
+                corrects the semantics with zero visual change. */}
+            <h3 role="heading" aria-level={2}>{provider.display_name}</h3>
             {connected ? (
               <span className="vn-provider-card-linked">
                 {accounts.length} account{accounts.length === 1 ? "" : "s"} linked
