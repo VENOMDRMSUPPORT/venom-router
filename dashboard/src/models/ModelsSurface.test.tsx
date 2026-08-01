@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { assertNoAxeViolations } from "../test/axe";
 import { createFetchMock, jsonResponse } from "../test/fetchMock";
 import type { EffectiveOffering, ModelGroup, OfferingCapability } from "../api/controlClient";
@@ -7,6 +7,7 @@ import ModelsSurface from "./ModelsSurface";
 
 const CSRF_TOKEN = "models-csrf-token";
 const MODELS_URL = "GET /api/control/v1/models?limit=200";
+const CENSUS_URL = "GET /api/control/v1/certifications/review";
 
 function capability(overrides: Partial<OfferingCapability> = {}): OfferingCapability {
   return {
@@ -56,9 +57,33 @@ function group(overrides: Partial<ModelGroup> = {}): ModelGroup {
   };
 }
 
+/** The census payload the review banner reads. Defaults to an all-clear so
+ * model-catalog tests are not coupled to the banner's own behaviour. */
+function censusBody(byReason: { reason: string; count: number }[] = [{ reason: "capability_not_certified", count: 0 }]) {
+  return {
+    data: {
+      scanned: 1,
+      limit: 50,
+      truncated: false,
+      evaluated_reasons: ["capability_not_certified"],
+      not_evaluated_reasons: [
+        "identity_unresolved",
+        "context_unverified",
+        "funding_unknown",
+        "no_healthy_account",
+        "quota_exhausted",
+        "quota_insufficient",
+        "cooling_down",
+      ],
+      by_reason: byReason,
+    },
+  };
+}
+
 function mockModels(groups: ModelGroup[], extra: Record<string, () => Response> = {}): ReturnType<typeof createFetchMock> {
   const mock = createFetchMock({
     [MODELS_URL]: () => jsonResponse(200, { data: groups }),
+    [CENSUS_URL]: () => jsonResponse(200, censusBody()),
     ...extra,
   });
   vi.stubGlobal("fetch", mock);
@@ -390,7 +415,8 @@ describe("ModelsSurface — pagination honesty", () => {
         }),
       "GET /api/control/v1/models?cursor=c2&limit=200": () =>
         jsonResponse(200, { data: [group({ model_id: "page-2", display_name: "Page Two Model" })] }),
-      });
+      [CENSUS_URL]: () => jsonResponse(200, censusBody()),
+    });
     vi.stubGlobal("fetch", mock);
     renderSurface();
 
@@ -420,7 +446,8 @@ describe("ModelsSurface — loading, empty, error", () => {
           jsonResponse(500, {
             error: { code: "internal", message: "internal error", request_id: "r1", retryable: true },
           }),
-          }),
+        [CENSUS_URL]: () => jsonResponse(200, censusBody()),
+      }),
     );
     const { container } = renderSurface();
 
@@ -438,7 +465,8 @@ describe("ModelsSurface — loading, empty, error", () => {
           jsonResponse(401, {
             error: { code: "session_expired", message: "session expired", request_id: "r2", retryable: false },
           }),
-          }),
+        [CENSUS_URL]: () => jsonResponse(200, censusBody()),
+      }),
     );
     render(<ModelsSurface csrfToken={CSRF_TOKEN} onSessionExpired={onSessionExpired} />);
     await waitFor(() => expect(onSessionExpired).toHaveBeenCalledTimes(1));
@@ -484,5 +512,52 @@ describe("ModelsSurface — secrets and accessibility", () => {
     const { container } = renderSurface();
     await waitFor(() => expect(container.textContent ?? "").toMatch(/no models/i));
     await assertNoAxeViolations(container);
+  });
+});
+
+describe("ModelsSurface — review-queue banner integration (P6-UI-012)", () => {
+  it("renders the banner and filters the catalog to the backlog when asked", async () => {
+    mockModels([
+      group({
+        model_id: "model-clean",
+        display_name: "Clean Model",
+        offerings: [offering({ provider_model_id: "clean-1", capabilities: [capability()] })],
+      }),
+      group({
+        model_id: "model-backlog",
+        display_name: "Backlog Model",
+        offerings: [
+          offering({
+            provider_model_id: "backlog-1",
+            capabilities: [capability({ state: "observed", truth: "unknown", routable: false })],
+          }),
+        ],
+      }),
+    ], {
+      [CENSUS_URL]: () =>
+        jsonResponse(200, censusBody([{ reason: "capability_not_certified", count: 1 }])),
+    });
+    renderSurface();
+
+    // Both groups before filtering.
+    await screen.findByText("Clean Model");
+    screen.getByText("Backlog Model");
+
+    fireEvent.click(await screen.findByRole("button", { name: /review the backlog/i }));
+
+    await waitFor(() => expect(screen.queryByText("Clean Model")).toBeNull());
+    screen.getByText("Backlog Model");
+  });
+
+  it("shows the review banner's count grouped by reason", async () => {
+    mockModels([group()], {
+      [CENSUS_URL]: () =>
+        jsonResponse(200, censusBody([{ reason: "capability_not_certified", count: 4 }])),
+    });
+    renderSurface();
+
+    const banner = await screen.findByTestId("review-queue-banner");
+    expect(within(banner).getByText("capability_not_certified")).toBeTruthy();
+    expect(banner.textContent ?? "").toMatch(/4/);
   });
 });

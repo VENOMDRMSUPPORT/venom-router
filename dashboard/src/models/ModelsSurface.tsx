@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, EmptyState, ErrorState, IconButton, Spinner } from "@venom/design-system/primitives";
 import {
   CapabilityTruthBadge,
@@ -20,6 +20,7 @@ import {
   type ModelGroup,
   type OfferingCapability,
 } from "../api/controlClient";
+import ReviewQueueBanner from "./ReviewQueueBanner";
 
 export interface ModelsSurfaceProps {
   csrfToken: string;
@@ -252,6 +253,7 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
   const [groups, setGroups] = useState<ModelGroup[] | null>(null);
   const [loadError, setLoadError] = useState<AuthApiError | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [backlogOnly, setBacklogOnly] = useState(false);
   const [outcome, setOutcome] = useState<JobOutcome | null>(null);
   const [busy, setBusy] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
@@ -353,13 +355,24 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
     [csrfToken, runTrigger],
   );
 
-  const visibleGroups = groups;
+  const visibleGroups = useMemo(() => {
+    if (!groups) return null;
+    return backlogOnly ? groups.filter(groupNeedsReview) : groups;
+  }, [groups, backlogOnly]);
+
+  const banner = (
+    <ReviewQueueBanner
+      onSessionExpired={onSessionExpired}
+      onReviewBacklog={() => setBacklogOnly(true)}
+    />
+  );
 
   // An error is its OWN state. Falling through to the empty state would tell the
   // owner "you have no models" when the truth is "we could not ask".
   if (loadError) {
     return (
       <div className="flex flex-col gap-4">
+        {banner}
         <ErrorState
           code={loadError.code}
           title="Could not load the model catalog"
@@ -376,6 +389,8 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
 
   return (
     <div className="flex flex-col gap-4">
+      {banner}
+
       {outcome ? (
         <Card data-testid="job-outcome">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -390,11 +405,26 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
         </Card>
       ) : null}
 
+      {backlogOnly ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="warning" icon="filter">
+            Showing the review backlog only
+          </Badge>
+          <Button size="sm" variant="ghost" onClick={() => setBacklogOnly(false)}>
+            Show the whole catalog
+          </Button>
+        </div>
+      ) : null}
+
       {visibleGroups.length === 0 ? (
         <EmptyState
           icon="box"
-          title="No models discovered"
-          description="Connect a provider account and run discovery — models appear here once an account&rsquo;s catalog has been observed."
+          title={backlogOnly ? "No models need review" : "No models discovered"}
+          description={
+            backlogOnly
+              ? "Every discovered offering-operation is certified and supported."
+              : "Connect a provider account and run discovery — models appear here once an account's catalog has been observed."
+          }
         />
       ) : (
         visibleGroups.map((g) => {

@@ -559,6 +559,43 @@ export async function getJob(jobId: string): Promise<JobRead> {
   return resp.data;
 }
 
+// --- Routing-admission census (P6-CAPI-EXTRA, enables P6-UI-012) ---
+
+/** One EVALUATED reason and its count. `reason` is a typed
+ * intelligence.AdmissionReason code, rendered verbatim — never renamed. */
+export interface ReviewReasonCount {
+  reason: string;
+  count: number;
+}
+
+/** GET /certifications/review's payload (internal/httpapi/reviewcensus.go's
+ * reviewCensusJSON) — 04 §5's standing "review count grouped by reason".
+ *
+ * THE FIELD PAIR THAT MATTERS: `evaluated_reasons` and `not_evaluated_reasons`
+ * partition the closed eight-value admission vocabulary, and `by_reason` carries
+ * counts for the EVALUATED ones only. A reason in `not_evaluated_reasons` has no
+ * count and must not be rendered with one — `0` would say "we looked and found
+ * none", which for an unevaluated check is false in the direction of a false
+ * all-clear. Rendering it as an absent row is equally wrong, for the same
+ * reason: absence also reads as "none found".
+ *
+ * `truncated` says the scan hit `limit`, so every count is a floor, not a total.
+ */
+export interface ReviewCensus {
+  scanned: number;
+  limit: number;
+  truncated: boolean;
+  evaluated_reasons: string[];
+  not_evaluated_reasons: string[];
+  by_reason: ReviewReasonCount[];
+}
+
+/** GET /certifications/review — a read, no CSRF token. */
+export async function getReviewCensus(): Promise<ReviewCensus> {
+  const body = await request<{ data: ReviewCensus }>("/certifications/review", { method: "GET" });
+  return body.data;
+}
+
 // --- Probe trigger (P3c-CAPI-001, enables P3c-UI-001) ---
 
 export interface StartProbeBody {

@@ -42,9 +42,29 @@ function baseHandlers(overrides: Record<string, () => Response> = {}) {
     // behavior is covered in src/fleet/*.test.tsx.
     "GET /api/control/v1/providers": () => jsonResponse(200, { data: { providers: [] } }),
     "GET /api/control/v1/accounts?limit=200": () => jsonResponse(200, { data: { accounts: [] } }),
-    // Same rationale for the Models destination (P6-UI-002) — its own behavior
-    // is covered in src/models/*.test.tsx.
+    // Same rationale for the Models destination (P6-UI-002) and the
+    // review-queue banner it renders (P6-UI-012) — their own behavior is
+    // covered in src/models/*.test.tsx.
     "GET /api/control/v1/models?limit=200": () => jsonResponse(200, { data: [] }),
+    "GET /api/control/v1/certifications/review": () =>
+      jsonResponse(200, {
+        data: {
+          scanned: 0,
+          limit: 50,
+          truncated: false,
+          evaluated_reasons: ["capability_not_certified"],
+          not_evaluated_reasons: [
+            "identity_unresolved",
+            "context_unverified",
+            "funding_unknown",
+            "no_healthy_account",
+            "quota_exhausted",
+            "quota_insufficient",
+            "cooling_down",
+          ],
+          by_reason: [{ reason: "capability_not_certified", count: 0 }],
+        },
+      }),
     ...overrides,
   });
 }
