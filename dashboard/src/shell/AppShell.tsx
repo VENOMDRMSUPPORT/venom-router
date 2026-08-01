@@ -10,6 +10,7 @@ import {
 import { logout, type SessionTimes } from "../auth/authClient";
 import FleetBreadcrumbChips, { type FleetView } from "../fleet/FleetBreadcrumbChips";
 import FleetOverview from "../fleet/FleetOverview";
+import QuotaSurface from "../quota/QuotaSurface";
 import {
   applyAppearanceSettings,
   DEFAULT_ACCENT,
@@ -331,6 +332,11 @@ function renderSurface(
         view={fleetView}
       />
     );
+  }
+
+  // P6-UI-006: Quota & Limits.
+  if (navKey === "quota") {
+    return <QuotaSurface onSessionExpired={onSessionExpired} />;
   }
 
   const item = navItemByKey(navKey);
