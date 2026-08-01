@@ -225,6 +225,19 @@ describe("FleetOverview — rendering", () => {
     screen.getByText("OpenCode Zen");
   });
 
+  it("narrows the grid to connected providers only when view is 'active'", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+    render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
+    await screen.findByText("OpenCode Zen");
+
+    // Only OpenCode Zen has connected accounts in the fixtures; the active
+    // view must hide the four unconnected integrations entirely.
+    expect(screen.queryByText("Antigravity")).toBeNull();
+    expect(screen.queryByText("Claude Code")).toBeNull();
+    expect(screen.queryByText("Agnes AI")).toBeNull();
+    expect(screen.queryByText("Custom (OpenAI-compatible)")).toBeNull();
+  });
+
   it("renders the per-state action buttons: Connect Integration, Setup required, Integration unavailable", async () => {
     await renderFleet();
 

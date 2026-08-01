@@ -19,6 +19,7 @@ import {
 } from "../api/controlClient";
 import ConnectDialog from "./ConnectDialog";
 import ProviderCard from "./ProviderCard";
+import type { FleetView } from "./FleetBreadcrumbChips";
 
 export interface FleetOverviewProps {
   csrfToken: string;
@@ -27,6 +28,10 @@ export interface FleetOverviewProps {
    * one connected account, total = full catalog) to the shell once the
    * live data has loaded. */
   onCounts?: (counts: { active: number; total: number }) => void;
+  /** The breadcrumb-row chip selection: "active" narrows the grid to
+   * providers with ≥1 connected account (on top of the search/category
+   * filters); "all" shows the full scoped catalog. Defaults to "all". */
+  view?: FleetView;
 }
 
 type AuthCategory = "all" | "oauth" | "api_key";
@@ -68,7 +73,7 @@ async function fetchAllAccounts(): Promise<AccountProjection[]> {
  * only.
  */
 export default function FleetOverview(props: FleetOverviewProps) {
-  const { csrfToken, onSessionExpired, onCounts } = props;
+  const { csrfToken, onSessionExpired, onCounts, view = "all" } = props;
 
   const [providers, setProviders] = useState<Provider[] | null>(null);
   const [accounts, setAccounts] = useState<AccountProjection[] | null>(null);
@@ -151,11 +156,14 @@ export default function FleetOverview(props: FleetOverviewProps) {
 
   const healthyCount = accounts.filter((a) => a.display_status === "healthy").length;
 
-  // Legacy-parity scoping: the segmented tabs filter by typed auth mode;
-  // the search filters the scoped grid live by name/slug/description.
-  const scopedProviders = providers.filter((p) =>
-    category === "all" ? true : category === "oauth" ? p.auth_mode === "oauth2" : p.auth_mode === "api_key",
-  );
+  // Legacy-parity scoping: the breadcrumb-row view toggle ("active" narrows
+  // to providers with ≥1 connected account) composes with the segmented
+  // tabs (auth mode) and the live search.
+  const connectedProviders = new Set(accountsByProvider.keys());
+  const scopedProviders = providers.filter((p) => {
+    if (view === "active" && !connectedProviders.has(p.id)) return false;
+    return category === "all" ? true : category === "oauth" ? p.auth_mode === "oauth2" : p.auth_mode === "api_key";
+  });
   const query = search.trim().toLowerCase();
   const filteredProviders = query
     ? scopedProviders.filter(

@@ -8,7 +8,7 @@ import {
   type SettingsResponse,
 } from "../api/controlClient";
 import { logout, type SessionTimes } from "../auth/authClient";
-import FleetBreadcrumbChips from "../fleet/FleetBreadcrumbChips";
+import FleetBreadcrumbChips, { type FleetView } from "../fleet/FleetBreadcrumbChips";
 import FleetOverview from "../fleet/FleetOverview";
 import {
   applyAppearanceSettings,
@@ -104,6 +104,11 @@ export default function AppShell(props: AppShellProps) {
   // reported up by FleetOverview once its live data loads; null until then
   // so the chips never render placeholder values.
   const [fleetCounts, setFleetCounts] = useState<{ active: number; total: number } | null>(null);
+  // The breadcrumb-row chip selection for the Provider Fleet: "all" (full
+  // catalog, default) or "active" (only providers with ≥1 connected
+  // account). Owned here so both the chips and FleetOverview share one
+  // source of truth.
+  const [fleetView, setFleetView] = useState<FleetView>("all");
   const appearanceRef = useRef(appearance);
   appearanceRef.current = appearance;
 
@@ -281,11 +286,16 @@ export default function AppShell(props: AppShellProps) {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <BreadcrumbBar item={activeItem} onNavigateHome={() => setActiveNav(DEFAULT_NAV_KEY)} />
             {activeNav === "providers" && fleetCounts ? (
-              <FleetBreadcrumbChips activeCount={fleetCounts.active} totalCount={fleetCounts.total} />
+              <FleetBreadcrumbChips
+                activeCount={fleetCounts.active}
+                totalCount={fleetCounts.total}
+                view={fleetView}
+                onViewChange={setFleetView}
+              />
             ) : null}
           </div>
 
-          {renderSurface(activeNav, csrfToken, onSessionExpired, setFleetCounts)}
+          {renderSurface(activeNav, csrfToken, onSessionExpired, setFleetCounts, fleetView)}
         </div>
       </main>
 
@@ -310,9 +320,17 @@ function renderSurface(
   csrfToken: string,
   onSessionExpired: () => void,
   onFleetCounts: (counts: { active: number; total: number }) => void,
+  fleetView: FleetView,
 ): ReactNode {
   if (navKey === "providers") {
-    return <FleetOverview csrfToken={csrfToken} onSessionExpired={onSessionExpired} onCounts={onFleetCounts} />;
+    return (
+      <FleetOverview
+        csrfToken={csrfToken}
+        onSessionExpired={onSessionExpired}
+        onCounts={onFleetCounts}
+        view={fleetView}
+      />
+    );
   }
 
   const item = navItemByKey(navKey);

@@ -501,6 +501,65 @@ describe("AppShell — global breadcrumb", () => {
     expect(screen.queryByText("All Integrations")).toBeNull();
   });
 
+  it("toggles the fleet view between Active and All via the breadcrumb chips", async () => {
+    vi.stubGlobal(
+      "fetch",
+      baseHandlers({
+        "GET /api/control/v1/providers": () =>
+          jsonResponse(200, {
+            data: {
+              providers: [
+                { id: "opencode-zen", display_name: "OpenCode Zen", description: "API-key.", auth_mode: "api_key", funding: { mode: "owner_policy", locked: false, non_expiring: false, fixed: null }, capabilities: [], configured: true, missing_env: [] },
+                { id: "antigravity", display_name: "Antigravity", description: "OAuth.", auth_mode: "oauth2", funding: { mode: "owner_policy", locked: false, non_expiring: false, fixed: null }, capabilities: [], configured: true, missing_env: [] },
+              ],
+            },
+          }),
+        "GET /api/control/v1/accounts?limit=200": () =>
+          jsonResponse(200, {
+            data: {
+              accounts: [
+                { id: "acct-1", provider: "opencode-zen", external_id: "ext-1", auth_type: "api_key", connection_state: "connected", health_state: "healthy", reauth_in_progress: false, identity: { email: undefined, plan: "Free" }, funding: { funding: "free", source: "owner_policy", locked: false, version: "v1" }, display_status: "healthy", eligibility: { eligible: true }, quota: [], created_at: "2026-07-01T00:00:00Z", updated_at: "2026-07-01T00:00:00Z" },
+              ],
+            },
+          }),
+      }),
+    );
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    // Wait for the shell to finish loading settings before interacting.
+    await screen.findByRole("link", { name: /overview/i });
+    fireEvent.click(screen.getByRole("link", { name: /providers/i }));
+
+    // Default view is "all": both providers render.
+    await screen.findByText("OpenCode Zen");
+    screen.getByText("Antigravity");
+
+    // "All Integrations" is selected by default; "Active Providers" is not.
+    expect(screen.getByRole("button", { name: /all integrations/i }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: /active providers/i }).getAttribute("aria-pressed")).toBe("false");
+
+    // Click "Active Providers" — the grid narrows to connected providers only.
+    fireEvent.click(screen.getByRole("button", { name: /active providers/i }));
+    await waitFor(() => expect(screen.queryByText("Antigravity")).toBeNull());
+    screen.getByText("OpenCode Zen");
+
+    // Selection followed the click.
+    expect(screen.getByRole("button", { name: /active providers/i }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: /all integrations/i }).getAttribute("aria-pressed")).toBe("false");
+
+    // Click "All Integrations" — the full catalog returns.
+    fireEvent.click(screen.getByRole("button", { name: /all integrations/i }));
+    await waitFor(() => screen.getByText("Antigravity"));
+    screen.getByText("OpenCode Zen");
+  });
+
   it("renders Dashboard / <leaf> on Overview with the leaf marked aria-current=page", async () => {
     vi.stubGlobal("fetch", baseHandlers());
 
