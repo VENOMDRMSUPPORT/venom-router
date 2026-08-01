@@ -11,6 +11,7 @@ import { logout, type SessionTimes } from "../auth/authClient";
 import FleetBreadcrumbChips, { type FleetView } from "../fleet/FleetBreadcrumbChips";
 import FleetOverview from "../fleet/FleetOverview";
 import TokenHealthSurface from "../health/TokenHealthSurface";
+import ApiKeysSurface from "../keys/ApiKeysSurface";
 import QuotaSurface from "../quota/QuotaSurface";
 import {
   applyAppearanceSettings,
@@ -343,6 +344,11 @@ function renderSurface(
   // P6-UI-007: Token Health.
   if (navKey === "token-health") {
     return <TokenHealthSurface csrfToken={csrfToken} onSessionExpired={onSessionExpired} />;
+  }
+
+  // P6-UI-009: API Keys.
+  if (navKey === "api-keys") {
+    return <ApiKeysSurface csrfToken={csrfToken} onSessionExpired={onSessionExpired} />;
   }
 
   const item = navItemByKey(navKey);

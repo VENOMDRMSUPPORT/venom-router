@@ -431,3 +431,60 @@ export async function pollOAuthStatus(transactionId: string): Promise<OAuthStatu
   });
   return resp.data;
 }
+
+// --- Venom API keys (P5-CAPI-001, 09 §3.11 / enables P6-UI-009) ---
+
+/** One key as the LIST reports it. There is deliberately no `raw_key` here:
+ * the server stores only a hash, and the raw value exists exactly once, in
+ * the create response (09 §3.11). Timestamps are epoch seconds; a null
+ * last_used_at means "never used" and a null revoked_at means "still
+ * active" — neither is ever coerced to a number or a date. */
+export interface ApiKeySummary {
+  id: string;
+  label: string;
+  rpm_limit: number | null;
+  key_prefix: string;
+  created_at: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
+}
+
+/** POST /keys' 201 payload. `raw_key` (`vk_live_*`) is returned ONCE and is
+ * never persisted anywhere by this client — not in module state, not in
+ * localStorage/sessionStorage, not in a URL. */
+export interface ApiKeyCreated {
+  id: string;
+  label: string;
+  rpm_limit: number | null;
+  raw_key: string;
+}
+
+export interface CreateApiKeyBody {
+  label: string;
+  rpm_limit?: number;
+}
+
+/** GET /keys — every key's non-secret projection. */
+export async function listApiKeys(): Promise<ApiKeySummary[]> {
+  const resp = await request<{ data: ApiKeySummary[] }>("/keys", { method: "GET" });
+  return resp.data ?? [];
+}
+
+/** POST /keys — mints a key and returns its raw value ONCE. */
+export async function createApiKey(body: CreateApiKeyBody, csrfToken: string): Promise<ApiKeyCreated> {
+  const resp = await request<{ data: ApiKeyCreated }>("/keys", {
+    method: "POST",
+    headers: { [CSRF_HEADER]: csrfToken },
+    body: JSON.stringify(body),
+  });
+  return resp.data;
+}
+
+/** DELETE /keys/{id} — revokes a key. Irreversible: the row is retained for
+ * audit but the key can never authenticate again. */
+export async function deleteApiKey(keyId: string, csrfToken: string): Promise<void> {
+  await request<{ data: { id: string; status: string } }>(`/keys/${encodeURIComponent(keyId)}`, {
+    method: "DELETE",
+    headers: { [CSRF_HEADER]: csrfToken },
+  });
+}
