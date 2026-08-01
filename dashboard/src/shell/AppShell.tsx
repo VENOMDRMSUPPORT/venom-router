@@ -25,6 +25,7 @@ import ModelsSurface from "../models/ModelsSurface";
 import OverviewSurface from "../overview/OverviewSurface";
 import QuotaSurface from "../quota/QuotaSurface";
 import RoutingSurface from "../routing/RoutingSurface";
+import SettingsSurface from "../settings/SettingsSurface";
 import {
   applyAppearanceSettings,
   DEFAULT_ACCENT,
@@ -471,6 +472,11 @@ function renderSurface(
         deepLinkRequestID={deepLinkRequestID}
       />
     );
+  }
+
+  // P6-UI-010: Settings.
+  if (navKey === "settings") {
+    return <SettingsSurface csrfToken={csrfToken} onSessionExpired={onSessionExpired} />;
   }
 
   // P6-UI-001: Overview — the default landing surface, replacing the
