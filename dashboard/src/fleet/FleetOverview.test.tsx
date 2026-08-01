@@ -197,6 +197,11 @@ describe("FleetOverview — rendering", () => {
     expect(screen.queryByText("OpenCode Zen")).toBeNull();
     expect(screen.queryByText("Agnes AI")).toBeNull();
 
+    // The inline × clear button restores the full grid without retyping.
+    fireEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+    screen.getByText("OpenCode Zen");
+    screen.getByText("Claude Code");
+
     fireEvent.change(searchbox, { target: { value: "no-such-integration" } });
     screen.getByText(/no integrations found/i);
     fireEvent.click(screen.getByRole("button", { name: /clear search/i }));

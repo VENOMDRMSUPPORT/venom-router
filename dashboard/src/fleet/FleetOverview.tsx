@@ -3,11 +3,11 @@ import {
   Button,
   EmptyState,
   ErrorState,
-  SearchField,
   SegmentedControl,
   Spinner,
   StatCard,
 } from "@venom/design-system/primitives";
+import { Icon } from "@venom/design-system/icons";
 import {
   isSessionExpired,
   listAccounts,
@@ -185,21 +185,36 @@ export default function FleetOverview(props: FleetOverviewProps) {
         <StatCard label="Models" value="—" tone="unknown" icon="box" />
       </div>
 
-      <div className="flex flex-col gap-3 rounded-lg border border-border-default bg-surface-secondary p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-        <div className="w-full sm:max-w-xs">
-          <SearchField
-            label="Search integrations"
+      <div className="flex flex-col gap-3 rounded-lg border border-border-default bg-surface-secondary p-3 shadow-sm sm:flex-row sm:items-center sm:gap-4">
+        <div className="vn-search relative block flex-1 sm:max-w-sm">
+          <Icon name="search" size={14} />
+          <input
+            type="search"
+            className="vn-input"
+            aria-label="Search integrations"
             placeholder="Search integrations…"
             value={search}
             onChange={(e: ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
           />
+          {search ? (
+            <button
+              type="button"
+              aria-label="Clear"
+              onClick={() => setSearch("")}
+              className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center justify-center rounded p-0.5 text-text-muted transition-colors hover:text-text-primary"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          ) : null}
         </div>
-        <SegmentedControl
-          label="Filter integrations by authentication type"
-          options={CATEGORY_OPTIONS}
-          value={category}
-          onChange={(value) => setCategory(value as AuthCategory)}
-        />
+        <div className="flex shrink-0 items-center">
+          <SegmentedControl
+            label="Filter integrations by authentication type"
+            options={CATEGORY_OPTIONS}
+            value={category}
+            onChange={(value) => setCategory(value as AuthCategory)}
+          />
+        </div>
       </div>
 
       {providers.length === 0 ? (
