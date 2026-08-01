@@ -20,9 +20,12 @@ package application_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,8 +51,37 @@ const realOpenCodeZenHTTPTimeout = 15 * time.Second
 // call, and only ever from inside TestRealAccount_OpenCodeZen_E2E, which
 // itself only runs when VENOM_E2E_OPENCODE_ZEN_KEY is set.
 func realOpenCodeZenChatProbe(ctx context.Context, baseURL, key string) (int, error) {
-	body := bytes.NewReader([]byte(`{"max_tokens":1}`))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/v1/chat/completions", body)
+	// Mirrors the production seam: resolve a real model id from GET
+	// /v1/models FIRST (opencode-zen validates the model before the key, so a
+	// model-less body is rejected 401 ModelError even with a valid key), then
+	// POST a single short user message with that model and max_tokens: 1. A
+	// failed/empty models read reports unavailable (non-nil error), never
+	// invalid; a 401/403 that is a model/request-shape problem does too.
+	modelID, err := firstRealOpenCodeZenModelID(ctx, baseURL, key)
+	if err != nil {
+		return 0, err
+	}
+
+	reqBody, err := json.Marshal(struct {
+		Model    string `json:"model"`
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+		MaxTokens int `json:"max_tokens"`
+	}{
+		Model: modelID,
+		Messages: []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}{{Role: "user", Content: "ping"}},
+		MaxTokens: 1,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("real opencode-zen chat probe marshal: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/v1/chat/completions", bytes.NewReader(reqBody))
 	if err != nil {
 		return 0, fmt.Errorf("real opencode-zen chat probe request: %w", err)
 	}
@@ -62,8 +94,41 @@ func realOpenCodeZenChatProbe(ctx context.Context, baseURL, key string) (int, er
 		return 0, fmt.Errorf("real opencode-zen chat probe: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		probeBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		hay := strings.ToLower(string(probeBody))
+		for _, marker := range []string{"modelerror", "not supported", "unsupported", "invalid_request", "invalid request"} {
+			if strings.Contains(hay, marker) {
+				return 0, errors.New("real opencode-zen chat probe: model/request-shape rejection (not an auth failure)")
+			}
+		}
+		return resp.StatusCode, nil
+	}
+
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return resp.StatusCode, nil
+}
+
+// firstRealOpenCodeZenModelID resolves the first advertised model id from the
+// real GET /v1/models, mirroring the production seam's resolveOpenCodeZenModelID.
+func firstRealOpenCodeZenModelID(ctx context.Context, baseURL, key string) (string, error) {
+	body, err := realOpenCodeZenModelsProbe(ctx, baseURL, key)
+	if err != nil {
+		return "", fmt.Errorf("real opencode-zen chat probe resolve model: %w", err)
+	}
+	var list struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil {
+		return "", fmt.Errorf("real opencode-zen chat probe resolve model: parse models: %w", err)
+	}
+	if len(list.Data) == 0 || list.Data[0].ID == "" {
+		return "", errors.New("real opencode-zen chat probe resolve model: catalog returned no usable model id")
+	}
+	return list.Data[0].ID, nil
 }
 
 func realOpenCodeZenModelsProbe(ctx context.Context, baseURL, key string) ([]byte, error) {
