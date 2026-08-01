@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,9 +36,30 @@ func fixedSettingsClock() time.Time {
 	return time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
 }
 
+// validSettingsBody returns a fully-valid five-field PUT /settings body
+// with the given overrides applied — the base for every PUT test, so each
+// rejection test varies exactly one field.
+func validSettingsBody(overrides map[string]any) map[string]any {
+	body := map[string]any{
+		"theme":         "venom-dark",
+		"density":       "comfortable",
+		"accent":        "mono",
+		"radius_px":     6,
+		"spacing_scale": 1.0,
+	}
+	for k, v := range overrides {
+		if v == nil {
+			delete(body, k)
+			continue
+		}
+		body[k] = v
+	}
+	return body
+}
+
 // settingsRequest builds a loopback, allowed-Host request to /settings with
 // the given method and optional JSON body.
-func settingsRequest(method string, body map[string]string) *http.Request {
+func settingsRequest(method string, body map[string]any) *http.Request {
 	var req *http.Request
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -65,6 +87,39 @@ func decodeSettingsData(t *testing.T, body []byte) (theme, density string) {
 	return got.Data.Theme, got.Data.Density
 }
 
+// decodeCustomizerData decodes the success envelope's customizer trio
+// (data.accent/radius_px/spacing_scale).
+func decodeCustomizerData(t *testing.T, body []byte) (accent string, radiusPx int, spacingScale float64) {
+	t.Helper()
+	var got struct {
+		Data struct {
+			Accent       string  `json:"accent"`
+			RadiusPx     int     `json:"radius_px"`
+			SpacingScale float64 `json:"spacing_scale"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode settings response: %v; body = %q", err, body)
+	}
+	return got.Data.Accent, got.Data.RadiusPx, got.Data.SpacingScale
+}
+
+// decodeErrorMessage decodes the failure envelope's error.message — the
+// validation tests assert the message NAMES the offending field
+// (fail-closed 400 per field, spec Batch B).
+func decodeErrorMessage(t *testing.T, body []byte) string {
+	t.Helper()
+	var got struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode error response: %v; body = %q", err, body)
+	}
+	return got.Error.Message
+}
+
 // --- GET ---
 
 // TestSettings_Get_FreshDB_ReturnsDefaults proves GET /settings on a fresh
@@ -85,6 +140,16 @@ func TestSettings_Get_FreshDB_ReturnsDefaults(t *testing.T) {
 	}
 	if density != "comfortable" {
 		t.Fatalf("density = %q, want comfortable", density)
+	}
+	accent, radiusPx, spacingScale := decodeCustomizerData(t, rec.Body.Bytes())
+	if accent != "mono" {
+		t.Fatalf("accent = %q, want mono", accent)
+	}
+	if radiusPx != 6 {
+		t.Fatalf("radius_px = %d, want 6", radiusPx)
+	}
+	if spacingScale != 1.0 {
+		t.Fatalf("spacing_scale = %v, want 1.0", spacingScale)
 	}
 }
 
@@ -111,23 +176,31 @@ func TestSettings_Get_EmitsNoAudit(t *testing.T) {
 // --- PUT success ---
 
 // TestSettings_Put_Valid_EchoesAndPersists proves PUT /settings with valid
-// values echoes them back, a subsequent GET returns them, and exactly one
-// audit_events row (settings_update / success) is recorded.
+// values (all five fields) echoes them back, a subsequent GET returns
+// them, and exactly one audit_events row (settings_update / success) is
+// recorded.
 func TestSettings_Put_Valid_EchoesAndPersists(t *testing.T) {
 	clock := fixedSettingsClock()
 	h, db := newTestSettingsHandler(t, func() time.Time { return clock })
 
 	rec := httptest.NewRecorder()
-	h.ServeSettings(rec, settingsRequest(http.MethodPut, map[string]string{
-		"theme":   "venom-light",
-		"density": "compact",
-	}))
+	h.ServeSettings(rec, settingsRequest(http.MethodPut, validSettingsBody(map[string]any{
+		"theme":         "venom-light",
+		"density":       "compact",
+		"accent":        "emerald",
+		"radius_px":     12,
+		"spacing_scale": 0.85,
+	})))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT status = %d, want 200; body = %q", rec.Code, rec.Body.String())
 	}
 	theme, density := decodeSettingsData(t, rec.Body.Bytes())
 	if theme != "venom-light" || density != "compact" {
 		t.Fatalf("PUT echoed = %s/%s, want venom-light/compact", theme, density)
+	}
+	accent, radiusPx, spacingScale := decodeCustomizerData(t, rec.Body.Bytes())
+	if accent != "emerald" || radiusPx != 12 || spacingScale != 0.85 {
+		t.Fatalf("PUT echoed customizer = %s/%d/%v, want emerald/12/0.85", accent, radiusPx, spacingScale)
 	}
 
 	// A subsequent GET returns the persisted values.
@@ -139,6 +212,10 @@ func TestSettings_Put_Valid_EchoesAndPersists(t *testing.T) {
 	theme, density = decodeSettingsData(t, getRec.Body.Bytes())
 	if theme != "venom-light" || density != "compact" {
 		t.Fatalf("GET after PUT = %s/%s, want venom-light/compact (persisted)", theme, density)
+	}
+	accent, radiusPx, spacingScale = decodeCustomizerData(t, getRec.Body.Bytes())
+	if accent != "emerald" || radiusPx != 12 || spacingScale != 0.85 {
+		t.Fatalf("GET after PUT customizer = %s/%d/%v, want emerald/12/0.85 (persisted)", accent, radiusPx, spacingScale)
 	}
 
 	// Exactly one audit_events row, settings_update / success.
@@ -160,15 +237,14 @@ func TestSettings_Put_InvalidTheme(t *testing.T) {
 	h, db := newTestSettingsHandler(t, nil)
 
 	// Seed a known value first so we can prove the DB is unchanged.
-	if err := h.settings.Put(context.Background(), "venom-dark", "comfortable", time.Now()); err != nil {
+	if err := h.settings.Put(context.Background(), "venom-dark", "comfortable", "mono", 6, 1.0, time.Now()); err != nil {
 		t.Fatalf("seed settings: %v", err)
 	}
 
 	rec := httptest.NewRecorder()
-	h.ServeSettings(rec, settingsRequest(http.MethodPut, map[string]string{
-		"theme":   "dark", // NOT venom-dark — invalid
-		"density": "comfortable",
-	}))
+	h.ServeSettings(rec, settingsRequest(http.MethodPut, validSettingsBody(map[string]any{
+		"theme": "dark", // NOT venom-dark — invalid
+	})))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid-theme PUT status = %d, want 400; body = %q", rec.Code, rec.Body.String())
 	}
@@ -201,15 +277,76 @@ func TestSettings_Put_InvalidDensity(t *testing.T) {
 	h, _ := newTestSettingsHandler(t, nil)
 
 	rec := httptest.NewRecorder()
-	h.ServeSettings(rec, settingsRequest(http.MethodPut, map[string]string{
-		"theme":   "venom-dark",
+	h.ServeSettings(rec, settingsRequest(http.MethodPut, validSettingsBody(map[string]any{
 		"density": "cozy", // invalid
-	}))
+	})))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid-density PUT status = %d, want 400; body = %q", rec.Code, rec.Body.String())
 	}
 	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "validation_error" {
 		t.Fatalf("error code = %q, want validation_error", code)
+	}
+}
+
+// TestSettings_Put_CustomizerRejections proves every invalid customizer
+// value is rejected fail-closed with 400 validation_error whose message
+// NAMES the offending field, leaves the DB unchanged, and records exactly
+// one failure audit row — one rejection case per field (accent enum,
+// radius_px integer/range/missing, spacing_scale range/missing).
+func TestSettings_Put_CustomizerRejections(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		overrides map[string]any
+		wantField string
+	}{
+		{"unknown accent", map[string]any{"accent": "teal"}, "accent"},
+		{"missing accent", map[string]any{"accent": nil}, "accent"},
+		{"radius_px above range", map[string]any{"radius_px": 17}, "radius_px"},
+		{"radius_px below range", map[string]any{"radius_px": -1}, "radius_px"},
+		{"radius_px non-integer", map[string]any{"radius_px": 3.5}, "radius_px"},
+		{"radius_px missing", map[string]any{"radius_px": nil}, "radius_px"},
+		{"spacing_scale above range", map[string]any{"spacing_scale": 1.26}, "spacing_scale"},
+		{"spacing_scale below range", map[string]any{"spacing_scale": 0.5}, "spacing_scale"},
+		{"spacing_scale missing", map[string]any{"spacing_scale": nil}, "spacing_scale"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, db := newTestSettingsHandler(t, nil)
+
+			// Seed a known-good row so "unchanged" is provable.
+			if err := h.settings.Put(context.Background(), "venom-dark", "comfortable", "blue", 8, 1.1, time.Now()); err != nil {
+				t.Fatalf("seed settings: %v", err)
+			}
+
+			rec := httptest.NewRecorder()
+			h.ServeSettings(rec, settingsRequest(http.MethodPut, validSettingsBody(tc.overrides)))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %q", rec.Code, rec.Body.String())
+			}
+			if code := decodeErrorCode(t, rec.Body.Bytes()); code != "validation_error" {
+				t.Fatalf("error code = %q, want validation_error", code)
+			}
+			if msg := decodeErrorMessage(t, rec.Body.Bytes()); !strings.Contains(msg, tc.wantField) {
+				t.Fatalf("error message = %q, want it to name the offending field %q", msg, tc.wantField)
+			}
+
+			// DB unchanged.
+			row, err := h.settings.Get(context.Background())
+			if err != nil {
+				t.Fatalf("Get after invalid PUT: %v", err)
+			}
+			if row.Accent != "blue" || row.RadiusPx != 8 || row.SpacingScale != 1.1 {
+				t.Fatalf("DB after invalid PUT = %s/%d/%v, want blue/8/1.1 (unchanged)", row.Accent, row.RadiusPx, row.SpacingScale)
+			}
+
+			// Exactly one failure audit row.
+			var n int
+			if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM audit_events WHERE action = ? AND result = ?`, AuditActionSettingsUpdate, AuditResultFailure).Scan(&n); err != nil {
+				t.Fatalf("count audit: %v", err)
+			}
+			if n != 1 {
+				t.Fatalf("settings_update failure audit rows = %d, want 1", n)
+			}
+		})
 	}
 }
 
@@ -345,7 +482,7 @@ func TestSettings_PutEnrichmentPersistsAndPreservesThemeDensity_HTTP(t *testing.
 	h, _ := newTestSettingsHandler(t, nil)
 
 	putRec := httptest.NewRecorder()
-	h.ServeSettings(putRec, settingsRequest(http.MethodPut, map[string]string{"theme": "venom-hc", "density": "compact"}))
+	h.ServeSettings(putRec, settingsRequest(http.MethodPut, validSettingsBody(map[string]any{"theme": "venom-hc", "density": "compact"})))
 	if putRec.Code != http.StatusOK {
 		t.Fatalf("PUT /settings status = %d, want 200", putRec.Code)
 	}
@@ -505,7 +642,9 @@ func TestControlMux_SettingsPut_ValidSessionAndCSRF_Succeeds(t *testing.T) {
 	mux := ControlMux(testAllowedHost, fakeSPA(), db, testKeyring(t))
 	cookie, csrfToken := setupOwnerWithCSRF(t, mux)
 
-	body, _ := json.Marshal(map[string]string{"theme": "venom-hc", "density": "compact"})
+	body, _ := json.Marshal(validSettingsBody(map[string]any{
+		"theme": "venom-hc", "density": "compact", "accent": "rose", "radius_px": 0, "spacing_scale": 1.25,
+	}))
 	req := newAuthRequest(t, http.MethodPut, "/api/control/v1/settings", bytes.NewBuffer(body))
 	req.AddCookie(cookie)
 	req.Header.Set("X-CSRF-Token", csrfToken)
@@ -519,6 +658,10 @@ func TestControlMux_SettingsPut_ValidSessionAndCSRF_Succeeds(t *testing.T) {
 	if theme != "venom-hc" || density != "compact" {
 		t.Fatalf("PUT /settings echoed = %s/%s, want venom-hc/compact", theme, density)
 	}
+	accent, radiusPx, spacingScale := decodeCustomizerData(t, rec.Body.Bytes())
+	if accent != "rose" || radiusPx != 0 || spacingScale != 1.25 {
+		t.Fatalf("PUT /settings echoed customizer = %s/%d/%v, want rose/0/1.25", accent, radiusPx, spacingScale)
+	}
 
 	// Persisted at the DB layer.
 	repo := storage.NewSettingsRepo(db)
@@ -528,5 +671,8 @@ func TestControlMux_SettingsPut_ValidSessionAndCSRF_Succeeds(t *testing.T) {
 	}
 	if row.Theme != "venom-hc" || row.Density != "compact" {
 		t.Fatalf("DB after PUT = %s/%s, want venom-hc/compact", row.Theme, row.Density)
+	}
+	if row.Accent != "rose" || row.RadiusPx != 0 || row.SpacingScale != 1.25 {
+		t.Fatalf("DB after PUT customizer = %s/%d/%v, want rose/0/1.25", row.Accent, row.RadiusPx, row.SpacingScale)
 	}
 }

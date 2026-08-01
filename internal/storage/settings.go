@@ -20,6 +20,9 @@ import (
 type SettingsRow struct {
 	Theme             string
 	Density           string
+	Accent            string
+	RadiusPx          int
+	SpacingScale      float64
 	EnrichmentEnabled bool
 	UpdatedAt         time.Time // zero value when no row exists yet (Get returned defaults)
 }
@@ -27,9 +30,16 @@ type SettingsRow struct {
 // DefaultTheme and DefaultDensity are the frozen @venom/design-system
 // defaults Get returns when no owner_settings row exists yet — the exact
 // values a fresh DB resolves to, with no seed row to reason about.
+// DefaultAccent/DefaultRadiusPx/DefaultSpacingScale extend the same frozen
+// vocabulary for the customizer dimension (Design_System/src/customizer.ts
+// -> DEFAULT_ACCENT/DEFAULT_RADIUS_PX/DEFAULT_SPACING_SCALE), matching the
+// 00013 migration's own column defaults verbatim.
 const (
-	DefaultTheme   = "venom-dark"
-	DefaultDensity = "comfortable"
+	DefaultTheme        = "venom-dark"
+	DefaultDensity      = "comfortable"
+	DefaultAccent       = "mono"
+	DefaultRadiusPx     = 6
+	DefaultSpacingScale = 1.0
 )
 
 // SettingsRepo persists the single owner_settings row (M5,
@@ -55,18 +65,27 @@ func NewSettingsRepo(db *DB) *SettingsRepo {
 // the explicit validation ahead of the write.
 func (r *SettingsRepo) Get(ctx context.Context) (SettingsRow, error) {
 	var (
-		out               SettingsRow
-		theme, density    string
-		enrichmentEnabled int
-		updatedAt         int64
+		out                    SettingsRow
+		theme, density, accent string
+		radiusPx               int
+		spacingScale           float64
+		enrichmentEnabled      int
+		updatedAt              int64
 	)
 	err := r.db.Conn().QueryRowContext(ctx,
-		`SELECT theme, density, enrichment_enabled, updated_at FROM owner_settings WHERE id = 1`,
-	).Scan(&theme, &density, &enrichmentEnabled, &updatedAt)
+		`SELECT theme, density, accent, radius_px, spacing_scale, enrichment_enabled, updated_at FROM owner_settings WHERE id = 1`,
+	).Scan(&theme, &density, &accent, &radiusPx, &spacingScale, &enrichmentEnabled, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		// enrichment_enabled defaults to false here too — matching the 00007
-		// schema's own column default, not a Go-layer-only assumption.
-		return SettingsRow{Theme: DefaultTheme, Density: DefaultDensity}, nil
+		// schema's own column default, not a Go-layer-only assumption; the
+		// customizer trio mirrors the 00013 column defaults the same way.
+		return SettingsRow{
+			Theme:        DefaultTheme,
+			Density:      DefaultDensity,
+			Accent:       DefaultAccent,
+			RadiusPx:     DefaultRadiusPx,
+			SpacingScale: DefaultSpacingScale,
+		}, nil
 	}
 	if err != nil {
 		return SettingsRow{}, fmt.Errorf("storage: get owner_settings: %w", err)
@@ -74,23 +93,29 @@ func (r *SettingsRepo) Get(ctx context.Context) (SettingsRow, error) {
 
 	out.Theme = theme
 	out.Density = density
+	out.Accent = accent
+	out.RadiusPx = radiusPx
+	out.SpacingScale = spacingScale
 	out.EnrichmentEnabled = enrichmentEnabled != 0
 	out.UpdatedAt = time.Unix(updatedAt, 0).UTC()
 	return out, nil
 }
 
 // Put UPSERTs the single owner_settings row (id = 1), stamping updated_at
-// = now. It does NOT validate the enum — that is the httpapi handler's
-// job; the owner_settings CHECK constraint is the defense-in-depth
-// backstop that bites if an invalid value ever reaches this layer. now is
-// the caller-supplied clock (tests inject a fixed value); it is stored as
-// an INTEGER epoch (.Unix()), matching the M2–M4 timestamp convention.
-func (r *SettingsRepo) Put(ctx context.Context, theme, density string, now time.Time) error {
+// = now. It does NOT validate the enums/ranges — that is the httpapi
+// handler's job; the owner_settings CHECK constraints are the
+// defense-in-depth backstop that bites if an invalid value ever reaches
+// this layer. now is the caller-supplied clock (tests inject a fixed
+// value); it is stored as an INTEGER epoch (.Unix()), matching the M2–M4
+// timestamp convention.
+func (r *SettingsRepo) Put(ctx context.Context, theme, density, accent string, radiusPx int, spacingScale float64, now time.Time) error {
 	_, err := r.db.Conn().ExecContext(ctx,
-		`INSERT INTO owner_settings (id, theme, density, updated_at)
-		 VALUES (1, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET theme = excluded.theme, density = excluded.density, updated_at = excluded.updated_at`,
-		theme, density, now.Unix(),
+		`INSERT INTO owner_settings (id, theme, density, accent, radius_px, spacing_scale, updated_at)
+		 VALUES (1, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET theme = excluded.theme, density = excluded.density,
+		     accent = excluded.accent, radius_px = excluded.radius_px, spacing_scale = excluded.spacing_scale,
+		     updated_at = excluded.updated_at`,
+		theme, density, accent, radiusPx, spacingScale, now.Unix(),
 	)
 	if err != nil {
 		return fmt.Errorf("storage: put owner_settings: %w", err)

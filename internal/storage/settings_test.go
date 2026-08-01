@@ -23,6 +23,15 @@ func TestSettings_Get_OnFreshDB_ReturnsDefaults(t *testing.T) {
 	if row.Density != DefaultDensity {
 		t.Fatalf("Density = %q, want default %q", row.Density, DefaultDensity)
 	}
+	if row.Accent != DefaultAccent {
+		t.Fatalf("Accent = %q, want default %q", row.Accent, DefaultAccent)
+	}
+	if row.RadiusPx != DefaultRadiusPx {
+		t.Fatalf("RadiusPx = %d, want default %d", row.RadiusPx, DefaultRadiusPx)
+	}
+	if row.SpacingScale != DefaultSpacingScale {
+		t.Fatalf("SpacingScale = %v, want default %v", row.SpacingScale, DefaultSpacingScale)
+	}
 	if !row.UpdatedAt.IsZero() {
 		t.Fatalf("UpdatedAt = %v, want zero (no row exists yet)", row.UpdatedAt)
 	}
@@ -38,14 +47,14 @@ func TestSettings_Get_OnFreshDB_ReturnsDefaults(t *testing.T) {
 }
 
 // TestSettings_PutThenGet_RoundTrips proves Put then Get round-trips the
-// theme/density/updated_at values.
+// theme/density/accent/radius/spacing/updated_at values.
 func TestSettings_PutThenGet_RoundTrips(t *testing.T) {
 	db := migratedOwnerSettingsDB(t)
 	repo := NewSettingsRepo(db)
 	ctx := context.Background()
 	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
 
-	if err := repo.Put(ctx, "venom-light", "compact", now); err != nil {
+	if err := repo.Put(ctx, "venom-light", "compact", "violet", 12, 0.85, now); err != nil {
 		t.Fatalf("Put: error = %v", err)
 	}
 
@@ -58,6 +67,15 @@ func TestSettings_PutThenGet_RoundTrips(t *testing.T) {
 	}
 	if row.Density != "compact" {
 		t.Fatalf("Density = %q, want compact", row.Density)
+	}
+	if row.Accent != "violet" {
+		t.Fatalf("Accent = %q, want violet", row.Accent)
+	}
+	if row.RadiusPx != 12 {
+		t.Fatalf("RadiusPx = %d, want 12", row.RadiusPx)
+	}
+	if row.SpacingScale != 0.85 {
+		t.Fatalf("SpacingScale = %v, want 0.85", row.SpacingScale)
 	}
 	if !row.UpdatedAt.Equal(now) {
 		t.Fatalf("UpdatedAt = %v, want %v", row.UpdatedAt, now)
@@ -74,10 +92,10 @@ func TestSettings_SecondPut_UpdatesSameSingleRow(t *testing.T) {
 	t0 := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
 	t1 := t0.Add(time.Hour)
 
-	if err := repo.Put(ctx, "venom-dark", "comfortable", t0); err != nil {
+	if err := repo.Put(ctx, "venom-dark", "comfortable", "mono", 6, 1.0, t0); err != nil {
 		t.Fatalf("first Put: %v", err)
 	}
-	if err := repo.Put(ctx, "venom-hc", "compact", t1); err != nil {
+	if err := repo.Put(ctx, "venom-hc", "compact", "rose", 0, 1.25, t1); err != nil {
 		t.Fatalf("second Put: %v", err)
 	}
 
@@ -97,6 +115,9 @@ func TestSettings_SecondPut_UpdatesSameSingleRow(t *testing.T) {
 	}
 	if row.Theme != "venom-hc" || row.Density != "compact" || !row.UpdatedAt.Equal(t1) {
 		t.Fatalf("row after second Put = %+v, want venom-hc/compact/%v", row, t1)
+	}
+	if row.Accent != "rose" || row.RadiusPx != 0 || row.SpacingScale != 1.25 {
+		t.Fatalf("customizer fields after second Put = %s/%d/%v, want rose/0/1.25", row.Accent, row.RadiusPx, row.SpacingScale)
 	}
 }
 
@@ -128,7 +149,7 @@ func TestSettings_PutEnrichmentPersistsAndPreservesThemeDensity(t *testing.T) {
 	t1 := t0.Add(time.Hour)
 	t2 := t1.Add(time.Hour)
 
-	if err := repo.Put(ctx, "venom-light", "compact", t0); err != nil {
+	if err := repo.Put(ctx, "venom-light", "compact", "amber", 10, 1.1, t0); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if err := repo.PutEnrichment(ctx, true, t1); err != nil {
@@ -145,9 +166,12 @@ func TestSettings_PutEnrichmentPersistsAndPreservesThemeDensity(t *testing.T) {
 	if row.Theme != "venom-light" || row.Density != "compact" {
 		t.Fatalf("theme/density after PutEnrichment = %s/%s, want venom-light/compact (unchanged)", row.Theme, row.Density)
 	}
+	if row.Accent != "amber" || row.RadiusPx != 10 || row.SpacingScale != 1.1 {
+		t.Fatalf("customizer fields after PutEnrichment = %s/%d/%v, want amber/10/1.1 (unchanged)", row.Accent, row.RadiusPx, row.SpacingScale)
+	}
 
 	// A later theme/density Put must NOT reset enrichment back to off.
-	if err := repo.Put(ctx, "venom-hc", "comfortable", t2); err != nil {
+	if err := repo.Put(ctx, "venom-hc", "comfortable", "mono", 6, 1.0, t2); err != nil {
 		t.Fatalf("second Put: %v", err)
 	}
 	row, err = repo.Get(ctx)
@@ -182,6 +206,10 @@ func TestSettings_PutEnrichmentOnFreshDB_SeedsFrozenDefaults(t *testing.T) {
 	if row.Theme != DefaultTheme || row.Density != DefaultDensity {
 		t.Fatalf("theme/density after fresh PutEnrichment = %s/%s, want frozen defaults %s/%s", row.Theme, row.Density, DefaultTheme, DefaultDensity)
 	}
+	if row.Accent != DefaultAccent || row.RadiusPx != DefaultRadiusPx || row.SpacingScale != DefaultSpacingScale {
+		t.Fatalf("customizer fields after fresh PutEnrichment = %s/%d/%v, want frozen defaults %s/%d/%v",
+			row.Accent, row.RadiusPx, row.SpacingScale, DefaultAccent, DefaultRadiusPx, DefaultSpacingScale)
+	}
 	if !row.EnrichmentEnabled {
 		t.Fatalf("EnrichmentEnabled = false, want true")
 	}
@@ -195,10 +223,19 @@ func TestSettings_Put_InvalidValue_RejectedByDBCheck(t *testing.T) {
 	db := migratedOwnerSettingsDB(t)
 	repo := NewSettingsRepo(db)
 
-	if err := repo.Put(context.Background(), "not-a-real-theme", "comfortable", time.Now()); err == nil {
+	if err := repo.Put(context.Background(), "not-a-real-theme", "comfortable", "mono", 6, 1.0, time.Now()); err == nil {
 		t.Fatalf("Put with invalid theme succeeded, want CHECK rejection (DB backstop)")
 	}
-	if err := repo.Put(context.Background(), "venom-dark", "not-a-real-density", time.Now()); err == nil {
+	if err := repo.Put(context.Background(), "venom-dark", "not-a-real-density", "mono", 6, 1.0, time.Now()); err == nil {
 		t.Fatalf("Put with invalid density succeeded, want CHECK rejection (DB backstop)")
+	}
+	if err := repo.Put(context.Background(), "venom-dark", "comfortable", "not-an-accent", 6, 1.0, time.Now()); err == nil {
+		t.Fatalf("Put with invalid accent succeeded, want CHECK rejection (DB backstop)")
+	}
+	if err := repo.Put(context.Background(), "venom-dark", "comfortable", "mono", 17, 1.0, time.Now()); err == nil {
+		t.Fatalf("Put with out-of-range radius_px succeeded, want CHECK rejection (DB backstop)")
+	}
+	if err := repo.Put(context.Background(), "venom-dark", "comfortable", "mono", 6, 1.5, time.Now()); err == nil {
+		t.Fatalf("Put with out-of-range spacing_scale succeeded, want CHECK rejection (DB backstop)")
 	}
 }

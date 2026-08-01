@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"time"
 
@@ -28,6 +29,32 @@ var (
 		"comfortable": true,
 		"compact":     true,
 	}
+	// allowedAccents is the EXACT frozen @venom/design-system customizer
+	// vocabulary (Design_System/src/customizer.ts -> ACCENTS, default
+	// "mono"). Matches the owner_settings accent CHECK constraint verbatim
+	// (00013_owner_settings_customizer.sql); the DB CHECK is the
+	// defense-in-depth backstop behind this httpapi-side validation.
+	allowedAccents = map[string]bool{
+		"mono":    true,
+		"blue":    true,
+		"violet":  true,
+		"amber":   true,
+		"emerald": true,
+		"rose":    true,
+	}
+)
+
+// radiusPxMin/Max and spacingScaleMin/Max are the frozen customizer ranges
+// (Design_System/src/customizer.ts -> RADIUS_MIN_PX/RADIUS_MAX_PX and
+// SPACING_SCALE_MIN/SPACING_SCALE_MAX), mirrored by the 00013 CHECK
+// constraints. Server-side validation is step-free: any float inside the
+// spacing range is accepted (the UI's 0.05 step is a client affordance,
+// not a contract).
+const (
+	radiusPxMin     = 0
+	radiusPxMax     = 16
+	spacingScaleMin = 0.75
+	spacingScaleMax = 1.25
 )
 
 // SettingsHandler serves the single owner-settings surface (P2b-CAPI-005,
@@ -54,22 +81,39 @@ func NewSettingsHandler(settings *storage.SettingsRepo, audit *auditEmitter, now
 }
 
 // settingsJSON is the GET/PUT success payload (09 §1 envelope under "data"):
-// {"data":{"theme":...,"density":...,"enrichment_enabled":...}}. No secret
-// ever appears here.
+// {"data":{"theme":...,"density":...,"accent":...,"radius_px":...,
+// "spacing_scale":...,"enrichment_enabled":...}}. No secret ever appears
+// here.
 type settingsJSON struct {
-	Theme             string `json:"theme"`
-	Density           string `json:"density"`
-	EnrichmentEnabled bool   `json:"enrichment_enabled"`
+	Theme             string  `json:"theme"`
+	Density           string  `json:"density"`
+	Accent            string  `json:"accent"`
+	RadiusPx          int     `json:"radius_px"`
+	SpacingScale      float64 `json:"spacing_scale"`
+	EnrichmentEnabled bool    `json:"enrichment_enabled"`
 }
 
 func toSettingsJSON(row storage.SettingsRow) settingsJSON {
-	return settingsJSON{Theme: row.Theme, Density: row.Density, EnrichmentEnabled: row.EnrichmentEnabled}
+	return settingsJSON{
+		Theme:             row.Theme,
+		Density:           row.Density,
+		Accent:            row.Accent,
+		RadiusPx:          row.RadiusPx,
+		SpacingScale:      row.SpacingScale,
+		EnrichmentEnabled: row.EnrichmentEnabled,
+	}
 }
 
-// settingsUpdateRequest is PUT /settings' body.
+// settingsUpdateRequest is PUT /settings' body. RadiusPx/SpacingScale are
+// pointers so a missing field and a JSON null are distinguishable from an
+// explicit value — both fail validation, never silently coerced to a zero
+// value (the enrichmentUpdateRequest precedent).
 type settingsUpdateRequest struct {
-	Theme   string `json:"theme"`
-	Density string `json:"density"`
+	Theme        string   `json:"theme"`
+	Density      string   `json:"density"`
+	Accent       string   `json:"accent"`
+	RadiusPx     *float64 `json:"radius_px"`
+	SpacingScale *float64 `json:"spacing_scale"`
 }
 
 // enrichmentUpdateRequest is PUT /settings/enrichment's body (P3a-CAPI-003).
@@ -135,8 +179,29 @@ func (h *SettingsHandler) servePut(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusBadRequest, "validation_error", "density must be one of comfortable, compact", false)
 		return
 	}
+	if !allowedAccents[req.Accent] {
+		h.audit.Emit(ctx, AuditActionSettingsUpdate, AuditResultFailure, AuditResourceSettings, "", "validation_error")
+		writeAuthError(w, http.StatusBadRequest, "validation_error", "accent must be one of mono, blue, violet, amber, emerald, rose", false)
+		return
+	}
+	// radius_px must be present, an integer, and within [0, 16] —
+	// fail-closed: a missing field, a JSON null, a fractional value, and an
+	// out-of-range value are all rejected naming the field.
+	if req.RadiusPx == nil || *req.RadiusPx != math.Trunc(*req.RadiusPx) ||
+		*req.RadiusPx < radiusPxMin || *req.RadiusPx > radiusPxMax {
+		h.audit.Emit(ctx, AuditActionSettingsUpdate, AuditResultFailure, AuditResourceSettings, "", "validation_error")
+		writeAuthError(w, http.StatusBadRequest, "validation_error", "radius_px must be an integer between 0 and 16", false)
+		return
+	}
+	// spacing_scale must be present and within [0.75, 1.25] (step-free
+	// server side — the UI's 0.05 step is a client affordance).
+	if req.SpacingScale == nil || *req.SpacingScale < spacingScaleMin || *req.SpacingScale > spacingScaleMax {
+		h.audit.Emit(ctx, AuditActionSettingsUpdate, AuditResultFailure, AuditResourceSettings, "", "validation_error")
+		writeAuthError(w, http.StatusBadRequest, "validation_error", "spacing_scale must be a number between 0.75 and 1.25", false)
+		return
+	}
 
-	if err := h.settings.Put(ctx, req.Theme, req.Density, h.now()); err != nil {
+	if err := h.settings.Put(ctx, req.Theme, req.Density, req.Accent, int(*req.RadiusPx), *req.SpacingScale, h.now()); err != nil {
 		// A failed write returns 500 with NO audit-success row — the
 		// audit trail records the write's outcome, and a failed write has
 		// no success to record. (A validation failure above already
