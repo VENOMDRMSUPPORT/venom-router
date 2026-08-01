@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { assertNoAxeViolations } from "../test/axe";
 import { createFetchMock, jsonResponse } from "../test/fetchMock";
-import { DENSITY_LABELS } from "../theme-runtime";
 import AppShell from "./AppShell";
 import { breadcrumbTrail, NAV, NAV_GROUPS } from "./nav";
 
@@ -321,12 +320,8 @@ describe("AppShell — settings restore + persistence", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("venom-dark");
   });
 
-  it("changing the DensityToggle applies immediately and PUTs /settings", async () => {
-    const fetchMock = baseHandlers({
-      "PUT /api/control/v1/settings": () =>
-        jsonResponse(200, { data: { theme: "venom-dark", density: "compact" } }),
-    });
-    vi.stubGlobal("fetch", fetchMock);
+  it("renders no density control in the header — density is boot-applied from settings only (owner request)", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
 
     render(
       <AppShell
@@ -338,16 +333,11 @@ describe("AppShell — settings restore + persistence", () => {
     );
     await screen.findByRole("link", { name: /overview/i });
 
-    fireEvent.click(screen.getByRole("radio", { name: DENSITY_LABELS["compact"] }));
-
-    expect(document.documentElement.getAttribute("data-density")).toBe("compact");
-
-    await waitFor(() => {
-      const putCall = fetchMock.mock.calls.find(
-        ([input, init]) => String(input) === "/api/control/v1/settings" && init?.method === "PUT",
-      );
-      expect(putCall).toBeTruthy();
-    });
+    const header = screen.getByRole("banner");
+    expect(header.querySelector(".vn-density-toggle")).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: /density/i })).toBeNull();
+    // The persisted setting still lands on the document root at boot.
+    expect(document.documentElement.getAttribute("data-density")).toBe("comfortable");
   });
 
   it("routes a session_expired PUT /settings response to onSessionExpired", async () => {
@@ -601,7 +591,7 @@ describe("AppShell — accessibility and storage guarantees", () => {
     await assertNoAxeViolations(container);
   });
 
-  it("never writes to localStorage or sessionStorage across mount, nav, theme/density changes", async () => {
+  it("never writes to localStorage or sessionStorage across mount, nav, and theme changes", async () => {
     const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
     const fetchMock = baseHandlers({
       "PUT /api/control/v1/settings": () =>
@@ -621,7 +611,6 @@ describe("AppShell — accessibility and storage guarantees", () => {
 
     fireEvent.click(screen.getByRole("link", { name: /providers/i }));
     fireEvent.click(screen.getByRole("button", { name: /switch to light mode/i }));
-    fireEvent.click(screen.getByRole("radio", { name: DENSITY_LABELS["compact"] }));
 
     await waitFor(() => {
       const putCalls = fetchMock.mock.calls.filter(

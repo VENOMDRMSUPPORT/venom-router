@@ -1,11 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import {
-  Banner,
-  DensityToggle,
-  EmptyState,
-  IconButton,
-  Spinner,
-} from "@venom/design-system/primitives";
+import { Banner, EmptyState, IconButton, Spinner } from "@venom/design-system/primitives";
 import { Icon } from "@venom/design-system/icons";
 import {
   getSettings,
@@ -164,15 +158,11 @@ export default function AppShell(props: AppShellProps) {
     void persistAppearance(next);
   }
 
-  function handleDensityChange(nextDensity: DensityName) {
-    const next = { ...appearance, density: nextDensity };
-    applyAppearance(next);
-    void persistAppearance(next);
-  }
-
-  // The customizer owns theme/accent/radius/spacing but NOT density —
-  // merge over the LATEST appearance (via ref) so a debounced slider
-  // persist that fires after a density change never clobbers it.
+  // The customizer owns theme/accent/radius/spacing but NOT density
+  // (density has no header control anymore — owner request; the persisted
+  // setting is still boot-applied from GET /settings). Merge over the
+  // LATEST appearance (via ref) so a debounced slider persist never
+  // clobbers the restored density.
   function mergeCustomizerValue(next: CustomizerValue): Appearance {
     return {
       ...appearanceRef.current,
@@ -259,7 +249,6 @@ export default function AppShell(props: AppShellProps) {
       >
         <ThemeToggle theme={appearance.theme} onChange={handleThemeChange} />
         <NotificationBell />
-        <DensityToggle value={appearance.density} onChange={handleDensityChange} />
         <OwnerMenu session={session} onSignOut={handleSignOut} />
       </ChromeHeader>
 
