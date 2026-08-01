@@ -596,6 +596,51 @@ export async function getReviewCensus(): Promise<ReviewCensus> {
   return body.data;
 }
 
+// --- Tier policy (P6-CAPI-EXTRA, enables P6-UI-003) ---
+
+/** One scored tier's Step-5 factor weights (05 §2). A 0 here is a REAL declared
+ * zero (05 §2's "—" cells for Pro evidence-confidence and Max latency), not an
+ * unknown; the not-applicable case is an unscored tier, which serves a null
+ * `weights` object instead. */
+export interface TierScoreWeights {
+  quality: number;
+  reliability: number;
+  quota_headroom: number;
+  evidence_confidence: number;
+  cost_class: number;
+  latency: number;
+}
+
+/** One tier's complete served policy (internal/httpapi/routingpolicy.go's
+ * tierPolicyJSON), read from routing.Policies() server-side.
+ *
+ * `weights` and `competitive_band` are `null` for an UNSCORED tier (Lite) —
+ * not-applicable, not zero. `attempt_budget` is the fallback depth and `funding`
+ * is the pool that fallback may draw from; together they are 05 §1's "fallback on
+ * exhaustion" row, which is why Lite's `free_only` pool makes its fallback fail
+ * closed rather than reach for a paid offering.
+ *
+ * Every field is OPTIONAL in this type on purpose: a field the API omits must
+ * render as unknown, never as a client-side default. */
+export interface TierPolicy {
+  tier: string;
+  funding?: string;
+  context_ceiling_tokens?: number;
+  thinking_ceiling?: string;
+  attempt_budget?: number;
+  scored?: boolean;
+  weights?: TierScoreWeights | null;
+  competitive_band?: number | null;
+  latency_tie_break_only?: boolean;
+}
+
+/** GET /routing/policy — the three tier policies. Read-only: 05 §8.4 defers
+ * owner weight tuning past V1, so there is no writer here or server-side. */
+export async function getRoutingPolicy(): Promise<TierPolicy[]> {
+  const body = await request<{ data: { tiers: TierPolicy[] } }>("/routing/policy", { method: "GET" });
+  return body.data?.tiers ?? [];
+}
+
 // --- Probe trigger (P3c-CAPI-001, enables P3c-UI-001) ---
 
 export interface StartProbeBody {

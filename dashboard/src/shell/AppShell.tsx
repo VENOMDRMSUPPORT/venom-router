@@ -14,6 +14,7 @@ import TokenHealthSurface from "../health/TokenHealthSurface";
 import ApiKeysSurface from "../keys/ApiKeysSurface";
 import ModelsSurface from "../models/ModelsSurface";
 import QuotaSurface from "../quota/QuotaSurface";
+import RoutingSurface from "../routing/RoutingSurface";
 import {
   applyAppearanceSettings,
   DEFAULT_ACCENT,
@@ -359,6 +360,11 @@ function renderSurface(
   // P6-UI-002: Models (the existing `models` nav key — nav.ts is unchanged).
   if (navKey === "models") {
     return <ModelsSurface csrfToken={csrfToken} onSessionExpired={onSessionExpired} />;
+  }
+
+  // P6-UI-003: Routing (the existing `routing` nav key).
+  if (navKey === "routing") {
+    return <RoutingSurface onSessionExpired={onSessionExpired} />;
   }
 
   const item = navItemByKey(navKey);

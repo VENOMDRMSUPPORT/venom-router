@@ -65,6 +65,62 @@ function baseHandlers(overrides: Record<string, () => Response> = {}) {
           by_reason: [{ reason: "capability_not_certified", count: 0 }],
         },
       }),
+    // The Routing destination (P6-UI-003) — the three tier policies exactly as
+    // internal/routing's shipped table serves them.
+    "GET /api/control/v1/routing/policy": () =>
+      jsonResponse(200, {
+        data: {
+          tiers: [
+            {
+              tier: "lite",
+              funding: "free_only",
+              context_ceiling_tokens: 262144,
+              thinking_ceiling: "none",
+              attempt_budget: 3,
+              scored: false,
+              weights: null,
+              competitive_band: null,
+              latency_tie_break_only: true,
+            },
+            {
+              tier: "pro",
+              funding: "free_and_paid",
+              context_ceiling_tokens: 524288,
+              thinking_ceiling: "extended",
+              attempt_budget: 4,
+              scored: true,
+              weights: {
+                quality: 0.4,
+                reliability: 0.25,
+                quota_headroom: 0.15,
+                evidence_confidence: 0,
+                cost_class: 0.15,
+                latency: 0.05,
+              },
+              competitive_band: 0.08,
+              latency_tie_break_only: false,
+            },
+            {
+              tier: "max",
+              funding: "free_and_paid",
+              context_ceiling_tokens: 1048576,
+              thinking_ceiling: "ultra",
+              attempt_budget: 5,
+              scored: true,
+              weights: {
+                quality: 0.6,
+                reliability: 0.2,
+                quota_headroom: 0.05,
+                evidence_confidence: 0.1,
+                cost_class: 0.05,
+                latency: 0,
+              },
+              competitive_band: 0.03,
+              latency_tie_break_only: true,
+            },
+          ],
+        },
+      }),
     ...overrides,
   });
 }
@@ -143,6 +199,25 @@ describe("AppShell — surface mounting", () => {
 
     // The Models surface's own empty state, not the shell placeholder.
     await screen.findByText(/no models discovered/i);
+    expect(screen.queryByText(/coming in a later phase/i)).toBeNull();
+  });
+
+  it("mounts the real Routing surface on the routing nav key", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    fireEvent.click(screen.getByRole("link", { name: /^routing$/i }));
+
+    await screen.findByTestId("tier-policy-lite");
     expect(screen.queryByText(/coming in a later phase/i)).toBeNull();
   });
 });
