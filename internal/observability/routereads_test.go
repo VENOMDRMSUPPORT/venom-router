@@ -277,3 +277,230 @@ func TestRouteReader_ListDecisions_NullScoresStayNil(t *testing.T) {
 // *sql.DB the recorder does (never a *storage.DB), so both sit on one
 // connection pool.
 var _ func(*sql.DB) *RouteReader = NewRouteReader
+
+// --- P6-CAPI-EXTRA: the list read's attempt rollup ---
+
+// rollupAttempt builds one attempt under decisionID with the given number,
+// status and latency (nil latency ⇒ the column stays NULL).
+func rollupAttempt(id, decisionID string, number int, status RouteStatus, latency *int) RouteAttempt {
+	return RouteAttempt{
+		ID: id, RouteDecisionID: decisionID, AttemptNumber: number,
+		ProviderID: "P1", AccountID: "acc-1", OfferingOperationID: "off-1",
+		LatencyMS: latency, Status: status, StartedAt: obsNow,
+	}
+}
+
+// readRollup lists decisions and returns the one whose id is decisionID.
+func readRollup(t *testing.T, reader *RouteReader, decisionID string) ListedDecision {
+	t.Helper()
+	got, err := reader.ListDecisions(context.Background(), 50, 0)
+	if err != nil {
+		t.Fatalf("ListDecisions: %v", err)
+	}
+	for _, d := range got {
+		if d.ID == decisionID {
+			return d
+		}
+	}
+	t.Fatalf("decision %q not in the list read (%d rows)", decisionID, len(got))
+	return ListedDecision{}
+}
+
+func intPtr(v int) *int { return &v }
+
+// TestRouteReader_ListDecisions_AttemptRollup pins the rolled-up outcome the
+// list read carries: the TERMINAL attempt's status (highest attempt number,
+// row id as the tie-break) and the TOTAL latency across the decision's
+// attempts.
+//
+// Every case here is an unknown-handling case as much as an arithmetic one:
+// a decision with no attempts must roll up to NULL/NULL (never 0 and never a
+// fabricated "success"), a decision with ANY unknown attempt latency must
+// roll up to an unknown TOTAL (a SUM that silently skipped the NULL would
+// under-report a real number as if it were complete), and a status value
+// outside the closed vocabulary must normalize to `unknown` on this path too.
+func TestRouteReader_ListDecisions_AttemptRollup(t *testing.T) {
+	tests := []struct {
+		name         string
+		attempts     []RouteAttempt
+		rawStatus    string // inserted past the recorder's normalization when non-empty
+		wantStatus   *RouteStatus
+		wantLatency  *int
+		statusReason string
+	}{
+		{
+			name:         "no attempts rolls up to unknown, never 0 and never success",
+			attempts:     nil,
+			wantStatus:   nil,
+			wantLatency:  nil,
+			statusReason: "a decision with no attempt rows made no attempt — that is not a status",
+		},
+		{
+			name:        "one attempt is its own terminal status and total",
+			attempts:    []RouteAttempt{rollupAttempt("att-1", "", 1, RouteStatusSuccess, intPtr(120))},
+			wantStatus:  statusPtr(RouteStatusSuccess),
+			wantLatency: intPtr(120),
+		},
+		{
+			name: "the last attempt decides the terminal status and every latency sums",
+			attempts: []RouteAttempt{
+				rollupAttempt("att-1", "", 1, RouteStatusFailure, intPtr(100)),
+				rollupAttempt("att-2", "", 2, RouteStatusTimeout, intPtr(200)),
+				rollupAttempt("att-3", "", 3, RouteStatusSuccess, intPtr(30)),
+			},
+			wantStatus:  statusPtr(RouteStatusSuccess),
+			wantLatency: intPtr(330),
+		},
+		{
+			name: "a NULL latency on any attempt makes the TOTAL unknown, never a short sum",
+			attempts: []RouteAttempt{
+				rollupAttempt("att-1", "", 1, RouteStatusFailure, intPtr(100)),
+				rollupAttempt("att-2", "", 2, RouteStatusSuccess, nil),
+			},
+			wantStatus:  statusPtr(RouteStatusSuccess),
+			wantLatency: nil,
+		},
+		{
+			name:        "an unrecognized status normalizes to unknown on the rollup path too",
+			rawStatus:   "upstream said: Bearer sk-live-DEADBEEF expired",
+			wantStatus:  statusPtr(RouteStatusUnknown),
+			wantLatency: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db := obsTestDB(t)
+			rec := NewRouteRecorder(db, Default())
+			reader := NewRouteReader(db)
+
+			seedDecisionAt(t, rec, "dec-rollup", "req-rollup", obsNow)
+			for _, a := range tc.attempts {
+				a.RouteDecisionID = "dec-rollup"
+				seedAttempt(t, rec, a)
+			}
+			if tc.rawStatus != "" {
+				// Bypass the writer's normalization so the READ path is what is
+				// under test — exactly as TestRouteReader_JunkStatusNormalizesOnRead
+				// does for the detail view.
+				if _, err := db.ExecContext(context.Background(),
+					`INSERT INTO route_attempts (id, route_decision_id, attempt_number, provider_id,
+						account_id, offering_operation_id, status, thinking_clamped, started_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+					"att-raw", "dec-rollup", 1, "P1", "acc-1", "off-1", tc.rawStatus, obsNow.Unix(),
+				); err != nil {
+					t.Fatalf("insert raw status: %v", err)
+				}
+			}
+
+			got := readRollup(t, reader, "dec-rollup")
+
+			switch {
+			case tc.wantStatus == nil && got.TerminalStatus != nil:
+				t.Fatalf("TerminalStatus = %q, want nil (%s)", *got.TerminalStatus, tc.statusReason)
+			case tc.wantStatus != nil && got.TerminalStatus == nil:
+				t.Fatalf("TerminalStatus = nil, want %q", *tc.wantStatus)
+			case tc.wantStatus != nil && *got.TerminalStatus != *tc.wantStatus:
+				t.Fatalf("TerminalStatus = %q, want %q", *got.TerminalStatus, *tc.wantStatus)
+			}
+
+			switch {
+			case tc.wantLatency == nil && got.TotalLatencyMS != nil:
+				t.Fatalf("TotalLatencyMS = %d, want nil (an unknown latency must never become a number)", *got.TotalLatencyMS)
+			case tc.wantLatency != nil && got.TotalLatencyMS == nil:
+				t.Fatalf("TotalLatencyMS = nil, want %d", *tc.wantLatency)
+			case tc.wantLatency != nil && *got.TotalLatencyMS != *tc.wantLatency:
+				t.Fatalf("TotalLatencyMS = %d, want %d", *got.TotalLatencyMS, *tc.wantLatency)
+			}
+		})
+	}
+}
+
+func statusPtr(s RouteStatus) *RouteStatus { return &s }
+
+// TestRouteReader_ListDecisions_RollupTieBreakIsDeterministic pins the SECOND
+// ordering key of the terminal-attempt subquery.
+//
+// Two attempts share attempt_number 1, so attempt_number alone cannot pick a
+// winner; only the row-id tie-break can. Making that observable takes care,
+// because dropping the tie-break does NOT produce a coin flip here: the
+// idx_route_attempts_decision index is (route_decision_id, attempt_number), so
+// SQLite answers a bare `ORDER BY attempt_number DESC` by walking that index
+// backwards, and within an equal attempt_number the index is ordered by ROWID —
+// i.e. insertion order. A fixture whose id order happens to match its insertion
+// order therefore gets the right answer for the wrong reason, and the mutation
+// passes unnoticed.
+//
+// So the two rows are seeded with id order and INSERTION order deliberately
+// OPPOSED: "att-z" (the higher id) goes in first and thus holds the LOWER rowid.
+//
+//	with the id tie-break  -> id DESC     -> att-z -> failure  (asserted)
+//	without it             -> rowid DESC  -> att-a -> success
+//
+// The read is repeated because an unspecified ORDER BY can agree with the
+// expectation once by chance.
+func TestRouteReader_ListDecisions_RollupTieBreakIsDeterministic(t *testing.T) {
+	db := obsTestDB(t)
+	rec := NewRouteRecorder(db, Default())
+	reader := NewRouteReader(db)
+
+	seedDecisionAt(t, rec, "dec-tie", "req-tie", obsNow)
+	// Higher id, inserted first (lower rowid).
+	seedAttempt(t, rec, rollupAttempt("att-z", "dec-tie", 1, RouteStatusFailure, nil))
+	// Lower id, inserted second (higher rowid).
+	seedAttempt(t, rec, rollupAttempt("att-a", "dec-tie", 1, RouteStatusSuccess, nil))
+
+	for i := 0; i < 5; i++ {
+		got := readRollup(t, reader, "dec-tie")
+		if got.TerminalStatus == nil {
+			t.Fatalf("call %d: TerminalStatus = nil, want a value", i)
+		}
+		if *got.TerminalStatus != RouteStatusFailure {
+			t.Fatalf("call %d: TerminalStatus = %q, want %q — the highest row ID among the tied attempt numbers (att-z), not the most recently inserted row (att-a)",
+				i, *got.TerminalStatus, RouteStatusFailure)
+		}
+	}
+}
+
+// TestRouteReader_RollupIsListOnly pins the split between the two reads.
+//
+// The rollup belongs to the LIST, where no attempts are returned and a
+// summary is the only outcome signal available. The explanation returns the
+// attempts THEMSELVES, so restating a summary there would be a second,
+// redundant claim that could drift from the array beside it. That split is
+// enforced STRUCTURALLY — the rollup fields live on ListedDecision, not on
+// the shared RouteDecision the explanation carries — and this test asserts
+// exactly that, so moving them onto the shared struct fails here.
+func TestRouteReader_RollupIsListOnly(t *testing.T) {
+	decisionType := reflect.TypeOf(RouteDecision{})
+	for _, field := range []string{"TerminalStatus", "TotalLatencyMS"} {
+		if _, present := decisionType.FieldByName(field); present {
+			t.Fatalf("RouteDecision has a %q field: the rollup must live on ListedDecision only, so the explanation read cannot carry it", field)
+		}
+	}
+	listedType := reflect.TypeOf(ListedDecision{})
+	for _, field := range []string{"TerminalStatus", "TotalLatencyMS"} {
+		f, present := listedType.FieldByName(field)
+		if !present {
+			t.Fatalf("ListedDecision is missing the %q rollup field", field)
+		}
+		if f.Type.Kind() != reflect.Ptr {
+			t.Fatalf("ListedDecision.%s is %s, want a pointer so an unknown value stays nil rather than becoming a zero", field, f.Type)
+		}
+	}
+
+	// And the detail read still returns its attempts.
+	db := obsTestDB(t)
+	rec := NewRouteRecorder(db, Default())
+	reader := NewRouteReader(db)
+	seedDecisionAt(t, rec, "dec-x", "req-x", obsNow)
+	seedAttempt(t, rec, rollupAttempt("att-1", "dec-x", 1, RouteStatusSuccess, intPtr(77)))
+
+	got, err := reader.GetExplanation(context.Background(), "req-x")
+	if err != nil {
+		t.Fatalf("GetExplanation: %v", err)
+	}
+	if len(got.Attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1 (the rollup split must not cost the detail view its attempts)", len(got.Attempts))
+	}
+}

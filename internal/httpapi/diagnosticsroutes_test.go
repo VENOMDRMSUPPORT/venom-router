@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
 var routesFixedNow = time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
@@ -25,6 +26,10 @@ var routesFixedNow = time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
 type routesFixture struct {
 	handler  *DiagnosticsHandler
 	recorder *observability.RouteRecorder
+	// db is exposed so a test can force a value PAST the recorder's own
+	// normalization straight into the column — the read path's fail-closed
+	// behaviour is only testable that way.
+	db *storage.DB
 }
 
 // newRoutesFixture wires a DiagnosticsHandler with a real RouteReader over a
@@ -37,6 +42,7 @@ func newRoutesFixture(t *testing.T) *routesFixture {
 	return &routesFixture{
 		handler:  handler,
 		recorder: observability.NewRouteRecorder(db.Conn(), nil),
+		db:       db,
 	}
 }
 
@@ -201,10 +207,16 @@ func TestDiagnosticsRoutes_ListOrderingAndPagination(t *testing.T) {
 // as surely as removing one — which is exactly the point: a new field is how
 // a prompt, a raw provider error, or an account external id would arrive.
 var (
+	// The list entry additionally carries `outcome` (P6-CAPI-EXTRA): the
+	// rolled-up terminal status + total latency of the decision's attempts.
+	// The EXPLANATION deliberately does not — it returns the attempts
+	// themselves (see routeExplanationKeys below and ListedDecision's doc
+	// comment in internal/observability).
 	routeEntryKeys = []string{
 		"candidates", "chosen", "created_at", "decision_id", "exclusion_reasons",
-		"request_id", "scores", "thinking", "tier", "workload_profile_bucket",
+		"outcome", "request_id", "scores", "thinking", "tier", "workload_profile_bucket",
 	}
+	routeOutcomeKeys     = []string{"terminal_status", "total_latency_ms"}
 	routeExplanationKeys = []string{
 		"attempts", "candidates", "chosen", "created_at", "decision_id", "exclusion_reasons",
 		"request_id", "scores", "thinking", "tier", "workload_profile_bucket",
@@ -275,6 +287,119 @@ func TestDiagnosticsRoutes_FieldSetFreeze(t *testing.T) {
 	if thinking["requested"] != "extended" || thinking["applied"] != "standard" ||
 		thinking["tier_clamped"] != true || thinking["certified_clamped"] != false {
 		t.Fatalf("thinking = %#v, want the recorded clamp record", thinking)
+	}
+}
+
+// TestDiagnosticsRoutes_ListOutcomeRollup proves the list entry's `outcome`
+// object reports the decision's rolled-up terminal status and total latency —
+// and, above all, that BOTH are JSON null for a decision with no attempt rows.
+// A `0` or a fabricated "success" there is the exact failure this endpoint
+// exists to avoid: the Overview surface renders this field as the request's
+// result, so a zero-latency success would be an invented outcome.
+func TestDiagnosticsRoutes_ListOutcomeRollup(t *testing.T) {
+	f := newRoutesFixture(t)
+
+	// dec-done has two attempts; dec-none has none. dec-none is newer so it
+	// sorts first.
+	f.seedDecision(t, routesSampleDecision("dec-done", "req-done", routesFixedNow))
+	lat1, lat2 := 90, 35
+	f.seedAttempt(t, observability.RouteAttempt{
+		ID: "att-1", RouteDecisionID: "dec-done", AttemptNumber: 1,
+		ProviderID: "prov-a", AccountID: "acct-a", OfferingOperationID: "off-a",
+		LatencyMS: &lat1, Status: observability.RouteStatusFailure, StartedAt: routesFixedNow,
+	})
+	f.seedAttempt(t, observability.RouteAttempt{
+		ID: "att-2", RouteDecisionID: "dec-done", AttemptNumber: 2,
+		ProviderID: "prov-b", AccountID: "acct-b", OfferingOperationID: "off-b",
+		LatencyMS: &lat2, Status: observability.RouteStatusSuccess, StartedAt: routesFixedNow,
+	})
+	f.seedDecision(t, routesSampleDecision("dec-none", "req-none", routesFixedNow.Add(time.Minute)))
+
+	rec, body := f.getRoutes(t, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	byID := map[string]map[string]any{}
+	for _, entry := range dataList(t, body) {
+		m := entry.(map[string]any)
+		byID[m["decision_id"].(string)] = m
+	}
+
+	done, ok := byID["dec-done"]
+	if !ok {
+		t.Fatalf("dec-done missing from the list: %#v", byID)
+	}
+	doneOutcome, ok := done["outcome"].(map[string]any)
+	if !ok {
+		t.Fatalf("dec-done outcome is not an object: %#v", done["outcome"])
+	}
+	if got := keysOf(t, doneOutcome); strings.Join(got, ",") != strings.Join(routeOutcomeKeys, ",") {
+		t.Fatalf("outcome key set = %v, want %v", got, routeOutcomeKeys)
+	}
+	if doneOutcome["terminal_status"] != string(observability.RouteStatusSuccess) {
+		t.Fatalf("terminal_status = %#v, want success (the LAST attempt decides)", doneOutcome["terminal_status"])
+	}
+	if doneOutcome["total_latency_ms"] != float64(lat1+lat2) {
+		t.Fatalf("total_latency_ms = %#v, want %d", doneOutcome["total_latency_ms"], lat1+lat2)
+	}
+
+	none, ok := byID["dec-none"]
+	if !ok {
+		t.Fatalf("dec-none missing from the list: %#v", byID)
+	}
+	noneOutcome, ok := none["outcome"].(map[string]any)
+	if !ok {
+		t.Fatalf("dec-none outcome is not an object: %#v", none["outcome"])
+	}
+	// Present-and-null, not absent: the client must be able to tell "no
+	// attempt was recorded" from "this response shape lacks the field".
+	for _, key := range routeOutcomeKeys {
+		v, present := noneOutcome[key]
+		if !present {
+			t.Fatalf("attempt-less decision omits outcome.%s entirely, want an explicit null", key)
+		}
+		if v != nil {
+			t.Fatalf("attempt-less decision outcome.%s = %#v, want null (never 0, never a fabricated status)", key, v)
+		}
+	}
+
+	// And the EXPLANATION carries no outcome object at all — its key set is
+	// frozen separately above, but assert the absence directly too.
+	_, xBody := f.getExplanation(t, "req-done")
+	if _, present := dataObject(t, xBody)["outcome"]; present {
+		t.Fatalf("the explanation payload must not carry an outcome rollup — it returns the attempts themselves")
+	}
+}
+
+// TestDiagnosticsRoutes_OutcomeRollupNormalizesJunkStatus proves the rollup
+// path is as fail-closed as every other status read: a value forced into the
+// column past the recorder's normalization surfaces as the closed-vocabulary
+// `unknown`, never as free provider text on this new field.
+func TestDiagnosticsRoutes_OutcomeRollupNormalizesJunkStatus(t *testing.T) {
+	f := newRoutesFixture(t)
+	f.seedDecision(t, routesSampleDecision("dec-junk", "req-junk", routesFixedNow))
+
+	const junk = "upstream said: Bearer sk-live-DEADBEEF expired"
+	if _, err := f.db.Conn().ExecContext(t.Context(),
+		`INSERT INTO route_attempts (id, route_decision_id, attempt_number, provider_id,
+			account_id, offering_operation_id, status, thinking_clamped, started_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		"att-junk", "dec-junk", 1, "prov-a", "acct-a", "off-a", junk, routesFixedNow.Unix(),
+	); err != nil {
+		t.Fatalf("insert junk status: %v", err)
+	}
+
+	rec, body := f.getRoutes(t, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	entry := dataList(t, body)[0].(map[string]any)
+	outcome := entry["outcome"].(map[string]any)
+	if outcome["terminal_status"] != string(observability.RouteStatusUnknown) {
+		t.Fatalf("terminal_status = %#v, want %q", outcome["terminal_status"], observability.RouteStatusUnknown)
+	}
+	if strings.Contains(rec.Body.String(), "sk-live-DEADBEEF") {
+		t.Fatalf("the rollup leaked raw provider text: %s", rec.Body.String())
 	}
 }
 
@@ -435,6 +560,20 @@ func TestDiagnosticsRoutes_SecretCanary(t *testing.T) {
 		"list entry":  keysOf(t, listEntry),
 		"explanation": keysOf(t, dataObject(t, xBody)),
 		"attempt":     keysOf(t, attempts[0].(map[string]any)),
+	}
+	// P6-CAPI-EXTRA extended this canary rather than adding a second one: the
+	// list entry's new nested `outcome` object is a NEW place a
+	// content-carrying field could be added, so its keys are harvested off the
+	// real response and checked against the same denylist.
+	listOutcome, ok := listEntry["outcome"].(map[string]any)
+	if !ok {
+		t.Fatalf("list entry outcome is not an object: %#v — this canary half would be vacuous", listEntry["outcome"])
+	}
+	actualKeySets["list entry outcome"] = keysOf(t, listOutcome)
+	// The rollup reads the SAME poisoned status column, so it must fail closed
+	// too: `unknown`, never the marker text.
+	if got := listOutcome["terminal_status"]; got != string(observability.RouteStatusUnknown) {
+		t.Fatalf("outcome.terminal_status = %#v, want %q for a poisoned status column", got, observability.RouteStatusUnknown)
 	}
 	for surface, keys := range actualKeySets {
 		for _, key := range keys {

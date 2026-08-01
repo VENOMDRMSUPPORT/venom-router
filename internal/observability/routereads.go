@@ -58,6 +58,61 @@ const decisionColumns = `id, request_id, tier, workload_profile_bucket, candidat
 	exclusion_reasons, chosen_provider_id, chosen_provider_model_id, chosen_funding,
 	scores, requested_thinking, applied_thinking, tier_clamped, certified_clamped, created_at`
 
+// ListedDecision is one LIST entry: the decision plus the rolled-up OUTCOME of
+// its attempts (P6-CAPI-EXTRA).
+//
+// The rollup lives on THIS type rather than on RouteDecision for two reasons.
+// Structurally, RouteDecision is the WRITER's struct (routerecords.go) and the
+// recorder has no rollup to write. Semantically, the rollup exists because the
+// list read returns no attempts — it is the only outcome signal that view has.
+// GetExplanation returns the attempts themselves, so a summary there would be a
+// second, redundant claim about the same rows, free to drift from the array
+// beside it. Keeping the fields off the shared struct makes that drift
+// impossible rather than merely discouraged.
+//
+// Both fields are pointers and both are honestly unknown-able:
+//   - a decision with ZERO attempt rows yields nil for both — it made no
+//     attempt, which is not a status and not a duration of 0;
+//   - a decision with ANY attempt whose latency_ms is NULL yields a nil
+//     TotalLatencyMS, because a sum that silently skipped the unknown term
+//     would report a short number as though it were the complete one.
+type ListedDecision struct {
+	RouteDecision
+
+	// TerminalStatus is the status of the decision's LAST attempt (highest
+	// attempt_number, row id as the deterministic tie-break — the same
+	// ordering GetExplanation uses, reversed), normalized through the shared
+	// normalizeStatus so a value that reached the column by any other path
+	// surfaces as RouteStatusUnknown rather than as free provider text.
+	TerminalStatus *RouteStatus
+
+	// TotalLatencyMS is the sum of every attempt's latency_ms, or nil when any
+	// one of them is unknown (see the type comment).
+	TotalLatencyMS *int
+}
+
+// decisionRollupColumns are the two correlated subqueries that compute
+// ListedDecision's rollup inside the SAME statement as the decision read — one
+// query, no N+1, and no new column or table on the frozen route_attempts
+// schema.
+//
+// The latency CASE is the fail-closed half. SQL's SUM ignores NULL terms, so a
+// bare SUM over a partially-instrumented attempt set would return a number
+// that looks complete and is not. Comparing COUNT(latency_ms) against COUNT(*)
+// detects exactly that case and reports the total as unknown instead.
+const decisionRollupColumns = `
+	(SELECT a.status FROM route_attempts a
+	  WHERE a.route_decision_id = route_decisions.id
+	  ORDER BY a.attempt_number DESC, a.id DESC
+	  LIMIT 1) AS terminal_status,
+	(SELECT CASE
+	          WHEN COUNT(*) = 0 THEN NULL
+	          WHEN COUNT(a.latency_ms) <> COUNT(*) THEN NULL
+	          ELSE SUM(a.latency_ms)
+	        END
+	   FROM route_attempts a
+	  WHERE a.route_decision_id = route_decisions.id) AS total_latency_ms`
+
 // ListDecisions returns decisions newest first, windowed by limit/offset.
 //
 // The ORDER BY carries a SECOND key (id) beyond created_at. created_at has
@@ -68,7 +123,7 @@ const decisionColumns = `id, request_id, tier, workload_profile_bucket, candidat
 // clamped to 0 and an offset past the end yields an empty slice — paging
 // inputs are advisory, exactly as parsePageParams treats them, never an
 // error.
-func (r *RouteReader) ListDecisions(ctx context.Context, limit, offset int) ([]RouteDecision, error) {
+func (r *RouteReader) ListDecisions(ctx context.Context, limit, offset int) ([]ListedDecision, error) {
 	if limit < 0 {
 		limit = 0
 	}
@@ -77,7 +132,7 @@ func (r *RouteReader) ListDecisions(ctx context.Context, limit, offset int) ([]R
 	}
 
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+decisionColumns+`
+		`SELECT `+decisionColumns+`,`+decisionRollupColumns+`
 		 FROM route_decisions
 		 ORDER BY created_at DESC, id DESC
 		 LIMIT ? OFFSET ?`,
@@ -89,13 +144,29 @@ func (r *RouteReader) ListDecisions(ctx context.Context, limit, offset int) ([]R
 	defer func() { _ = rows.Close() }()
 
 	// Always a non-nil slice so an empty page marshals as [] rather than null.
-	out := make([]RouteDecision, 0, limit)
+	out := make([]ListedDecision, 0, limit)
 	for rows.Next() {
-		d, scanErr := scanDecision(rows)
+		var (
+			terminalStatus sql.NullString
+			totalLatency   sql.NullInt64
+		)
+		d, scanErr := scanDecision(rows, &terminalStatus, &totalLatency)
 		if scanErr != nil {
 			return nil, scanErr
 		}
-		out = append(out, d)
+
+		entry := ListedDecision{RouteDecision: d}
+		// A NULL terminal status stays nil: "no attempt was recorded" is not
+		// the same claim as any status value, least of all success.
+		if terminalStatus.Valid {
+			s := normalizeStatus(RouteStatus(terminalStatus.String))
+			entry.TerminalStatus = &s
+		}
+		if totalLatency.Valid {
+			v := int(totalLatency.Int64)
+			entry.TotalLatencyMS = &v
+		}
+		out = append(out, entry)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("observability: list route decisions: %w", err)
@@ -200,7 +271,12 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanDecision(s rowScanner) (RouteDecision, error) {
+// scanDecision scans decisionColumns, in that exact order, into a
+// RouteDecision. `extra` receives any additional SELECT-list destinations the
+// caller appended AFTER decisionColumns (the list read's two rollup
+// subqueries) — so decisionColumns stays the single source of truth for the
+// shared prefix's order no matter what a caller adds behind it.
+func scanDecision(s rowScanner, extra ...any) (RouteDecision, error) {
 	var (
 		d                                          RouteDecision
 		summaryJSON, reasonsJSON                   string
@@ -210,11 +286,13 @@ func scanDecision(s rowScanner) (RouteDecision, error) {
 		tierClamped, certifiedClamped              int
 		createdAt                                  int64
 	)
-	if err := s.Scan(
+	dests := []any{
 		&d.ID, &d.RequestID, &d.Tier, &d.WorkloadProfileBucket, &summaryJSON,
 		&reasonsJSON, &chosenProvider, &chosenModel, &chosenFunding,
 		&scoresJSON, &requestedThinking, &appliedThinking, &tierClamped, &certifiedClamped, &createdAt,
-	); err != nil {
+	}
+	dests = append(dests, extra...)
+	if err := s.Scan(dests...); err != nil {
 		// sql.ErrNoRows is passed through unwrapped so GetExplanation's
 		// errors.Is check stays exact.
 		if errors.Is(err, sql.ErrNoRows) {

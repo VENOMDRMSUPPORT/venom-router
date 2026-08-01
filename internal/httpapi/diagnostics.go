@@ -124,8 +124,36 @@ type routeDecisionJSON struct {
 	Thinking         routeThinkingJSON  `json:"thinking"`
 }
 
+// routeOutcomeJSON is the LIST entry's rolled-up attempt outcome
+// (P6-CAPI-EXTRA). Both fields are explicitly nullable pointers and both are
+// PRESENT-AND-NULL rather than omitted, so a client can distinguish "no
+// attempt was recorded" from "this response shape has no such field".
+//
+// A null terminal_status means exactly that: the decision has no attempt rows.
+// It is never rendered as a status, and above all never as `success`. A null
+// total_latency_ms means at least one attempt's latency is unknown, so the
+// total is unknown — never a SUM that silently dropped the unknown term, and
+// never 0.
+type routeOutcomeJSON struct {
+	TerminalStatus *string `json:"terminal_status"`
+	TotalLatencyMS *int    `json:"total_latency_ms"`
+}
+
+// routeDecisionListEntryJSON is the LIST entry: the shared decision projection
+// plus the outcome rollup.
+//
+// The rollup is deliberately NOT on routeDecisionJSON itself. routeDecisionJSON
+// is embedded by routeExplanationJSON, so a field added there would appear on
+// the explanation payload too — where it would be a second, redundant claim
+// about the very attempts that payload already returns in full, free to drift
+// from them. Mirrors observability.ListedDecision's own split.
+type routeDecisionListEntryJSON struct {
+	routeDecisionJSON
+	Outcome routeOutcomeJSON `json:"outcome"`
+}
+
 // routeExplanationJSON is the explanation payload: exactly the list entry's
-// fields (embedded, so the two can never drift) plus the attempts array.
+// shared fields (embedded, so the two can never drift) plus the attempts array.
 // Attempts has NO omitempty — a decision whose attempts are all absent still
 // reports `"attempts": []`, so the client never has to distinguish "no
 // attempts" from "this response shape lacks the field".
@@ -180,6 +208,21 @@ func toRouteDecisionJSON(d observability.RouteDecision) routeDecisionJSON {
 			CertifiedClamped: d.CertifiedClamped,
 		},
 	}
+}
+
+// toRouteDecisionListEntryJSON projects one list entry. Both rollup fields are
+// carried through as nil when the reader reported them nil — this function has
+// no default value for either, by construction.
+func toRouteDecisionListEntryJSON(d observability.ListedDecision) routeDecisionListEntryJSON {
+	out := routeDecisionListEntryJSON{routeDecisionJSON: toRouteDecisionJSON(d.RouteDecision)}
+	if d.TerminalStatus != nil {
+		// Already normalized to the closed vocabulary by the reader, so
+		// projecting it as-is can never carry free provider text.
+		s := string(*d.TerminalStatus)
+		out.Outcome.TerminalStatus = &s
+	}
+	out.Outcome.TotalLatencyMS = d.TotalLatencyMS
+	return out
 }
 
 func toRouteAttemptJSON(a observability.RouteAttempt) routeAttemptJSON {
@@ -244,9 +287,9 @@ func (h *DiagnosticsHandler) ServeRoutes(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	out := make([]routeDecisionJSON, 0, len(decisions))
+	out := make([]routeDecisionListEntryJSON, 0, len(decisions))
 	for _, d := range decisions {
-		out = append(out, toRouteDecisionJSON(d))
+		out = append(out, toRouteDecisionListEntryJSON(d))
 	}
 
 	// A full page advertises the next offset; a short page is the last page

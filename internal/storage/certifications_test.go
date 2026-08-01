@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -181,6 +183,125 @@ func TestCertificationRepo_ListStaleCertifiedBoundary(t *testing.T) {
 	}
 	if got[freshID] {
 		t.Errorf("ListStaleCertified returned %q (after cutoff), want excluded", freshID)
+	}
+}
+
+// TestCertificationRepo_ListForAdmissionCensusCoversEveryStatus is the
+// load-bearing difference between this query and ListForReview.
+//
+// ListForReview filters to observed/suspended/expired — the states the review
+// DRAINER can advance. The admission census must NOT use that filter, because
+// the single most important non-routable row in the whole model is `certified`
+// with capability truth `unknown`: it is excluded from the drainer's backlog
+// (there is nothing to re-probe from `certified`) yet models.Routable rejects it.
+// A census built on ListForReview would report that row as no problem at all.
+func TestCertificationRepo_ListForAdmissionCensusCoversEveryStatus(t *testing.T) {
+	now := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	db := migratedCatalogDB(t)
+	repo := NewCertificationRepo(db, fixedClock(now))
+	ctx := context.Background()
+
+	seed := func(name, state, truth string) string {
+		id := seedOfferingOperationChain(t, db, "acct-census", "prov-census", "model-census", "pm-census-"+name)
+		if err := insertCertification(db, id, state, truth); err != nil {
+			t.Fatalf("seed certification %q: %v", name, err)
+		}
+		return id
+	}
+
+	want := map[string][2]string{
+		seed("routable", "certified", "supported"):     {"certified", "supported"},
+		seed("certunknown", "certified", "unknown"):    {"certified", "unknown"},
+		seed("certunsupp", "certified", "unsupported"): {"certified", "unsupported"},
+		seed("observed", "observed", "unknown"):        {"observed", "unknown"},
+		seed("probing", "probing", "unknown"):          {"probing", "unknown"},
+		seed("discovered", "discovered", "unknown"):    {"discovered", "unknown"},
+		seed("suspended", "suspended", "unsupported"):  {"suspended", "unsupported"},
+		seed("expired", "expired", "unknown"):          {"expired", "unknown"},
+	}
+
+	items, truncated, err := repo.ListForAdmissionCensus(ctx, 100)
+	if err != nil {
+		t.Fatalf("ListForAdmissionCensus: %v", err)
+	}
+	if truncated {
+		t.Fatalf("truncated = true for a limit of 100 over %d rows, want false", len(want))
+	}
+	if len(items) != len(want) {
+		t.Fatalf("items = %d, want %d (every certification row, whatever its status)", len(items), len(want))
+	}
+	for _, it := range items {
+		expect, ok := want[it.OfferingOperationID]
+		if !ok {
+			t.Fatalf("census returned an unseeded id %q", it.OfferingOperationID)
+		}
+		if string(it.State) != expect[0] || string(it.Truth) != expect[1] {
+			t.Errorf("%s = (%q,%q), want (%q,%q)", it.OfferingOperationID, it.State, it.Truth, expect[0], expect[1])
+		}
+	}
+
+	// Deterministic order across repeated calls, so a truncated census always
+	// truncates the same way rather than sampling at random.
+	var first []string
+	for i := 0; i < 3; i++ {
+		got, _, err := repo.ListForAdmissionCensus(ctx, 100)
+		if err != nil {
+			t.Fatalf("ListForAdmissionCensus call %d: %v", i, err)
+		}
+		ids := make([]string, 0, len(got))
+		for _, it := range got {
+			ids = append(ids, it.OfferingOperationID)
+		}
+		if i == 0 {
+			first = ids
+			continue
+		}
+		if strings.Join(ids, ",") != strings.Join(first, ",") {
+			t.Fatalf("call %d order = %v, want the stable %v", i, ids, first)
+		}
+	}
+}
+
+// TestCertificationRepo_ListForAdmissionCensusIsBounded proves the census is
+// bounded and, when it is cut short, SAYS SO. A silently truncated count reads
+// as a complete one, which is the difference between "3 offerings need review"
+// and "at least 3 of an unknown number do".
+func TestCertificationRepo_ListForAdmissionCensusIsBounded(t *testing.T) {
+	now := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	db := migratedCatalogDB(t)
+	repo := NewCertificationRepo(db, fixedClock(now))
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		id := seedOfferingOperationChain(t, db, "acct-bound", "prov-bound", "model-bound", fmt.Sprintf("pm-bound-%d", i))
+		if err := insertCertification(db, id, "observed", "unknown"); err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+
+	tests := []struct {
+		name          string
+		limit         int
+		wantLen       int
+		wantTruncated bool
+	}{
+		{name: "limit under the row count truncates and reports it", limit: 2, wantLen: 2, wantTruncated: true},
+		{name: "limit exactly at the row count is not truncated", limit: 5, wantLen: 5, wantTruncated: false},
+		{name: "limit above the row count is not truncated", limit: 50, wantLen: 5, wantTruncated: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			items, truncated, err := repo.ListForAdmissionCensus(ctx, tc.limit)
+			if err != nil {
+				t.Fatalf("ListForAdmissionCensus: %v", err)
+			}
+			if len(items) != tc.wantLen {
+				t.Fatalf("items = %d, want %d (the limit must be honoured exactly, never exceeded)", len(items), tc.wantLen)
+			}
+			if truncated != tc.wantTruncated {
+				t.Fatalf("truncated = %v, want %v", truncated, tc.wantTruncated)
+			}
+		})
 	}
 }
 

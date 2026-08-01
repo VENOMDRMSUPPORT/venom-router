@@ -274,6 +274,13 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	)
 	mux.Handle("/api/control/v1/models/{id}/benchmark", gated(benchmarkHandler.ServeBenchmark))
 
+	// Tier policy read (P6-CAPI-EXTRA, enables P6-UI-003, 05 §1/§8.4): GET
+	// /routing/policy. It takes no repo at all — the three tier policies come
+	// from internal/routing's own validated table, so there is nothing to wire
+	// but the gate. READ-ONLY by design: 05 §8.4 defers owner weight tuning past
+	// V1, so no PUT exists here or anywhere.
+	mux.Handle("/api/control/v1/routing/policy", gated(NewRoutingPolicyHandler().ServePolicy))
+
 	// Discovery + certification read (P3a-CAPI-002): POST
 	// /accounts/{id}/discover (async, 202 + the canonical shared job
 	// surface) and GET /offerings/{id}/certification. discoveryRepo
@@ -332,6 +339,13 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// copy-returning method rather than a NewDiscoveryHandler parameter).
 	discoveryHandlerWithProbes := discoveryHandler.WithProbeRuns(probeRunRepo)
 	mux.Handle("/api/control/v1/offerings/{id}/certification", gated(discoveryHandlerWithProbes.ServeCertification))
+
+	// Routing-admission census (P6-CAPI-EXTRA, enables P6-UI-012, 04 §5): GET
+	// /certifications/review — "the review count grouped by reason". It shares
+	// certRepo with the probe/certification routes above rather than building its
+	// own, and reports which admission reasons it could NOT evaluate rather than
+	// counting them as zero (see reviewcensus.go's header).
+	mux.Handle("/api/control/v1/certifications/review", gated(NewReviewCensusHandler(certRepo).ServeCensus))
 
 	// Quota refresh (P3b-CAPI-001, 09 §2 "Refresh quota snapshot"): POST
 	// /accounts/{id}/quota, async (202 + the canonical shared job
