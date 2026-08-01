@@ -115,7 +115,7 @@ Each component's sibling `Name.d.ts` is also generated (`npm run build:declarati
 | Path | Responsibility | Authored/Generated | Version controlled | Regeneration command |
 |---|---|---|---|---|
 | `components/` | Canonical component source (`Name.tsx`/`.ts`) + docs (`.prompt.md`) + example cards (`*.card.html`/`*.entry.tsx`) | Authored (sibling `Name.d.ts` generated) | Yes | `.d.ts`: `npm run build:declarations` |
-| `src/` | Public package entry points — re-export barrels + the `applyTheme`/`applyDensity` entry helpers. No component logic, ever. | Authored | Yes | — |
+| `src/` | Public package entry points — re-export barrels + the `applyTheme`/`applyDensity`/`applyAccent`/`applyRadius`/`applySpacing` entry helpers. No component logic, ever. | Authored | Yes | — |
 | `tokens/tokens.*.json` | Authored token source of truth (W3C format, 3 layers) | Authored | Yes | — |
 | `tokens/base.css`, `tokens/fonts.css` | Authored base/type/webfont-fallback CSS | Authored | Yes | — |
 | `tokens/primitives.css`, `tokens/components.css`, `tokens/density.css`, `tokens/tokens.ts`, `tokens/tailwind-theme.ts` | Generated token outputs (CSS vars, typed object, Tailwind theme) | Generated (required, committed) | Yes | `npm run validate` (gate 1: `validation/build-tokens.cjs`) |

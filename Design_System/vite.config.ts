@@ -18,6 +18,7 @@ export default defineConfig({
         tokens: resolve(__dirname, "src/tokens.ts"),
         themes: resolve(__dirname, "src/themes.ts"),
         density: resolve(__dirname, "src/density.ts"),
+        customizer: resolve(__dirname, "src/customizer.ts"),
         icons: resolve(__dirname, "src/icons.ts"),
         primitives: resolve(__dirname, "src/primitives.ts"),
         domain: resolve(__dirname, "src/domain.ts"),

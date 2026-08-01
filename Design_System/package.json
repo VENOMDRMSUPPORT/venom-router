@@ -48,6 +48,11 @@
       "import": "./dist/density.mjs",
       "require": "./dist/density.cjs"
     },
+    "./customizer": {
+      "types": "./dist/types/src/customizer.d.ts",
+      "import": "./dist/customizer.mjs",
+      "require": "./dist/customizer.cjs"
+    },
     "./icons": {
       "types": "./dist/types/src/icons.d.ts",
       "import": "./dist/icons.mjs",
@@ -85,10 +90,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "vendor:icons": "node scripts/vendor-icons.js",
     "validate": "node scripts/validate.js",
+    "test:unit": "playwright test -c tests/playwright.config.ts tests/unit",
     "test:a11y": "playwright test -c tests/playwright.config.ts tests/a11y",
     "test:visual": "playwright test -c tests/playwright.config.ts tests/visual",
     "test:visual:update": "playwright test -c tests/playwright.config.ts tests/visual --update-snapshots",
-    "test": "npm run test:a11y && npm run test:visual"
+    "test": "npm run test:unit && npm run test:a11y && npm run test:visual"
   },
   "peerDependencies": {
     "react": "^18.3.0",

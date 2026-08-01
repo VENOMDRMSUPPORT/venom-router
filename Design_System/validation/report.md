@@ -1,6 +1,6 @@
 # Validation report — Venom Design System
 
-Run at `2026-08-01T00:14:46.296Z` (finished `2026-08-01T00:14:58.230Z`) against package `@venom/design-system@1.0.0` by `scripts/validate.js`. Every row below is an actual gate output from this run — not a hand-maintained estimate. Regenerate with `npm run validate`; never hand-edit this file.
+Run at `2026-08-01T00:17:25.158Z` (finished `2026-08-01T00:17:37.704Z`) against package `@venom/design-system@1.0.0` by `scripts/validate.js`. Every row below is an actual gate output from this run — not a hand-maintained estimate. Regenerate with `npm run validate`; never hand-edit this file.
 
 ## Gate results
 
@@ -27,7 +27,7 @@ Run at `2026-08-01T00:14:46.296Z` (finished `2026-08-01T00:14:58.230Z`) against 
 
 - Status: **PASS**
 - Command: `buildVenomTokens(io)`
-- Started: 2026-08-01T00:14:46.298Z · Finished: 2026-08-01T00:14:46.310Z
+- Started: 2026-08-01T00:17:25.160Z · Finished: 2026-08-01T00:17:25.171Z
 - Summary: `{"venom-dark":{"count":93,"missing":[],"extra":[]},"venom-light":{"count":93,"missing":[],"extra":[]},"venom-hc":{"count":93,"missing":[],"extra":[]}}`
 - Log: OK: 171 primitives, 93 semantic tokens x 3 themes, 73 component tokens, 16 density tokens, 5 accents (7 override blocks), 17 tailwind theme groups.
 
@@ -35,7 +35,7 @@ Run at `2026-08-01T00:14:46.296Z` (finished `2026-08-01T00:14:58.230Z`) against 
 
 - Status: **PASS**
 - Command: `checkVenomContrast(io)`
-- Started: 2026-08-01T00:14:46.310Z · Finished: 2026-08-01T00:14:46.311Z
+- Started: 2026-08-01T00:17:25.171Z · Finished: 2026-08-01T00:17:25.172Z
 - Summary: `{"summary":{"checked":119,"failed":0,"failures":[]},"results":[{"theme":"venom-dark","pair":"text.primary on surface.canvas","ratio":19.9,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.secondary on surface.canvas","ratio":13.46,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.muted on surface.canvas","ratio":7.76,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.primary on surface.primary","ratio":17.35,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.secondary on surface.primary","ratio":11.74,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.muted on surface.primary","ratio":6.77,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.primary on surface.secondary","ratio":16.58,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.secondary on surface.secondary","ratio":11.22,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.muted on surface.secondary","ratio":6.47,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.primary on surface.raised","ratio":15.82,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.secondary on surface.raised","ratio":10.7,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.muted on surface.raised","ratio":6.17,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.link on surface.canvas","ratio":19.9,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.link on surface.primary","ratio":17.35,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"text.on-accent on accent.default","ratio":21,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"accent.text on surface.canvas","ratio":19.9,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"accent.text on surface.primary","ratio":17.35,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"status.healthy.fg on status.healthy.bg","ratio":7.57,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"status.healthy.fg on surface.primary","ratio":9.8,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-dark","pair":"status.degraded.fg on status.degraded.bg","ratio":6.98,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"status.degraded.fg on surface.primary","ratio":8.37,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-dark","pair":"status.warning.fg on status.warning.bg","ratio":7.61,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"status.warning.fg on surface.primary","ratio":10.05,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-dark","pair":"status.critical.fg on status.critical.bg","ratio":6.84,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"status.critical.fg on surface.primary","ratio":7.91,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-dark","pair":"status.info.fg on status.info.bg","ratio":6.92,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"status.info.fg on surface.primary","ratio":8.15,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-dark","pair":"status.unknown.fg on status.unknown.bg","ratio":10.72,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"status.unknown.fg on surface.primary","ratio":11.74,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-dark","pair":"status.inactive.fg on status.inactive.bg","ratio":6.77,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"status.inactive.fg on surface.primary","ratio":6.77,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-dark","pair":"tier.lite.fg on tier.lite.bg","ratio":7.35,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"tier.pro.fg on tier.pro.bg","ratio":6.53,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"tier.max.fg on tier.max.bg","ratio":7.73,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"action.primary.fg on action.primary.bg","ratio":21,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"action.secondary.fg on action.secondary.bg","ratio":16.58,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"action.destructive.fg on action.destructive.bg","ratio":6.15,"need":4.5,"pass":true},{"theme":"venom-dark","pair":"border.strong on surface.primary","ratio":3.59,"need":3,"pass":true,"label":"control boundary"},{"theme":"venom-dark","pair":"focus.ring on surface.canvas","ratio":19.9,"need":3,"pass":true,"label":"focus ring"},{"theme":"venom-light","pair":"text.primary on surface.canvas","ratio":15.48,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.secondary on surface.canvas","ratio":9.5,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.muted on surface.canvas","ratio":4.8,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.primary on surface.primary","ratio":17.01,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.secondary on surface.primary","ratio":10.44,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.muted on surface.primary","ratio":5.28,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.primary on surface.secondary","ratio":16.3,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.secondary on surface.secondary","ratio":10.01,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.muted on surface.secondary","ratio":5.05,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.primary on surface.raised","ratio":17.01,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.secondary on surface.raised","ratio":10.44,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.muted on surface.raised","ratio":5.28,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.link on surface.canvas","ratio":15.48,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.link on surface.primary","ratio":17.01,"need":4.5,"pass":true},{"theme":"venom-light","pair":"text.on-accent on accent.default","ratio":21,"need":4.5,"pass":true},{"theme":"venom-light","pair":"accent.text on surface.canvas","ratio":19.11,"need":4.5,"pass":true},{"theme":"venom-light","pair":"accent.text on surface.primary","ratio":21,"need":4.5,"pass":true},{"theme":"venom-light","pair":"status.healthy.fg on status.healthy.bg","ratio":5.7,"need":4.5,"pass":true},{"theme":"venom-light","pair":"status.healthy.fg on surface.primary","ratio":6.6,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-light","pair":"status.degraded.fg on status.degraded.bg","ratio":6.39,"need":4.5,"pass":true},{"theme":"venom-light","pair":"status.degraded.fg on surface.primary","ratio":7.79,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-light","pair":"status.warning.fg on status.warning.bg","ratio":5.67,"need":4.5,"pass":true},{"theme":"venom-light","pair":"status.warning.fg on surface.primary","ratio":6.67,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-light","pair":"status.critical.fg on status.critical.bg","ratio":6.88,"need":4.5,"pass":true},{"theme":"venom-light","pair":"status.critical.fg on surface.primary","ratio":8.51,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-light","pair":"status.info.fg on status.info.bg","ratio":7.12,"need":4.5,"pass":true},{"theme":"venom-light","pair":"status.info.fg on surface.primary","ratio":8.7,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-light","pair":"status.unknown.fg on status.unknown.bg","ratio":8.23,"need":4.5,"pass":true},{"theme":"venom-light","pair":"status.unknown.fg on surface.primary","ratio":10.44,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-light","pair":"status.inactive.fg on status.inactive.bg","ratio":7.03,"need":4.5,"pass":true},{"theme":"venom-light","pair":"status.inactive.fg on surface.primary","ratio":7.73,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-light","pair":"tier.lite.fg on tier.lite.bg","ratio":6.68,"need":4.5,"pass":true},{"theme":"venom-light","pair":"tier.pro.fg on tier.pro.bg","ratio":7.54,"need":4.5,"pass":true},{"theme":"venom-light","pair":"tier.max.fg on tier.max.bg","ratio":6.09,"need":4.5,"pass":true},{"theme":"venom-light","pair":"action.primary.fg on action.primary.bg","ratio":21,"need":4.5,"pass":true},{"theme":"venom-light","pair":"action.secondary.fg on action.secondary.bg","ratio":17.01,"need":4.5,"pass":true},{"theme":"venom-light","pair":"action.destructive.fg on action.destructive.bg","ratio":6.15,"need":4.5,"pass":true},{"theme":"venom-light","pair":"border.strong on surface.primary","ratio":4.83,"need":3,"pass":true,"label":"control boundary"},{"theme":"venom-light","pair":"focus.ring on surface.canvas","ratio":19.11,"need":3,"pass":true,"label":"focus ring"},{"theme":"venom-hc","pair":"text.primary on surface.canvas","ratio":21,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.secondary on surface.canvas","ratio":16.55,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.muted on surface.canvas","ratio":14.21,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.primary on surface.primary","ratio":21,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.secondary on surface.primary","ratio":16.55,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.muted on surface.primary","ratio":14.21,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.primary on surface.secondary","ratio":19.9,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.secondary on surface.secondary","ratio":15.68,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.muted on surface.secondary","ratio":13.46,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.primary on surface.raised","ratio":18.7,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.secondary on surface.raised","ratio":14.74,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.muted on surface.raised","ratio":12.65,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.link on surface.canvas","ratio":21,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.link on surface.primary","ratio":21,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"text.on-accent on accent.default","ratio":21,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"accent.text on surface.canvas","ratio":21,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"accent.text on surface.primary","ratio":21,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"status.healthy.fg on status.healthy.bg","ratio":9.7,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"status.healthy.fg on surface.primary","ratio":15.21,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-hc","pair":"status.degraded.fg on status.degraded.bg","ratio":9.34,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"status.degraded.fg on surface.primary","ratio":13.54,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-hc","pair":"status.warning.fg on status.warning.bg","ratio":9.43,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"status.warning.fg on surface.primary","ratio":15.07,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-hc","pair":"status.critical.fg on status.critical.bg","ratio":9.17,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"status.critical.fg on surface.primary","ratio":12.84,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-hc","pair":"status.info.fg on status.info.bg","ratio":9.51,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"status.info.fg on surface.primary","ratio":13.55,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-hc","pair":"status.unknown.fg on status.unknown.bg","ratio":12.49,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"status.unknown.fg on surface.primary","ratio":16.55,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-hc","pair":"status.inactive.fg on status.inactive.bg","ratio":6.77,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"status.inactive.fg on surface.primary","ratio":8.19,"need":3,"pass":true,"label":"icon/graphic on surface"},{"theme":"venom-hc","pair":"tier.lite.fg on tier.lite.bg","ratio":9.73,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"tier.pro.fg on tier.pro.bg","ratio":9.42,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"tier.max.fg on tier.max.bg","ratio":9.69,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"action.primary.fg on action.primary.bg","ratio":21,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"action.secondary.fg on action.secondary.bg","ratio":18.7,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"action.destructive.fg on action.destructive.bg","ratio":9.57,"need":4.5,"pass":true},{"theme":"venom-hc","pair":"border.strong on surface.primary","ratio":14.21,"need":3,"pass":true,"label":"control boundary"},{"theme":"venom-hc","pair":"focus.ring on surface.canvas","ratio":14.81,"need":3,"pass":true,"label":"focus ring"},{"theme":"venom-hc","pair":"text.primary on surface.canvas","ratio":21,"need":7,"pass":true,"label":"AAA"},{"theme":"venom-hc","pair":"text.secondary on surface.canvas","ratio":16.55,"need":7,"pass":true,"label":"AAA"}]}`
 - Log: CONTRAST: 119 pairings checked, 0 failures
 
@@ -43,7 +43,7 @@ Run at `2026-08-01T00:14:46.296Z` (finished `2026-08-01T00:14:58.230Z`) against 
 
 - Status: **PASS**
 - Command: `checkVenomGuardrails(io)`
-- Started: 2026-08-01T00:14:46.311Z · Finished: 2026-08-01T00:14:46.447Z
+- Started: 2026-08-01T00:17:25.172Z · Finished: 2026-08-01T00:17:25.308Z
 - Summary: `{"lintFiles":131,"terminologyFiles":187,"iconGlyphsDefined":79,"iconGlyphsUsed":41,"stateChecks":97,"componentFileCount":56,"cdnScanFiles":196,"requiredComponentsChecked":4,"anyScannedFiles":113,"errors":[]}`
 - Log: GUARDRAILS: 131 lint files, 187 terminology files, 41/79 glyphs, 97 state checks, 56 components, 196 cdn-scanned files, 113 any-scanned files, 0 violations
 
@@ -51,62 +51,62 @@ Run at `2026-08-01T00:14:46.296Z` (finished `2026-08-01T00:14:58.230Z`) against 
 
 - Status: **PASS**
 - Command: `npx tsc -p tsconfig.json --noEmit`
-- Started: 2026-08-01T00:14:46.447Z · Finished: 2026-08-01T00:14:49.094Z
+- Started: 2026-08-01T00:17:25.309Z · Finished: 2026-08-01T00:17:28.032Z
 
 ### Declaration generation (components/**/*.tsx -> sibling .d.ts)
 
 - Status: **PASS**
 - Command: `npx tsc -p tsconfig.declarations.json`
-- Started: 2026-08-01T00:14:49.111Z · Finished: 2026-08-01T00:14:51.558Z
+- Started: 2026-08-01T00:17:28.048Z · Finished: 2026-08-01T00:17:30.557Z
 
 ### Declaration drift check (checked-in .d.ts vs freshly generated)
 
 - Status: **PASS**
 - Command: `diff before/after tsc -p tsconfig.declarations.json`
-- Started: 2026-08-01T00:14:51.558Z · Finished: 2026-08-01T00:14:51.579Z
+- Started: 2026-08-01T00:17:30.557Z · Finished: 2026-08-01T00:17:30.576Z
 - Summary: `{"declarationFilesChecked":57,"drifted":0}`
 
 ### Declaration generation (package entry points -> dist/types)
 
 - Status: **PASS**
 - Command: `npx tsc -p tsconfig.build.json`
-- Started: 2026-08-01T00:14:51.609Z · Finished: 2026-08-01T00:14:54.268Z
+- Started: 2026-08-01T00:17:30.620Z · Finished: 2026-08-01T00:17:33.420Z
 
 ### Explorer production build (Vite, no in-browser transpilation)
 
 - Status: **PASS**
 - Command: `npx vite build --config vite.explorer.config.ts`
-- Started: 2026-08-01T00:14:54.268Z · Finished: 2026-08-01T00:14:56.490Z
-- Output: `vite v5.4.21 building for production... transforming... ✓ 206 modules transformed. rendering chunks... computing gzip size... dist-explorer/components/icons/icon.card.html                                      0.65 kB │ gzip:  0.44 kB dist-explorer/components/domain-routing/routing.card.html                          0.84 kB │ gzip:  0.47 kB dist-explorer/components/data/data.card.html                                       0.85 kB │ gzip:  0.45 kB dist-explorer/states/capability-truth.html        `
+- Started: 2026-08-01T00:17:33.420Z · Finished: 2026-08-01T00:17:35.785Z
+- Output: `vite v5.4.21 building for production... transforming... ✓ 207 modules transformed. rendering chunks... computing gzip size... dist-explorer/components/icons/icon.card.html                                      0.65 kB │ gzip:  0.44 kB dist-explorer/components/domain-routing/routing.card.html                          0.84 kB │ gzip:  0.47 kB dist-explorer/components/data/data.card.html                                       0.85 kB │ gzip:  0.45 kB dist-explorer/states/capability-truth.html        `
 
 ### Library build (Vite, dist/*.mjs + dist/*.cjs)
 
 - Status: **PASS**
 - Command: `npx vite build`
-- Started: 2026-08-01T00:14:56.490Z · Finished: 2026-08-01T00:14:58.130Z
-- Output: `vite v5.4.21 building for production... transforming... ✓ 67 modules transformed. rendering chunks... computing gzip size... dist/icons.mjs                 0.14 kB │ gzip:  0.14 kB │ map:   0.09 kB dist/density.mjs               0.40 kB │ gzip:  0.27 kB │ map:   1.41 kB dist/themes.mjs                0.59 kB │ gzip:  0.32 kB │ map:   2.23 kB dist/Icon-Dg97Ygra.js          1.22 kB │ gzip:  0.72 kB │ map:   2.88 kB dist/primitives.mjs            1.66 kB │ gzip:  0.81 kB │ map:   0.10 kB dist/domai`
+- Started: 2026-08-01T00:17:35.785Z · Finished: 2026-08-01T00:17:37.610Z
+- Output: `vite v5.4.21 building for production... transforming... ✓ 68 modules transformed. rendering chunks... computing gzip size... dist/icons.mjs                 0.14 kB │ gzip:  0.14 kB │ map:   0.09 kB dist/density.mjs               0.40 kB │ gzip:  0.27 kB │ map:   1.41 kB dist/themes.mjs                0.59 kB │ gzip:  0.32 kB │ map:   2.23 kB dist/customizer.mjs            1.15 kB │ gzip:  0.57 kB │ map:   4.70 kB dist/Icon-Dg97Ygra.js          1.22 kB │ gzip:  0.72 kB │ map:   2.88 kB dist/primi`
 
 ### Package export completeness (every dist/*.mjs entry point is importable and non-empty)
 
 - Status: **PASS**
 - Command: `node dist\.export-check.mjs`
-- Started: 2026-08-01T00:14:58.130Z · Finished: 2026-08-01T00:14:58.215Z
-- Output: `index: 148 symbols tokens: 1 symbols themes: 6 symbols density: 5 symbols icons: 2 symbols primitives: 60 symbols domain: 74 symbols tailwind: 2 symbols`
+- Started: 2026-08-01T00:17:37.611Z · Finished: 2026-08-01T00:17:37.689Z
+- Output: `index: 163 symbols tokens: 1 symbols themes: 6 symbols density: 5 symbols customizer: 15 symbols icons: 2 symbols primitives: 60 symbols domain: 74 symbols tailwind: 2 symbols`
 
 ### No stale validation artifacts
 
 - Status: **PASS**
 - Command: `ls('validation') + filename check`
-- Started: 2026-08-01T00:14:58.215Z · Finished: 2026-08-01T00:14:58.215Z
+- Started: 2026-08-01T00:17:37.689Z · Finished: 2026-08-01T00:17:37.690Z
 - Summary: `{"scannedFiles":10,"staleFound":0}`
 
 ### Handoff manifest (classification, canonical sources, generated artifacts, stale duplicates, exclusions)
 
 - Status: **PASS**
 - Command: `checkVenomHandoff(io)`
-- Started: 2026-08-01T00:14:58.215Z · Finished: 2026-08-01T00:14:58.230Z
-- Summary: `{"topLevelEntries":30,"canonicalConcerns":10,"componentModulesWithDeclarations":57,"errors":[]}`
-- Log: HANDOFF: 30 top-level entries classified, 10 canonical concerns present, 57 component modules with generated declarations, 0 stale duplicates, exclusions covered.
+- Started: 2026-08-01T00:17:37.690Z · Finished: 2026-08-01T00:17:37.704Z
+- Summary: `{"topLevelEntries":31,"canonicalConcerns":10,"componentModulesWithDeclarations":57,"errors":[]}`
+- Log: HANDOFF: 31 top-level entries classified, 10 canonical concerns present, 57 component modules with generated declarations, 0 stale duplicates, exclusions covered.
 
 ## Not covered by this command
 
