@@ -85,9 +85,16 @@ jobs:
       # headless chromium needs on a bare Linux host; on this self-hosted
       # runner the browser is cached under ~/.cache/ms-playwright between runs,
       # so only the first build pays the download.
+      # NOTE: deliberately WITHOUT `--with-deps`. That flag re-execs itself under
+      # sudo to apt-install OS libraries, and this self-hosted runner has no
+      # passwordless sudo — it fails with "sudo: a password is required" before a
+      # single byte is downloaded (run 30701375330). Without the flag Playwright
+      # only fetches its pinned browser build into ~/.cache/ms-playwright, which
+      # needs no elevation. If the host is ever missing a shared library, the
+      # RUN step below fails loudly on browser launch — it does not skip.
       - name: Install the chromium build Playwright pins
         working-directory: dashboard
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       # Real-browser accessibility (this is where axe's color-contrast rule
       # actually runs — jsdom cannot evaluate it) plus the critical flows,
