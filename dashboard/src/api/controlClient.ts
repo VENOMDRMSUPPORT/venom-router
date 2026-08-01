@@ -12,7 +12,7 @@
 // stores anything itself — no localStorage/sessionStorage, no
 // module-level cache of any token or secret.
 
-import type { DensityName, ThemeName } from "../theme-runtime";
+import type { AccentName, DensityName, ThemeName } from "../theme-runtime";
 import { AuthApiError, isSessionExpired, request as sharedRequest, throwApiError, toApiError } from "./http";
 
 export { AuthApiError, isSessionExpired, toApiError };
@@ -27,21 +27,24 @@ function request<T>(path: string, init: RequestInit): Promise<T> {
 
 // --- Settings (P2b-CAPI-005 / UI-001) ---
 
-interface SettingsResponse {
+export interface SettingsResponse {
   theme: ThemeName;
   density: DensityName;
+  accent: AccentName;
+  radius_px: number;
+  spacing_scale: number;
 }
 
-/** GET /settings — the persisted theme/density, or the frozen defaults if
- * no row exists yet. */
+/** GET /settings — the persisted appearance (theme/density/accent/
+ * radius_px/spacing_scale), or the frozen defaults if no row exists yet. */
 export async function getSettings(): Promise<SettingsResponse> {
   const body = await request<{ data: SettingsResponse }>("/settings", { method: "GET" });
   return body.data;
 }
 
-/** PUT /settings — persists theme/density. The shipped endpoint only ever
- * accepts/returns `{theme, density}` — there is no `version` field, so no
- * `If-Match` is ever sent here. */
+/** PUT /settings — persists all five appearance fields (the server
+ * validates each fail-closed and rejects a partial body). There is no
+ * `version` field, so no `If-Match` is ever sent here. */
 export async function putSettings(next: SettingsResponse, csrfToken: string): Promise<SettingsResponse> {
   const body = await request<{ data: SettingsResponse }>("/settings", {
     method: "PUT",
