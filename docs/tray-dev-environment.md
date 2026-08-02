@@ -1,8 +1,8 @@
 # Tray Development Environment
 
 How the venom tray app splits Production from Development, which ports belong
-to what, and how the dev children are isolated and contained. Accurate to the
-code as of 2026-08-01 (`internal/tray/devsupervisor.go` and friends).
+to what, and how the dev child is contained. Accurate to the code as of
+2026-08-02 (`internal/tray/devsupervisor.go` and friends).
 
 ## Two tray sections
 
@@ -11,7 +11,9 @@ code as of 2026-08-01 (`internal/tray/devsupervisor.go` and friends).
   Start/Stop/Restart Production.
 - **Development** — live-reload development. Menu items: Open Development
   Dashboard, Start/Stop/Restart Development, plus a `Dev Status:` info line
-  (Stopped / Starting / Running / Error per component).
+  (Stopped / Starting / Running / Error). Development runs **only** the vite
+  frontend; it proxies `/api` to the production backend on 8081, so it uses
+  the single production database (there is no separate dev backend).
 
 ## The key fact: edits under `dashboard/` do NOT appear on 8081
 
@@ -29,14 +31,13 @@ edits under `dashboard/` immediately.
 
 | Port | What | Notes |
 | ---- | ---- | ----- |
-| 8081 | Production server + embedded dashboard | default `VENOM_BIND` (`internal/config`) |
-| 8088 | Dev frontend (vite, hot reload) | `--strictPort`: vite fails loudly if 8088 is taken — it never silently hops to another port. Bound to `--host 127.0.0.1` |
-| 8082 | Dev backend | `go run ./cmd/venom serve -bind 127.0.0.1:8082` |
+| 8081 | Production server + embedded dashboard + the single database | default `VENOM_BIND` (`internal/config`); serves both prod and dev API |
+| 8088 | Dev frontend (vite, hot reload); proxies `/api` -> 8081 | `--strictPort`: vite fails loudly if 8088 is taken — it never silently hops to another port. Bound to `--host 127.0.0.1` |
 
 ## Dev repo root resolution
 
 The Development section needs the repo root to run `npm run dev` (in
-`<root>/dashboard`) and `go run ./cmd/venom` (in `<root>`). Resolution order
+`<root>/dashboard`). Resolution order
 (`ResolveDevRoot` in `internal/tray/devsupervisor.go`):
 
 1. The `VENOM_DEV_ROOT` environment variable, when set and non-empty
@@ -62,14 +63,16 @@ setx VENOM_DEV_ROOT "C:\Users\hamee\Desktop\venom-router"
 The tray logs the resolved value at boot as `tray: dev root` in
 `%LOCALAPPDATA%\venom-router\logs\venom.log`.
 
-## Isolation: dev state never touches production state
+## One shared database: dev uses production state
 
-The dev backend is spawned with `VENOM_DATA_DIR=<dataDir>\dev`, giving it its
-own single-instance lock, database, and keyring — fully separate from
-production.
+Development runs no backend of its own. The vite frontend proxies `/api` to
+the production server on 8081, so development reads and writes the **single**
+production database, keyring, and single-instance lock. There is no separate
+dev database, keyring, or lock, and no `<dataDir>\dev` data dir. The owner
+account created through the production dashboard is therefore the same account
+the dev dashboard logs into.
 
-- Production data dir on Windows: `%LOCALAPPDATA%\venom-router`.
-- Dev backend data dir: `%LOCALAPPDATA%\venom-router\dev`.
+- Production (and now dev) data dir on Windows: `%LOCALAPPDATA%\venom-router`.
 - `%LOCALAPPDATA%\VenomRouter` (no hyphen) belongs to a **separate legacy
   install** (`G:\Venom-Router`) and is never read or written by this project.
   For the same reason the autostart Run-key value this app manages is named
@@ -78,20 +81,22 @@ production.
 
 ## Containment: no orphaned dev processes
 
-On Windows both dev children are spawned inside their own Job Object
-configured `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
+On Windows the dev child is spawned inside its own Job Object configured
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
 (`internal/tray/devprocess_windows.go`). Stop Development — or the tray
-process exiting or dying, which closes the job handles — terminates the
-**entire** process tree: npm/vite's node children and `go run`'s compiled
-child. Children are also spawned with `CREATE_NO_WINDOW`, so no consoles pop.
+process exiting or dying, which closes the job handle — terminates the
+**entire** process tree, including npm/vite's node children. The child is also
+spawned with `CREATE_NO_WINDOW`, so no console pops.
 
 ## The vite `/api` proxy
 
 `dashboard/vite.config.ts` proxies `/api` to the control plane. The target is
 `VENOM_DEV_API_TARGET` when set; the tray's Development section sets it to
-`http://127.0.0.1:8082`, so dev traffic hits the isolated dev backend. A
-manual `npm run dev` (without the tray) defaults to `http://127.0.0.1:8081` —
-the production/standalone bind.
+`http://127.0.0.1:8081`, so dev traffic hits the production backend and its
+single database. A manual `npm run dev` (without the tray) also defaults to
+`http://127.0.0.1:8081` — the same production/standalone bind. Because dev has
+no backend of its own, the production server must be running for the dev
+frontend's `/api` calls to succeed.
 
 ## Build and icon
 

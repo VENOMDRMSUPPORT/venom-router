@@ -43,22 +43,16 @@ func TestDevEnablement(t *testing.T) {
 		v    DevStatusView
 		want menuEnablement
 	}{
-		{"stopped", DevStatusView{Overall: DevStopped, Frontend: DevStopped, Backend: DevStopped},
+		{"stopped", DevStatusView{Overall: DevStopped, Frontend: DevStopped},
 			menuEnablement{Open: false, Start: true, Stop: false, Restart: false}},
-		{"starting", DevStatusView{Overall: DevStarting, Frontend: DevStarting, Backend: DevStarting},
+		{"starting", DevStatusView{Overall: DevStarting, Frontend: DevStarting},
 			menuEnablement{Open: false, Start: false, Stop: true, Restart: true}},
-		{"frontend up first", DevStatusView{Overall: DevStarting, Frontend: DevRunning, Backend: DevStarting},
+		{"running", DevStatusView{Overall: DevRunning, Frontend: DevRunning},
 			menuEnablement{Open: true, Start: false, Stop: true, Restart: true}},
-		{"running", DevStatusView{Overall: DevRunning, Frontend: DevRunning, Backend: DevRunning},
-			menuEnablement{Open: true, Start: false, Stop: true, Restart: true}},
-		// Error states never offer Start: recovery is Restart (clean recycle
-		// of both components) or Stop (clears the error state). Offering
-		// Start alongside Stop+Restart is the owner-reported UX bug.
-		{"error with backend stopped", DevStatusView{Overall: DevError, Frontend: DevError, Backend: DevStopped},
-			menuEnablement{Open: false, Start: false, Stop: true, Restart: true}},
-		{"owner screenshot: frontend error, backend running", DevStatusView{Overall: DevError, Frontend: DevError, Backend: DevRunning},
-			menuEnablement{Open: false, Start: false, Stop: true, Restart: true}},
-		{"both components errored", DevStatusView{Overall: DevError, Frontend: DevError, Backend: DevError},
+		// Error never offers Start: recovery is Restart (clean recycle of the
+		// frontend) or Stop (clears the error state). Offering Start alongside
+		// Stop+Restart is the owner-reported UX bug.
+		{"error", DevStatusView{Overall: DevError, Frontend: DevError},
 			menuEnablement{Open: false, Start: false, Stop: true, Restart: true}},
 	}
 	for _, tc := range cases {

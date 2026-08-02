@@ -12,17 +12,17 @@ import (
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
 )
 
-// Development-environment constants (design 2026-07-31). The dev section is a
-// Windows desktop affordance; the frontend spec deliberately runs npm through
-// cmd /c. Ports are fixed by the approved design.
+// Development-environment constants (design 2026-08-02, one shared database).
+// The dev section is a Windows desktop affordance running a single child, the
+// vite frontend; it proxies /api to the PRODUCTION backend on 8081, so there
+// is no dev backend and no separate database. The frontend spec deliberately
+// runs npm through cmd /c. Ports are fixed by the approved design.
 const (
-	devFrontendURL   = "http://127.0.0.1:8088/"
-	devBackendBind   = "127.0.0.1:8082"
-	devBackendHealth = "http://" + devBackendBind + "/health"
-	devAPITarget     = "VENOM_DEV_API_TARGET=http://" + devBackendBind
+	devFrontendURL = "http://127.0.0.1:8088/"
+	devAPITarget   = "VENOM_DEV_API_TARGET=http://127.0.0.1:8081"
 )
 
-// DevComponentState is one dev child's coarse state.
+// DevComponentState is the dev child's coarse state.
 type DevComponentState int
 
 const (
@@ -32,8 +32,7 @@ const (
 	DevError
 )
 
-// title is the capitalized overall form ("Stopped"); label the lowercase
-// per-component form ("stopped") — both exactly as the menu renders them.
+// title is the capitalized form ("Stopped"), exactly as the menu renders it.
 func (s DevComponentState) title() string {
 	switch s {
 	case DevStarting:
@@ -44,19 +43,6 @@ func (s DevComponentState) title() string {
 		return "Error"
 	default:
 		return "Stopped"
-	}
-}
-
-func (s DevComponentState) label() string {
-	switch s {
-	case DevStarting:
-		return "starting"
-	case DevRunning:
-		return "running"
-	case DevError:
-		return "error"
-	default:
-		return "stopped"
 	}
 }
 
@@ -86,7 +72,7 @@ type ProcessRunner interface {
 type HealthProbe func(ctx context.Context, url string) bool
 
 // DefaultHealthProbe: any HTTP response (any status) proves the listener is
-// up — vite and the dev backend both answer GET on their probe URLs.
+// up — vite answers GET on its probe URL.
 func DefaultHealthProbe(ctx context.Context, url string) bool {
 	cctx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
@@ -102,46 +88,26 @@ func DefaultHealthProbe(ctx context.Context, url string) bool {
 	return true
 }
 
-// DevStatusView is an immutable snapshot for the UI.
+// DevStatusView is an immutable snapshot for the UI. With a single component,
+// Overall simply mirrors Frontend; it is kept as its own field so the menu's
+// enablement logic and the status line read consistently.
 type DevStatusView struct {
 	Overall  DevComponentState
 	Frontend DevComponentState
-	Backend  DevComponentState
 }
 
-// statusLine renders the menu's dev info line, e.g.
-// "Dev Status: Starting · Frontend starting · Backend running".
+// statusLine renders the menu's dev info line, e.g. "Dev Status: Starting".
 func (v DevStatusView) statusLine() string {
-	return "Dev Status: " + v.Overall.title() +
-		" · Frontend " + v.Frontend.label() +
-		" · Backend " + v.Backend.label()
-}
-
-// overallDevState aggregates: Error dominates, then Starting (any component
-// not yet Running while another is up also reads Starting), then Running
-// (both), else Stopped.
-func overallDevState(f, b DevComponentState) DevComponentState {
-	switch {
-	case f == DevError || b == DevError:
-		return DevError
-	case f == DevRunning && b == DevRunning:
-		return DevRunning
-	case f == DevStarting || b == DevStarting || f == DevRunning || b == DevRunning:
-		return DevStarting
-	default:
-		return DevStopped
-	}
+	return "Dev Status: " + v.Overall.title()
 }
 
 // DevSupervisorOptions configures NewDevSupervisor.
 type DevSupervisorOptions struct {
 	// Root is the repo root ("" = Development section unavailable).
-	Root string
-	// DataDir is the PRODUCTION data dir; the dev backend gets <DataDir>/dev.
-	DataDir string
-	Runner  ProcessRunner
-	Probe   HealthProbe
-	Logger  *observability.Logger
+	Root   string
+	Runner ProcessRunner
+	Probe  HealthProbe
+	Logger *observability.Logger
 }
 
 type devComponent struct {
@@ -153,18 +119,16 @@ type devComponent struct {
 	gen int
 }
 
-// DevSupervisor drives the two dev children (vite frontend, go backend)
-// through ProcessRunner. Platform-neutral; no syscalls, no os/exec.
+// DevSupervisor drives the single dev child (the vite frontend) through
+// ProcessRunner. Platform-neutral; no syscalls, no os/exec.
 type DevSupervisor struct {
-	root    string
-	dataDir string
-	runner  ProcessRunner
-	probe   HealthProbe
-	log     *observability.Logger
+	root   string
+	runner ProcessRunner
+	probe  HealthProbe
+	log    *observability.Logger
 
 	mu       sync.Mutex
 	frontend devComponent
-	backend  devComponent
 
 	lifecycleMu sync.Mutex
 }
@@ -172,11 +136,10 @@ type DevSupervisor struct {
 // NewDevSupervisor builds a DevSupervisor, filling defaults.
 func NewDevSupervisor(opts DevSupervisorOptions) *DevSupervisor {
 	s := &DevSupervisor{
-		root:    opts.Root,
-		dataDir: opts.DataDir,
-		runner:  opts.Runner,
-		probe:   opts.Probe,
-		log:     opts.Logger,
+		root:   opts.Root,
+		runner: opts.Runner,
+		probe:  opts.Probe,
+		log:    opts.Logger,
 	}
 	if s.log == nil {
 		s.log = observability.Default()
@@ -239,14 +202,14 @@ func (s *DevSupervisor) Available() bool { return s.root != "" }
 // DashboardURL is the dev frontend (vite) URL.
 func (s *DevSupervisor) DashboardURL() string { return devFrontendURL }
 
-// Status returns the current snapshot.
+// Status returns the current snapshot. With one component, Overall mirrors
+// the frontend state.
 func (s *DevSupervisor) Status() DevStatusView {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return DevStatusView{
-		Overall:  overallDevState(s.frontend.state, s.backend.state),
+		Overall:  s.frontend.state,
 		Frontend: s.frontend.state,
-		Backend:  s.backend.state,
 	}
 }
 
@@ -267,16 +230,7 @@ func (s *DevSupervisor) frontendSpec() ProcessSpec {
 	}
 }
 
-func (s *DevSupervisor) backendSpec() ProcessSpec {
-	return ProcessSpec{
-		Dir:      s.root,
-		Name:     "go",
-		Args:     []string{"run", "./cmd/venom", "serve", "-bind", devBackendBind},
-		ExtraEnv: []string{"VENOM_DATA_DIR=" + filepath.Join(s.dataDir, "dev")},
-	}
-}
-
-// Start spawns any component that is not already Starting/Running. No-op
+// Start spawns the frontend unless it is already Starting/Running. No-op
 // when the dev root is unavailable.
 func (s *DevSupervisor) Start() {
 	if !s.Available() {
@@ -285,16 +239,14 @@ func (s *DevSupervisor) Start() {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 	s.startComponent(&s.frontend, "frontend", s.frontendSpec())
-	s.startComponent(&s.backend, "backend", s.backendSpec())
 }
 
-// Stop kills both components and marks them Stopped. Deliberate: the bumped
+// Stop kills the frontend and marks it Stopped. Deliberate: the bumped
 // generation makes the watcher ignore the kill-induced Wait return.
 func (s *DevSupervisor) Stop() {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 	s.stopComponent(&s.frontend)
-	s.stopComponent(&s.backend)
 }
 
 // Restart is Stop then Start.
@@ -303,11 +255,10 @@ func (s *DevSupervisor) Restart() {
 	s.Start()
 }
 
-// Refresh promotes Starting components to Running once their health probe
-// answers (called from the UI ticker).
+// Refresh promotes the frontend from Starting to Running once its health
+// probe answers (called from the UI ticker).
 func (s *DevSupervisor) Refresh(ctx context.Context) {
 	s.refreshComponent(ctx, &s.frontend, devFrontendURL)
-	s.refreshComponent(ctx, &s.backend, devBackendHealth)
 }
 
 func (s *DevSupervisor) startComponent(c *devComponent, name string, spec ProcessSpec) {
@@ -343,8 +294,8 @@ func (s *DevSupervisor) startComponent(c *devComponent, name string, spec Proces
 	go s.watch(c, name, h, gen)
 }
 
-// watch turns an unexpected child exit — clean or not — into Error: dev
-// servers must not exit on their own, so a self-exit is always a defect the
+// watch turns an unexpected child exit — clean or not — into Error: the dev
+// frontend must not exit on its own, so a self-exit is always a defect the
 // owner should see (a deliberate Stop bumps gen first and is ignored here).
 func (s *DevSupervisor) watch(c *devComponent, name string, h ProcessHandle, gen int) {
 	err := h.Wait()

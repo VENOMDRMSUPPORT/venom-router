@@ -191,17 +191,12 @@ func runTrayLoop(parent context.Context, stdout io.Writer) error {
 		LogPath:         logPath,
 	})
 
-	dataDir, err := platform.EnsureDataDir()
-	if err != nil {
-		return fmt.Errorf("cli: resolve data dir: %w", err)
-	}
 	devRoot := tray.ResolveDevRoot()
 	dev := tray.NewDevSupervisor(tray.DevSupervisorOptions{
-		Root:    devRoot,
-		DataDir: dataDir,
-		Runner:  tray.NewProcessRunner(),
-		Probe:   tray.DefaultHealthProbe,
-		Logger:  logger,
+		Root:   devRoot,
+		Runner: tray.NewProcessRunner(),
+		Probe:  tray.DefaultHealthProbe,
+		Logger: logger,
 	})
 	if devRoot == "" {
 		devRoot = "unavailable"
