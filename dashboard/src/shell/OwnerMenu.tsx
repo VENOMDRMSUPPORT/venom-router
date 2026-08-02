@@ -1,18 +1,15 @@
 import { useEffect, useState } from "react";
-import { DropdownMenu, IconButton } from "@venom/design-system/primitives";
+import { DropdownMenu } from "@venom/design-system/primitives";
+import { Icon } from "@venom/design-system/icons";
 import { OwnerSessionStatus } from "@venom/design-system/domain";
 import type { SessionTimes } from "../auth/authClient";
 
 export interface OwnerMenuProps {
   session: SessionTimes;
   onSignOut: () => void | Promise<void>;
+  onNavigate?: (navKey: string) => void;
 }
 
-/** Formats a millisecond duration as the plain "Xh Ym" / "Xm" text
- * OwnerSessionStatus's idleIn/absoluteIn slots expect — never a raw
- * styled value, just content. Floors at "0m" rather than going negative
- * once a countdown has technically elapsed client-side (the server, not
- * this display, is the source of truth on the next real request). */
 function formatRemaining(targetIso: string, now: number): string {
   const remainingMs = new Date(targetIso).getTime() - now;
   if (Number.isNaN(remainingMs) || remainingMs <= 0) return "0m";
@@ -22,15 +19,10 @@ function formatRemaining(targetIso: string, now: number): string {
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
-/**
- * The top bar's owner menu (P2b-UI-001): a DropdownMenu surfacing the
- * live OwnerSessionStatus (idle/absolute countdowns) plus a Sign out
- * item. Ticks once a minute purely to keep the displayed countdowns
- * fresh — the session's actual expiry is always enforced server-side.
- */
 export default function OwnerMenu(props: OwnerMenuProps) {
-  const { session, onSignOut } = props;
+  const { session, onSignOut, onNavigate } = props;
   const [now, setNow] = useState(() => Date.now());
+  const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60_000);
@@ -39,18 +31,67 @@ export default function OwnerMenu(props: OwnerMenuProps) {
 
   return (
     <DropdownMenu
-      trigger={<IconButton icon="user-round" label="Owner menu" variant="ghost" />}
       align="end"
+      trigger={
+        <button
+          type="button"
+          aria-label="Owner menu"
+          onClick={() => setIsOpen(!isOpen)}
+          className="flex items-center gap-2 rounded-lg p-1.5 hover:bg-surface-secondary text-text-primary text-xs font-medium transition-colors"
+        >
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#33373B] text-white font-semibold text-xs shadow-sm">
+            O
+          </span>
+          <span className="hidden sm:inline-block text-xs font-semibold text-text-primary">
+            Venom Owner
+          </span>
+          <Icon
+            name="chevron-down"
+            size={14}
+            className={`text-text-muted transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+          />
+        </button>
+      }
       items={[
         {
           type: "label",
           label: (
-            <OwnerSessionStatus
-              state="active"
-              idleIn={formatRemaining(session.idleExpiresAt, now)}
-              absoluteIn={formatRemaining(session.absoluteExpiresAt, now)}
-            />
+            <div className="flex items-center gap-3 p-1 min-w-[200px]">
+              <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-[#33373B] text-white font-bold text-sm">
+                O
+              </span>
+              <div className="flex flex-col min-w-0">
+                <span className="font-semibold text-sm text-text-primary truncate">
+                  Venom Owner
+                </span>
+                <span className="text-xs text-text-muted truncate">
+                  owner@venom.local
+                </span>
+              </div>
+            </div>
           ),
+        },
+        { type: "separator" },
+        {
+          type: "label",
+          label: (
+            <div className="px-1 py-0.5">
+              <OwnerSessionStatus
+                state="active"
+                idleIn={formatRemaining(session.idleExpiresAt, now)}
+                absoluteIn={formatRemaining(session.absoluteExpiresAt, now)}
+              />
+            </div>
+          ),
+        },
+        { type: "separator" },
+        {
+          label: "Settings",
+          icon: "settings",
+          onSelect: () => {
+            if (onNavigate) onNavigate("settings");
+            else window.location.hash = "#settings";
+          },
         },
         { type: "separator" },
         {

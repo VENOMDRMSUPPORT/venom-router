@@ -539,13 +539,66 @@
 /* Chrome heights match the legacy console exactly: 70px header row and a
    70px sidebar brand block (legacy `min-h-17.5` / `h-17.5` = 70px). Chrome
    separators use --border-default — the legacy chrome border role. */
-.vn-shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: 70px minmax(0, 1fr); height: 100vh; min-width: 0; overflow: hidden; background: var(--surface-canvas); }
+.vn-shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: 60px minmax(0, 1fr); height: 100vh; min-width: 0; overflow: hidden; background: var(--surface-canvas); }
 .vn-shell-nav { grid-row: 1 / 3; display: flex; flex-direction: column; background: var(--nav-bg); border-right: var(--border-hairline) solid var(--border-default); overflow-y: auto; }
 .vn-shell-topbar { display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-4); border-bottom: var(--border-hairline) solid var(--border-default); background: var(--surface-primary); }
 .vn-shell-main { min-width: 0; overflow: auto; }
 .vn-shell-content { width: 100%; min-width: 0; padding: var(--density-page-pad); display: flex; flex-direction: column; gap: var(--density-page-section-gap); max-width: 1400px; }
 
-.vn-nav-brand { display: flex; align-items: center; gap: var(--space-2); height: 70px; flex: none; padding: 0 var(--space-4); border-bottom: var(--border-hairline) solid var(--border-default); font-weight: var(--font-weight-semibold); letter-spacing: -0.01em; }
+.vn-nav-brand { display: flex; align-items: center; gap: var(--space-3); height: 60px; flex: none; padding: 0 var(--space-4); border-bottom: var(--border-hairline) solid var(--border-default); font-weight: var(--font-weight-semibold); letter-spacing: -0.01em; user-select: text; cursor: default; }
+
+@keyframes vn-orbit-ring {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes vn-pulse-core {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 4px var(--accent-text)); }
+  50% { transform: scale(1.1); filter: drop-shadow(0 0 8px var(--accent-text)); }
+}
+
+.vn-brand-tile {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; flex-shrink: 0; border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-secondary) 70%, var(--accent-text) 30%);
+  border: 1.5px solid color-mix(in srgb, var(--accent-text) 60%, var(--border-default));
+  color: var(--accent-text); text-decoration: none; cursor: pointer;
+  box-shadow: 0 0 16px color-mix(in srgb, var(--accent-text) 35%, transparent), inset 0 0 8px color-mix(in srgb, var(--accent-text) 20%, transparent);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
+.vn-brand-tile::before {
+  content: ""; position: absolute; inset: -50%;
+  background: conic-gradient(from 0deg, transparent 0 300deg, var(--accent-text) 360deg);
+  animation: vn-orbit-ring 3s linear infinite;
+  opacity: 0.6; pointer-events: none;
+}
+
+.vn-brand-tile::after {
+  content: ""; position: absolute; inset: 2px;
+  background: var(--surface-secondary);
+  border-radius: calc(var(--radius-lg) - 2px);
+  z-index: 1;
+}
+
+.vn-brand-tile:hover {
+  border-color: var(--accent-text);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--accent-text) 60%, transparent);
+  transform: scale(1.04);
+}
+
+.vn-brand-icon {
+  position: relative; z-index: 2;
+  animation: vn-pulse-core 3s ease-in-out infinite;
+}
+
+.vn-brand-status-dot {
+  position: absolute; bottom: -2px; right: -2px; z-index: 3; width: 10px; height: 10px;
+  border-radius: var(--radius-full); background: var(--status-healthy);
+  border: 2px solid var(--surface-canvas);
+  box-shadow: 0 0 8px var(--status-healthy);
+}
 .vn-nav-group { padding: var(--space-3) var(--space-3) var(--space-1); }
 .vn-nav-item {
   display: flex; align-items: center; gap: var(--space-2);
@@ -687,7 +740,7 @@
 }
 
 @media (max-width: 1199px) {
-  .vn-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: 70px minmax(0, 1fr); }
+  .vn-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: 60px minmax(0, 1fr); }
   .vn-shell-nav { display: none; }
   .vn-shell-topbar { grid-column: 1; min-width: 0; }
   .vn-shell-main { grid-column: 1; padding-bottom: calc(84px + env(safe-area-inset-bottom)); }

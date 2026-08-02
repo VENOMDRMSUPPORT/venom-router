@@ -64,7 +64,7 @@
   --focus-ring: var(--color-gray-1000);
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
-  --selection-bg: var(--color-gray-200);
+  --selection-bg: rgba(0, 112, 243, 0.25);
   --selection-fg: var(--color-gray-895);
   --tier-lite-fg: var(--color-sky-700);
   --tier-lite-bg: var(--color-sky-100);

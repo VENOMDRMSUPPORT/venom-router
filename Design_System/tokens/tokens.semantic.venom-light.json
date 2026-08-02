@@ -77,7 +77,7 @@
   },
   "selection": {
     "$type": "color",
-    "bg": { "$value": "{color.gray.200}" },
+    "bg": { "$value": "rgba(0, 112, 243, 0.25)" },
     "fg": { "$value": "{color.gray.895}" }
   },
   "tier": {

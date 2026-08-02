@@ -2,8 +2,8 @@
   "$description": "Venom Design System — accent dimension (2026-08-01 Vercel-style retheme). Five optional accents delivered as [data-accent=\"...\"] override blocks in the generated tokens/accents.css. Each block overrides ONLY the accent-derived custom properties (accent.*, text.on-accent, text.link*, border.focus, focus.ring, selection.*); everything else stays theme-owned. `data-accent` absent or \"mono\" keeps the base monochrome themes. Hex values are ported verbatim from the legacy Vercel-style stylesheet; `base` carries the venom-dark values (dark is the :root default theme) and `themes.venom-light` carries per-theme overrides where the legacy palette diverges (emerald and rose).",
   "$notes": {
     "accent.active": "The legacy palette defines no pressed shade; the legacy hover value is reused for the active state (no invented colors).",
-    "selection.bg": "The legacy soft focus-ring wash — rgba(accent, 0.2) — reused as the selection wash.",
-    "selection.fg": "var(--text-primary) so selected text keeps the current theme's text color."
+    "selection.bg": "Soft, calm, professional accent selection wash.",
+    "selection.fg": "Natural text readability."
   },
   "accents": {
     "blue": {
@@ -18,7 +18,7 @@
         "text.link-hover": "#005bc4",
         "border.focus": "#0070f3",
         "focus.ring": "#0070f3",
-        "selection.bg": "rgba(0, 112, 243, 0.2)",
+        "selection.bg": "rgba(0, 112, 243, 0.3)",
         "selection.fg": "var(--text-primary)"
       }
     },
@@ -34,7 +34,7 @@
         "text.link-hover": "#6929c4",
         "border.focus": "#8a3ffc",
         "focus.ring": "#8a3ffc",
-        "selection.bg": "rgba(138, 63, 252, 0.2)",
+        "selection.bg": "rgba(138, 63, 252, 0.3)",
         "selection.fg": "var(--text-primary)"
       }
     },
@@ -50,7 +50,7 @@
         "text.link-hover": "#d48b11",
         "border.focus": "#f5a623",
         "focus.ring": "#f5a623",
-        "selection.bg": "rgba(245, 166, 35, 0.2)",
+        "selection.bg": "rgba(245, 166, 35, 0.3)",
         "selection.fg": "var(--text-primary)"
       }
     },
@@ -66,7 +66,7 @@
         "text.link-hover": "#00b3ad",
         "border.focus": "#00dfd8",
         "focus.ring": "#00dfd8",
-        "selection.bg": "rgba(0, 223, 216, 0.2)",
+        "selection.bg": "rgba(0, 223, 216, 0.3)",
         "selection.fg": "var(--text-primary)"
       },
       "themes": {
@@ -81,7 +81,7 @@
           "text.link-hover": "#077d4f",
           "border.focus": "#09a267",
           "focus.ring": "#09a267",
-          "selection.bg": "rgba(9, 162, 103, 0.2)",
+          "selection.bg": "rgba(9, 162, 103, 0.28)",
           "selection.fg": "var(--text-primary)"
         }
       }
@@ -98,7 +98,7 @@
         "text.link-hover": "#c612b4",
         "border.focus": "#f81ce5",
         "focus.ring": "#f81ce5",
-        "selection.bg": "rgba(248, 28, 229, 0.2)",
+        "selection.bg": "rgba(248, 28, 229, 0.3)",
         "selection.fg": "var(--text-primary)"
       },
       "themes": {
@@ -113,7 +113,7 @@
           "text.link-hover": "#b8006c",
           "border.focus": "#eb008b",
           "focus.ring": "#eb008b",
-          "selection.bg": "rgba(235, 0, 139, 0.2)",
+          "selection.bg": "rgba(235, 0, 139, 0.28)",
           "selection.fg": "var(--text-primary)"
         }
       }

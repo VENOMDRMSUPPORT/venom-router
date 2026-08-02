@@ -40,12 +40,14 @@ import {
   type DensityName,
   type ThemeName,
 } from "../theme-runtime";
+import BrandHeader from "./BrandHeader";
 import BreadcrumbBar from "./BreadcrumbBar";
 import ChromeHeader from "./ChromeHeader";
 import EnterpriseCustomizer, { type CustomizerValue } from "./EnterpriseCustomizer";
 import { DEFAULT_NAV_KEY, NAV, NAV_GROUPS, NAV_SECTIONS, navItemByKey } from "./nav";
 import NotificationBell from "./NotificationBell";
 import OwnerMenu from "./OwnerMenu";
+import SearchBar from "./SearchBar";
 import ThemeToggle from "./ThemeToggle";
 
 export interface AppShellProps {
@@ -256,17 +258,7 @@ export default function AppShell(props: AppShellProps) {
   return (
     <div className="vn-shell">
       <nav className="vn-shell-nav vn-scroll" aria-label="Primary">
-        {/* Brand block (legacy sidebar-header pattern): accent-tinted logo
-            mark + wordmark with the small-caps slogan line beneath. The
-            mark is the DS route glyph rendered via currentColor, so it
-            follows the customizer's live accent. */}
-        <div className="vn-nav-brand">
-          <Icon name="route" size={18} className="flex-none text-accent-text" />
-          <div className="flex min-w-0 flex-col">
-            <span className="truncate">Venom Router</span>
-            <span className="vn-overline truncate">AI Control Center</span>
-          </div>
-        </div>
+        <BrandHeader onNavigate={(key) => setActiveNav(key)} />
         {NAV_GROUPS.map((group) => (
           <div key={group}>
             <div className="vn-nav-group vn-overline">{group}</div>
@@ -294,6 +286,16 @@ export default function AppShell(props: AppShellProps) {
         subtitle={activeItem.description}
         icon={activeItem.icon}
       >
+        <SearchBar onNavigate={handleNavigate} />
+        <span className="vn-desktop-theme-toggle">
+          <ThemeToggle theme={appearance.theme} onChange={handleThemeChange} />
+        </span>
+        <NotificationBell />
+        <OwnerMenu
+          session={session}
+          onSignOut={handleSignOut}
+          onNavigate={handleNavigate}
+        />
         <EnterpriseCustomizer
           value={{
             theme: appearance.theme,
@@ -304,11 +306,6 @@ export default function AppShell(props: AppShellProps) {
           onApply={handleCustomizerApply}
           onPersist={handleCustomizerPersist}
         />
-        <span className="vn-desktop-theme-toggle">
-          <ThemeToggle theme={appearance.theme} onChange={handleThemeChange} />
-        </span>
-        <NotificationBell />
-        <OwnerMenu session={session} onSignOut={handleSignOut} />
       </ChromeHeader>
 
       <main className="vn-shell-main vn-scroll">
