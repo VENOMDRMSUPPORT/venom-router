@@ -1,8 +1,15 @@
 package httpapi
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"strings"
+
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 )
 
 // zenChatUsability is the semantic verdict of one real opencode-zen chat
@@ -79,4 +86,75 @@ func classifyOpenCodeZenChatUsability(status int, body []byte) zenChatUsability 
 		return zenChatUsable
 	}
 	return zenChatInconclusive
+}
+
+// probeOpenCodeZenChatUsability runs ONE minimal real chat completion for a
+// SPECIFIC model (discovery supplies the id) and returns the usability verdict.
+// It is the per-model usability probe, distinct from the account-health seam:
+// it targets a named model and reads the raw body so classifyOpenCodeZenChat-
+// Usability can distinguish working / free-exhausted / paid / auth outcomes.
+//
+// The error is non-nil ONLY on a transport failure (the model's usability is
+// then simply unknown) — never on a provider error response, which is a real
+// verdict the classifier reads from the body. key travels only as the
+// Authorization header and is never logged; the body is read only to classify.
+func probeOpenCodeZenChatUsability(ctx context.Context, baseURL, key, modelID string) (zenChatUsability, error) {
+	reqBody, err := json.Marshal(openCodeZenChatProbeRequest{
+		Model:     modelID,
+		Messages:  []openCodeZenChatProbeMessage{{Role: "user", Content: "ping"}},
+		MaxTokens: 1,
+	})
+	if err != nil {
+		return zenChatInconclusive, fmt.Errorf("httpapi: opencode-zen usability probe marshal: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/v1/chat/completions", bytes.NewReader(reqBody))
+	if err != nil {
+		return zenChatInconclusive, fmt.Errorf("httpapi: opencode-zen usability probe request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := openCodeZenHTTPClient.Do(req)
+	if err != nil {
+		return zenChatInconclusive, fmt.Errorf("httpapi: opencode-zen usability probe: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, openCodeZenProbeBodyLimit))
+	return classifyOpenCodeZenChatUsability(resp.StatusCode, body), nil
+}
+
+// zenUsabilitySignal maps a chat-usability verdict onto the EXISTING
+// probe-signal vocabulary (intelligence, 04 §2/§5) so a usability result drives
+// the very same certification machinery every other probe does — no parallel
+// taxonomy. The chosen signals encode the design's intent exactly:
+//
+//   - usable        -> capability_response (definitive supported -> routable chat)
+//   - paid-unusable -> semantic_rejection  (definitive unsupported: the account
+//                      cannot use this paid model, a proven-negative verdict)
+//   - free-exhausted-> rate_limited        (retryable, reschedules: a spent free
+//                      quota is transient, never a permanent unsupported)
+//   - auth-failure  -> unauthorized        (terminal credential block; the caller
+//                      also stops probing the rest of the account)
+//   - inconclusive  -> malformed_request   (establishes nothing)
+func zenUsabilitySignal(v zenChatUsability) intelligence.ProbeSignalKind {
+	switch v {
+	case zenChatUsable:
+		return intelligence.SignalCapabilityResponse
+	case zenChatPaidUnusable:
+		return intelligence.SignalSemanticRejection
+	case zenChatFreeExhausted:
+		return intelligence.SignalRateLimited
+	case zenChatAuthFailure:
+		return intelligence.SignalUnauthorized
+	default:
+		return intelligence.SignalMalformedRequest
+	}
+}
+
+// zenUsabilityProbeOutcome bridges a chat-usability verdict to the ProbeOutcome
+// the CertificationDriver.RecordAttempt consumes, via the shared taxonomy.
+func zenUsabilityProbeOutcome(v zenChatUsability) (intelligence.ProbeOutcome, error) {
+	return intelligence.ClassifyProbeSignal(zenUsabilitySignal(v))
 }
