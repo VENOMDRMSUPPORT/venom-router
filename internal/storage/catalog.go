@@ -228,6 +228,47 @@ func (r *CatalogRepo) GetOperationCertification(ctx context.Context, offeringOpe
 	return op, true, nil
 }
 
+// ChatOfferingToVerify is one free chat offering-operation awaiting a
+// usability probe: the certification row id to drive and the provider model id
+// to probe. It is the storage-side shape the per-account usability run consumes.
+type ChatOfferingToVerify struct {
+	OfferingOperationID string
+	ProviderModelID     string
+}
+
+// ListChatOfferingsToVerify returns the account's chat offering-operations
+// whose certification is still `observed` — exactly the rows a usability probe
+// should run against. Non-chat operations, chat ops already past observed
+// (probing/certified/suspended/expired are handled by the existing probe/
+// recertify paths), and other accounts' rows are all excluded by the query.
+func (r *CatalogRepo) ListChatOfferingsToVerify(ctx context.Context, accountID string) ([]ChatOfferingToVerify, error) {
+	rows, err := r.db.Conn().QueryContext(ctx,
+		`SELECT oo.id, oo.provider_model_id
+		 FROM offering_operations oo
+		 JOIN certifications c ON c.offering_operation_id = oo.id
+		 WHERE oo.account_id = ? AND oo.operation = 'chat' AND c.status = 'observed'
+		 ORDER BY oo.provider_model_id ASC`,
+		accountID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("storage: list chat offerings to verify for %q: %w", accountID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []ChatOfferingToVerify
+	for rows.Next() {
+		var v ChatOfferingToVerify
+		if err := rows.Scan(&v.OfferingOperationID, &v.ProviderModelID); err != nil {
+			return nil, fmt.Errorf("storage: list chat offerings to verify for %q: scan: %w", accountID, err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: list chat offerings to verify for %q: %w", accountID, err)
+	}
+	return out, nil
+}
+
 // catalogRowScanner is the shared shape of *sql.Row's and *sql.Rows' Scan
 // method (mirrors storage.scanner in accounts.go).
 type catalogRowScanner interface {
