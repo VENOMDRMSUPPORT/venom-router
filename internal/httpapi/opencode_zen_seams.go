@@ -27,15 +27,16 @@ var openCodeZenHTTPClient = &http.Client{Timeout: openCodeZenHTTPTimeout}
 // exists so a hostile/huge body can never exhaust memory.
 const openCodeZenProbeBodyLimit = 8 << 10
 
-// errOpenCodeZenModelOrShapeRejection is the internal sentinel the chat probe
-// returns when the provider answered 401/403 for a MODEL or request-shape
-// reason rather than an authentication reason. It carries NO provider text —
-// the provider's message is read only to classify and is then discarded — and
-// it maps, via providers.ValidateAPIKey's err!=nil branch, to
-// ValidationUnavailable (never invalid). This is the fail-closed guard: the
-// system must never tell the owner their key is bad when it cannot actually
-// establish that.
-var errOpenCodeZenModelOrShapeRejection = errors.New("httpapi: opencode-zen chat probe: model/request-shape rejection (not an auth failure)")
+// errOpenCodeZenNonAuth401 is the internal sentinel the chat probe returns when
+// the provider answered 401/403 WITHOUT a positive authentication signal — a
+// model/request-shape problem, or any error type the classifier does not
+// recognise (billing is handled separately, as authenticated). It carries NO
+// provider text (the message is read only to classify, then discarded) and
+// maps, via providers.ValidateAPIKey's err!=nil branch, to
+// ValidationUnavailable. This is the inverted default: falsely rejecting a good
+// credential is an unrecoverable dead end for the owner, so only a positive
+// auth signal may produce invalid; everything else fails closed to unavailable.
+var errOpenCodeZenNonAuth401 = errors.New("httpapi: opencode-zen chat probe: 401/403 without a positive authentication signal (unavailable, not invalid)")
 
 // openCodeZenChatProbeMessage / openCodeZenChatProbeRequest are the minimal
 // OpenAI-compatible chat-completions request the probe sends.
@@ -73,11 +74,12 @@ type openCodeZenModelList struct {
 // authentication; the model id is NEVER hardcoded because the catalog changes.
 //
 // If the models read fails or the catalog is empty, the probe reports
-// unavailable (returns a non-nil error), NEVER invalid. On a 401/403 whose
-// body indicates a model/request-shape problem rather than an auth problem, it
-// also reports unavailable (the fail-closed guard). key is sent ONLY as the
-// Authorization header value — never logged, never included in any error this
-// function returns; provider error text is read solely to classify and is
+// unavailable (returns a non-nil error), NEVER invalid. A 401/403 is triaged
+// by body (classifyOpenCodeZen401Body): a billing/credits rejection proves the
+// key authenticated (reported via providers.ErrProbeAuthenticated); a positive
+// auth failure is invalid; anything else is unavailable. key is sent ONLY as
+// the Authorization header value — never logged, never included in any error
+// this function returns; provider error text is read solely to classify and is
 // then discarded.
 func openCodeZenChatProbeSeam(ctx context.Context, baseURL, key string) (int, error) {
 	modelID, err := resolveOpenCodeZenModelID(ctx, baseURL, key)
@@ -107,15 +109,32 @@ func openCodeZenChatProbeSeam(ctx context.Context, baseURL, key string) (int, er
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Fail-closed guard: a 401/403 whose body positively indicates a model or
-	// request-shape problem must not be read as an invalid credential. The
-	// body is read ONLY to classify — its text never leaves this function.
+	// opencode-zen answers 401/403 for at least three distinct conditions, so
+	// the wire status alone cannot classify the key. Read the body ONLY to
+	// classify (its text never leaves this function) and invert the default:
+	// only a POSITIVE authentication signal produces invalid; a billing
+	// rejection proves the key authenticated; everything else fails closed to
+	// unavailable.
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		probeBody, _ := io.ReadAll(io.LimitReader(resp.Body, openCodeZenProbeBodyLimit))
-		if openCodeZenBodyIsModelOrShapeProblem(probeBody) {
-			return 0, errOpenCodeZenModelOrShapeRejection
+		switch classifyOpenCodeZen401Body(probeBody) {
+		case ocz401Authenticated:
+			// The provider answered 401 for BILLING (CreditsError / insufficient
+			// balance). It could only look up the workspace balance AFTER
+			// recognizing the key, so authentication SUCCEEDED. Report that
+			// explicitly via providers.ErrProbeAuthenticated — deliberately NOT
+			// a synthesized 200, so the returned value is traceable to this
+			// reasoning rather than looking like a real network success.
+			return 0, providers.ErrProbeAuthenticated
+		case ocz401AuthFailure:
+			// A positive auth signal (AuthError, or a clearly invalid/missing
+			// key): return the real status so ValidateAPIKey maps it to invalid.
+			return resp.StatusCode, nil
+		default:
+			// No positive auth signal (model/shape, unrecognized type, opaque
+			// body): unavailable, never invalid.
+			return 0, errOpenCodeZenNonAuth401
 		}
-		return resp.StatusCode, nil
 	}
 
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -140,24 +159,42 @@ func resolveOpenCodeZenModelID(ctx context.Context, baseURL, key string) (string
 	return list.Data[0].ID, nil
 }
 
-// openCodeZenBodyIsModelOrShapeProblem reports whether a 401/403 response body
-// positively indicates a MODEL or request-shape problem rather than an
-// authentication failure. It keys only on markers the recorded model/shape
-// responses carry ("ModelError", "... is not supported", "unsupported",
-// "invalid_request") — the recorded auth responses ("Invalid API key." /
-// "Missing API key.") carry none, so a genuine auth 401 is NOT matched and
-// still classifies as invalid. When it cannot positively identify a model/
-// shape problem it returns false; any misread therefore errs toward
-// unavailable only on a positive signal, and toward invalid otherwise —
-// preserving genuine auth-failure detection.
-func openCodeZenBodyIsModelOrShapeProblem(body []byte) bool {
+// openCodeZen401Kind is how classifyOpenCodeZen401Body triages a 401/403 body.
+type openCodeZen401Kind int
+
+const (
+	// ocz401Unavailable: no positive authentication signal (a model/request-
+	// shape problem, an unrecognized error type, or an opaque body) — the key
+	// cannot be judged, so fail closed to unavailable, never invalid.
+	ocz401Unavailable openCodeZen401Kind = iota
+	// ocz401AuthFailure: a positive authentication failure (an AuthError type,
+	// or a message that clearly states the key is invalid or missing).
+	ocz401AuthFailure
+	// ocz401Authenticated: a billing/credits rejection — the provider computed
+	// a workspace balance, which it could only do after recognizing the key,
+	// so authentication succeeded.
+	ocz401Authenticated
+)
+
+// classifyOpenCodeZen401Body triages a 401/403 response body. It keys on
+// byte-level markers of the recorded live envelopes (CreditsError /
+// "insufficient balance"; AuthError / "invalid api key" / "missing api key").
+// The default is unavailable — the inverted policy: falsely branding a good
+// credential invalid is an unrecoverable dead end for the owner and has now
+// happened twice against this provider (ModelError, then CreditsError), whereas
+// wrongly accepting a bad key surfaces on the very first request and is
+// recoverable. So only a positive auth signal yields invalid, and only a
+// billing signal yields authenticated; everything else is unavailable.
+func classifyOpenCodeZen401Body(body []byte) openCodeZen401Kind {
 	hay := strings.ToLower(string(body))
-	for _, marker := range []string{"modelerror", "not supported", "unsupported", "invalid_request", "invalid request"} {
-		if strings.Contains(hay, marker) {
-			return true
-		}
+	switch {
+	case strings.Contains(hay, "creditserror") || strings.Contains(hay, "insufficient balance"):
+		return ocz401Authenticated
+	case strings.Contains(hay, "autherror") || strings.Contains(hay, "invalid api key") || strings.Contains(hay, "missing api key"):
+		return ocz401AuthFailure
+	default:
+		return ocz401Unavailable
 	}
-	return false
 }
 
 // openCodeZenModelsProbeSeam is the real implementation of

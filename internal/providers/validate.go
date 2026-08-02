@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"strings"
 )
 
@@ -14,7 +15,25 @@ import (
 // concrete HTTP implementation is supplied by the caller
 // (internal/accounts/application, P2b-PROV-005) and injected here as
 // this function type. It must never log key.
+//
+// A probe normally returns the provider's HTTP status (which ValidateAPIKey
+// classifies below). It may INSTEAD return ErrProbeAuthenticated to state that
+// authentication positively succeeded even though the provider answered a
+// non-2xx status for a reason unrelated to the credential (see that var).
 type ChatProbe func(ctx context.Context, baseURL, key string) (statusCode int, err error)
+
+// ErrProbeAuthenticated is the sentinel a ChatProbe returns to state that the
+// provider RECOGNIZED the key — authentication succeeded — even though it
+// answered a non-2xx wire status for a reason that is not about the credential.
+// The motivating case: opencode-zen answers 401 CreditsError for a perfectly
+// valid key whose workspace balance is zero; the provider could only compute
+// that balance after recognizing the key, so the key is authenticated and the
+// inability to spend belongs to the funding/quota layers, not to credential
+// validation. ValidateAPIKey maps this sentinel to ValidationValid. It is an
+// opt-in signal — a probe returns it only when it can positively prove
+// authentication from such a response; every other probe returns an ordinary
+// status or error and is therefore classified exactly as before.
+var ErrProbeAuthenticated = errors.New("providers: chat probe: authentication succeeded (provider recognized the key)")
 
 // ValidationStatus is ValidateAPIKey's 3-way classification (03 §1).
 type ValidationStatus string
@@ -61,6 +80,13 @@ func NormalizeAPIKey(key string) string {
 func ValidateAPIKey(ctx context.Context, probe ChatProbe, baseURL, key string) ValidationStatus {
 	status, err := probe(ctx, baseURL, NormalizeAPIKey(key))
 	if err != nil {
+		// A probe may explicitly signal authentication succeeded despite a
+		// non-2xx wire status (ErrProbeAuthenticated). Any OTHER error is an
+		// ambiguous/transport failure and stays unavailable — so no other
+		// provider's classification changes.
+		if errors.Is(err, ErrProbeAuthenticated) {
+			return ValidationValid
+		}
 		return ValidationUnavailable
 	}
 

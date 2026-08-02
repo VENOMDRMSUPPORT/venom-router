@@ -98,12 +98,16 @@ func realOpenCodeZenChatProbe(ctx context.Context, baseURL, key string) (int, er
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		probeBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		hay := strings.ToLower(string(probeBody))
-		for _, marker := range []string{"modelerror", "not supported", "unsupported", "invalid_request", "invalid request"} {
-			if strings.Contains(hay, marker) {
-				return 0, errors.New("real opencode-zen chat probe: model/request-shape rejection (not an auth failure)")
-			}
+		switch {
+		case strings.Contains(hay, "creditserror") || strings.Contains(hay, "insufficient balance"):
+			// Billing/credits rejection proves the key authenticated (mirrors
+			// the production seam's ocz401Authenticated branch).
+			return 0, providers.ErrProbeAuthenticated
+		case strings.Contains(hay, "autherror") || strings.Contains(hay, "invalid api key") || strings.Contains(hay, "missing api key"):
+			return resp.StatusCode, nil
+		default:
+			return 0, errors.New("real opencode-zen chat probe: 401/403 without a positive authentication signal (unavailable, not invalid)")
 		}
-		return resp.StatusCode, nil
 	}
 
 	_, _ = io.Copy(io.Discard, resp.Body)
