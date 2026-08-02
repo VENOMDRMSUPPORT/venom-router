@@ -4,7 +4,6 @@ import { assertNoAxeViolations } from "../test/axe";
 import { createFetchMock, jsonResponse } from "../test/fetchMock";
 import type { AccountProjection, EffectiveOffering, OfferingCapability } from "../api/controlClient";
 import ModelTestReport from "./ModelTestReport";
-import { probeTarget } from "./modelStatus";
 
 const CSRF_TOKEN = "report-csrf-token";
 
@@ -54,16 +53,19 @@ function offering(overrides: Partial<EffectiveOffering>): EffectiveOffering {
   } as EffectiveOffering;
 }
 
-// model-a: WORKING + routable (enabled) + probeable via its chat op.
-// model-b: UNTESTED, NO probeable operation (no offering_operation_id).
-// model-c: FAILED, probeable.
+// model-a: WORKING + routable (enabled) via chat, probeable via its tools op
+// (chat is NOT probeable — the server accepts only the four probeable
+// operations, so the probe target must come from one of those).
+// model-b: UNTESTED, NO probeable operation (chat-only — a chat op id would
+// still not be probeable).
+// model-c: FAILED, probeable via its tools op.
 const OFFERINGS: EffectiveOffering[] = [
   offering({
     provider_model_id: "zen/model-a",
     display_name: "Model A",
     capabilities: [
-      capability({ truth: "supported", state: "certified", routable: true, offering_operation_id: "op-a" }),
-      capability({ operation: "tools" }),
+      capability({ truth: "supported", state: "certified", routable: true }),
+      capability({ operation: "tools", offering_operation_id: "op-a" }),
       capability({ operation: "vision" }),
       capability({ operation: "reasoning" }),
       capability({ operation: "coding" }),
@@ -80,7 +82,7 @@ const OFFERINGS: EffectiveOffering[] = [
   offering({
     provider_model_id: "zen/model-c",
     display_name: "Model C",
-    capabilities: [capability({ truth: "unsupported", offering_operation_id: "op-c" })],
+    capabilities: [capability({ operation: "tools", truth: "unsupported", offering_operation_id: "op-c" })],
   }),
 ];
 
@@ -239,30 +241,5 @@ describe("ModelTestReport — actions", () => {
       expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/offerings/op-c/probe"))).toBe(true);
       expect(onRefetch).toHaveBeenCalled();
     });
-  });
-});
-
-describe("probeTarget — chat first, then any probeable capability, else nothing", () => {
-  it("prefers the chat operation's offering_operation_id", () => {
-    expect(
-      probeTarget({
-        capabilities: [
-          capability({ operation: "tools", offering_operation_id: "op-tools" }),
-          capability({ operation: "chat", offering_operation_id: "op-chat" }),
-        ],
-      } as never),
-    ).toBe("op-chat");
-  });
-
-  it("falls back to the first capability carrying an id", () => {
-    expect(
-      probeTarget({
-        capabilities: [capability({ operation: "chat" }), capability({ operation: "tools", offering_operation_id: "op-tools" })],
-      } as never),
-    ).toBe("op-tools");
-  });
-
-  it("returns undefined when nothing is probeable — never a composed id", () => {
-    expect(probeTarget({ capabilities: [capability()] } as never)).toBeUndefined();
   });
 });

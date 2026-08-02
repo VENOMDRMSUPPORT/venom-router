@@ -61,13 +61,32 @@ export function distinctModelCount(offerings: readonly EffectiveOffering[]): num
   return distinctModelStats(offerings).total;
 }
 
-/** The offering-operation id a probe should target for this model: the
- * chat operation's when it carries one, else the first capability with an
- * id. ABSENT means NOT PROBEABLE (native/transport-only operations have no
- * offering_operations row) — the control stays disabled with the reason
- * stated, never a composed id. */
+/** The four operations the probe endpoint accepts — an exact mirror of the
+ * server's `probeableOperations` (internal/httpapi/probe.go): anything else
+ * is rejected 422 before a probe ever runs. chat and streaming are
+ * DELIBERATELY excluded — they are certified by actual successful use, not
+ * a deliberate probe — and image_generation is reserved future scope.
+ * Declared in probe-preference order: tools first, then the remaining
+ * three in the server set's declared order. */
+export const PROBEABLE_OPERATIONS: ReadonlySet<string> = new Set([
+  "tools",
+  "context_window",
+  "structured_output",
+  "vision",
+]);
+
+/** The offering-operation id a probe should target for this model: the id
+ * of the first capability whose operation is in PROBEABLE_OPERATIONS
+ * (iterated in its declared preference order — tools first) AND that
+ * carries an offering_operation_id. Never chat — the server rejects it 422.
+ * `undefined` means NOT PROBEABLE (native/transport-only operations have no
+ * offering_operations row, and chat-only models have nothing the probe
+ * endpoint accepts) — the control stays disabled with the reason stated,
+ * never a composed id. */
 export function probeTarget(offering: Pick<EffectiveOffering, "capabilities">): string | undefined {
-  const chat = offering.capabilities.find((c) => c.operation === "chat" && c.offering_operation_id);
-  if (chat) return chat.offering_operation_id;
-  return offering.capabilities.find((c) => c.offering_operation_id)?.offering_operation_id;
+  for (const operation of PROBEABLE_OPERATIONS) {
+    const match = offering.capabilities.find((c) => c.operation === operation && c.offering_operation_id);
+    if (match) return match.offering_operation_id;
+  }
+  return undefined;
 }

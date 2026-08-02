@@ -187,9 +187,10 @@ function offering(overrides: Record<string, unknown>) {
   };
 }
 
-// acct-1 sees two models (one WORKING with a probeable op, one untested,
-// unprobeable); acct-2 sees model-a again (FAILED). Distinct across the
-// provider = 2; provider-level working = 1.
+// acct-1 sees two models (one WORKING, one untested); acct-2 sees model-a
+// again (FAILED). Distinct across the provider = 2; provider-level
+// working = 1. (No probing happens here — chat op ids are NOT probe
+// targets; see modelStatus.probeTarget.)
 const OFFERINGS = [
   offering({
     provider_model_id: "zen/model-a",
