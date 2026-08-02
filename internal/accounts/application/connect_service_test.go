@@ -52,6 +52,17 @@ func fixtureChatProbe(serverURL string) providers.ChatProbe {
 	}
 }
 
+// fixtureUnusedModelsDevProbe is the ModelsDevProbe for connect-only
+// tests: these flows never run discovery, so it fails LOUDLY if a code
+// change starts to.
+func fixtureUnusedModelsDevProbe(t *testing.T) providers.ModelsDevProbe {
+	t.Helper()
+	return func(context.Context) ([]byte, error) {
+		t.Fatalf("models.dev probe called in a connect-only test")
+		return nil, nil
+	}
+}
+
 func fixtureModelsProbe(serverURL string) providers.ModelsProbe {
 	return func(ctx context.Context, baseURL, key string) ([]byte, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL+"/v1/models", nil)
@@ -82,7 +93,7 @@ func TestConnectService_ValidKey_CreatesExactlyOneAccountCredentialFunding(t *te
 	db := migratedDB(t)
 	seedProvider(t, db, "opencode-zen")
 
-	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL))
+	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL), fixtureUnusedModelsDevProbe(t), nil)
 	enrollment := storage.NewEnrollmentRepo(db)
 	accounts := storage.NewAccountRepo(db)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -119,7 +130,7 @@ func TestConnectService_OwnerOverride_StampsOwnerOverrideSource(t *testing.T) {
 	db := migratedDB(t)
 	seedProvider(t, db, "opencode-zen")
 
-	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL))
+	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL), fixtureUnusedModelsDevProbe(t), nil)
 	enrollment := storage.NewEnrollmentRepo(db)
 	accounts := storage.NewAccountRepo(db)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -150,7 +161,7 @@ func TestConnectService_DuplicateIdentity_ReturnsAccountAlreadyConnected(t *test
 	db := migratedDB(t)
 	seedProvider(t, db, "opencode-zen")
 
-	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL))
+	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL), fixtureUnusedModelsDevProbe(t), nil)
 	enrollment := storage.NewEnrollmentRepo(db)
 	accounts := storage.NewAccountRepo(db)
 	svc := application.NewConnectService(enrollment, accounts, newTestKeyring(t), sequentialIDGenerator("id"), nil)
@@ -184,7 +195,7 @@ func TestConnectService_InvalidKey_CreatesZeroRows(t *testing.T) {
 	db := migratedDB(t)
 	seedProvider(t, db, "opencode-zen")
 
-	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL))
+	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL), fixtureUnusedModelsDevProbe(t), nil)
 	enrollment := storage.NewEnrollmentRepo(db)
 	accounts := storage.NewAccountRepo(db)
 	svc := application.NewConnectService(enrollment, accounts, newTestKeyring(t), sequentialIDGenerator("id"), nil)
@@ -211,7 +222,7 @@ func TestConnectService_UnavailableProvider_CreatesZeroRows(t *testing.T) {
 	db := migratedDB(t)
 	seedProvider(t, db, "opencode-zen")
 
-	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL))
+	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL), fixtureUnusedModelsDevProbe(t), nil)
 	enrollment := storage.NewEnrollmentRepo(db)
 	accounts := storage.NewAccountRepo(db)
 	svc := application.NewConnectService(enrollment, accounts, newTestKeyring(t), sequentialIDGenerator("id"), nil)

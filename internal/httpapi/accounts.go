@@ -10,6 +10,7 @@ import (
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/application"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/domain"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
@@ -48,6 +49,14 @@ type AccountsHandler struct {
 	revealLimit  *fixedWindowLimiter
 	now          func() time.Time
 	newFundingID func() string
+
+	// registry resolves optional per-provider adapters — today only
+	// ServeHealth's live HealthAdapter probe consults it. Nil unless
+	// WithProviderRegistry is wired (mirrors DiscoveryHandler.WithProbeRuns'
+	// additive-dependency convention: a constructor parameter would break
+	// every existing NewAccountsHandler call site, and a nil registry keeps
+	// every pre-existing path byte-for-byte).
+	registry *providers.Registry
 }
 
 // NewAccountsHandler builds the handler over the shared account/credential/
@@ -85,6 +94,16 @@ func NewAccountsHandler(
 		now:          now,
 		newFundingID: newFundingID,
 	}
+}
+
+// WithProviderRegistry returns a shallow copy of h with the provider
+// registry wired in, so ServeHealth can run a registered HealthAdapter's
+// live probe — see the field's own doc comment for why this is a
+// copy-returning method rather than a constructor parameter.
+func (h *AccountsHandler) WithProviderRegistry(reg *providers.Registry) *AccountsHandler {
+	clone := *h
+	clone.registry = reg
+	return &clone
 }
 
 // fundingEvidenceVersionToken is the opaque version token a funding row
@@ -752,14 +771,25 @@ func (h *AccountsHandler) ServeDisconnect(w http.ResponseWriter, r *http.Request
 	writeData(w, http.StatusOK, h.projectAccount(ctx, persisted, now, true))
 }
 
-// ServeHealth implements POST /accounts/{id}/health (02 §3 Axis 2). SCOPE
-// THIS PHASE: no HealthAdapter is registered for any provider yet
-// (opencode-zen and antigravity have none), so there is no live probe to
-// call. This endpoint applies the pure-domain health transition for the
-// target the request carries (defaulting to unknown when omitted) and
-// returns the resulting health_state, auditing the action. When a real
-// HealthAdapter is registered (P3), this is the slot a live probe call
-// slots into — the domain transition + audit shape is already correct.
+// ServeHealth implements POST /accounts/{id}/health (02 §3 Axis 2).
+//
+// TWO PATHS, strictly separated:
+//
+//   - Body-carried target, or no HealthAdapter registered for the
+//     account's provider (or no registry wired at all): the original
+//     P2b behavior byte-for-byte — apply the pure-domain transition for
+//     the carried target (defaulting to unknown) and persist it, never
+//     touching the probe-evidence columns.
+//
+//   - No valid body target AND a registered HealthAdapter AND a leasable
+//     active credential: run the LIVE probe with the account's stored
+//     credentials, use its observation as the transition target, and
+//     stamp last_health_check_at (+ last_health_error from the
+//     observation's safe message — never raw provider text; a healthy
+//     probe clears it).
+//
+// Either way the domain transition, persistence, audit, and projection
+// flow is the same.
 func (h *AccountsHandler) ServeHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeAuthError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", false)
@@ -780,9 +810,9 @@ func (h *AccountsHandler) ServeHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The request MAY carry a target health_state; default to unknown
-	// (never crash when no probe is possible this phase).
+	// The request MAY carry a target health_state; default to unknown.
 	target := domain.HealthUnknown
+	bodyTarget := false
 	if r.ContentLength > 0 {
 		var req struct {
 			HealthState string `json:"health_state"`
@@ -790,6 +820,23 @@ func (h *AccountsHandler) ServeHealth(w http.ResponseWriter, r *http.Request) {
 		if jerr := json.NewDecoder(r.Body).Decode(&req); jerr == nil && req.HealthState != "" {
 			if t, pok := parseHealthState(req.HealthState); pok {
 				target = t
+				bodyTarget = true
+			}
+		}
+	}
+
+	// The live-probe path (P3 slot, now filled): only when the caller did
+	// NOT dictate a target, and only for providers with a registered
+	// HealthAdapter and a leasable active credential. Every guard failing
+	// falls through to the original default-unknown path unchanged.
+	probeRan := false
+	var probeError string
+	if !bodyTarget {
+		if obs, ok := h.runHealthProbe(ctx, account); ok {
+			probeRan = true
+			target = healthTargetFromObservation(obs)
+			if obs.Failure != nil {
+				probeError = obs.Failure.SafeMessage
 			}
 		}
 	}
@@ -803,7 +850,16 @@ func (h *AccountsHandler) ServeHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	persisted, persistedOK, perr := h.accounts.UpdateHealthState(ctx, id, next, now)
+	var (
+		persisted   domain.Account
+		persistedOK bool
+		perr        error
+	)
+	if probeRan {
+		persisted, persistedOK, perr = h.accounts.UpdateHealthObservation(ctx, id, next, now, probeError, now)
+	} else {
+		persisted, persistedOK, perr = h.accounts.UpdateHealthState(ctx, id, next, now)
+	}
 	if perr != nil {
 		h.audit.Emit(ctx, AuditActionAccountHealth, AuditResultFailure, AuditResourceAccount, id, "internal")
 		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
@@ -817,6 +873,70 @@ func (h *AccountsHandler) ServeHealth(w http.ResponseWriter, r *http.Request) {
 
 	h.audit.Emit(ctx, AuditActionAccountHealth, AuditResultSuccess, AuditResourceAccount, id, "")
 	writeData(w, http.StatusOK, h.projectAccount(ctx, persisted, now, true))
+}
+
+// runHealthProbe runs the account's provider's registered HealthAdapter
+// against the account's ACTIVE stored credential, leased through the same
+// CredentialService path every other adapter call uses (the plaintext
+// never escapes the lease callback's scope). ok is false when no probe
+// could even be ATTEMPTED — no registry, no adapter, no active
+// credential, or a failed lease — in which case the caller keeps the
+// original no-probe behavior. An adapter that was reached but returned an
+// error yields an honest unknown-status observation (we checked, it did
+// not complete) so the attempt is still stamped, with a fixed safe
+// message — never the adapter's raw error text.
+func (h *AccountsHandler) runHealthProbe(ctx context.Context, account domain.Account) (providers.HealthObservation, bool) {
+	if h.registry == nil {
+		return providers.HealthObservation{}, false
+	}
+	adapter, ok := h.registry.HealthAdapter(providers.ProviderID(account.ProviderID))
+	if !ok {
+		return providers.HealthObservation{}, false
+	}
+	credentialID, ok := activeCredentialIDFor(ctx, h.credentials, account.ID)
+	if !ok {
+		return providers.HealthObservation{}, false
+	}
+
+	var (
+		obs      providers.HealthObservation
+		probeErr error
+	)
+	leaseErr := h.credService.Use(ctx, credentialID, func(plaintext []byte) error {
+		obs, probeErr = adapter.CheckAccountHealth(ctx, providers.StoredCredentials{Value: string(plaintext)})
+		return nil
+	})
+	if leaseErr != nil {
+		return providers.HealthObservation{}, false
+	}
+	if probeErr != nil {
+		return providers.HealthObservation{
+			Status:  "unknown",
+			Scope:   "account",
+			Failure: &providers.HealthFailure{Class: "probe", Retryable: true, SafeMessage: "health probe did not complete"},
+		}, true
+	}
+	return obs, true
+}
+
+// healthTargetFromObservation maps a HealthObservation onto the domain
+// health_state axis, reading the adapter's classification VERBATIM —
+// never re-deriving it: healthy/degraded/expired pass through, unreachable
+// maps to unavailable (types.go's documented correspondence), and
+// anything else is honestly unknown.
+func healthTargetFromObservation(obs providers.HealthObservation) domain.HealthState {
+	switch obs.Status {
+	case "healthy":
+		return domain.HealthHealthy
+	case "degraded":
+		return domain.HealthDegraded
+	case "expired":
+		return domain.HealthExpired
+	case "unreachable":
+		return domain.HealthUnavailable
+	default:
+		return domain.HealthUnknown
+	}
 }
 
 // parseHealthState maps a request-body health_state string to a

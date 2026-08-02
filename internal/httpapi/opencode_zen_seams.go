@@ -219,7 +219,41 @@ func openCodeZenModelsProbeSeam(ctx context.Context, baseURL, key string) ([]byt
 		return nil, fmt.Errorf("httpapi: opencode-zen models probe: read response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("httpapi: opencode-zen models probe returned status %d", resp.StatusCode)
+		// Typed, not opaque: the health classification (2xx healthy;
+		// 401/403 expired; everything else unavailable) needs the real wire
+		// status, and providers.ModelsProbeStatusError is the seam's channel
+		// for it. The body is discarded — never part of the error.
+		return nil, fmt.Errorf("httpapi: opencode-zen models probe: %w", &providers.ModelsProbeStatusError{StatusCode: resp.StatusCode})
+	}
+	return respBody, nil
+}
+
+// modelsDevDatasetURL is the public models.dev dataset the free-only
+// discovery intersection reads (03 §3).
+const modelsDevDatasetURL = "https://models.dev/api.json"
+
+// openCodeZenModelsDevProbeSeam is the real implementation of
+// providers.ModelsDevProbe: a plain GET of the PUBLIC models.dev dataset.
+// It deliberately sends NO Authorization header — the dataset is public,
+// and the account key must never travel to a third-party host.
+func openCodeZenModelsDevProbeSeam(ctx context.Context) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsDevDatasetURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("httpapi: models.dev probe request: %w", err)
+	}
+
+	resp, err := openCodeZenHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("httpapi: models.dev probe: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("httpapi: models.dev probe: read response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("httpapi: models.dev probe returned status %d", resp.StatusCode)
 	}
 	return respBody, nil
 }
@@ -233,5 +267,5 @@ func openCodeZenModelsProbeSeam(ctx context.Context, baseURL, key string) ([]byt
 // cannot happen in this composition since this is the only call site
 // that ever registers opencode-zen into a given Registry.
 func registerOpenCodeZen(reg *providers.Registry) error {
-	return providers.RegisterOpenCodeZen(reg, openCodeZenChatProbeSeam, openCodeZenModelsProbeSeam)
+	return providers.RegisterOpenCodeZen(reg, openCodeZenChatProbeSeam, openCodeZenModelsProbeSeam, openCodeZenModelsDevProbeSeam, nil)
 }

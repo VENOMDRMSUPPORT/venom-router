@@ -885,6 +885,112 @@ describe("FleetOverview — credential reveal", () => {
   });
 });
 
+describe("FleetOverview — sync tolerates quota_unsupported", () => {
+  it("treats a 409 quota_unsupported as benign: muted caption, refetch, NO error banner", async () => {
+    const fetchMock = await renderFleet(
+      {
+        "POST /api/control/v1/accounts/acct-1/health": () => jsonResponse(200, { data: ACCOUNT_HEALTHY }),
+        "POST /api/control/v1/accounts/acct-1/quota": () =>
+          jsonResponse(409, { error: { code: "quota_unsupported", message: "this provider has no quota capability", request_id: "r5", retryable: false } }),
+      },
+      { view: "active" },
+    );
+    expandProvider("OpenCode Zen");
+    await screen.findByTitle("display_status: healthy");
+
+    fireEvent.click(within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /sync: health · plan · usage/i }));
+
+    await screen.findByText(/quota sync skipped — this provider has no quota capability/i);
+    // The health refresh ran and the page refetched — the sync SUCCEEDED.
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/health"))).toBe(true);
+    await waitFor(() => {
+      const providerReads = fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/providers"));
+      expect(providerReads.length).toBeGreaterThanOrEqual(2);
+    });
+    // No error banner anywhere: the typed code never renders as a failure.
+    expect(screen.queryByText(/quota_unsupported/)).toBeNull();
+  });
+
+  it("still surfaces every OTHER quota failure verbatim", async () => {
+    await renderFleet(
+      {
+        "POST /api/control/v1/accounts/acct-1/health": () => jsonResponse(200, { data: ACCOUNT_HEALTHY }),
+        "POST /api/control/v1/accounts/acct-1/quota": () =>
+          jsonResponse(409, { error: { code: "credential_unavailable", message: "account has no active credential", request_id: "r6", retryable: false } }),
+      },
+      { view: "active" },
+    );
+    expandProvider("OpenCode Zen");
+    await screen.findByTitle("display_status: healthy");
+
+    fireEvent.click(within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /sync: health · plan · usage/i }));
+
+    await screen.findByText(/credential_unavailable/);
+    expect(screen.queryByText(/quota sync skipped/i)).toBeNull();
+  });
+});
+
+describe("FleetOverview — account row polish (fingerprint identities, deduped badges, no dead dashes)", () => {
+  const HEX64 = "0123456789abcdef".repeat(4);
+  const ACCOUNT_ZEN = account({
+    id: "acct-z",
+    external_id: HEX64,
+    identity: { email: undefined, plan: "Free" },
+    funding: { funding: "free", source: "owner_policy", locked: false, version: "v9" },
+    quota: [],
+  });
+
+  async function renderZenRow() {
+    await renderFleet(
+      {
+        "GET /api/control/v1/accounts?limit=200": () => jsonResponse(200, { data: { accounts: [ACCOUNT_ZEN] } }),
+        "GET /api/control/v1/offerings?limit=200": () => jsonResponse(200, { data: [] }),
+      },
+      { view: "active" },
+    );
+    expandProvider("OpenCode Zen");
+    const headline = await screen.findByTitle(HEX64);
+    return headline.closest(".vnd-account") as HTMLElement;
+  }
+
+  it("truncates a fingerprint external id to a short mono headline with the full value in the title", async () => {
+    const row = await renderZenRow();
+
+    const headline = within(row).getByTitle(HEX64);
+    expect(headline.textContent).toBe(`${HEX64.slice(0, 12)}…`);
+    // The raw 64-char hex never renders as TEXT anywhere.
+    expect(document.body.textContent).not.toContain(HEX64);
+  });
+
+  it("suppresses the plan badge when it merely repeats the funding classification", async () => {
+    const row = await renderZenRow();
+
+    // One badge, not two: the synthetic "Free" plan echoes funding "free",
+    // so only the FundingBadge (the real classification) renders.
+    expect(within(row).queryByText("FREE")).toBeNull();
+    within(row).getByText("Free");
+  });
+
+  it("renders no lone dash placeholders for empty quota windows or certification data", async () => {
+    const row = await renderZenRow();
+
+    expect(within(row).queryAllByText("—")).toHaveLength(0);
+    expect(within(row).queryByTitle(/no quota windows tracked/i)).toBeNull();
+    // The meta line still reports the absence honestly, once.
+    expect(within(row).getByText(/Quota: — · Checked: .+/)).toBeTruthy();
+  });
+
+  it("gives Fetch models and the model-report chip DISTINCT icons", async () => {
+    const row = await renderZenRow();
+
+    const fetchButton = within(row).getByRole("button", { name: /fetch models from provider/i });
+    const reportChip = within(row).getByRole("button", { name: /open model test report/i });
+    expect(fetchButton.querySelector(".vn-icon--download")).toBeTruthy();
+    expect(reportChip.querySelector(".vn-icon--box")).toBeTruthy();
+    expect(fetchButton.querySelector(".vn-icon--box")).toBeNull();
+  });
+});
+
 describe("FleetOverview — funding override", () => {
   it("sends expected_version and surfaces funding_locked", async () => {
     const fetchMock = await renderFleet(

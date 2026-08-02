@@ -163,18 +163,15 @@ export interface QuotaSummaryCompactProps {
  * provider_evidence/owner_override windows as thin labelled meters,
  * local_safety windows through the same LocalSafetyBudgetIndicator the
  * full summary uses (Venom's own routing-safety budget is never presented
- * as provider evidence — docs/02 §3, 07 §5a). Empty renders the honest
- * "—" idiom, not a zeroed meter.
+ * as provider evidence — docs/02 §3, 07 §5a). Zero windows render NOTHING
+ * here: the account row's meta line already reports "Quota: —" once, and
+ * a second lone dash would be dead space, not information.
  */
 export function QuotaSummaryCompact(props: QuotaSummaryCompactProps) {
   const { windows, nowMs = Date.now() } = props;
 
   if (windows.length === 0) {
-    return (
-      <span className="vn-caption" title="No quota windows tracked for this account yet">
-        —
-      </span>
-    );
+    return null;
   }
 
   const evidenceWindows = windows.filter((w) => w.source !== "local_safety");

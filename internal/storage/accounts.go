@@ -162,6 +162,25 @@ func (r *AccountRepo) UpdateHealthState(ctx context.Context, accountID string, n
 	)
 }
 
+// UpdateHealthObservation durably sets accountID's health_state AND the
+// live-probe evidence columns: last_health_check_at = checkedAt and
+// last_health_error = lastHealthError ("" writes NULL — a healthy probe
+// CLEARS the previous error rather than leaving it to read as current).
+// Used only by the live-probe path; the body-target/no-probe path keeps
+// using UpdateHealthState, which never touches the evidence columns.
+func (r *AccountRepo) UpdateHealthObservation(ctx context.Context, accountID string, next domain.Account, checkedAt time.Time, lastHealthError string, now time.Time) (domain.Account, bool, error) {
+	var errVal any
+	if lastHealthError != "" {
+		errVal = lastHealthError
+	}
+	return r.updateAccountState(ctx, accountID,
+		`health_state = ?, last_health_check_at = ?, last_health_error = ?, updated_at = ?`,
+		[]any{string(next.HealthState), checkedAt.Unix(), errVal, now.Unix()},
+		next,
+		"update health observation",
+	)
+}
+
 // updateAccountState is the shared body of UpdateConnectionState and
 // UpdateHealthState: run the guarded UPDATE, confirm exactly one row was
 // affected, then read the updated row back (so the caller gets the

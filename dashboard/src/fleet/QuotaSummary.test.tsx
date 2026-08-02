@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { assertNoAxeViolations } from "../test/axe";
 import type { QuotaWindow } from "../api/controlClient";
-import QuotaSummary from "./QuotaSummary";
+import QuotaSummary, { QuotaSummaryCompact } from "./QuotaSummary";
 
 afterEach(() => {
   cleanup();
@@ -120,6 +120,31 @@ describe("QuotaSummary — empty state", () => {
 
     screen.getByText("—");
     expect(container.querySelectorAll('[role="meter"]').length).toBe(0);
+  });
+});
+
+describe("QuotaSummaryCompact — empty state", () => {
+  it("renders NOTHING for zero windows — the account meta line already reports the absence", () => {
+    const { container } = render(<QuotaSummaryCompact windows={[]} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("still renders a real known window's meter and an unknown window's state word", () => {
+    const { container } = render(
+      <QuotaSummaryCompact
+        nowMs={Date.parse("2026-07-27T01:00:00Z")}
+        windows={[
+          window_({ window_key: "gem" }),
+          window_({ window_key: "opt", used: null, remaining: null, total: null, state: "unknown", freshness: "unknown" }),
+        ]}
+      />,
+    );
+
+    screen.getByText("GEM");
+    screen.getByText("10%");
+    screen.getByText("OPT");
+    screen.getByText("unknown");
+    expect(container.querySelectorAll('[role="meter"]').length).toBe(1);
   });
 });
 

@@ -225,7 +225,10 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// its own — same one-repo-per-underlying-table pattern as accountRepo/
 	// fundingRepo/credentialRepo above.
 	quotaWindowRepo := storage.NewQuotaWindowRepo(db, nil, nil)
-	accountsHandler := NewAccountsHandler(accountRepo, credentialRepo, fundingRepo, quotaWindowRepo, credentialService, ops, audit, nil, newOAuthTransactionID)
+	// WithProviderRegistry wires the live HealthAdapter lookup into
+	// POST /accounts/{id}/health — a registered provider (opencode-zen)
+	// now gets a real probe instead of the P2b default-unknown placeholder.
+	accountsHandler := NewAccountsHandler(accountRepo, credentialRepo, fundingRepo, quotaWindowRepo, credentialService, ops, audit, nil, newOAuthTransactionID).WithProviderRegistry(reg)
 	mux.Handle("/api/control/v1/accounts", gated(accountsHandler.ServeList))
 	mux.Handle("/api/control/v1/accounts/{id}", gated(accountsHandler.ServeGet))
 	// DELETE /accounts/{id} is the soft-disconnect route (09 §2). It is

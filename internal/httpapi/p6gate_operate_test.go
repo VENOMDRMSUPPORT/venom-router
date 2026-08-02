@@ -118,13 +118,18 @@ func fakeZenSeams() (providers.ChatProbe, providers.ModelsProbe) {
 	return chat, models
 }
 
-// fakeZenRegistry is the production registry with opencode-zen's two HTTP
-// seams faked out. Every other adapter behaviour is the real one.
+// fakeZenRegistry is the production registry with opencode-zen's HTTP
+// seams faked out. Every other adapter behaviour is the real one. The
+// fake models.dev dataset prices BOTH catalog models at an explicit zero,
+// so the free-only intersection keeps the fixture catalog intact.
 func fakeZenRegistry(t *testing.T) *providers.Registry {
 	t.Helper()
 	reg := providers.NewRegistry()
 	chat, models := fakeZenSeams()
-	if err := providers.RegisterOpenCodeZen(reg, chat, models); err != nil {
+	modelsDev := func(_ context.Context) ([]byte, error) {
+		return []byte(`{"opencode":{"models":{"grok-code":{"cost":{"input":0,"output":0}},"claude-sonnet":{"cost":{"input":0,"output":0}}}}}`), nil
+	}
+	if err := providers.RegisterOpenCodeZen(reg, chat, models, modelsDev, nil); err != nil {
 		t.Fatalf("register faked opencode-zen: %v", err)
 	}
 	return reg

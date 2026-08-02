@@ -48,12 +48,12 @@ export default function CertificationSummary(props: CertificationSummaryProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, DetailState>>({});
 
+  // Zero operations render NOTHING: the mount stays (callers never need a
+  // conditional), but a lone "—" for an account whose certification data
+  // lives on the Model Test Report surface would be dead space claiming
+  // "no data tracked" — absence of rows here is not that claim.
   if (operations.length === 0) {
-    return (
-      <span className="vn-caption" title="No certification data tracked for this account yet">
-        —
-      </span>
-    );
+    return null;
   }
 
   function toggle(op: CertificationSummaryOperation) {

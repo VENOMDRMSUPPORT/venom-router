@@ -79,7 +79,7 @@ func TestConnectService_OpenCodeZen_E2E_IdentityFundingHealthAndKeyNeverLeaks(t 
 	db := migratedDB(t)
 	seedProvider(t, db, "opencode-zen")
 
-	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(mux.URL), fixtureModelsProbe(mux.URL))
+	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(mux.URL), fixtureModelsProbe(mux.URL), fixtureUnusedModelsDevProbe(t), nil)
 	enrollment := storage.NewEnrollmentRepo(db)
 	accounts := storage.NewAccountRepo(db)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

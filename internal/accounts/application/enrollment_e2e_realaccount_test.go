@@ -135,6 +135,30 @@ func firstRealOpenCodeZenModelID(ctx context.Context, baseURL, key string) (stri
 	return list.Data[0].ID, nil
 }
 
+// realOpenCodeZenModelsDevProbe fetches the REAL public models.dev dataset
+// — no Authorization header, mirroring the production seam: the dataset is
+// public and the account key must never travel to a third-party host.
+func realOpenCodeZenModelsDevProbe(ctx context.Context) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://models.dev/api.json", nil)
+	if err != nil {
+		return nil, fmt.Errorf("real models.dev probe request: %w", err)
+	}
+	client := &http.Client{Timeout: realOpenCodeZenHTTPTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("real models.dev probe: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("real models.dev probe: read response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("real models.dev probe returned status %d", resp.StatusCode)
+	}
+	return respBody, nil
+}
+
 func realOpenCodeZenModelsProbe(ctx context.Context, baseURL, key string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/models", nil)
 	if err != nil {
@@ -179,7 +203,7 @@ func TestRealAccount_OpenCodeZen_E2E(t *testing.T) {
 	db := migratedDB(t)
 	seedProvider(t, db, "opencode-zen")
 
-	adapter := providers.NewOpenCodeZenAdapter(realOpenCodeZenChatProbe, realOpenCodeZenModelsProbe)
+	adapter := providers.NewOpenCodeZenAdapter(realOpenCodeZenChatProbe, realOpenCodeZenModelsProbe, realOpenCodeZenModelsDevProbe, nil)
 	enrollment := storage.NewEnrollmentRepo(db)
 	accounts := storage.NewAccountRepo(db)
 	svc := application.NewConnectService(enrollment, accounts, newTestKeyring(t), sequentialIDGenerator("real-e2e"), nil)

@@ -255,7 +255,8 @@ func TestRegistrations_ShippedProviders_HaveCorrectTransports(t *testing.T) {
 	reg := NewRegistry()
 	chatProbe := func(_ context.Context, _, _ string) (int, error) { return 200, nil }
 	modelsProbe := func(_ context.Context, _, _ string) ([]byte, error) { return []byte(`{"data":[]}`), nil }
-	if err := RegisterOpenCodeZen(reg, chatProbe, modelsProbe); err != nil {
+	modelsDevProbe := func(_ context.Context) ([]byte, error) { return []byte(`{"opencode":{"models":{}}}`), nil }
+	if err := RegisterOpenCodeZen(reg, chatProbe, modelsProbe, modelsDevProbe, nil); err != nil {
 		t.Fatalf("RegisterOpenCodeZen: %v", err)
 	}
 

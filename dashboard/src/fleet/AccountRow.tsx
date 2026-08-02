@@ -79,6 +79,15 @@ function latestQuotaObservedAt(account: AccountProjection): number | null {
   return latest;
 }
 
+/** A fingerprint-style external id (fingerprint-identity providers store a
+ * 64-char hex SHA-256 there). Rendered truncated — the full value stays in
+ * the title attribute, never lost. */
+const FINGERPRINT_ID = /^[0-9a-f]{32,}$/i;
+
+function shortExternalId(externalId: string): string {
+  return FINGERPRINT_ID.test(externalId) ? `${externalId.slice(0, 12)}…` : externalId;
+}
+
 /**
  * One connected account's row (image 2 layout): numbered index chip,
  * identity (email, uppercase plan badge, immutable external id), the
@@ -106,6 +115,7 @@ export default function AccountRow(props: AccountRowProps) {
 
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState<AuthApiError | null>(null);
+  const [actionNote, setActionNote] = useState<string | null>(null);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
 
   const [fundingOpen, setFundingOpen] = useState(false);
@@ -156,6 +166,7 @@ export default function AccountRow(props: AccountRowProps) {
   async function runLifecycleAction(action: () => Promise<unknown>) {
     setActionPending(true);
     setActionError(null);
+    setActionNote(null);
     try {
       await action();
       onChanged();
@@ -170,21 +181,32 @@ export default function AccountRow(props: AccountRowProps) {
     }
   }
 
-  /** "Sync: health · plan · usage" — refreshHealth (synchronous), then the
-   * async quota refresh polled to its terminal job status, then a refetch.
-   * A non-completed quota job surfaces its typed code verbatim. */
+  /** "Sync: health · plan · usage" — refreshHealth (the live probe), then
+   * the async quota refresh polled to its terminal job status, then a
+   * refetch. A provider with NO quota capability answers the quota trigger
+   * with a typed 409 `quota_unsupported` — that is a benign fact about the
+   * provider, not a failure of this sync: it gets a muted caption, never
+   * an error banner. Every OTHER quota failure still surfaces verbatim. */
   function handleSync() {
     void runLifecycleAction(async () => {
       await refreshHealth(account.id, csrfToken);
-      const handle = await refreshQuota(account.id, csrfToken);
-      const job = await pollJobToTerminal(handle.job_id);
-      if (job.status !== "completed") {
-        throw new AuthApiError(0, {
-          code: job.error?.code ?? `job_${job.status}`,
-          message: job.error?.message ?? `The quota refresh job is ${job.status}.`,
-          request_id: "",
-          retryable: true,
-        });
+      try {
+        const handle = await refreshQuota(account.id, csrfToken);
+        const job = await pollJobToTerminal(handle.job_id);
+        if (job.status !== "completed") {
+          throw new AuthApiError(0, {
+            code: job.error?.code ?? `job_${job.status}`,
+            message: job.error?.message ?? `The quota refresh job is ${job.status}.`,
+            request_id: "",
+            retryable: true,
+          });
+        }
+      } catch (err) {
+        if (err instanceof AuthApiError && err.code === "quota_unsupported") {
+          setActionNote("Quota sync skipped — this provider has no quota capability. Health was refreshed.");
+          return;
+        }
+        throw err;
       }
     });
   }
@@ -242,6 +264,12 @@ export default function AccountRow(props: AccountRowProps) {
   }
 
   const fundingLocked = account.funding?.locked ?? false;
+  // A synthetic plan label that merely repeats the funding classification
+  // ("Free" plan + free funding) would render as two identical badges —
+  // keep the FundingBadge (the real classification) and drop the echo.
+  const plan = account.identity.plan;
+  const showPlanBadge = !!plan && plan.toLowerCase() !== (account.funding?.funding ?? "").toLowerCase();
+  const isFingerprintId = FINGERPRINT_ID.test(account.external_id);
   const canStop = account.connection_state === "connected";
   const canResume = account.connection_state === "stopped";
   const powerTitle = canStop
@@ -262,13 +290,24 @@ export default function AccountRow(props: AccountRowProps) {
 
         <div className="vnd-account-body">
           <div className="vnd-account-identity">
-            <span className="vnd-account-email">{account.identity.email || account.external_id}</span>
-            {account.identity.plan ? (
-              <Badge tone="info" mono title={`plan: ${account.identity.plan}`}>
-                {account.identity.plan.toUpperCase()}
+            {/* A fingerprint identity renders truncated with the full value
+                in the title — never a raw 64-char hex headline. */}
+            <span
+              className={`vnd-account-email${!account.identity.email && isFingerprintId ? " vn-mono-xs" : ""}`}
+              title={!account.identity.email && isFingerprintId ? account.external_id : undefined}
+            >
+              {account.identity.email || shortExternalId(account.external_id)}
+            </span>
+            {showPlanBadge && plan ? (
+              <Badge tone="info" mono title={`plan: ${plan}`}>
+                {plan.toUpperCase()}
               </Badge>
             ) : null}
-            {account.identity.email ? <span className="vn-caption vn-mono-xs">{account.external_id}</span> : null}
+            {account.identity.email ? (
+              <span className="vn-caption vn-mono-xs" title={account.external_id}>
+                {shortExternalId(account.external_id)}
+              </span>
+            ) : null}
             <FundingBadge funding={account.funding?.funding} source={account.funding?.source} locked={fundingLocked} />
             <IconButton
               icon="sliders-horizontal"
@@ -284,27 +323,34 @@ export default function AccountRow(props: AccountRowProps) {
             />
           </div>
 
-          <SecretRevealControl
-            masked="••••••••"
-            secret={secret}
-            revealed={revealed}
-            blocked={!revealed}
-            onRevealRequest={handleRevealRequest}
-            onHide={handleHide}
-            label="credential"
-          />
+          {/* self-start: the reveal control is a fit-content chip, never a
+              full-width slab stretched by the flex column. */}
+          <span className="self-start">
+            <SecretRevealControl
+              masked="••••••••"
+              secret={secret}
+              revealed={revealed}
+              blocked={!revealed}
+              onRevealRequest={handleRevealRequest}
+              onHide={handleHide}
+              label="credential"
+            />
+          </span>
           {revealError ? (
             <TypedErrorDisplay code={revealError.code} message={revealError.message} retryable={revealError.retryable} tone="critical" />
           ) : null}
 
+          {/* Renders nothing for zero windows — the meta line's "Quota: —"
+              already reports the absence once. */}
           <QuotaSummaryCompact windows={account.quota} />
 
           {/* P3c-UI-001: retained mount (no-removal rule). The per-account
-           * LIVE certification surface is now the Model Test Report modal
+           * LIVE certification surface is the Model Test Report modal
            * (per-model status derived from the same offering capability
-           * truths); this summary keeps its honest empty idiom here. */}
+           * truths); with zero operations this renders nothing. */}
           <CertificationSummary operations={[]} />
 
+          {actionNote ? <span className="vn-caption">{actionNote}</span> : null}
           {actionError ? (
             <TypedErrorDisplay code={actionError.code} message={actionError.message} retryable={actionError.retryable} tone="critical" />
           ) : null}
@@ -322,7 +368,7 @@ export default function AccountRow(props: AccountRowProps) {
               onClick={handleSync}
             />
             <IconButton
-              icon="box"
+              icon="download"
               label="Fetch models from provider"
               title="Fetch models from provider"
               variant="ghost"

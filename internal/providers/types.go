@@ -46,7 +46,12 @@ type HealthFailure struct {
 
 // HealthObservation is returned by the standalone HealthAdapter (03 §1).
 type HealthObservation struct {
-	Status             string // healthy | degraded | unreachable (unreachable maps to account health_state "unavailable")
+	// Status maps onto the account health_state axis: healthy | degraded |
+	// expired (a definitive credential rejection — the provider answered
+	// and refused the credential) | unreachable (maps to account
+	// health_state "unavailable"). An adapter never guesses: a rate limit
+	// or provider fault is unreachable, not expired.
+	Status             string
 	Scope              string // account | offering
 	CredentialValid    bool
 	TransportReachable bool

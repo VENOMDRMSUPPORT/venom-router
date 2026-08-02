@@ -161,10 +161,12 @@ describe("CertificationSummary — the list row makes no certification request",
 });
 
 describe("CertificationSummary — empty state", () => {
-  it("renders the honest empty-state idiom for zero tracked operations", () => {
+  it("renders NOTHING for zero tracked operations — the mount stays, the output is empty", () => {
     const { container } = render(<CertificationSummary operations={[]} />);
-    screen.getByText("—");
-    expect(container.querySelectorAll("button").length).toBe(0);
+    // No lone dash, no buttons, no fabricated rows: an account whose
+    // certification data lives on the Model Test Report surface gets no
+    // dead placeholder here.
+    expect(container.firstChild).toBeNull();
   });
 });
 
