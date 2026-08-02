@@ -21,8 +21,103 @@ const CONTROL_BASE = "/api/control/v1";
 const CSRF_HEADER = "X-CSRF-Token";
 const IDEMPOTENCY_HEADER = "Idempotency-Key";
 
-function request<T>(path: string, init: RequestInit): Promise<T> {
-  return sharedRequest<T>(CONTROL_BASE, path, init);
+// --- Debug operation log (providers-page Debug panel) ---
+//
+// A module-level ring buffer of the last 200 control-API exchanges,
+// SECRET-FREE BY CONSTRUCTION: each event carries only the method, the
+// path (query string stripped), the status, the duration, and — on a typed
+// error — the server's request_id. No request or response body, no header,
+// and no query parameter is ever captured, so there is no field a
+// credential could reach.
+
+/** One captured control-API exchange. */
+export interface DebugLogEvent {
+  id: number;
+  /** Epoch ms at which the request settled. */
+  at: number;
+  method: string;
+  /** The request path (control base included, query string stripped). */
+  path: string;
+  /** The HTTP status, or "network_error" when fetch itself rejected. */
+  status: number | "network_error";
+  ok: boolean;
+  durationMs: number;
+  /** The error envelope's request_id, when the exchange failed typed. */
+  requestId?: string;
+}
+
+const DEBUG_LOG_CAP = 200;
+let debugEventSeq = 0;
+const debugEvents: DebugLogEvent[] = [];
+const debugListeners = new Set<() => void>();
+// Cached immutable snapshot so useSyncExternalStore gets a REFERENCE-
+// stable value between mutations (a fresh array per read would loop it).
+let debugSnapshotCache: DebugLogEvent[] | null = null;
+
+function notifyDebugListeners(): void {
+  debugSnapshotCache = null;
+  for (const listener of debugListeners) listener();
+}
+
+function recordDebugEvent(event: Omit<DebugLogEvent, "id">): void {
+  debugEvents.push({ id: ++debugEventSeq, ...event });
+  if (debugEvents.length > DEBUG_LOG_CAP) debugEvents.splice(0, debugEvents.length - DEBUG_LOG_CAP);
+  notifyDebugListeners();
+}
+
+/** The read/observe surface for the Debug Log panel. `snapshot()` returns
+ * oldest-first; the panel reverses for newest-first display. */
+export const debugLog = {
+  subscribe(listener: () => void): () => void {
+    debugListeners.add(listener);
+    return () => {
+      debugListeners.delete(listener);
+    };
+  },
+  snapshot(): readonly DebugLogEvent[] {
+    if (debugSnapshotCache === null) debugSnapshotCache = debugEvents.slice();
+    return debugSnapshotCache;
+  },
+  clear(): void {
+    debugEvents.length = 0;
+    notifyDebugListeners();
+  },
+};
+
+async function request<T>(path: string, init: RequestInit): Promise<T> {
+  const startedAt = Date.now();
+  const method = (init.method ?? "GET").toUpperCase();
+  // Query strings can carry cursors/limits only today, but the log strips
+  // them anyway so no future parameter can leak through this seam.
+  const logPath = CONTROL_BASE + path.split("?")[0];
+  let observedStatus: number | "network_error" = "network_error";
+  try {
+    const result = await sharedRequest<T>(CONTROL_BASE, path, init, (o) => {
+      observedStatus = o.status;
+    });
+    recordDebugEvent({
+      at: Date.now(),
+      method,
+      path: logPath,
+      status: observedStatus,
+      ok: true,
+      durationMs: Date.now() - startedAt,
+    });
+    return result;
+  } catch (err) {
+    recordDebugEvent({
+      at: Date.now(),
+      method,
+      path: logPath,
+      // An AuthApiError always carries the real HTTP status it was thrown
+      // with; anything else here is fetch itself rejecting.
+      status: err instanceof AuthApiError ? err.status : "network_error",
+      ok: false,
+      durationMs: Date.now() - startedAt,
+      requestId: err instanceof AuthApiError && err.requestId ? err.requestId : undefined,
+    });
+    throw err;
+  }
 }
 
 // --- Settings (P2b-CAPI-005 / UI-001) ---
@@ -321,11 +416,23 @@ export async function connectApiKeyAccount(
  * reverification_required (401), no_active_credential / not_found (404),
  * rate_limited (429). */
 export async function revealCredential(accountId: string, csrfToken: string): Promise<string> {
-  const response = await fetch(`${CONTROL_BASE}/accounts/${encodeURIComponent(accountId)}/reveal`, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { [CSRF_HEADER]: csrfToken },
-  });
+  const path = `${CONTROL_BASE}/accounts/${encodeURIComponent(accountId)}/reveal`;
+  const startedAt = Date.now();
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { [CSRF_HEADER]: csrfToken },
+    });
+  } catch (err) {
+    // This call bypasses the shared request helper (its success body is raw
+    // plaintext), so it records its own debug event — method/path/status
+    // only, exactly like every other call; the plaintext never gets near it.
+    recordDebugEvent({ at: Date.now(), method: "POST", path, status: "network_error", ok: false, durationMs: Date.now() - startedAt });
+    throw err;
+  }
+  recordDebugEvent({ at: Date.now(), method: "POST", path, status: response.status, ok: response.ok, durationMs: Date.now() - startedAt });
   if (!response.ok) {
     await throwApiError(response);
   }
@@ -587,6 +694,49 @@ export interface AsyncJobHandle {
 export async function startDiscovery(accountId: string, csrfToken: string): Promise<AsyncJobHandle> {
   const resp = await request<{ data: AsyncJobHandle }>(
     `/accounts/${encodeURIComponent(accountId)}/discover`,
+    { method: "POST", headers: { [CSRF_HEADER]: csrfToken } },
+  );
+  return resp.data;
+}
+
+/** POST /accounts/{id}/quota's 202 payload — the canonical job handle
+ * (internal/httpapi/quota.go's quotaRefreshResponseJSON). */
+export interface QuotaRefreshHandle {
+  job_id: string;
+  status_url: string;
+}
+
+/** POST /accounts/{id}/quota — triggers an async quota-snapshot refresh
+ * (202 + job; poll GET /jobs/{job_id} for terminal status — an accepted
+ * trigger is NOT a completed one). Typed errors to expect:
+ * quota_unsupported (409, the provider has no quota adapter),
+ * credential_unavailable (409), not_found (404). */
+export async function refreshQuota(accountId: string, csrfToken: string): Promise<QuotaRefreshHandle> {
+  const resp = await request<{ data: QuotaRefreshHandle }>(
+    `/accounts/${encodeURIComponent(accountId)}/quota`,
+    { method: "POST", headers: { [CSRF_HEADER]: csrfToken } },
+  );
+  return resp.data;
+}
+
+/** POST /providers/{id}/sync's 200 payload (internal/httpapi/accounts.go's
+ * ServeProviderSync): a per-account best-effort refresh COUNT, not a
+ * result. `note` is the server's own honesty caveat — this phase no
+ * discovery/quota/health adapter is registered, so "synced" means "the
+ * account was visited", nothing stronger. */
+export interface ProviderSyncResult {
+  provider: string;
+  synced: number;
+  skipped: number;
+  note?: string;
+}
+
+/** POST /providers/{id}/sync — best-effort sync of every account under one
+ * provider (health · plan · usage, as far as the server's registered
+ * adapters go). Synchronous 200, no job. */
+export async function syncProvider(providerId: string, csrfToken: string): Promise<ProviderSyncResult> {
+  const resp = await request<{ data: ProviderSyncResult }>(
+    `/providers/${encodeURIComponent(providerId)}/sync`,
     { method: "POST", headers: { [CSRF_HEADER]: csrfToken } },
   );
   return resp.data;

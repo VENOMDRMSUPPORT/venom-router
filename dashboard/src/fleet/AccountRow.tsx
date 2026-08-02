@@ -1,37 +1,48 @@
 import { useState, type ChangeEvent } from "react";
-import { Button, Dialog, DropdownMenu, FormField, IconButton, Select } from "@venom/design-system/primitives";
+import { Badge, Button, Dialog, FormField, IconButton, Select } from "@venom/design-system/primitives";
 import {
-  AccountIdentity,
-  AccountStatus,
   DestructiveActionConfirmation,
   FundingBadge,
-  ProviderAccountRow,
   SecretRevealControl,
   TypedErrorDisplay,
 } from "@venom/design-system/domain";
 import ReverifyModal from "../auth/ReverifyModal";
 import CertificationSummary from "./CertificationSummary";
-import QuotaSummary from "./QuotaSummary";
+import { QuotaSummaryCompact } from "./QuotaSummary";
+import { pollJobToTerminal } from "./jobs";
+import { relativeTime } from "./relativeTime";
 import {
   AuthApiError,
   disconnectAccount,
   isSessionExpired,
   refreshHealth,
+  refreshQuota,
   resumeAccount,
   revealCredential,
+  startDiscovery,
   stopAccount,
   toApiError,
   updateFunding,
   type AccountProjection,
+  type DisplayStatus,
 } from "../api/controlClient";
 
 export interface AccountRowProps {
   account: AccountProjection;
+  /** 1-based position within its provider — the "#1 / #2" index chip. */
+  index: number;
+  /** Distinct models discovered for this account; null while the offerings
+   * read is loading or failed (rendered as an honest "—", never 0). */
+  modelCount: number | null;
   csrfToken: string;
   onSessionExpired: () => void;
   /** Called after any successful mutation — the parent re-fetches the
-   * fleet so this row's own props are refreshed from the server. */
+   * fleet (providers + accounts + offerings) so this row's own props are
+   * refreshed from the server. */
   onChanged: () => void;
+  /** Opens this account's Model Test Report modal (owned by the page so
+   * the dialog outlives row re-renders). */
+  onOpenModelReport: () => void;
 }
 
 const FUNDING_OPTIONS = [
@@ -40,23 +51,52 @@ const FUNDING_OPTIONS = [
   { value: "unknown", label: "Unknown" },
 ];
 
+/** display_status -> dot tone. PRESENTATION mapping only (mirrors the DS
+ * state matrix's tones); the verbatim server value always travels in the
+ * dot's title, never renamed. */
+const DOT_TONE: Record<DisplayStatus, string> = {
+  connecting: "info",
+  healthy: "healthy",
+  degraded: "degraded",
+  unavailable: "critical",
+  expired: "warning",
+  unknown: "unknown",
+  reauthenticating: "info",
+  cooling_down: "warning",
+  stopped: "inactive",
+  disconnected: "inactive",
+};
+
+/** The most recent observed_at across the account's evidence windows —
+ * the "Quota: … ago" instant. Null when no evidence window reports one. */
+function latestQuotaObservedAt(account: AccountProjection): number | null {
+  let latest: number | null = null;
+  for (const w of account.quota) {
+    if (w.source === "local_safety") continue;
+    const t = Date.parse(w.observed_at);
+    if (!Number.isNaN(t) && (latest == null || t > latest)) latest = t;
+  }
+  return latest;
+}
+
 /**
- * One connected account's row (P2b-UI-003): identity + credential reveal,
- * the server's DERIVED display_status (rendered verbatim), the
- * account-scoped FundingBadge with an override control, and the
- * stop/resume/refresh-health/disconnect lifecycle actions.
+ * One connected account's row (image 2 layout): numbered index chip,
+ * identity (email, uppercase plan badge, immutable external id), the
+ * credential reveal + reverify flow, the funding badge + owner override,
+ * compact quota meters, and the action cluster — sync (health · plan ·
+ * usage), fetch models, the model-count chip opening the Model Test
+ * Report, the disable/enable power toggle, and disconnect.
  *
  * Credential reveal (security-critical): the masked control shows no
  * secret by default. onRevealRequest calls POST /accounts/{id}/reveal;
  * a reverification_required (401) opens the same ReverifyModal
  * auth/AuthGate's own sensitive actions use — on a successful reverify,
- * reveal is retried once. Both onHide AND losing focus (SecretRevealControl
- * calls onHide for both, see its own doc comment) clear the plaintext from
- * this component's state immediately; it is never logged, never stored,
- * and the DOM shows only the masked placeholder once hidden.
+ * reveal is retried once. Both onHide AND losing focus clear the plaintext
+ * from this component's state immediately; it is never logged, never
+ * stored, and the DOM shows only the masked placeholder once hidden.
  */
 export default function AccountRow(props: AccountRowProps) {
-  const { account, csrfToken, onSessionExpired, onChanged } = props;
+  const { account, index, modelCount, csrfToken, onSessionExpired, onChanged, onOpenModelReport } = props;
 
   const [revealed, setRevealed] = useState(false);
   const [secret, setSecret] = useState("");
@@ -130,16 +170,48 @@ export default function AccountRow(props: AccountRowProps) {
     }
   }
 
+  /** "Sync: health · plan · usage" — refreshHealth (synchronous), then the
+   * async quota refresh polled to its terminal job status, then a refetch.
+   * A non-completed quota job surfaces its typed code verbatim. */
+  function handleSync() {
+    void runLifecycleAction(async () => {
+      await refreshHealth(account.id, csrfToken);
+      const handle = await refreshQuota(account.id, csrfToken);
+      const job = await pollJobToTerminal(handle.job_id);
+      if (job.status !== "completed") {
+        throw new AuthApiError(0, {
+          code: job.error?.code ?? `job_${job.status}`,
+          message: job.error?.message ?? `The quota refresh job is ${job.status}.`,
+          request_id: "",
+          retryable: true,
+        });
+      }
+    });
+  }
+
+  /** "Fetch models from provider" — discovery for THIS account, polled to
+   * terminal, then a refetch (the parent reloads offerings too). */
+  function handleFetchModels() {
+    void runLifecycleAction(async () => {
+      const handle = await startDiscovery(account.id, csrfToken);
+      const job = await pollJobToTerminal(handle.job_id);
+      if (job.status !== "completed") {
+        throw new AuthApiError(0, {
+          code: job.error?.code ?? `job_${job.status}`,
+          message: job.error?.message ?? `The discovery job is ${job.status}.`,
+          request_id: "",
+          retryable: true,
+        });
+      }
+    });
+  }
+
   function handleStop() {
     void runLifecycleAction(() => stopAccount(account.id, csrfToken));
   }
 
   function handleResume() {
     void runLifecycleAction(() => resumeAccount(account.id, csrfToken));
-  }
-
-  function handleRefreshHealth() {
-    void runLifecycleAction(() => refreshHealth(account.id, csrfToken));
   }
 
   function handleDisconnectConfirmed() {
@@ -170,31 +242,33 @@ export default function AccountRow(props: AccountRowProps) {
   }
 
   const fundingLocked = account.funding?.locked ?? false;
+  const canStop = account.connection_state === "connected";
+  const canResume = account.connection_state === "stopped";
+  const powerTitle = canStop
+    ? "Disable account"
+    : canResume
+      ? "Enable account"
+      : `Account is ${account.connection_state}`;
+  const dotTone = DOT_TONE[account.display_status] ?? "unknown";
+  const quotaObserved = latestQuotaObservedAt(account);
+  const checkedAt = account.last_health_check_at ? Date.parse(account.last_health_check_at) : NaN;
 
   return (
     <>
-      <ProviderAccountRow
-        identity={
-          <div className="flex flex-col gap-1">
-            <AccountIdentity email={account.identity.email} externalId={account.external_id} plan={account.identity.plan} />
-            <SecretRevealControl
-              masked="••••••••"
-              secret={secret}
-              revealed={revealed}
-              blocked={!revealed}
-              onRevealRequest={handleRevealRequest}
-              onHide={handleHide}
-              label="credential"
-            />
-            {revealError ? (
-              <TypedErrorDisplay code={revealError.code} message={revealError.message} retryable={revealError.retryable} tone="critical" />
+      <div className="vnd-account">
+        <span className="vnd-account-index" aria-hidden="true">
+          {index}
+        </span>
+
+        <div className="vnd-account-body">
+          <div className="vnd-account-identity">
+            <span className="vnd-account-email">{account.identity.email || account.external_id}</span>
+            {account.identity.plan ? (
+              <Badge tone="info" mono title={`plan: ${account.identity.plan}`}>
+                {account.identity.plan.toUpperCase()}
+              </Badge>
             ) : null}
-          </div>
-        }
-        status={<AccountStatus status={account.display_status} />}
-        quota={<QuotaSummary windows={account.quota} />}
-        funding={
-          <div className="flex items-center gap-2">
+            {account.identity.email ? <span className="vn-caption vn-mono-xs">{account.external_id}</span> : null}
             <FundingBadge funding={account.funding?.funding} source={account.funding?.source} locked={fundingLocked} />
             <IconButton
               icon="sliders-horizontal"
@@ -209,59 +283,94 @@ export default function AccountRow(props: AccountRowProps) {
               }}
             />
           </div>
-        }
-        actions={
-          // TODO(P2b-UI-003 follow-up): reauthentication of an existing
-          // OAuth account (POST /accounts/{id}/reauth/begin, P2b-PROV-008)
-          // is intentionally NOT wired into this menu yet. It is optional
-          // for this task, and cleanly adding it here would need the same
-          // begin -> open authorize_url -> poll status shape ConnectDialog
-          // already implements for a fresh OAuth connect, just retargeted
-          // at reauth/begin's endpoint for an oauth-authed account instead
-          // of a "connect account" flow. Left out to keep this row's scope
-          // to the account-lifecycle actions explicitly asked for
-          // (stop/resume/refresh health/disconnect).
-          <DropdownMenu
-            trigger={<IconButton icon="ellipsis" label={`Actions for ${account.external_id}`} variant="ghost" size="sm" />}
-            align="end"
-            items={[
-              { label: "Stop", icon: "pause", disabled: actionPending || account.connection_state !== "connected", onSelect: handleStop },
-              { label: "Resume", icon: "play", disabled: actionPending || account.connection_state !== "stopped", onSelect: handleResume },
-              {
-                label: "Refresh health",
-                icon: "refresh-cw",
-                disabled: actionPending || account.connection_state === "disconnected",
-                onSelect: handleRefreshHealth,
-              },
-              { type: "separator" },
-              {
-                label: "Disconnect",
-                icon: "unplug",
-                danger: true,
-                disabled: actionPending || account.connection_state === "disconnected",
-                onSelect: () => setDisconnectOpen(true),
-              },
-            ]}
+
+          <SecretRevealControl
+            masked="••••••••"
+            secret={secret}
+            revealed={revealed}
+            blocked={!revealed}
+            onRevealRequest={handleRevealRequest}
+            onHide={handleHide}
+            label="credential"
           />
-        }
-      />
+          {revealError ? (
+            <TypedErrorDisplay code={revealError.code} message={revealError.message} retryable={revealError.retryable} tone="critical" />
+          ) : null}
 
-      {/* P3c-UI-001: the certification summary composes entirely from
-       * offering-operation data (state/truth/probe-execution/review
-       * reasons), none of which GET /accounts or AccountProjection carries
-       * today — GET /offerings has no per-account mount point wired into
-       * this page yet (FleetOverview's own "Models" StatCard is the same
-       * honest "—" for the same reason). Wiring is complete and tested in
-       * isolation (CertificationSummary.test.tsx); the moment a later unit
-       * supplies this account's offering-operations, passing them here is
-       * the only change needed — an empty array renders the same honest
-       * "—" idiom QuotaSummary uses for its own empty case, never a
-       * fabricated row. */}
-      <CertificationSummary operations={[]} />
+          <QuotaSummaryCompact windows={account.quota} />
 
-      {actionError ? (
-        <TypedErrorDisplay code={actionError.code} message={actionError.message} retryable={actionError.retryable} tone="critical" />
-      ) : null}
+          {/* P3c-UI-001: retained mount (no-removal rule). The per-account
+           * LIVE certification surface is now the Model Test Report modal
+           * (per-model status derived from the same offering capability
+           * truths); this summary keeps its honest empty idiom here. */}
+          <CertificationSummary operations={[]} />
+
+          {actionError ? (
+            <TypedErrorDisplay code={actionError.code} message={actionError.message} retryable={actionError.retryable} tone="critical" />
+          ) : null}
+        </div>
+
+        <div className="vnd-account-right">
+          <div className="vnd-account-actions">
+            <IconButton
+              icon="activity"
+              label="Sync: health · plan · usage"
+              title="Sync: health · plan · usage"
+              variant="ghost"
+              size="sm"
+              disabled={actionPending || account.connection_state === "disconnected"}
+              onClick={handleSync}
+            />
+            <IconButton
+              icon="box"
+              label="Fetch models from provider"
+              title="Fetch models from provider"
+              variant="ghost"
+              size="sm"
+              disabled={actionPending || account.connection_state === "disconnected"}
+              onClick={handleFetchModels}
+            />
+            <IconButton
+              icon="box"
+              label="Open model test report"
+              title={modelCount ? "Open model test report" : "No models discovered yet"}
+              variant="ghost"
+              size="sm"
+              className="vnd-count-btn"
+              disabled={!modelCount}
+              onClick={onOpenModelReport}
+            >
+              {/* An unknown count is "—", never a fabricated 0. */}
+              {modelCount == null ? "—" : modelCount}
+            </IconButton>
+            <IconButton
+              icon="power"
+              label={powerTitle}
+              title={powerTitle}
+              variant="ghost"
+              size="sm"
+              disabled={actionPending || (!canStop && !canResume)}
+              onClick={canStop ? handleStop : canResume ? handleResume : undefined}
+            />
+            <IconButton
+              icon="trash-2"
+              label="Disconnect account"
+              title="Disconnect account"
+              variant="ghost"
+              size="sm"
+              disabled={actionPending || account.connection_state === "disconnected"}
+              onClick={() => setDisconnectOpen(true)}
+            />
+          </div>
+          <div className="vnd-account-meta">
+            <span className={`vnd-health-dot vnd-health-dot--${dotTone}`} title={`display_status: ${account.display_status}`} />
+            <span>
+              Quota: {quotaObserved == null ? "—" : relativeTime(quotaObserved)} · Checked:{" "}
+              {Number.isNaN(checkedAt) ? "—" : relativeTime(checkedAt)}
+            </span>
+          </div>
+        </div>
+      </div>
 
       <ReverifyModal
         open={reverifyOpen}

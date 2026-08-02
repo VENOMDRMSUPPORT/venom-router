@@ -1,0 +1,431 @@
+/* Providers-page (fleet) dashboard-local styles.
+ *
+ * Everything here resolves through @venom/design-system CSS custom
+ * properties (surfaces, borders, status roles, spacing, radius, type
+ * scale) so themes, accents, and density keep working unchanged. No raw
+ * colors. Class names are prefixed `vnd-` (venom dashboard) so they can
+ * never collide with the frozen package's own `vn-` namespace. */
+
+/* --- Active Providers: the compact row list ------------------------------ */
+
+.vnd-fleet-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.vnd-provider-row {
+  border: var(--border-hairline) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  padding: var(--space-3) var(--space-4);
+  min-width: 0;
+}
+
+.vnd-provider-row-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.vnd-provider-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 1;
+}
+
+.vnd-provider-row-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.vnd-provider-row-name {
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--font-line-height-snug);
+}
+
+.vnd-provider-row-sub {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.vnd-provider-row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+}
+
+/* The expanded per-provider account panel: inset, green-tinted left edge. */
+.vnd-provider-row-accounts {
+  margin-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* --- Health dots ---------------------------------------------------------- */
+
+.vnd-health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  flex: none;
+  display: inline-block;
+  background: var(--status-unknown-fg);
+}
+.vnd-health-dot--healthy { background: var(--status-healthy-fg); }
+.vnd-health-dot--warning { background: var(--status-warning-fg); }
+.vnd-health-dot--degraded { background: var(--status-degraded-fg); }
+.vnd-health-dot--critical { background: var(--status-critical-fg); }
+.vnd-health-dot--inactive { background: var(--status-inactive-fg); }
+.vnd-health-dot--info { background: var(--status-info-fg); }
+.vnd-health-dot--unknown { background: var(--status-unknown-fg); }
+
+/* --- Account rows (image 2) ----------------------------------------------- */
+
+.vnd-account {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  border: var(--border-hairline) solid var(--border-subtle);
+  border-left: 3px solid var(--status-healthy-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  padding: var(--space-3) var(--space-4);
+  min-width: 0;
+}
+
+.vnd-account-index {
+  color: var(--text-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-2xs);
+  padding-top: var(--space-1);
+  flex: none;
+}
+
+.vnd-account-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+
+.vnd-account-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.vnd-account-email {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.vnd-account-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex: none;
+}
+
+.vnd-account-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.vnd-account-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  white-space: nowrap;
+}
+
+/* --- Compact quota meters -------------------------------------------------- */
+
+.vnd-quota-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 28rem;
+}
+
+.vnd-quota-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--font-size-2xs);
+}
+
+.vnd-quota-label {
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  min-width: var(--space-8);
+  flex: none;
+}
+
+.vnd-meter {
+  flex: 1;
+  min-width: 4rem;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--surface-primary);
+  border: var(--border-hairline) solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.vnd-meter-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--status-healthy-fg);
+}
+.vnd-meter-fill--warning { background: var(--status-warning-fg); }
+.vnd-meter-fill--critical { background: var(--status-critical-fg); }
+
+/* Missing evidence: hatched, no fabricated fill width. */
+.vnd-meter--unknown {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--border-default) 0,
+    var(--border-default) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+.vnd-quota-pct {
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-semibold);
+  flex: none;
+}
+.vnd-quota-pct--healthy { color: var(--status-healthy-fg); }
+.vnd-quota-pct--warning { color: var(--status-warning-fg); }
+.vnd-quota-pct--critical { color: var(--status-critical-fg); }
+.vnd-quota-pct--unknown { color: var(--text-muted); }
+
+.vnd-quota-reset {
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex: none;
+}
+
+/* --- Catalog card additions (image 4/5/6) ---------------------------------- */
+
+.vnd-card-name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.vnd-card-domain {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+/* --- Icon-button-with-count (the models-count chip) ------------------------ */
+
+.vnd-count-btn {
+  width: auto;
+  padding-inline: var(--space-2);
+  gap: var(--space-1);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+}
+
+/* An anchor styled as a ghost icon button (external provider site links). */
+.vnd-icon-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+}
+.vnd-icon-link:hover { color: var(--text-primary); background: var(--surface-primary); }
+.vnd-icon-link:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* --- Connect dialog: the 2x2 billing-type radio cards ---------------------- */
+
+.vnd-billing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.vnd-billing-grid .vn-check {
+  align-items: flex-start;
+  border: var(--border-hairline) solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  padding: var(--space-3);
+  margin: 0;
+}
+
+.vnd-billing-grid .vn-check:has(input:checked) {
+  border-color: var(--border-strong);
+  background: var(--surface-secondary);
+}
+
+/* --- Model Test Report (image 3) ------------------------------------------- */
+
+.vnd-report-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.vnd-report-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-items: center;
+  border: var(--border-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  padding: var(--space-3);
+}
+
+.vnd-report-tile-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vnd-report-tile-value {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.vnd-report-tile-value--healthy { color: var(--status-healthy-fg); }
+.vnd-report-tile-value--critical { color: var(--status-critical-fg); }
+.vnd-report-tile-value--muted { color: var(--text-muted); }
+
+.vnd-report-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.vnd-report-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.vnd-report-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border: var(--border-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  padding: var(--space-3);
+  min-width: 0;
+}
+
+.vnd-report-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 1;
+}
+
+.vnd-report-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+/* --- Debug Log panel (image 11) --------------------------------------------- */
+
+.vnd-debug-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding-bottom: var(--space-2);
+  border-bottom: var(--border-hairline) solid var(--border-subtle);
+  margin-bottom: var(--space-2);
+}
+
+.vnd-debug-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-2xs);
+}
+
+.vnd-debug-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  border-bottom: var(--border-hairline) solid var(--border-subtle);
+  padding: var(--space-1) 0;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.vnd-debug-time { color: var(--text-muted); flex: none; }
+.vnd-debug-path { overflow-wrap: anywhere; min-width: 0; }
+.vnd-debug-status--ok { color: var(--status-healthy-fg); }
+.vnd-debug-status--fail { color: var(--status-critical-fg); }
+.vnd-debug-duration { color: var(--text-muted); }
+
+.vnd-debug-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-10);
+  height: var(--space-10);
+  border-radius: var(--radius-lg);
+  background: var(--surface-primary);
+  border: var(--border-hairline) solid var(--border-subtle);
+  color: var(--text-muted);
+}
+
+/* --- Responsive ------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .vnd-report-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vnd-account { flex-wrap: wrap; }
+  .vnd-account-right { align-items: flex-start; }
+}

@@ -43,12 +43,14 @@ test.describe("critical flows", () => {
       }
     });
 
-    await page.getByRole("button", { name: "Connect Integration" }).first().click();
+    // The default Active Providers view adds accounts through the row's
+    // "+ Add account" action (the documented flow for a 2nd/3rd account).
+    await page.getByRole("button", { name: "Add account" }).first().click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
 
     await dialog.getByLabel("API key").fill(SENTINELS.providerCredential);
-    await dialog.getByRole("button", { name: /validate .* connect/i }).click();
+    await dialog.getByRole("button", { name: /save & encrypt/i }).click();
 
     // The enrollment POST is what "connected" means here; asserting the
     // request went out is stronger than asserting a toast appeared, because a

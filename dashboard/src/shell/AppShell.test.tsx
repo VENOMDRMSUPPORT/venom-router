@@ -42,6 +42,7 @@ function baseHandlers(overrides: Record<string, () => Response> = {}) {
     // behavior is covered in src/fleet/*.test.tsx.
     "GET /api/control/v1/providers": () => jsonResponse(200, { data: { providers: [] } }),
     "GET /api/control/v1/accounts?limit=200": () => jsonResponse(200, { data: { accounts: [] } }),
+    "GET /api/control/v1/offerings?limit=200": () => jsonResponse(200, { data: [] }),
     // Same rationale for the Models destination (P6-UI-002) and the
     // review-queue banner it renders (P6-UI-012) — their own behavior is
     // covered in src/models/*.test.tsx.
@@ -169,15 +170,18 @@ describe("AppShell — navigation", () => {
     const overviewLink = await screen.findByRole("link", { name: /overview/i });
     expect(overviewLink.getAttribute("aria-current")).toBe("page");
 
-    const providersLink = screen.getByRole("link", { name: /providers/i });
+    // Scoped to the primary nav: the providers page's own breadcrumb now
+    // carries a "Providers" link too.
+    const primary = within(screen.getByRole("navigation", { name: /primary/i }));
+    const providersLink = primary.getByRole("link", { name: /providers/i });
     expect(providersLink.getAttribute("aria-current")).toBeNull();
 
     fireEvent.click(providersLink);
 
-    expect(screen.getByRole("link", { name: /providers/i }).getAttribute("aria-current")).toBe(
+    expect(primary.getByRole("link", { name: /providers/i }).getAttribute("aria-current")).toBe(
       "page",
     );
-    expect(screen.getByRole("link", { name: /overview/i }).getAttribute("aria-current")).toBeNull();
+    expect(primary.getByRole("link", { name: /overview/i }).getAttribute("aria-current")).toBeNull();
   });
 });
 
@@ -801,12 +805,71 @@ describe("AppShell — global breadcrumb", () => {
     );
     await screen.findByRole("link", { name: /overview/i });
 
-    fireEvent.click(screen.getByRole("link", { name: /providers/i }));
+    fireEvent.click(screen.getByRole("link", { name: /^models$/i }));
 
     const crumbs = screen.getByRole("navigation", { name: /breadcrumb/i });
     within(crumbs).getByText("Dashboard");
     within(crumbs).getByText("Operate");
-    expect(crumbs.querySelector('[aria-current="page"]')?.textContent).toBe("Providers");
+    expect(crumbs.querySelector('[aria-current="page"]')?.textContent).toBe("Models");
+  });
+
+  it("mirrors the providers auth filter in the breadcrumb's third segment", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    fireEvent.click(screen.getByRole("link", { name: /providers/i }));
+
+    // The documented trail: Dashboard / Providers / <filter> Providers.
+    const currentCrumb = () =>
+      screen.getByRole("navigation", { name: /breadcrumb/i }).querySelector('[aria-current="page"]')?.textContent;
+    within(screen.getByRole("navigation", { name: /breadcrumb/i })).getByText("Providers");
+    expect(currentCrumb()).toBe("All Providers");
+
+    const tabs = await screen.findByRole("group", { name: /filter providers by authentication type/i });
+    fireEvent.click(within(tabs).getByRole("button", { name: "OAuth" }));
+    expect(currentCrumb()).toBe("OAuth Providers");
+
+    fireEvent.click(within(tabs).getByRole("button", { name: "API Key" }));
+    expect(currentCrumb()).toBe("API KEY Providers");
+  });
+
+  it("shows the Debug chip on the providers page only, toggling the Debug Log panel", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+
+    render(
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: /overview/i });
+
+    // Not on Overview.
+    expect(screen.queryByRole("button", { name: /^debug$/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole("link", { name: /providers/i }));
+    const debugChip = await screen.findByRole("button", { name: /^debug$/i });
+    fireEvent.click(debugChip);
+
+    await screen.findByRole("dialog", { name: /debug log/i });
+
+    // Closing via the panel's own × works, and navigating away removes the chip.
+    fireEvent.click(screen.getByRole("button", { name: /^close$/i }));
+    expect(screen.queryByRole("dialog", { name: /debug log/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole("link", { name: /overview/i }));
+    expect(screen.queryByRole("button", { name: /^debug$/i })).toBeNull();
   });
 
   it("derives the trail from the same nav metadata for every page", () => {
@@ -831,15 +894,18 @@ describe("AppShell — global breadcrumb", () => {
     );
     await screen.findByRole("link", { name: /overview/i });
 
-    fireEvent.click(screen.getByRole("link", { name: /providers/i }));
-    expect(screen.getByRole("link", { name: /providers/i }).getAttribute("aria-current")).toBe(
+    // Scoped to the primary nav: the providers breadcrumb also carries a
+    // "Providers" link.
+    const primary = within(screen.getByRole("navigation", { name: /primary/i }));
+    fireEvent.click(primary.getByRole("link", { name: /providers/i }));
+    expect(primary.getByRole("link", { name: /providers/i }).getAttribute("aria-current")).toBe(
       "page",
     );
 
     const crumbs = screen.getByRole("navigation", { name: /breadcrumb/i });
     fireEvent.click(within(crumbs).getByText("Dashboard"));
 
-    expect(screen.getByRole("link", { name: /overview/i }).getAttribute("aria-current")).toBe(
+    expect(primary.getByRole("link", { name: /overview/i }).getAttribute("aria-current")).toBe(
       "page",
     );
   });

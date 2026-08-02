@@ -17,7 +17,8 @@ import {
 } from "../api/controlClient";
 import { logout, type SessionTimes } from "../auth/authClient";
 import FleetBreadcrumbChips, { type FleetView } from "../fleet/FleetBreadcrumbChips";
-import FleetOverview from "../fleet/FleetOverview";
+import FleetOverview, { type AuthCategory } from "../fleet/FleetOverview";
+import DebugLogPanel from "./DebugLogPanel";
 import TokenHealthSurface from "../health/TokenHealthSurface";
 import ConnectClientPage from "../connect/ConnectClientPage";
 import DiagnosticsSurface from "../diagnostics/DiagnosticsSurface";
@@ -139,6 +140,13 @@ export default function AppShell(props: AppShellProps) {
   // account). Owned here so both the chips and FleetOverview share one
   // source of truth.
   const [fleetView, setFleetView] = useState<FleetView>("active");
+  // The Providers page's auth filter, lifted here so the breadcrumb's
+  // third segment can mirror it ("All Providers" / "OAuth Providers" /
+  // "API KEY Providers") — FleetOverview receives it controlled.
+  const [fleetCategory, setFleetCategory] = useState<AuthCategory>("all");
+  // The Debug Log panel (providers page only) — a chip in the page-context
+  // bar toggles it.
+  const [debugOpen, setDebugOpen] = useState(false);
   const [apiKeyCreateOpen, setApiKeyCreateOpen] = useState(false);
   const appearanceRef = useRef(appearance);
   appearanceRef.current = appearance;
@@ -235,6 +243,9 @@ export default function AppShell(props: AppShellProps) {
 
   function handleNavigate(next: string) {
     if (next !== "api-keys") setApiKeyCreateOpen(false);
+    // The Debug chip only exists on the providers page — its panel leaves
+    // with it.
+    if (next !== "providers") setDebugOpen(false);
     // A hand navigation supersedes the deep link: the operator is asking for the
     // surface, not for the one request the hash named.
     setDeepLinkRequestID(undefined);
@@ -327,10 +338,31 @@ export default function AppShell(props: AppShellProps) {
           ) : null}
 
           {/* The global breadcrumb row (legacy parity): trail chip on the
-              left; on the Providers page, the fleet's Active/All chips on
-              the right once the live counts have loaded. */}
+              left (its third segment mirrors the providers page's live
+              auth filter) plus the Debug chip there; on the Providers
+              page, the fleet's Active/All chips on the right once the
+              live counts have loaded. */}
           <PageContextBar
-            leading={<BreadcrumbBar item={activeItem} onNavigateHome={() => handleNavigate(DEFAULT_NAV_KEY)} />}
+            leading={
+              <span className="flex items-center gap-2">
+                <BreadcrumbBar
+                  item={activeItem}
+                  trail={activeNav === "providers" ? ["Dashboard", "Providers", FLEET_CATEGORY_CRUMB[fleetCategory]] : undefined}
+                  onNavigateHome={() => handleNavigate(DEFAULT_NAV_KEY)}
+                />
+                {activeNav === "providers" ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon="terminal"
+                    aria-pressed={debugOpen}
+                    onClick={() => setDebugOpen((open) => !open)}
+                  >
+                    Debug
+                  </Button>
+                ) : null}
+              </span>
+            }
             secondary={activeNav === "providers" && fleetCounts ? (
               <FleetBreadcrumbChips
                 activeCount={fleetCounts.active}
@@ -353,11 +385,15 @@ export default function AppShell(props: AppShellProps) {
             onSessionExpired,
             setFleetCounts,
             fleetView,
+            fleetCategory,
+            setFleetCategory,
             apiKeyCreateOpen,
             setApiKeyCreateOpen,
             handleNavigate,
             deepLinkRequestID,
           )}
+
+          <DebugLogPanel open={debugOpen} onClose={() => setDebugOpen(false)} />
         </div>
       </main>
 
@@ -380,6 +416,14 @@ export default function AppShell(props: AppShellProps) {
  * shared nav metadata.
  */
 export const CONNECT_CLIENT_KEY = "__connect-client";
+
+/** The providers-page breadcrumb's third segment per auth filter (the
+ * documented "All Providers / OAuth Providers / API KEY Providers"). */
+const FLEET_CATEGORY_CRUMB: Record<AuthCategory, string> = {
+  all: "All Providers",
+  oauth: "OAuth Providers",
+  api_key: "API KEY Providers",
+};
 
 /** What an initial location hash resolved to. */
 interface InitialRoute {
@@ -426,6 +470,8 @@ function renderSurface(
   onSessionExpired: () => void,
   onFleetCounts: (counts: { active: number; total: number }) => void,
   fleetView: FleetView,
+  fleetCategory: AuthCategory,
+  onFleetCategoryChange: (category: AuthCategory) => void,
   apiKeyCreateOpen: boolean,
   onApiKeyCreateOpenChange: (open: boolean) => void,
   onNavigate: (navKey: string) => void,
@@ -438,6 +484,8 @@ function renderSurface(
         onSessionExpired={onSessionExpired}
         onCounts={onFleetCounts}
         view={fleetView}
+        category={fleetCategory}
+        onCategoryChange={onFleetCategoryChange}
       />
     );
   }

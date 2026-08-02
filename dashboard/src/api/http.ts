@@ -91,13 +91,32 @@ export async function throwApiError(response: Response): Promise<never> {
   throw new AuthApiError(response.status, errorBody);
 }
 
+/** What a request observer is told about a settled HTTP exchange — status
+ * and ok only, by construction: no body, no headers, no URL beyond what the
+ * caller already knows it asked for. Exists for controlClient's debug
+ * operation log (see its `debugLog`); authClient passes no observer. */
+export interface RequestObservation {
+  status: number;
+  ok: boolean;
+}
+
 /** Envelope-aware fetch wrapper shared by every control-plane client
  * module: always `credentials: "same-origin"`, always JSON request/response
  * bodies, unwraps `{data: ...}` on success and throws AuthApiError on
  * `{error: ...}`. base is the caller's own route prefix (e.g.
  * `/api/control/v1/auth` for authClient, `/api/control/v1` for
- * controlClient) so each module keeps its own base path exactly as before. */
-export async function request<T>(base: string, path: string, init: RequestInit): Promise<T> {
+ * controlClient) so each module keeps its own base path exactly as before.
+ *
+ * `observe` (optional) is called once with {status, ok} as soon as the
+ * response arrives — never with any body or header content. A fetch-level
+ * rejection (offline/DNS) propagates without an observation; the caller's
+ * own error handling records that case. */
+export async function request<T>(
+  base: string,
+  path: string,
+  init: RequestInit,
+  observe?: (o: RequestObservation) => void,
+): Promise<T> {
   const response = await fetch(base + path, {
     ...init,
     credentials: "same-origin",
@@ -106,6 +125,8 @@ export async function request<T>(base: string, path: string, init: RequestInit):
       ...(init.headers ?? {}),
     },
   });
+
+  observe?.({ status: response.status, ok: response.ok });
 
   if (!response.ok) {
     await throwApiError(response);

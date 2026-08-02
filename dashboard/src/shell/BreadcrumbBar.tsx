@@ -7,6 +7,11 @@ export interface BreadcrumbBarProps {
   item: NavItem;
   /** Invoked when the root "Dashboard" crumb is activated. */
   onNavigateHome: () => void;
+  /** Optional full-trail override (root first). The Providers page uses
+   * this so its third segment mirrors the live auth filter ("Dashboard /
+   * Providers / OAuth Providers"); everywhere else the trail still derives
+   * from the nav metadata. */
+  trail?: string[];
 }
 
 /**
@@ -21,7 +26,7 @@ export interface BreadcrumbBarProps {
 export default function BreadcrumbBar(props: BreadcrumbBarProps) {
   const { item, onNavigateHome } = props;
 
-  const trail = breadcrumbTrail(item);
+  const trail = props.trail ?? breadcrumbTrail(item);
   const items: BreadcrumbItem[] = trail.map((label, i) => {
     if (i === trail.length - 1) return { label };
     return i === 0 ? { label, href: "#overview" } : { label };

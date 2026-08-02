@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Alert,
+  Badge,
   Button,
   EmptyState,
   ErrorState,
@@ -11,15 +13,26 @@ import {
 import {
   isSessionExpired,
   listAccounts,
+  listOfferings,
   listProviders,
   toApiError,
   type AccountProjection,
   type AuthApiError,
+  type EffectiveOffering,
   type Provider,
 } from "../api/controlClient";
 import ConnectDialog from "./ConnectDialog";
+import ModelTestReport from "./ModelTestReport";
 import ProviderCard from "./ProviderCard";
+import ProviderRow from "./ProviderRow";
+import { distinctModelStats } from "./modelStatus";
+import { providerDescription, providerDisplayName } from "./providerMeta";
 import type { FleetView } from "./FleetBreadcrumbChips";
+import "./fleet.css";
+
+/** The auth-mode filter the segmented tabs select. "all" is the only tab
+ * that shows `custom_openai` entries. */
+export type AuthCategory = "all" | "oauth" | "api_key";
 
 export interface FleetOverviewProps {
   csrfToken: string;
@@ -28,18 +41,20 @@ export interface FleetOverviewProps {
    * one connected account, total = full catalog) to the shell once the
    * live data has loaded. */
   onCounts?: (counts: { active: number; total: number }) => void;
-  /** The breadcrumb-row chip selection: "active" narrows the grid to
-   * providers with ≥1 connected account (on top of the search/category
-   * filters); "all" shows the full scoped catalog. Defaults to "all". */
+  /** The breadcrumb-row chip selection: "active" renders the compact
+   * provider ROW LIST (providers with ≥1 account); "all" renders the full
+   * catalog CARD GRID. Defaults to "all". */
   view?: FleetView;
+  /** Controlled auth-category filter (the shell lifts it so the
+   * breadcrumb's third segment can mirror it). Uncontrolled when absent. */
+  category?: AuthCategory;
+  onCategoryChange?: (category: AuthCategory) => void;
 }
 
-type AuthCategory = "all" | "oauth" | "api_key" | "custom";
-
 const CATEGORY_OPTIONS = [
-  { value: "oauth", label: "OAuth Providers" },
-  { value: "api_key", label: "Api key Providers" },
-  { value: "custom", label: "Custom Providers" },
+  { value: "all", label: "All" },
+  { value: "oauth", label: "OAuth" },
+  { value: "api_key", label: "API Key" },
 ];
 
 /** Fetches every account page (bounded — an owner console's account count
@@ -57,34 +72,64 @@ async function fetchAllAccounts(): Promise<AccountProjection[]> {
   return all;
 }
 
+/** Fetches every offerings page (same bounded cursor loop as accounts). */
+async function fetchAllOfferings(): Promise<EffectiveOffering[]> {
+  const all: EffectiveOffering[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 25; page++) {
+    const result = await listOfferings({ cursor, limit: 200 });
+    all.push(...result.offerings);
+    if (!result.nextCursor) break;
+    cursor = result.nextCursor;
+  }
+  return all;
+}
+
+function matchesCategory(provider: Provider, category: AuthCategory): boolean {
+  if (category === "all") return true;
+  if (category === "oauth") return provider.auth_mode === "oauth2";
+  return provider.auth_mode === "api_key";
+}
+
 /**
- * The Provider Fleet dashboard (P2b-UI-003, legacy-parity layout): stat
- * cards, a toolbar (live "Search integrations…" filter + All/OAuth/API Key
- * segmented tabs scoping by auth mode), and the responsive 2-column
- * integration-card grid (ProviderCard — official logo or letter mark,
- * legacy auth badges, per-state action button, expandable account rows),
- * plus the API-key/OAuth connect dialogs, credential reveal, funding
- * override, and lifecycle actions. Assembled entirely from
- * `@venom/design-system`'s building blocks — there is no single shipped
- * ProviderFleet UI component to render.
+ * The Providers page (P2b-UI-003, rebuilt to the documented fleet layout):
+ * contextual stat cards, the search + All/OAuth/API Key filter bar, and
+ * TWO views selected by the shell's breadcrumb chips —
  *
- * Like the legacy category tabs, the OAuth/API Key tabs scope by typed
- * auth mode only (no slug logic); `custom_openai` stays visible under All
- * only.
+ *   Active Providers: a compact ROW LIST of providers with ≥1 connected
+ *   account (ProviderRow), each expandable into its numbered account rows
+ *   with per-account sync/discover/report/disable/disconnect actions.
+ *
+ *   All Integrations: the full catalog CARD GRID (ProviderCard) with
+ *   marketing meta, CONNECTED state, and the connect call-to-action.
+ *
+ * Offerings (GET /offerings) load in parallel and drive the model counts;
+ * a failed offerings read NEVER breaks the page — counts render an honest
+ * "—" and the failure is surfaced once, inline.
  */
 export default function FleetOverview(props: FleetOverviewProps) {
-  const { csrfToken, onSessionExpired, onCounts, view = "all" } = props;
+  const { csrfToken, onSessionExpired, onCounts, view = "all", onCategoryChange } = props;
 
   const [providers, setProviders] = useState<Provider[] | null>(null);
   const [accounts, setAccounts] = useState<AccountProjection[] | null>(null);
+  const [offerings, setOfferings] = useState<EffectiveOffering[] | null>(null);
+  const [offeringsError, setOfferingsError] = useState<AuthApiError | null>(null);
   const [loadError, setLoadError] = useState<AuthApiError | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [connectProvider, setConnectProvider] = useState<Provider | null>(null);
-  const [category, setCategory] = useState<AuthCategory>("all");
+  const [internalCategory, setInternalCategory] = useState<AuthCategory>("all");
   const [search, setSearch] = useState("");
+  const [reportAccountId, setReportAccountId] = useState<string | null>(null);
+
+  const category = props.category ?? internalCategory;
 
   const reload = useCallback(() => setReloadToken((t) => t + 1), []);
+
+  function handleCategoryChange(next: AuthCategory) {
+    setInternalCategory(next);
+    onCategoryChange?.(next);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -92,10 +137,33 @@ export default function FleetOverview(props: FleetOverviewProps) {
     async function load() {
       setLoadError(null);
       try {
-        const [providerList, accountList] = await Promise.all([listProviders(), fetchAllAccounts()]);
+        // Offerings ride alongside but fail SOFT: model counts degrade to
+        // "—" while the rest of the page still works.
+        const offeringsPromise: Promise<
+          { ok: true; offerings: EffectiveOffering[] } | { ok: false; error: unknown }
+        > = fetchAllOfferings().then(
+          (list) => ({ ok: true as const, offerings: list }),
+          (error: unknown) => ({ ok: false as const, error }),
+        );
+        const [providerList, accountList, offeringsResult] = await Promise.all([
+          listProviders(),
+          fetchAllAccounts(),
+          offeringsPromise,
+        ]);
         if (cancelled) return;
         setProviders(providerList);
         setAccounts(accountList);
+        if (offeringsResult.ok) {
+          setOfferings(offeringsResult.offerings);
+          setOfferingsError(null);
+        } else {
+          if (isSessionExpired(offeringsResult.error)) {
+            onSessionExpired();
+            return;
+          }
+          setOfferings(null);
+          setOfferingsError(toApiError(offeringsResult.error));
+        }
       } catch (err) {
         if (cancelled) return;
         if (isSessionExpired(err)) {
@@ -122,6 +190,17 @@ export default function FleetOverview(props: FleetOverviewProps) {
       total: providers.length,
     });
   }, [providers, accounts, onCounts]);
+
+  const offeringsByAccount = useMemo(() => {
+    if (!offerings) return null;
+    const map = new Map<string, EffectiveOffering[]>();
+    for (const offering of offerings) {
+      const list = map.get(offering.account_id);
+      if (list) list.push(offering);
+      else map.set(offering.account_id, [offering]);
+    }
+    return map;
+  }, [offerings]);
 
   function toggleExpanded(providerId: string) {
     setExpanded((prev) => {
@@ -153,41 +232,105 @@ export default function FleetOverview(props: FleetOverviewProps) {
     if (list) list.push(account);
     else accountsByProvider.set(account.provider, [account]);
   }
-
-  const healthyCount = accounts.filter((a) => a.display_status === "healthy").length;
-
-  // Legacy-parity scoping: the breadcrumb-row view toggle ("active" narrows
-  // to providers with ≥1 connected account) composes with the segmented
-  // tabs (auth mode) and the live search.
+  const providersById = new Map(providers.map((p) => [p.id, p]));
   const connectedProviders = new Set(accountsByProvider.keys());
-  const scopedProviders = providers.filter((p) => {
-    if (view === "active" && !connectedProviders.has(p.id)) return false;
-    if (category === "all") return true;
-    if (category === "oauth") return p.auth_mode === "oauth2";
-    if (category === "custom") return p.auth_mode === "custom_openai";
-    return p.auth_mode === "api_key";
+
+  // --- Contextual stat-card scope: the CURRENT view + auth filter ---------
+
+  const categoryProviders = providers.filter((p) => matchesCategory(p, category));
+  const scopedConnectedCount = categoryProviders.filter((p) => connectedProviders.has(p.id)).length;
+  const scopedAccounts = accounts.filter((a) => {
+    const provider = providersById.get(a.provider);
+    return provider ? matchesCategory(provider, category) : category === "all";
   });
+  const scopedAccountIds = new Set(scopedAccounts.map((a) => a.id));
+  const scopedProviderCountForAccounts = new Set(scopedAccounts.map((a) => a.provider)).size;
+  const healthyCount = scopedAccounts.filter((a) => a.display_status === "healthy").length;
+  const scopedOfferings = offerings ? offerings.filter((o) => scopedAccountIds.has(o.account_id)) : null;
+  const modelStats = scopedOfferings ? distinctModelStats(scopedOfferings) : null;
+
+  // --- View scoping + search ------------------------------------------------
+
+  const viewScoped = view === "active"
+    ? categoryProviders.filter((p) => connectedProviders.has(p.id))
+    : categoryProviders;
   const query = search.trim().toLowerCase();
   const filteredProviders = query
-    ? scopedProviders.filter(
+    ? viewScoped.filter(
         (p) =>
+          providerDisplayName(p).toLowerCase().includes(query) ||
           p.display_name.toLowerCase().includes(query) ||
           p.id.toLowerCase().includes(query) ||
+          providerDescription(p).toLowerCase().includes(query) ||
           p.description.toLowerCase().includes(query),
       )
-    : scopedProviders;
+    : viewScoped;
   const emptyActiveView = view === "active" && category === "all" && query.length === 0;
+
+  /** Distinct models across ONE provider's accounts, or null while the
+   * offerings read is unknown. */
+  function providerModelCount(providerId: string): number | null {
+    if (!offerings) return null;
+    const ids = new Set((accountsByProvider.get(providerId) ?? []).map((a) => a.id));
+    return distinctModelStats(offerings.filter((o) => ids.has(o.account_id))).total;
+  }
+
+  function accountModelCount(accountId: string): number | null {
+    if (!offeringsByAccount) return null;
+    return distinctModelStats(offeringsByAccount.get(accountId) ?? []).total;
+  }
+
+  const reportAccount = reportAccountId ? accounts.find((a) => a.id === reportAccountId) ?? null : null;
+  const reportProvider = reportAccount ? providersById.get(reportAccount.provider) : undefined;
 
   return (
     <div className="flex flex-col gap-4">
       <div className="vn-provider-stats">
-        <StatCard label="Providers" value={providers.length} icon="server" />
-        <StatCard label="Accounts" value={accounts.length} icon="user-round" />
-        <StatCard label="Healthy" value={healthyCount} tone="healthy" icon="heart-pulse" />
-        {/* Model discovery is a later phase (non-goal here) — an honest
-         * "—" rather than a fabricated count. */}
-        <StatCard label="Models" value="—" tone="unknown" icon="box" />
+        <StatCard
+          label="Providers"
+          value={view === "active" ? scopedConnectedCount : categoryProviders.length}
+          meta={view === "active" ? "connected integrations" : "all integrations"}
+          icon="server"
+        />
+        <StatCard
+          label="Accounts"
+          value={scopedAccounts.length}
+          meta={`across ${scopedProviderCountForAccounts} provider${scopedProviderCountForAccounts === 1 ? "" : "s"}`}
+          icon="user-round"
+        />
+        <StatCard
+          label="Healthy"
+          value={`${healthyCount}/${scopedAccounts.length}`}
+          tone="healthy"
+          icon="heart-pulse"
+          meta={
+            <span className="flex items-center gap-2">
+              account health
+              {scopedAccounts.length > 0 && healthyCount === scopedAccounts.length ? (
+                <Badge tone="healthy">all healthy</Badge>
+              ) : null}
+            </span>
+          }
+        />
+        {/* An offerings read that has not landed renders the honest "—",
+         * never a fabricated 0. */}
+        <StatCard
+          label="Models"
+          value={modelStats ? modelStats.total : "—"}
+          tone={modelStats ? undefined : "unknown"}
+          icon="box"
+          meta={modelStats ? `${modelStats.working} working · unique` : offeringsError ? "offerings unavailable" : "loading…"}
+        />
       </div>
+
+      {offeringsError ? (
+        <Alert tone="warning" title="Could not load model offerings">
+          Model counts show "—" until the offerings read succeeds ({offeringsError.code}).{" "}
+          <Button variant="ghost" size="sm" onClick={reload}>
+            Retry
+          </Button>
+        </Alert>
+      ) : null}
 
       <FilterBar
         label="Provider filters"
@@ -200,7 +343,7 @@ export default function FleetOverview(props: FleetOverviewProps) {
           label="Filter providers by authentication type"
           options={CATEGORY_OPTIONS}
           value={category}
-          onChange={(value) => setCategory(value as AuthCategory)}
+          onChange={(value) => handleCategoryChange(value as AuthCategory)}
         />
       </FilterBar>
 
@@ -221,19 +364,33 @@ export default function FleetOverview(props: FleetOverviewProps) {
             )}
           />
         </div>
+      ) : view === "active" ? (
+        <div className="vnd-fleet-rows">
+          {filteredProviders.map((provider) => (
+            <ProviderRow
+              key={provider.id}
+              provider={provider}
+              accounts={accountsByProvider.get(provider.id) ?? []}
+              uniqueModelCount={providerModelCount(provider.id)}
+              accountModelCounts={accountModelCount}
+              expanded={expanded.has(provider.id)}
+              onToggleExpand={() => toggleExpanded(provider.id)}
+              onAddAccount={() => setConnectProvider(provider)}
+              onOpenModelReport={(account) => setReportAccountId(account.id)}
+              csrfToken={csrfToken}
+              onSessionExpired={onSessionExpired}
+              onChanged={reload}
+            />
+          ))}
+        </div>
       ) : (
         <div className="vn-provider-grid">
           {filteredProviders.map((provider) => (
             <ProviderCard
               key={provider.id}
               provider={provider}
-              accounts={accountsByProvider.get(provider.id) ?? []}
-              expanded={expanded.has(provider.id)}
-              onToggleExpand={() => toggleExpanded(provider.id)}
+              accountCount={(accountsByProvider.get(provider.id) ?? []).length}
               onConnect={() => setConnectProvider(provider)}
-              csrfToken={csrfToken}
-              onSessionExpired={onSessionExpired}
-              onChanged={reload}
             />
           ))}
         </div>
@@ -249,6 +406,19 @@ export default function FleetOverview(props: FleetOverviewProps) {
           reload();
         }}
       />
+
+      {reportAccount ? (
+        <ModelTestReport
+          open
+          account={reportAccount}
+          providerName={reportProvider ? providerDisplayName(reportProvider) : reportAccount.provider}
+          offerings={offeringsByAccount?.get(reportAccount.id) ?? []}
+          csrfToken={csrfToken}
+          onSessionExpired={onSessionExpired}
+          onClose={() => setReportAccountId(null)}
+          onRefetch={reload}
+        />
+      ) : null}
     </div>
   );
 }

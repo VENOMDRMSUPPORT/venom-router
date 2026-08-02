@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { Alert, Button, Dialog, FormField, Input, Select, Spinner } from "@venom/design-system/primitives";
+import { Alert, Button, Dialog, FormField, RadioGroup, Spinner, Textarea } from "@venom/design-system/primitives";
+import { Icon } from "@venom/design-system/icons";
 import { TypedErrorDisplay } from "@venom/design-system/domain";
 import {
   connectApiKeyAccount,
@@ -10,6 +11,7 @@ import {
   AuthApiError,
   type Provider,
 } from "../api/controlClient";
+import { providerDisplayName } from "./providerMeta";
 
 export interface ConnectDialogProps {
   /** The provider being connected, or null when the dialog is closed. */
@@ -20,14 +22,21 @@ export interface ConnectDialogProps {
   onConnected: () => void;
 }
 
-const FUNDING_OPTIONS = [
-  { value: "", label: "Let the provider's policy decide" },
-  { value: "free", label: "Free" },
-  { value: "paid", label: "Paid" },
-  { value: "unknown", label: "Unknown — classify later" },
+/** The 2x2 Billing Type radio cards (image 9). "" = inherit: the funding
+ * field is OMITTED from the connect body so the catalog's own policy
+ * decides — never sent as a value. */
+const BILLING_OPTIONS = [
+  { value: "", label: "Inherit from provider", description: "Use the provider's default billing classification" },
+  { value: "free", label: "Free", description: "Account uses free-tier quotas only" },
+  { value: "paid", label: "Paid", description: "Account has paid subscription or credits" },
+  { value: "unknown", label: "Unknown", description: "Billing status is unclear or mixed" },
 ];
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
+
+/** The popup window features the OAuth flow opens with (image 10). */
+const OAUTH_POPUP_NAME = "venom-oauth";
+const OAUTH_POPUP_FEATURES = "popup,width=560,height=720";
 
 function newIdempotencyKey(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
@@ -35,12 +44,24 @@ function newIdempotencyKey(): string {
 }
 
 /**
- * The provider's "Connect account" dialog (P2b-UI-003): API-key mode
- * (FormField+Input, an Idempotency-Key header so a retried submit never
- * double-connects, the key never echoed and cleared from state the
- * instant submit starts) or OAuth mode (begin -> open the authorize URL
- * in a new tab -> poll status until completed/failed/expired). Neither
- * mode ever displays a code, token, or the submitted key anywhere.
+ * The provider's connect dialog (image 9/10).
+ *
+ * API-key mode: a mono textarea for the key (cleared from state
+ * SYNCHRONOUSLY at submit — it never lingers past the moment of
+ * submission), the 2x2 Billing Type radio cards (inherit = funding omitted
+ * from the body), an Idempotency-Key header so a retried submit never
+ * double-connects, and the "Save & encrypt" primary. The AES-256-GCM claim
+ * in the description is the real storage contract (internal/secrets).
+ *
+ * OAuth mode: begin -> open the authorize URL in a POPUP window -> poll
+ * status every 2s until completed/failed/expired. "Re-open sign-in window"
+ * re-opens the SAME authorize URL — it is also the recovery path when the
+ * popup was blocked (window.open returned null). Neither mode ever
+ * displays a code, token, or the submitted key anywhere.
+ *
+ * DELIBERATE DEVIATION from the documented UI: no "Label (optional)"
+ * field — the connect body accepts only {api_key, funding} server-side,
+ * so a label input would be an inert control.
  */
 export default function ConnectDialog(props: ConnectDialogProps) {
   const { provider, csrfToken, onSessionExpired, onClose, onConnected } = props;
@@ -52,6 +73,10 @@ export default function ConnectDialog(props: ConnectDialogProps) {
 
   const [oauthPhase, setOauthPhase] = useState<"idle" | "pending" | "failed" | "expired">("idle");
   const [oauthError, setOauthError] = useState<AuthApiError | null>(null);
+  // The live transaction's authorize URL — held ONLY so "Re-open sign-in
+  // window" can re-open the same one; cleared with the rest of the state.
+  const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
+  const [popupBlocked, setPopupBlocked] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function stopPolling() {
@@ -70,6 +95,8 @@ export default function ConnectDialog(props: ConnectDialogProps) {
     setError(null);
     setOauthPhase("idle");
     setOauthError(null);
+    setAuthorizeUrl(null);
+    setPopupBlocked(false);
     stopPolling();
   }
 
@@ -106,13 +133,21 @@ export default function ConnectDialog(props: ConnectDialogProps) {
     }
   }
 
+  /** Opens (or re-opens) the sign-in popup for `url`, tracking whether the
+   * browser blocked it so the pending state can say so. */
+  function openPopup(url: string) {
+    const popup = window.open(url, OAUTH_POPUP_NAME, OAUTH_POPUP_FEATURES);
+    setPopupBlocked(popup == null);
+  }
+
   async function handleOAuthBegin() {
     if (!provider) return;
     setOauthError(null);
     setOauthPhase("pending");
     try {
       const begin = await oauthBegin(provider.id, csrfToken);
-      window.open(begin.authorize_url, "_blank", "noopener,noreferrer");
+      setAuthorizeUrl(begin.authorize_url);
+      openPopup(begin.authorize_url);
 
       const expiresAtMs = new Date(begin.expires_at).getTime();
       pollRef.current = setInterval(() => {
@@ -160,16 +195,17 @@ export default function ConnectDialog(props: ConnectDialogProps) {
   if (!provider) return null;
 
   const isOAuth = provider.auth_mode === "oauth2";
+  const name = providerDisplayName(provider);
 
   return (
     <Dialog
       open={provider != null}
       onClose={handleClose}
-      title={`Connect ${provider.display_name} account`}
+      title={`Connect ${name}`}
       description={
         isOAuth
-          ? "Sign in with the provider in the new tab that opens, then return here."
-          : "Validated with a real, zero-cost credential check before the account is created."
+          ? "Sign in via the popup window. We complete the connection automatically when the provider redirects back."
+          : "Paste your API key. It is encrypted with AES-256-GCM before storage and never shown again."
       }
       footer={
         isOAuth ? (
@@ -182,7 +218,7 @@ export default function ConnectDialog(props: ConnectDialogProps) {
               Cancel
             </Button>
             <Button variant="primary" loading={submitting} disabled={apiKey.length === 0} onClick={() => void handleApiKeySubmit()}>
-              Validate &amp; connect
+              Save &amp; encrypt
             </Button>
           </>
         )
@@ -192,13 +228,23 @@ export default function ConnectDialog(props: ConnectDialogProps) {
         <div className="flex flex-col gap-3">
           {oauthPhase === "idle" ? (
             <Button variant="primary" icon="external-link" onClick={() => void handleOAuthBegin()}>
-              Continue with {provider.display_name}
+              Continue with {name}
             </Button>
           ) : null}
           {oauthPhase === "pending" ? (
-            <div className="flex items-center gap-2">
-              <Spinner size="sm" label="Waiting for the provider" />
-              <span className="vn-caption">Complete sign-in in the new tab — this closes automatically once connected.</span>
+            <div className="flex flex-col items-center gap-3 py-4">
+              <Spinner size="lg" label="Waiting for the provider" />
+              <span className="vn-caption">Waiting for authorization in popup…</span>
+              {popupBlocked ? (
+                <Alert tone="warning" title="The popup may have been blocked">
+                  Use "Re-open sign-in window" to try again.
+                </Alert>
+              ) : null}
+              {authorizeUrl ? (
+                <Button variant="secondary" size="sm" onClick={() => openPopup(authorizeUrl)}>
+                  Re-open sign-in window
+                </Button>
+              ) : null}
             </div>
           ) : null}
           {oauthPhase === "failed" ? (
@@ -210,34 +256,43 @@ export default function ConnectDialog(props: ConnectDialogProps) {
           ) : null}
           {oauthPhase === "expired" ? (
             <Alert tone="warning" title="The connection attempt expired">
-              Start again from "Connect account".
+              Start again from "Add account".
             </Alert>
           ) : null}
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          <FormField
-            label="API key"
-            required
-            description="Validated authentically with a zero-cost check. The key is never echoed back or stored anywhere in this app."
-          >
-            <Input
-              mono
-              type="password"
+          <FormField label="API key" required>
+            <Textarea
+              className="vn-input--mono"
+              rows={4}
+              placeholder="sk-…"
               autoComplete="off"
+              spellCheck={false}
               value={apiKey}
               disabled={submitting}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setApiKey(e.target.value)}
+              onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setApiKey(e.target.value)}
             />
           </FormField>
-          <FormField label="Funding classification" description="Recorded as owner evidence.">
-            <Select
-              options={FUNDING_OPTIONS}
+          {/* Not a FormField: its <label htmlFor> would dangle on the
+              radiogroup DIV — the group is named via its own aria-label and
+              each card is a real <label><input type="radio"/></label>. */}
+          <div className="vn-field">
+            <span className="vn-label">Billing Type</span>
+            <RadioGroup
+              name={`billing-${provider.id}`}
+              label="Billing Type"
+              className="vnd-billing-grid"
+              options={BILLING_OPTIONS}
               value={funding}
               disabled={submitting}
-              onChange={(e: ChangeEvent<HTMLSelectElement>) => setFunding(e.target.value)}
+              onChange={setFunding}
             />
-          </FormField>
+          </div>
+          <p className="vn-caption flex items-center gap-2" style={{ margin: 0 }}>
+            <Icon name="shield-check" size={13} />
+            Stored encrypted. A health check runs immediately after connect.
+          </p>
           {error ? <TypedErrorDisplay code={error.code} message={error.message} retryable={error.retryable} tone="critical" /> : null}
         </div>
       )}
