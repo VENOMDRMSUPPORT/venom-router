@@ -42,6 +42,7 @@ tmp/
 .codegraph/
 .hive/
 .omo/
+.gemini/
 
 # internal/httpui/dist is populated by `task dashboard:build-embed`
 # (dashboard/dist copied here for go:embed, P2a-UI-001). Only the
