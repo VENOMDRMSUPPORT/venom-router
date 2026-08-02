@@ -207,7 +207,7 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	connectService := application.NewConnectService(storage.NewEnrollmentRepo(db), accountRepo, kr, newOAuthTransactionID, nil)
 	fundingRepo := storage.NewFundingEvidenceRepo(db)
 	idem := newIdempotencyStore()
-	enrollmentHandler := NewEnrollmentHandler(connectService, reg, fundingRepo, idem, audit)
+	enrollmentHandler := NewEnrollmentHandler(connectService, reg, fundingRepo, accountRepo, idem, audit)
 	mux.Handle("/api/control/v1/providers/{id}/accounts", gated(enrollmentHandler.ServeConnect))
 
 	// Account lifecycle (P2b-CAPI-004): the GET list/detail projections,
@@ -239,6 +239,7 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// ServeMux treats "DELETE /accounts/{id}" as more specific than the
 	// method-less pattern, so the two do not conflict.
 	mux.Handle("DELETE /api/control/v1/accounts/{id}", gated(accountsHandler.ServeDisconnect))
+	mux.Handle("PATCH /api/control/v1/accounts/{id}", gated(accountsHandler.ServeSetLabel))
 	mux.Handle("/api/control/v1/accounts/{id}/reveal", gated(accountsHandler.ServeReveal))
 	mux.Handle("/api/control/v1/accounts/{id}/funding", gated(accountsHandler.ServeFunding))
 	mux.Handle("/api/control/v1/accounts/{id}/stop", gated(accountsHandler.ServeStop))

@@ -361,7 +361,7 @@ func connectFakeZenAccount(t *testing.T, db *storage.DB, kr *secrets.Keyring, re
 
 	accountRepo := storage.NewAccountRepo(db)
 	connect := application.NewConnectService(storage.NewEnrollmentRepo(db), accountRepo, kr, newOAuthTransactionID, nil)
-	handler := NewEnrollmentHandler(connect, reg, storage.NewFundingEvidenceRepo(db), newIdempotencyStore(), newAuditEmitter(db, nil))
+	handler := NewEnrollmentHandler(connect, reg, storage.NewFundingEvidenceRepo(db), accountRepo, newIdempotencyStore(), newAuditEmitter(db, nil))
 
 	body := fmt.Sprintf(`{"api_key":%q}`, gateProviderKey)
 	req := httptest.NewRequest(http.MethodPost, "/api/control/v1/providers/opencode-zen/accounts", bytes.NewBufferString(body))

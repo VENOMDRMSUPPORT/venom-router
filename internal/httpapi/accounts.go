@@ -130,6 +130,7 @@ type accountProjectionJSON struct {
 	ProviderID       string              `json:"provider"`
 	ExternalID       string              `json:"external_id"`
 	DisplayName      string              `json:"display_name,omitempty"`
+	Label            string              `json:"label,omitempty"`
 	AuthType         string              `json:"auth_type"`
 	ConnectionState  string              `json:"connection_state"`
 	HealthState      string              `json:"health_state"`
@@ -278,6 +279,7 @@ func (h *AccountsHandler) projectAccountWithWindows(ctx context.Context, a domai
 		ProviderID:       a.ProviderID,
 		ExternalID:       a.ExternalID,
 		DisplayName:      a.DisplayName,
+		Label:            a.Label,
 		AuthType:         a.AuthType,
 		ConnectionState:  string(a.ConnectionState),
 		HealthState:      string(a.HealthState),
@@ -947,6 +949,50 @@ func parseHealthState(raw string) (domain.HealthState, bool) {
 		return domain.HealthState(raw), true
 	}
 	return "", false
+}
+
+// --- PATCH /accounts/{id} ---
+
+// ServeSetLabel implements PATCH /accounts/{id}: sets or clears the
+// owner-supplied human-readable label. An empty label clears any existing
+// one; the account falls back to the "#account NN" display on the client.
+func (h *AccountsHandler) ServeSetLabel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		writeAuthError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", false)
+		return
+	}
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	var req struct {
+		Label string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAuthError(w, http.StatusBadRequest, "validation_error", "invalid request body", false)
+		return
+	}
+	if len(req.Label) > 100 {
+		writeAuthError(w, http.StatusBadRequest, "validation_error", "label must be at most 100 characters", false)
+		return
+	}
+
+	now := h.now()
+	ok, err := h.accounts.UpdateLabel(ctx, id, req.Label, now)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+	if !ok {
+		writeAuthError(w, http.StatusNotFound, "not_found", "account not found", false)
+		return
+	}
+
+	account, _, err := h.accounts.GetByID(ctx, id)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+	writeData(w, http.StatusOK, h.projectAccount(ctx, account, now, false))
 }
 
 // --- POST /providers/{id}/sync ---

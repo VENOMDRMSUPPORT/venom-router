@@ -13,7 +13,7 @@ import (
 
 // accountSelectColumns lists every accounts column AccountRepo reads, in
 // scanAccount's exact scan order.
-const accountSelectColumns = `id, provider_id, external_id, display_name, auth_type, connection_state, health_state, reauth_in_progress, identity_email, identity_plan, last_health_check_at, last_health_error, created_at, updated_at`
+const accountSelectColumns = `id, provider_id, external_id, display_name, label, auth_type, connection_state, health_state, reauth_in_progress, identity_email, identity_plan, last_health_check_at, last_health_error, created_at, updated_at`
 
 // AccountRepo reads and updates accounts rows (M2) into domain.Account. Row
 // creation happens only through EnrollmentRepo.CreateConnectedAccount's
@@ -297,15 +297,15 @@ func scanRowsAccount(rows *sql.Rows) (domain.Account, bool, error) {
 
 func scanOneAccount(s scanner) (domain.Account, bool, error) {
 	var (
-		a                                                         domain.Account
-		connectionState, healthState                              string
-		reauthInProgress                                          int
-		displayName, identityEmail, identityPlan, lastHealthError sql.NullString
-		lastHealthCheckAt                                         sql.NullInt64
-		createdAt, updatedAt                                      int64
+		a                                                              domain.Account
+		connectionState, healthState                                   string
+		reauthInProgress                                               int
+		displayName, label, identityEmail, identityPlan, lastHealthError sql.NullString
+		lastHealthCheckAt                                              sql.NullInt64
+		createdAt, updatedAt                                           int64
 	)
 	err := s.Scan(
-		&a.ID, &a.ProviderID, &a.ExternalID, &displayName, &a.AuthType,
+		&a.ID, &a.ProviderID, &a.ExternalID, &displayName, &label, &a.AuthType,
 		&connectionState, &healthState, &reauthInProgress,
 		&identityEmail, &identityPlan, &lastHealthCheckAt, &lastHealthError,
 		&createdAt, &updatedAt,
@@ -318,6 +318,7 @@ func scanOneAccount(s scanner) (domain.Account, bool, error) {
 	}
 
 	a.DisplayName = displayName.String
+	a.Label = label.String
 	a.IdentityEmail = identityEmail.String
 	a.IdentityPlan = identityPlan.String
 	a.LastHealthError = lastHealthError.String
@@ -331,4 +332,25 @@ func scanOneAccount(s scanner) (domain.Account, bool, error) {
 	a.CreatedAt = time.Unix(createdAt, 0).UTC()
 	a.UpdatedAt = time.Unix(updatedAt, 0).UTC()
 	return a, true, nil
+}
+
+// UpdateLabel sets (or clears, when label is "") accountID's label column and
+// stamps updated_at = now. ok is false if no account row matches accountID.
+func (r *AccountRepo) UpdateLabel(ctx context.Context, accountID, label string, now time.Time) (bool, error) {
+	var labelVal any
+	if label != "" {
+		labelVal = label
+	}
+	res, err := r.db.Conn().ExecContext(ctx,
+		`UPDATE accounts SET label = ?, updated_at = ? WHERE id = ?`,
+		labelVal, now.Unix(), accountID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("storage: update label for account %q: %w", accountID, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("storage: update label for account %q: rows affected: %w", accountID, err)
+	}
+	return affected > 0, nil
 }

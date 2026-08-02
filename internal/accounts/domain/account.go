@@ -36,6 +36,7 @@ type Account struct {
 	ProviderID        string
 	ExternalID        string
 	DisplayName       string
+	Label             string
 	AuthType          string
 	ConnectionState   ConnectionState
 	HealthState       HealthState

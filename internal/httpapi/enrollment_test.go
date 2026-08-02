@@ -77,7 +77,7 @@ func newTestEnrollmentHandler(t *testing.T, providerID string, adapter providers
 	fundingRepo := storage.NewFundingEvidenceRepo(db)
 	idem := newIdempotencyStore()
 	audit := newAuditEmitter(db, nil)
-	return NewEnrollmentHandler(connectSvc, reg, fundingRepo, idem, audit), db
+	return NewEnrollmentHandler(connectSvc, reg, fundingRepo, accountRepo, idem, audit), db
 }
 
 func newTestEnrollmentMux(h *EnrollmentHandler) http.Handler {

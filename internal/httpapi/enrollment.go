@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/application"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/domain"
@@ -22,25 +23,28 @@ const enrollmentRoute = "POST /providers/{id}/accounts"
 // control route, and Idempotency-Key aware via idem.Execute so a
 // retried request with the same key never re-runs ConnectAPIKeyAccount.
 type EnrollmentHandler struct {
-	connect *application.ConnectService
-	reg     *providers.Registry
-	funding *storage.FundingEvidenceRepo
-	idem    *idempotencyStore
-	audit   *auditEmitter
+	connect  *application.ConnectService
+	reg      *providers.Registry
+	funding  *storage.FundingEvidenceRepo
+	accounts *storage.AccountRepo
+	idem     *idempotencyStore
+	audit    *auditEmitter
+	now      func() time.Time
 }
 
 // NewEnrollmentHandler builds the handler over the shared provider
 // registry, connect service, funding-evidence reader (used only to
 // report the persisted funding classification back in the success
 // response), idempotency store, and audit emitter.
-func NewEnrollmentHandler(connect *application.ConnectService, reg *providers.Registry, funding *storage.FundingEvidenceRepo, idem *idempotencyStore, audit *auditEmitter) *EnrollmentHandler {
-	return &EnrollmentHandler{connect: connect, reg: reg, funding: funding, idem: idem, audit: audit}
+func NewEnrollmentHandler(connect *application.ConnectService, reg *providers.Registry, funding *storage.FundingEvidenceRepo, accounts *storage.AccountRepo, idem *idempotencyStore, audit *auditEmitter) *EnrollmentHandler {
+	return &EnrollmentHandler{connect: connect, reg: reg, funding: funding, accounts: accounts, idem: idem, audit: audit, now: time.Now}
 }
 
 // connectAPIKeyRequest is POST .../accounts' request body.
 type connectAPIKeyRequest struct {
 	APIKey  string `json:"api_key"`
 	Funding string `json:"funding,omitempty"`
+	Label   string `json:"label,omitempty"`
 }
 
 // accountJSON is POST .../accounts' success payload projection — never
@@ -132,6 +136,10 @@ func (h *EnrollmentHandler) serveConnect(w http.ResponseWriter, r *http.Request)
 	fundingValue := domain.FundingUnknown
 	if err == nil && ok {
 		fundingValue = fundingEvidence.Funding
+	}
+
+	if req.Label != "" {
+		_, _ = h.accounts.UpdateLabel(ctx, account.ID, req.Label, h.now())
 	}
 
 	h.audit.Emit(ctx, AuditActionAccountConnect, AuditResultSuccess, AuditResourceAccount, account.ID, "")

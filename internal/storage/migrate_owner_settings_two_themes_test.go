@@ -30,7 +30,10 @@ func TestOwnerSettingsTwoThemes_UpDownUpMigratesHighContrastToDark(t *testing.T)
 		t.Fatalf("seed v14 high-contrast settings: %v", err)
 	}
 
-	if _, err := provider.Up(ctx); err != nil {
+	// UpTo(15)/DownTo(14) pin the exact versions this test reasons about (the
+	// two-themes migration is 15). Relative Up/Down would assume 15 is HEAD and
+	// break the moment any migration is added above it.
+	if _, err := provider.UpTo(ctx, 15); err != nil {
 		t.Fatalf("migrate to v15: %v", err)
 	}
 	assertTwoThemeSettingsRow(t, db)
@@ -44,7 +47,7 @@ func TestOwnerSettingsTwoThemes_UpDownUpMigratesHighContrastToDark(t *testing.T)
 		t.Fatalf("restore dark row after constraint proof: %v", err)
 	}
 
-	if _, err := provider.Down(ctx); err != nil {
+	if _, err := provider.DownTo(ctx, 14); err != nil {
 		t.Fatalf("roll back v15: %v", err)
 	}
 	var downTheme string
@@ -58,7 +61,7 @@ func TestOwnerSettingsTwoThemes_UpDownUpMigratesHighContrastToDark(t *testing.T)
 		t.Fatalf("v14 down schema did not restore venom-hc allowance: %v", err)
 	}
 
-	if _, err := provider.Up(ctx); err != nil {
+	if _, err := provider.UpTo(ctx, 15); err != nil {
 		t.Fatalf("re-apply v15: %v", err)
 	}
 	var theme string
