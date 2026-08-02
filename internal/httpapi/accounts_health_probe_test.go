@@ -311,3 +311,174 @@ func TestDiscover_ModelsDevFailureSurfacesAsFailedJob(t *testing.T) {
 		t.Fatalf("catalog offerings after a failed run = %d, want 0", offerings)
 	}
 }
+
+// zenSuccessSeedAccount seeds the opencode-zen provider + a connected
+// account + an active stored credential — the shared fixture of the
+// failed-discovery test above and the succeeded-discovery test below.
+func zenSuccessSeedAccount(t *testing.T, db *storage.DB, accountID string, clock time.Time) (*storage.AccountCredentialRepo, *application.CredentialService) {
+	t.Helper()
+	if _, err := db.Conn().Exec(
+		`INSERT INTO providers (id, display_name, auth_mode, funding_mode, funding_locked, created_at, updated_at) VALUES (?, ?, 'api_key', 'owner_policy', 0, 0, 0)`,
+		"opencode-zen", "OpenCode Zen",
+	); err != nil {
+		t.Fatalf("seed provider: %v", err)
+	}
+	if _, err := db.Conn().Exec(
+		`INSERT INTO accounts (id, provider_id, external_id, auth_type, connection_state, health_state, created_at, updated_at)
+		 VALUES (?, 'opencode-zen', ?, 'api_key', 'connected', 'healthy', 0, 0)`,
+		accountID, accountID,
+	); err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	credRepo := storage.NewAccountCredentialRepo(db)
+	credSvc := application.NewCredentialService(credRepo, testKeyring(t), func() time.Time { return clock })
+	if _, err := credSvc.Store(context.Background(), application.StoreCredentialParams{
+		ID: "cred-zen-ok", AccountID: accountID, ProviderID: "opencode-zen",
+		Kind: domain.CredentialKindAPIKey, Active: true, PlaintextKey: "zen-key",
+	}); err != nil {
+		t.Fatalf("store credential: %v", err)
+	}
+	return credRepo, credSvc
+}
+
+// TestDiscover_ZenSuccessPersistsExplicitOperationsAndLimits is the
+// succeeded-discovery counterpart of the ModelsDev failure test above,
+// and the end-to-end pin for the "7 models, zero operations" defect: the
+// REAL opencode-zen adapter (catalog + models.dev seams faked, everything
+// else production code) is driven through POST /discover, and the applied
+// snapshot must persist offering_operations rows grounded in the entry's
+// explicit facts — chat for every surviving model, tools/vision only
+// where declared — plus the declared limits, and GET /offerings must
+// render each capability with its offering_operation_id (the probeable
+// handle the per-model Test control needs).
+//
+// Before the adapter reported capabilities, this test failed at the very
+// first operations assertion: DiscoverModels returned Capabilities nil,
+// so intelligence derived zero Operations and storage created ZERO
+// offering_operations rows — nothing probeable, "Test All" a no-op
+// (verified red against the pre-change adapter, 2026-08-02).
+func TestDiscover_ZenSuccessPersistsExplicitOperationsAndLimits(t *testing.T) {
+	clock := fixedDiscoveryClock()
+	db := testControlDB(t)
+	const accountID = "acct-zen-ok"
+	credRepo, credSvc := zenSuccessSeedAccount(t, db, accountID, clock)
+
+	reg := providers.NewRegistry()
+	zenModels := func(_ context.Context, _, _ string) ([]byte, error) {
+		return []byte(`{"data":[{"id":"tooled-free"},{"id":"seeing-free"},{"id":"paid-x"}]}`), nil
+	}
+	// The live dataset's shape (2026-08-02): every free model declares
+	// tool_call:true and reasoning:true; only one has "image" in
+	// modalities.input; limit = {context, output}. reasoning must map to
+	// NOTHING. paid-x is priced and must not survive.
+	modelsDevUp := func(_ context.Context) ([]byte, error) {
+		return []byte(`{"opencode":{"models":{
+			"tooled-free":{"cost":{"input":0,"output":0},"tool_call":true,"reasoning":true,"limit":{"context":262144,"output":32768}},
+			"seeing-free":{"cost":{"input":0,"output":0},"tool_call":true,"reasoning":true,"modalities":{"input":["text","image"],"output":["text"]},"limit":{"context":200000,"output":32000}},
+			"paid-x":{"cost":{"input":1.5,"output":3}}
+		}}}`), nil
+	}
+	if err := providers.RegisterOpenCodeZen(reg, nil, zenModels, modelsDevUp, func() time.Time { return clock }); err != nil {
+		t.Fatalf("register zen: %v", err)
+	}
+
+	jobs := storage.NewJobRepo(db)
+	h := NewDiscoveryHandler(
+		storage.NewAccountRepo(db), credRepo, storage.NewCatalogRepo(db), jobs,
+		storage.NewDiscoveryRepo(db, discoveryIDCounter()), reg, credSvc,
+		newAuditEmitter(db, nil), newIdempotencyStore(), discoveryIDCounter(),
+		func() time.Time { return clock },
+	)
+	mux := newTestDiscoveryMux(h)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, discoveryRequest(http.MethodPost, "/api/control/v1/accounts/"+accountID+"/discover"))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("discover status = %d, want 202; body = %q", rec.Code, rec.Body.String())
+	}
+	data := decodeDiscoverResponse(t, rec.Body.Bytes())
+	row := waitForJobTerminal(t, jobs, data.JobID, 2*time.Second)
+	if row.Status != storage.JobCompleted {
+		t.Fatalf("job status = %q, want completed (error = %+v)", row.Status, row.Error)
+	}
+
+	// The defect pin: the applied snapshot created offering_operations
+	// rows, exactly the explicitly-grounded set per model and no other.
+	wantOps := map[string][]string{
+		"tooled-free": {"chat", "tools"},
+		"seeing-free": {"chat", "tools", "vision"},
+	}
+	for modelID, want := range wantOps {
+		rows, err := db.Conn().Query(
+			`SELECT operation FROM offering_operations WHERE account_id = ? AND provider_model_id = ? ORDER BY operation`,
+			accountID, modelID,
+		)
+		if err != nil {
+			t.Fatalf("query offering_operations for %s: %v", modelID, err)
+		}
+		var got []string
+		for rows.Next() {
+			var op string
+			if err := rows.Scan(&op); err != nil {
+				_ = rows.Close()
+				t.Fatalf("scan operation: %v", err)
+			}
+			got = append(got, op)
+		}
+		_ = rows.Close()
+		if len(got) != len(want) {
+			t.Fatalf("%s operations = %v, want %v (chat always; tools/vision only when declared; reasoning never)", modelID, got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("%s operations = %v, want %v", modelID, got, want)
+			}
+		}
+	}
+	var paidOps int
+	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM offering_operations WHERE account_id = ? AND provider_model_id = 'paid-x'`, accountID).Scan(&paidOps); err != nil {
+		t.Fatalf("count paid-x operations: %v", err)
+	}
+	if paidOps != 0 {
+		t.Fatalf("paid-x has %d operations — a paid model must not survive the free-only intersection at all", paidOps)
+	}
+
+	// The declared limits round-trip (nil never coerced, values verbatim).
+	var ctxLen, maxOut sql.NullInt64
+	var maxIn sql.NullInt64
+	if err := db.Conn().QueryRow(
+		`SELECT context_length, max_input_tokens, max_output_tokens FROM account_model_offerings WHERE account_id = ? AND provider_model_id = 'tooled-free'`,
+		accountID,
+	).Scan(&ctxLen, &maxIn, &maxOut); err != nil {
+		t.Fatalf("query tooled-free limits: %v", err)
+	}
+	if !ctxLen.Valid || ctxLen.Int64 != 262144 || !maxOut.Valid || maxOut.Int64 != 32768 {
+		t.Fatalf("tooled-free limits = (%+v, %+v), want context 262144 / output 32768 from the entry's limit object", ctxLen, maxOut)
+	}
+	if maxIn.Valid {
+		t.Fatalf("tooled-free max_input_tokens = %d, want NULL (the entry declares no limit.input — absent stays unknown)", maxIn.Int64)
+	}
+
+	// Layer A: through the REAL composed ControlMux, GET /offerings renders
+	// each capability with its offering_operation_id — the probeable handle
+	// the dashboard's per-model Test control requires.
+	muxA, cookie, _ := p3aOwnerMux(t, db)
+	recA := p3aGet(t, muxA, cookie, "/api/control/v1/offerings?account_id="+accountID)
+	if recA.Code != http.StatusOK {
+		t.Fatalf("GET /offerings status = %d, want 200; body = %q", recA.Code, recA.Body.String())
+	}
+	list := p3aDecodeOfferings(t, recA.Body.Bytes())
+	if len(list) != 2 {
+		t.Fatalf("len(offerings) = %d, want 2", len(list))
+	}
+	for _, modelID := range []string{"tooled-free", "seeing-free"} {
+		o := p3aFindOffering(t, list, modelID)
+		chatCap := findCapability(t, o.Capabilities, "chat")
+		if chatCap.OfferingOperationID == "" {
+			t.Fatalf("%s chat capability has no offering_operation_id — nothing would be probeable and the per-model Test control stays disabled", modelID)
+		}
+		if o.Classification == "no_operations_declared" {
+			t.Fatalf("%s classification = no_operations_declared — the exact live defect this change removes", modelID)
+		}
+	}
+}

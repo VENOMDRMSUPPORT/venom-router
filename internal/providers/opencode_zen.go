@@ -90,10 +90,32 @@ type OpenCodeZenAdapter struct {
 
 	// The parsed models.dev free-set cache (mutex-guarded; the clock is
 	// injected so tests need no timers). fetchedAt is the zero time until
-	// the first successful parse.
+	// the first successful parse. Each entry carries the surviving model's
+	// explicit models.dev facts (zenModelFacts), not just membership.
 	mu             sync.Mutex
-	freeSet        map[string]struct{}
+	freeSet        map[string]zenModelFacts
 	freeSetFetched time.Time
+}
+
+// zenModelFacts is what the models.dev parse retains per surviving free
+// model beyond membership itself: the EXPLICIT per-model fields the
+// dataset declares (03 §3 documents models.dev as zen's per-model fact
+// source). Absent fields stay zero/nil — DiscoverModels only reports what
+// is explicitly present, never a guess.
+type zenModelFacts struct {
+	// ToolCall mirrors the entry's explicit `tool_call` boolean
+	// (absent/false -> false -> the "tools" capability is omitted).
+	ToolCall bool
+	// ImageInput is true when the entry's `modalities.input` array
+	// explicitly contains "image" (-> the "vision" capability).
+	ImageInput bool
+	// Context/Input/Output mirror the entry's `limit` object
+	// ({context, input?, output} in the live dataset, verified
+	// 2026-08-02); each is nil when the field is absent — never
+	// 0-as-unknown.
+	Context *int
+	Input   *int
+	Output  *int
 }
 
 // NewOpenCodeZenAdapter builds the adapter over the three injected HTTP
@@ -144,6 +166,13 @@ type openCodeZenModelsResponse struct {
 // cannot be established (models.dev unreachable/unparseable and no fresh
 // cache), the typed ErrModelsDevUnavailable is returned so the discovery
 // job fails loudly — never the unfiltered list, never a silent empty.
+//
+// Each surviving model is reported with the EXPLICIT models.dev facts the
+// same parsed entry already carries: capabilities via zenCapabilities
+// (chat always; tools/vision only when the dataset declares them) and the
+// declared limits (nil when absent — never 0-as-unknown). DiscoveredModel's
+// contract ("Capabilities: only from explicit provider fields") holds:
+// models.dev is zen's documented per-model fact source (03 §3).
 func (a *OpenCodeZenAdapter) DiscoverModels(ctx context.Context, creds StoredCredentials) ([]DiscoveredModel, error) {
 	body, err := a.modelsProbe(ctx, OpenCodeZenBaseURL, creds.Value)
 	if err != nil {
@@ -162,12 +191,51 @@ func (a *OpenCodeZenAdapter) DiscoverModels(ctx context.Context, creds StoredCre
 
 	models := make([]DiscoveredModel, 0, len(parsed.Data))
 	for _, m := range parsed.Data {
-		if _, free := freeSet[m.ID]; !free {
+		facts, free := freeSet[m.ID]
+		if !free {
 			continue
 		}
-		models = append(models, DiscoveredModel{ProviderModelID: m.ID, DisplayName: m.ID})
+		models = append(models, DiscoveredModel{
+			ProviderModelID: m.ID,
+			DisplayName:     m.ID,
+			Capabilities:    zenCapabilities(facts),
+			ContextLength:   facts.Context,
+			MaxInputTokens:  facts.Input,
+			MaxOutputTokens: facts.Output,
+		})
 	}
 	return models, nil
+}
+
+// zenCapabilities maps one surviving model's explicit models.dev facts
+// onto the fixed operation vocabulary (internal/models Operations).
+//
+//   - "chat" is asserted for EVERY surviving model rather than read from a
+//     dataset field: the zen gateway serves exactly the OpenAI-compatible
+//     POST /v1/chat/completions surface (03 §3), so a model listed by a
+//     chat-completions gateway is, by that explicit fact, a chat model.
+//   - "tools" only when the entry declares `tool_call: true`.
+//   - "vision" only when `modalities.input` explicitly contains "image".
+//
+// Nothing else is mapped: the dataset's `reasoning` flag has no operation
+// in the vocabulary and is deliberately dropped, and streaming /
+// structured_output / context_window / image_generation have no explicit
+// per-model models.dev field to ground them — asserting any of them here
+// would be fabrication.
+//
+// The literals spell internal/models' operation vocabulary (ParseOperation
+// fails closed on anything else); they are duplicated here rather than
+// imported because internal/providers imports no internal package
+// (layering — same reason fingerprintAPIKey is duplicated).
+func zenCapabilities(facts zenModelFacts) []string {
+	caps := []string{"chat"}
+	if facts.ToolCall {
+		caps = append(caps, "tools")
+	}
+	if facts.ImageInput {
+		caps = append(caps, "vision")
+	}
+	return caps
 }
 
 // freeModelSet returns the current models.dev free set for opencode-zen,
@@ -176,7 +244,7 @@ func (a *OpenCodeZenAdapter) DiscoverModels(ctx context.Context, creds StoredCre
 // ErrModelsDevUnavailable (wrapping the cause) — a STALE cache is
 // deliberately not a fallback: serving day-old cost facts to a free-only
 // account is the exact failure 03 §3's contract exists to prevent.
-func (a *OpenCodeZenAdapter) freeModelSet(ctx context.Context) (map[string]struct{}, error) {
+func (a *OpenCodeZenAdapter) freeModelSet(ctx context.Context) (map[string]zenModelFacts, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -200,23 +268,38 @@ func (a *OpenCodeZenAdapter) freeModelSet(ctx context.Context) (map[string]struc
 }
 
 // modelsDevModel is the subset of one models.dev model entry the free
-// classification reads. Cost and its two legs are POINTERS on purpose:
-// an absent cost is an unknown cost, and unknown is never classified as
-// free — only an explicit {input: 0, output: 0} qualifies.
+// classification and the per-model fact extraction read. Cost and its two
+// legs are POINTERS on purpose: an absent cost is an unknown cost, and
+// unknown is never classified as free — only an explicit {input: 0,
+// output: 0} qualifies. The limit legs are pointers for the same reason
+// on the OTHER side: an absent limit is unknown and stays nil, never a
+// fabricated 0. (Field names verified against the live dataset
+// 2026-08-02: `tool_call` boolean, `modalities.input` string array,
+// `limit` = {context, input?, output}.)
 type modelsDevModel struct {
 	Cost *struct {
 		Input  *float64 `json:"input"`
 		Output *float64 `json:"output"`
 	} `json:"cost"`
-	Status string `json:"status"`
+	Status     string `json:"status"`
+	ToolCall   bool   `json:"tool_call"`
+	Modalities struct {
+		Input []string `json:"input"`
+	} `json:"modalities"`
+	Limit struct {
+		Context *int `json:"context"`
+		Input   *int `json:"input"`
+		Output  *int `json:"output"`
+	} `json:"limit"`
 }
 
 // parseModelsDevFreeSet parses the full models.dev dataset body and
-// returns the set of opencode model ids that are EXPLICITLY zero-cost and
-// not deprecated. A dataset without the opencode entry is a parse-level
-// failure (the shape this adapter depends on has drifted), never an
-// authoritative "nothing is free".
-func parseModelsDevFreeSet(body []byte) (map[string]struct{}, error) {
+// returns the opencode model ids that are EXPLICITLY zero-cost and not
+// deprecated, each carrying its explicit per-model facts (zenModelFacts).
+// A dataset without the opencode entry is a parse-level failure (the
+// shape this adapter depends on has drifted), never an authoritative
+// "nothing is free".
+func parseModelsDevFreeSet(body []byte) (map[string]zenModelFacts, error) {
 	var dataset map[string]struct {
 		Models map[string]modelsDevModel `json:"models"`
 	}
@@ -228,7 +311,7 @@ func parseModelsDevFreeSet(body []byte) (map[string]struct{}, error) {
 		return nil, fmt.Errorf("models.dev dataset has no %q provider entry", modelsDevOpenCodeKey)
 	}
 
-	freeSet := make(map[string]struct{})
+	freeSet := make(map[string]zenModelFacts)
 	for id, m := range entry.Models {
 		if m.Status == "deprecated" {
 			continue
@@ -237,10 +320,28 @@ func parseModelsDevFreeSet(body []byte) (map[string]struct{}, error) {
 			continue // unknown cost is NOT free
 		}
 		if *m.Cost.Input == 0 && *m.Cost.Output == 0 {
-			freeSet[id] = struct{}{}
+			freeSet[id] = zenModelFacts{
+				ToolCall:   m.ToolCall,
+				ImageInput: containsImageModality(m.Modalities.Input),
+				Context:    m.Limit.Context,
+				Input:      m.Limit.Input,
+				Output:     m.Limit.Output,
+			}
 		}
 	}
 	return freeSet, nil
+}
+
+// containsImageModality reports whether the entry's explicit input
+// modalities include "image" — the only grounding for the "vision"
+// capability. Exact match, no folding: the dataset spells it lowercase.
+func containsImageModality(inputs []string) bool {
+	for _, m := range inputs {
+		if m == "image" {
+			return true
+		}
+	}
+	return false
 }
 
 // CheckAccountHealth implements HealthAdapter via the SAME authentic

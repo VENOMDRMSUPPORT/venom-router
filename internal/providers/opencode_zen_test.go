@@ -291,6 +291,102 @@ func TestOpenCodeZenAdapter_DiscoverModels_IntersectsFreeSetExactly(t *testing.T
 	}
 }
 
+// TestOpenCodeZenAdapter_DiscoverModels_MapsExplicitCapabilitiesAndLimits
+// is the per-model mapping matrix over the models.dev facts a surviving
+// free model carries:
+//
+//   - "chat" always (a chat-completions gateway's model IS a chat model);
+//   - "tools" only on an explicit tool_call:true (false/absent -> omitted);
+//   - "vision" only when modalities.input explicitly contains "image";
+//   - reasoning:true is IGNORED (outside the operation vocabulary);
+//   - limits come from the entry's `limit` object (context/input/output)
+//     when present, and stay nil when absent — never a fabricated 0.
+//
+// Before this mapping existed, every DiscoveredModel had nil Capabilities
+// and nil limits, so zero offering_operations rows were ever created and
+// nothing was probeable — this test fails against that behavior.
+func TestOpenCodeZenAdapter_DiscoverModels_MapsExplicitCapabilitiesAndLimits(t *testing.T) {
+	zen := fixtureZenCatalogProbe("bare", "tooled", "sighted", "limited")
+	modelsDev := func(ctx context.Context) ([]byte, error) {
+		return fixtureModelsDevBody(
+			// bare: free with no explicit extras -> chat only, nil limits.
+			`"bare":{"cost":{"input":0,"output":0}},` +
+				// tooled: explicit tool_call:true; reasoning:true must be ignored.
+				`"tooled":{"cost":{"input":0,"output":0},"tool_call":true,"reasoning":true},` +
+				// sighted: image input modality -> vision; tool_call:false stays omitted;
+				// a partial limit (context only) fills only ContextLength.
+				`"sighted":{"cost":{"input":0,"output":0},"tool_call":false,"reasoning":true,"modalities":{"input":["text","image"],"output":["text"]},"limit":{"context":200000}},` +
+				// limited: everything at once, including the rarer limit.input leg
+				// (the live dataset's big-pickle shape, verified 2026-08-02).
+				`"limited":{"cost":{"input":0,"output":0},"tool_call":true,"modalities":{"input":["text"]},"limit":{"context":256000,"input":160000,"output":32000}}`,
+		), nil
+	}
+
+	adapter := NewOpenCodeZenAdapter(nil, zen, modelsDev, nil)
+	discovered, err := adapter.DiscoverModels(context.Background(), StoredCredentials{Value: "k"})
+	if err != nil {
+		t.Fatalf("DiscoverModels: %v", err)
+	}
+	byID := map[string]DiscoveredModel{}
+	for _, m := range discovered {
+		byID[m.ProviderModelID] = m
+	}
+	if len(byID) != 4 {
+		t.Fatalf("discovered %d models (%+v), want 4", len(byID), discovered)
+	}
+
+	assertCaps := func(id string, want ...string) {
+		t.Helper()
+		got := byID[id].Capabilities
+		if len(got) != len(want) {
+			t.Fatalf("%s capabilities = %v, want %v", id, got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("%s capabilities = %v, want %v", id, got, want)
+			}
+		}
+	}
+	assertCaps("bare", "chat")
+	assertCaps("tooled", "chat", "tools")
+	assertCaps("sighted", "chat", "vision")
+	assertCaps("limited", "chat", "tools")
+
+	assertLimit := func(id, name string, got *int, want *int) {
+		t.Helper()
+		switch {
+		case want == nil && got != nil:
+			t.Fatalf("%s %s = %d, want nil (absent must stay unknown, never 0)", id, name, *got)
+		case want != nil && got == nil:
+			t.Fatalf("%s %s = nil, want %d", id, name, *want)
+		case want != nil && *got != *want:
+			t.Fatalf("%s %s = %d, want %d", id, name, *got, *want)
+		}
+	}
+	intPtr := func(v int) *int { return &v }
+	for _, id := range []string{"bare", "tooled"} {
+		assertLimit(id, "ContextLength", byID[id].ContextLength, nil)
+		assertLimit(id, "MaxInputTokens", byID[id].MaxInputTokens, nil)
+		assertLimit(id, "MaxOutputTokens", byID[id].MaxOutputTokens, nil)
+	}
+	assertLimit("sighted", "ContextLength", byID["sighted"].ContextLength, intPtr(200000))
+	assertLimit("sighted", "MaxInputTokens", byID["sighted"].MaxInputTokens, nil)
+	assertLimit("sighted", "MaxOutputTokens", byID["sighted"].MaxOutputTokens, nil)
+	assertLimit("limited", "ContextLength", byID["limited"].ContextLength, intPtr(256000))
+	assertLimit("limited", "MaxInputTokens", byID["limited"].MaxInputTokens, intPtr(160000))
+	assertLimit("limited", "MaxOutputTokens", byID["limited"].MaxOutputTokens, intPtr(32000))
+
+	// No capability outside the explicit mapping may ever appear —
+	// "reasoning" in particular has no operation in the vocabulary.
+	for id, m := range byID {
+		for _, c := range m.Capabilities {
+			if c != "chat" && c != "tools" && c != "vision" {
+				t.Fatalf("%s carries unexpected capability %q — only chat/tools/vision are explicitly grounded", id, c)
+			}
+		}
+	}
+}
+
 // TestOpenCodeZenAdapter_DiscoverModels_CacheHonoredWithinTTL proves the
 // models.dev parse is served from cache inside the ~10 min TTL and
 // re-fetched after it — with an injected clock, no timers.
