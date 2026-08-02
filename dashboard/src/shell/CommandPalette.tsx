@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "@venom/design-system/icons";
 import { IconButton } from "@venom/design-system/primitives";
 import { NAV, type NavItem } from "./nav";
+import "./shell.css";
 
 export interface CommandPaletteProps {
   isOpen: boolean;
@@ -74,7 +75,7 @@ export default function CommandPalette(props: CommandPaletteProps) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xl bg-surface-primary border border-border-default rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] transition-all"
+        className="vnd-palette-panel w-full max-w-xl bg-surface-primary border border-border-default rounded-xl shadow-2xl overflow-hidden flex flex-col transition-all"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
@@ -102,10 +103,10 @@ export default function CommandPalette(props: CommandPaletteProps) {
         </div>
 
         {/* Scrollable Results List */}
-        <div className="overflow-y-auto p-2 max-h-[380px] space-y-1">
+        <div className="vnd-palette-results overflow-y-auto p-2 space-y-1">
           {filtered.length > 0 ? (
             <div>
-              <div className="px-3 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+              <div className="px-3 py-2 text-2xs font-semibold text-text-muted uppercase tracking-wider">
                 Pages
               </div>
               <div className="space-y-1">
@@ -119,19 +120,19 @@ export default function CommandPalette(props: CommandPaletteProps) {
                       onMouseEnter={() => setSelectedIndex(idx)}
                       className={`w-full flex items-center gap-3.5 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-all text-left ${
                         isSelected
-                          ? "bg-[var(--accent-default)] text-[var(--text-on-accent)] font-bold shadow-sm"
+                          ? "bg-accent-default text-text-on-accent font-bold shadow-sm"
                           : "text-text-primary hover:bg-surface-secondary"
                       }`}
                     >
                       <Icon
                         name={item.icon}
                         size={18}
-                        className={isSelected ? "text-[var(--text-on-accent)] flex-none" : "text-text-primary flex-none"}
+                        className={isSelected ? "text-text-on-accent flex-none" : "text-text-primary flex-none"}
                       />
                       <span className="flex-1 truncate">{item.label}</span>
                       <span
                         className={`text-xs ${
-                          isSelected ? "text-[var(--text-on-accent)] opacity-80 font-medium" : "text-text-muted font-normal"
+                          isSelected ? "text-text-on-accent opacity-80 font-medium" : "text-text-muted font-normal"
                         }`}
                       >
                         {item.group}
@@ -149,28 +150,28 @@ export default function CommandPalette(props: CommandPaletteProps) {
         </div>
 
         {/* Footer Shortcut Helper */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-t border-border-default bg-surface-secondary text-[11px] text-text-muted select-none">
+        <div className="flex items-center justify-between px-4 py-2.5 border-t border-border-default bg-surface-secondary text-2xs text-text-muted select-none">
           <div className="flex items-center gap-3">
             <span>
-              <kbd className="rounded border border-border-default bg-surface-primary px-1 py-0.5 font-mono text-[10px]">
+              <kbd className="rounded border border-border-default bg-surface-primary px-1 py-0.5 font-mono text-2xs">
                 ↑↓
               </kbd>{" "}
               Navigate
             </span>
             <span>
-              <kbd className="rounded border border-border-default bg-surface-primary px-1 py-0.5 font-mono text-[10px]">
+              <kbd className="rounded border border-border-default bg-surface-primary px-1 py-0.5 font-mono text-2xs">
                 ↵
               </kbd>{" "}
               Select
             </span>
             <span>
-              <kbd className="rounded border border-border-default bg-surface-primary px-1 py-0.5 font-mono text-[10px]">
+              <kbd className="rounded border border-border-default bg-surface-primary px-1 py-0.5 font-mono text-2xs">
                 ESC
               </kbd>{" "}
               Close
             </span>
           </div>
-          <span className="font-mono text-[10px] text-text-muted">Venom Gateway</span>
+          <span className="font-mono text-2xs text-text-muted">Venom Gateway</span>
         </div>
       </div>
     </div>

@@ -39,7 +39,10 @@ export default function OwnerMenu(props: OwnerMenuProps) {
           onClick={() => setIsOpen(!isOpen)}
           className="flex items-center gap-2 rounded-lg p-1.5 hover:bg-surface-secondary text-text-primary text-xs font-medium transition-colors"
         >
-          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#33373B] text-white font-semibold text-xs shadow-sm">
+          {/* The redesign's hardcoded #33373B avatar maps onto the neutral
+              status-inactive chip pair — themable, and the closest grey the
+              token scale offers. */}
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-status-inactive-bg text-text-primary font-semibold text-xs shadow-sm">
             O
           </span>
           <span className="hidden sm:inline-block text-xs font-semibold text-text-primary">
@@ -56,8 +59,8 @@ export default function OwnerMenu(props: OwnerMenuProps) {
         {
           type: "label",
           label: (
-            <div className="flex items-center gap-3 p-1 min-w-[200px]">
-              <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-[#33373B] text-white font-bold text-sm">
+            <div className="flex items-center gap-3 p-1 min-w-48">
+              <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-status-inactive-bg text-text-primary font-bold text-sm">
                 O
               </span>
               <div className="flex flex-col min-w-0">

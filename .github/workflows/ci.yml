@@ -8,6 +8,10 @@ on:
   pull_request:
     paths-ignore:
       - "**/*.md"
+  # Manual dispatch exists ONLY for the visual-baselines-linux job below —
+  # the push/PR-triggered jobs also run on a dispatch (they gate the same
+  # commit and should be green anyway), but only a maintainer can dispatch.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -109,6 +113,53 @@ jobs:
 
       - name: Prove the embedded dashboard is served
         run: go test ./internal/httpui/... ./internal/app/... -run 'TestBoot_ServesEmbeddedDashboardSPA|TestNew_UsesEmbeddedDist' -v
+
+  # Regenerates the *-linux.png visual baselines ON the linux runner — the
+  # only host whose rendering they are valid for — and publishes them as an
+  # artifact for a maintainer to download, review, and commit. It never
+  # commits anything itself: a baseline is a reviewed fixture, not a build
+  # output.
+  visual-baselines-linux:
+    name: visual baselines (linux, manual dispatch)
+    # SECURITY (public repo + self-hosted runners): dispatch-only — this job
+    # never runs for pushes or PRs, so no fork code can ever reach it; only a
+    # maintainer triggering "Run workflow" on a ref of THIS repo.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, Linux, X64, venom-linux]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout with pinned Bifrost submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Design System dependencies
+        working-directory: Design_System
+        run: npm ci
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      # Same rationale as the gate job's install: chromium only, and never
+      # `--with-deps` (the runner has no passwordless sudo; the OS libraries
+      # were installed once as root with `npx playwright install-deps`).
+      - name: Install the chromium build Playwright pins
+        working-directory: dashboard
+        run: npx playwright install chromium
+
+      # `--update-snapshots` rewrites the linux baselines in the working
+      # tree (the suite's own webServer builds the dashboard first).
+      - name: Regenerate the linux visual baselines
+        working-directory: dashboard
+        run: npm run test:visual:update
+
+      - name: Upload the regenerated linux baselines
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-baselines-linux
+          path: dashboard/tests/visual/appearance.spec.ts-snapshots/*-linux.png
+          if-no-files-found: error
 
   windows-smoke:
     name: windows smoke (self-hosted)

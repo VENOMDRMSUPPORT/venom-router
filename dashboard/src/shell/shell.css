@@ -1,0 +1,26 @@
+/* Shell-chrome dashboard-local styles (header/brand redesign).
+ *
+ * Values the Tailwind token scale cannot express (viewport-relative
+ * constraints, the brand dot's glow) live here instead of arbitrary-value
+ * utility classes, which the no-raw-values lint gate forbids in TSX.
+ * Colors resolve through @venom/design-system custom properties so themes
+ * and accents keep working. Class names use the dashboard-local `vnd-`
+ * prefix (see fleet.css) so they can never collide with the frozen
+ * package's `vn-` namespace. */
+
+/* The brand tile's live status dot: a soft healthy-tone glow around the
+ * pulsing dot. */
+.vnd-brand-pulse {
+  box-shadow: 0 0 6px var(--status-healthy-fg);
+}
+
+/* The command palette panel is bounded by the viewport, its result list
+ * by a fixed scroll window — both are layout constraints, not scale
+ * values, so they are not utility-class material. */
+.vnd-palette-panel {
+  max-height: 80vh;
+}
+
+.vnd-palette-results {
+  max-height: 380px;
+}

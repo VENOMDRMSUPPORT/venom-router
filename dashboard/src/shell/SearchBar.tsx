@@ -38,7 +38,7 @@ export default function SearchBar(props: SearchBarProps) {
         <span className="w-full min-w-0 truncate text-xs text-text-muted">
           Search pages or run a command...
         </span>
-        <kbd className="hidden sm:inline-block flex-none rounded border border-border-default bg-surface-primary px-1.5 py-0.5 font-mono text-[10px] text-text-muted select-none">
+        <kbd className="hidden sm:inline-block flex-none rounded border border-border-default bg-surface-primary px-1.5 py-0.5 font-mono text-2xs text-text-muted select-none">
           ⌘K
         </kbd>
       </button>
