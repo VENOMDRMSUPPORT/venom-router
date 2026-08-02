@@ -361,7 +361,7 @@ export default function AccountRow(props: AccountRowProps) {
         <div className="vnd-account-right">
           <div className="vnd-account-actions">
             <IconButton
-              icon="activity"
+              icon="heart-pulse"
               label="Sync: health · plan · usage"
               title="Sync: health · plan · usage"
               variant="ghost"
@@ -379,7 +379,7 @@ export default function AccountRow(props: AccountRowProps) {
               onClick={handleFetchModels}
             />
             <IconButton
-              icon="box"
+              icon="flask-conical"
               label="Open model test report"
               title={modelCount ? "Open model test report" : "No models discovered yet"}
               variant="ghost"
@@ -401,7 +401,7 @@ export default function AccountRow(props: AccountRowProps) {
               onClick={canStop ? handleStop : canResume ? handleResume : undefined}
             />
             <IconButton
-              icon="trash-2"
+              icon="unplug"
               label="Disconnect account"
               title="Disconnect account"
               variant="ghost"
@@ -413,7 +413,7 @@ export default function AccountRow(props: AccountRowProps) {
           <div className="vnd-account-meta">
             <span className={`vnd-health-dot vnd-health-dot--${dotTone}`} title={`display_status: ${account.display_status}`} />
             <span>
-              Quota: {isFreeAccount && quotaObserved == null ? "Unlimited" : quotaObserved == null ? "—" : relativeTime(quotaObserved)} · Checked:{" "}
+              {isFreeAccount && quotaObserved == null ? "Free" : `Quota: ${quotaObserved == null ? "—" : relativeTime(quotaObserved)}`} · Checked:{" "}
               {Number.isNaN(checkedAt) ? "—" : relativeTime(checkedAt)}
             </span>
           </div>

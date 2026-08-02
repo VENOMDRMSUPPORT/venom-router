@@ -977,8 +977,8 @@ describe("FleetOverview — account row polish (fingerprint identities, deduped 
 
     expect(within(row).queryAllByText("—")).toHaveLength(0);
     expect(within(row).queryByTitle(/no quota windows tracked/i)).toBeNull();
-    // Free accounts: "Quota: Unlimited" in the meta line + "∞ Unlimited" in the body.
-    expect(within(row).getByText(/Quota: Unlimited · Checked: .+/)).toBeTruthy();
+    // Free accounts: "Free · Checked: …" in the meta line + "∞ Unlimited" in the body.
+    expect(within(row).getByText(/^Free · Checked: .+/)).toBeTruthy();
     within(row).getByText("∞ Unlimited");
   });
 
@@ -988,8 +988,8 @@ describe("FleetOverview — account row polish (fingerprint identities, deduped 
     const fetchButton = within(row).getByRole("button", { name: /fetch models from provider/i });
     const reportChip = within(row).getByRole("button", { name: /open model test report/i });
     expect(fetchButton.querySelector(".vn-icon--download")).toBeTruthy();
-    expect(reportChip.querySelector(".vn-icon--box")).toBeTruthy();
-    expect(fetchButton.querySelector(".vn-icon--box")).toBeNull();
+    expect(reportChip.querySelector(".vn-icon--flask-conical")).toBeTruthy();
+    expect(fetchButton.querySelector(".vn-icon--flask-conical")).toBeNull();
   });
 });
 
