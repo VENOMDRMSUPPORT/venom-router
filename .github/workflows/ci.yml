@@ -141,6 +141,13 @@ jobs:
         working-directory: dashboard
         run: npm ci
 
+      # The suite's webServer runs the dashboard's `npm run build`, whose
+      # `@venom/design-system` file: dependency resolves to
+      # Design_System/dist/* — which only exists after the design system's
+      # own build. Mirror the gate job's step so a fresh checkout has it.
+      - name: Build and embed dashboard once
+        run: task dashboard:build-embed
+
       # Same rationale as the gate job's install: chromium only, and never
       # `--with-deps` (the runner has no passwordless sudo; the OS libraries
       # were installed once as root with `npx playwright install-deps`).
