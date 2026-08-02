@@ -62,8 +62,11 @@ type ModelsDevProbe func(ctx context.Context) ([]byte, error)
 
 // ModelsProbeStatusError is the typed error a ModelsProbe implementation
 // returns when the provider answered with a non-2xx status, so a caller
-// (the health classification below) can read the REAL wire status instead
-// of an opaque string. Transport-level failures stay plain errors.
+// can read the REAL wire status instead of an opaque string.
+// Transport-level failures stay plain errors. (Zen health no longer reads
+// this type — its models endpoint ignores credentials, see checkHealth —
+// but the seam contract stays: discovery and future adapters still get
+// the typed status.)
 type ModelsProbeStatusError struct {
 	StatusCode int
 }
@@ -77,7 +80,8 @@ func (e *ModelsProbeStatusError) Error() string {
 // identity is the key's own fingerprint with a synthetic "Free" plan;
 // funding is decided by the funding domain at connect time (02 §2), never
 // fabricated here. Discovery is the free-only intersection against
-// models.dev; health is the GET /v1/models (Bearer) probe.
+// models.dev; health is the same authentic chat-validation probe
+// ConnectAPIKey uses (NOT the models listing — see checkHealth for why).
 type OpenCodeZenAdapter struct {
 	chatProbe      ChatProbe
 	modelsProbe    ModelsProbe
@@ -239,16 +243,31 @@ func parseModelsDevFreeSet(body []byte) (map[string]struct{}, error) {
 	return freeSet, nil
 }
 
-// CheckAccountHealth implements HealthAdapter via 03 §3's documented
-// health call: GET /v1/models with the account's Bearer key. The
-// classification NEVER guesses:
+// CheckAccountHealth implements HealthAdapter via the SAME authentic
+// chat-validation probe ConnectAPIKey uses (ValidateAPIKey over the
+// injected ChatProbe; zen models are free, so the max_tokens:1 probe
+// costs nothing).
 //
-//	2xx                      -> healthy (credential accepted, transport up)
-//	401/403                  -> expired (the provider READ and REJECTED the
-//	                            credential; transport reachable)
-//	429/5xx/other non-2xx    -> unreachable (retryable — a rate limit or a
-//	                            provider fault says nothing about the key)
-//	transport error          -> unreachable (retryable)
+// It deliberately does NOT probe GET /v1/models: that endpoint is PUBLIC
+// and ignores the Bearer credential entirely — verified live 2026-08-02,
+// it answers 200 both with no Authorization header at all and with a
+// garbage key — so a models-list health check reports healthy for ANY
+// stored key, including a revoked one (a false green). 03 §3 documents
+// the free-model chat probe as the credential-authentic alternative, and
+// that is the only one of the two that actually reads the credential. Do
+// not "simplify" this back to the models listing.
+//
+// The classification NEVER guesses:
+//
+//	ValidationValid       -> healthy (the provider authenticated the key —
+//	                         a 2xx chat response, or a CreditsError-style
+//	                         billing rejection the seam proves was
+//	                         computed AFTER recognizing the key)
+//	ValidationInvalid     -> expired (the provider READ and REJECTED the
+//	                         credential; transport reachable)
+//	ValidationUnavailable -> unreachable (retryable — a rate limit,
+//	                         provider fault, ambiguous 401, or transport
+//	                         error says nothing about the key)
 //
 // The observation is always returned with a nil error — every real
 // outcome above IS the observation; there is no failure mode left to
@@ -258,16 +277,17 @@ func (a *OpenCodeZenAdapter) CheckAccountHealth(ctx context.Context, creds Store
 }
 
 // CheckOfferingHealth reuses the account-level probe: opencode-zen has no
-// per-model health endpoint, and /v1/models is the documented health call
-// regardless of model (03 §3).
+// per-model health endpoint, so the credential-authentic chat probe is
+// the health call regardless of model (03 §3).
 func (a *OpenCodeZenAdapter) CheckOfferingHealth(ctx context.Context, creds StoredCredentials, providerModelID string) (HealthObservation, error) {
 	return a.checkHealth(ctx, creds, "offering")
 }
 
 func (a *OpenCodeZenAdapter) checkHealth(ctx context.Context, creds StoredCredentials, scope string) (HealthObservation, error) {
 	checkedAt := a.now().Unix()
-	_, err := a.modelsProbe(ctx, OpenCodeZenBaseURL, creds.Value)
-	if err == nil {
+
+	switch ValidateAPIKey(ctx, a.chatProbe, OpenCodeZenBaseURL, creds.Value) {
+	case ValidationValid:
 		return HealthObservation{
 			Status:             "healthy",
 			Scope:              scope,
@@ -275,13 +295,7 @@ func (a *OpenCodeZenAdapter) checkHealth(ctx context.Context, creds StoredCreden
 			TransportReachable: true,
 			CheckedAt:          checkedAt,
 		}, nil
-	}
-
-	// 401/403 (literals, not net/http constants — this package stays free
-	// of net/http, 01 §3/§8).
-	var statusErr *ModelsProbeStatusError
-	if errors.As(err, &statusErr) &&
-		(statusErr.StatusCode == 401 || statusErr.StatusCode == 403) {
+	case ValidationInvalid:
 		// The provider read the credential and rejected it — a definitive
 		// auth failure, NOT unavailability.
 		return HealthObservation{
@@ -296,22 +310,22 @@ func (a *OpenCodeZenAdapter) checkHealth(ctx context.Context, creds StoredCreden
 				SafeMessage: "provider rejected the credential (401/403)",
 			},
 		}, nil
+	default:
+		// 429, 5xx, an ambiguous status, or a transport error: the key's
+		// validity is unknown and the check is retryable — never expired.
+		return HealthObservation{
+			Status:             "unreachable",
+			Scope:              scope,
+			CredentialValid:    false,
+			TransportReachable: false,
+			CheckedAt:          checkedAt,
+			Failure: &HealthFailure{
+				Class:       "unavailable",
+				Retryable:   true,
+				SafeMessage: "provider unavailable or rate limited",
+			},
+		}, nil
 	}
-
-	// 429, 5xx, any other non-2xx status, or a transport error: the key's
-	// validity is unknown and the check is retryable — never expired.
-	return HealthObservation{
-		Status:             "unreachable",
-		Scope:              scope,
-		CredentialValid:    false,
-		TransportReachable: false,
-		CheckedAt:          checkedAt,
-		Failure: &HealthFailure{
-			Class:       "unavailable",
-			Retryable:   true,
-			SafeMessage: "provider unavailable or rate limited",
-		},
-	}, nil
 }
 
 // RegisterOpenCodeZen registers the opencode-zen APIKey + Health +

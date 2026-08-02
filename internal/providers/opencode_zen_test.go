@@ -382,64 +382,73 @@ func TestOpenCodeZenAdapter_DiscoverModels_MissingOpenCodeEntryIsError(t *testin
 }
 
 // ============================================================================
-// Health classification (03 §3: GET /v1/models, Bearer)
+// Health classification (03 §3: the credential-authentic chat probe)
 // ============================================================================
 
 // TestOpenCodeZenAdapter_CheckAccountHealth_ClassificationMatrix pins the
-// full status matrix: 2xx healthy; 401/403 expired (definitive credential
-// rejection, NOT retryable); 429/5xx/transport unavailable (retryable,
-// NEVER expired).
+// full status matrix over the CHAT-validation probe (the same one
+// ConnectAPIKey uses): 2xx healthy; a CreditsError-style
+// ErrProbeAuthenticated healthy (the provider recognized the key);
+// 401/403 expired (definitive credential rejection, NOT retryable);
+// 429/5xx/transport unreachable (retryable, NEVER expired).
+//
+// Health deliberately does NOT use the models probe: zen's GET /v1/models
+// is public and ignores the Bearer credential (verified live 2026-08-02),
+// so it would report healthy for any key.
 func TestOpenCodeZenAdapter_CheckAccountHealth_ClassificationMatrix(t *testing.T) {
 	cases := []struct {
 		name          string
-		probe         ModelsProbe
+		probe         ChatProbe
 		wantStatus    string
 		wantCredValid bool
 		wantReachable bool
 		wantRetryable *bool // nil = no Failure expected
 	}{
 		{
-			name:          "200 is healthy",
-			probe:         func(ctx context.Context, baseURL, key string) ([]byte, error) { return []byte(`{"data":[]}`), nil },
+			name:          "chat 200 is healthy",
+			probe:         func(ctx context.Context, baseURL, key string) (int, error) { return 200, nil },
 			wantStatus:    "healthy",
 			wantCredValid: true,
 			wantReachable: true,
 		},
 		{
-			name: "401 is expired",
-			probe: func(ctx context.Context, baseURL, key string) ([]byte, error) {
-				return nil, &ModelsProbeStatusError{StatusCode: 401}
+			name: "CreditsError-shaped authenticated signal is healthy",
+			probe: func(ctx context.Context, baseURL, key string) (int, error) {
+				// The seam's shape for zen's 401 CreditsError: the provider
+				// computed a workspace balance, so the key authenticated.
+				return 0, ErrProbeAuthenticated
 			},
+			wantStatus:    "healthy",
+			wantCredValid: true,
+			wantReachable: true,
+		},
+		{
+			name:          "chat 401 is expired",
+			probe:         func(ctx context.Context, baseURL, key string) (int, error) { return 401, nil },
 			wantStatus:    "expired",
 			wantCredValid: false,
 			wantReachable: true,
 			wantRetryable: boolPtr(false),
 		},
 		{
-			name: "403 is expired",
-			probe: func(ctx context.Context, baseURL, key string) ([]byte, error) {
-				return nil, &ModelsProbeStatusError{StatusCode: 403}
-			},
+			name:          "chat 403 is expired",
+			probe:         func(ctx context.Context, baseURL, key string) (int, error) { return 403, nil },
 			wantStatus:    "expired",
 			wantCredValid: false,
 			wantReachable: true,
 			wantRetryable: boolPtr(false),
 		},
 		{
-			name: "429 is unreachable and retryable, never expired",
-			probe: func(ctx context.Context, baseURL, key string) ([]byte, error) {
-				return nil, &ModelsProbeStatusError{StatusCode: 429}
-			},
+			name:          "chat 429 is unreachable and retryable, never expired",
+			probe:         func(ctx context.Context, baseURL, key string) (int, error) { return 429, nil },
 			wantStatus:    "unreachable",
 			wantCredValid: false,
 			wantReachable: false,
 			wantRetryable: boolPtr(true),
 		},
 		{
-			name: "500 is unreachable and retryable",
-			probe: func(ctx context.Context, baseURL, key string) ([]byte, error) {
-				return nil, &ModelsProbeStatusError{StatusCode: 500}
-			},
+			name:          "chat 500 is unreachable and retryable",
+			probe:         func(ctx context.Context, baseURL, key string) (int, error) { return 500, nil },
 			wantStatus:    "unreachable",
 			wantCredValid: false,
 			wantReachable: false,
@@ -447,8 +456,8 @@ func TestOpenCodeZenAdapter_CheckAccountHealth_ClassificationMatrix(t *testing.T
 		},
 		{
 			name: "transport error is unreachable and retryable",
-			probe: func(ctx context.Context, baseURL, key string) ([]byte, error) {
-				return nil, errors.New("dial tcp: connection refused")
+			probe: func(ctx context.Context, baseURL, key string) (int, error) {
+				return 0, errors.New("dial tcp: connection refused")
 			},
 			wantStatus:    "unreachable",
 			wantCredValid: false,
@@ -460,7 +469,7 @@ func TestOpenCodeZenAdapter_CheckAccountHealth_ClassificationMatrix(t *testing.T
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, now := fixtureClock()
-			adapter := NewOpenCodeZenAdapter(nil, tc.probe, nil, now)
+			adapter := NewOpenCodeZenAdapter(tc.probe, nil, nil, now)
 			obs, err := adapter.CheckAccountHealth(context.Background(), StoredCredentials{Value: "k"})
 			if err != nil {
 				t.Fatalf("CheckAccountHealth error = %v, want nil (every outcome IS the observation)", err)
@@ -494,3 +503,56 @@ func TestOpenCodeZenAdapter_CheckAccountHealth_ClassificationMatrix(t *testing.T
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// TestOpenCodeZenAdapter_CheckHealth_ChatVerdictDecidesNotModelsProbe is
+// the regression pin for the 5d12a71 false green: zen's GET /v1/models is
+// public and ignores the Bearer credential (verified live 2026-08-02 —
+// 200 with no Authorization header AND with a garbage key), so a health
+// check that trusts the models probe reports healthy for a revoked key.
+//
+// Here the models probe answers a perfectly happy 200 with valid JSON,
+// while the chat-validation probe proves the credential was READ and
+// REJECTED. Health must report expired — the chat verdict decides.
+//
+// The models-probe call counter pins the adapter-level wiring too: the
+// adapter itself must not consult the models probe for health at all.
+// (In production the chat probe SEAM internally resolves a model id via
+// its own GET /v1/models — commit 3135a3c — but that lives inside the
+// injected ChatProbe, not behind this adapter's ModelsProbe seam, so a
+// zero count here is legitimate and does not contradict that resolution.)
+func TestOpenCodeZenAdapter_CheckHealth_ChatVerdictDecidesNotModelsProbe(t *testing.T) {
+	modelsProbeCalls := 0
+	happyModels := func(ctx context.Context, baseURL, key string) ([]byte, error) {
+		modelsProbeCalls++
+		return []byte(`{"data":[{"id":"model-a"}]}`), nil
+	}
+	rejectingChat := func(ctx context.Context, baseURL, key string) (int, error) {
+		return 401, nil
+	}
+
+	_, now := fixtureClock()
+	adapter := NewOpenCodeZenAdapter(rejectingChat, happyModels, nil, now)
+
+	obs, err := adapter.CheckAccountHealth(context.Background(), StoredCredentials{Value: "revoked-key"})
+	if err != nil {
+		t.Fatalf("CheckAccountHealth error = %v, want nil", err)
+	}
+	if obs.Status != "expired" {
+		t.Fatalf("Status = %q, want expired — a 200 models listing must never outvote the chat probe's credential rejection (the 5d12a71 false green)", obs.Status)
+	}
+	if obs.CredentialValid {
+		t.Fatalf("CredentialValid = true, want false when the chat probe proved rejection")
+	}
+
+	offObs, err := adapter.CheckOfferingHealth(context.Background(), StoredCredentials{Value: "revoked-key"}, "model-a")
+	if err != nil {
+		t.Fatalf("CheckOfferingHealth error = %v, want nil", err)
+	}
+	if offObs.Status != "expired" {
+		t.Fatalf("offering Status = %q, want expired (same credential-authentic path)", offObs.Status)
+	}
+
+	if modelsProbeCalls != 0 {
+		t.Fatalf("adapter-level models probe calls during health = %d, want 0 (health must be decided by the chat probe alone)", modelsProbeCalls)
+	}
+}
