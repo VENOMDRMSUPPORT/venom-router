@@ -277,6 +277,7 @@ export default function AccountRow(props: AccountRowProps) {
     : canResume
       ? "Enable account"
       : `Account is ${account.connection_state}`;
+  const isFreeAccount = account.funding?.funding?.toLowerCase() === "free";
   const dotTone = DOT_TONE[account.display_status] ?? "unknown";
   const quotaObserved = latestQuotaObservedAt(account);
   const checkedAt = account.last_health_check_at ? Date.parse(account.last_health_check_at) : NaN;
@@ -340,9 +341,10 @@ export default function AccountRow(props: AccountRowProps) {
             <TypedErrorDisplay code={revealError.code} message={revealError.message} retryable={revealError.retryable} tone="critical" />
           ) : null}
 
-          {/* Renders nothing for zero windows — the meta line's "Quota: —"
-              already reports the absence once. */}
-          <QuotaSummaryCompact windows={account.quota} />
+          <QuotaSummaryCompact
+            windows={account.quota}
+            isUnlimited={isFreeAccount && account.quota.length === 0}
+          />
 
           {/* P3c-UI-001: retained mount (no-removal rule). The per-account
            * LIVE certification surface is the Model Test Report modal
@@ -411,7 +413,7 @@ export default function AccountRow(props: AccountRowProps) {
           <div className="vnd-account-meta">
             <span className={`vnd-health-dot vnd-health-dot--${dotTone}`} title={`display_status: ${account.display_status}`} />
             <span>
-              Quota: {quotaObserved == null ? "—" : relativeTime(quotaObserved)} · Checked:{" "}
+              Quota: {isFreeAccount && quotaObserved == null ? "Unlimited" : quotaObserved == null ? "—" : relativeTime(quotaObserved)} · Checked:{" "}
               {Number.isNaN(checkedAt) ? "—" : relativeTime(checkedAt)}
             </span>
           </div>

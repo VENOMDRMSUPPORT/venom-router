@@ -129,6 +129,22 @@ describe("QuotaSummaryCompact — empty state", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it("renders the Unlimited label when isUnlimited=true and windows is empty", () => {
+    render(<QuotaSummaryCompact windows={[]} isUnlimited />);
+    screen.getByText("∞ Unlimited");
+  });
+
+  it("still renders windows normally when isUnlimited=true but windows exist", () => {
+    render(
+      <QuotaSummaryCompact
+        nowMs={Date.parse("2026-07-27T01:00:00Z")}
+        windows={[window_({ window_key: "gem" })]}
+        isUnlimited
+      />,
+    );
+    screen.getByText("GEM");
+  });
+
   it("still renders a real known window's meter and an unknown window's state word", () => {
     const { container } = render(
       <QuotaSummaryCompact

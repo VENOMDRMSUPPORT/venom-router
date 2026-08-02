@@ -977,8 +977,9 @@ describe("FleetOverview — account row polish (fingerprint identities, deduped 
 
     expect(within(row).queryAllByText("—")).toHaveLength(0);
     expect(within(row).queryByTitle(/no quota windows tracked/i)).toBeNull();
-    // The meta line still reports the absence honestly, once.
-    expect(within(row).getByText(/Quota: — · Checked: .+/)).toBeTruthy();
+    // Free accounts: "Quota: Unlimited" in the meta line + "∞ Unlimited" in the body.
+    expect(within(row).getByText(/Quota: Unlimited · Checked: .+/)).toBeTruthy();
+    within(row).getByText("∞ Unlimited");
   });
 
   it("gives Fetch models and the model-report chip DISTINCT icons", async () => {
