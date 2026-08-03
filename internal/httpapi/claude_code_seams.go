@@ -30,16 +30,16 @@ const (
 )
 
 // claudeCodeTokenSeam is the real implementation of providers.ClaudeCodeTokenProbe:
-// a POST with body as the JSON payload to the OAuth token endpoint (03 §3's
-// "JSON token exchange" — the form-encoded variant was the drift the legacy
-// reference corrected). body (carrying the code/verifier/refresh token) is
-// never logged.
+// a POST with body as the x-www-form-urlencoded payload to the OAuth token
+// endpoint (the reference exchange — the endpoint REJECTS a JSON body with
+// invalid_grant, per coqu's "from Claude CLI source" documentation). body
+// (carrying the code/verifier/refresh token) is never logged.
 func claudeCodeTokenSeam(ctx context.Context, tokenURL string, body []byte) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("httpapi: claude-code token request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := claudeCodeHTTPClient.Do(req)

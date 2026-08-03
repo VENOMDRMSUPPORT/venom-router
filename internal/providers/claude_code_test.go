@@ -90,7 +90,9 @@ func TestClaudeCode_RegistersNativeOAuthAnthropic(t *testing.T) {
 
 // TestClaudeCode_AuthorizeURL is mutation row 1: the authorize URL carries every
 // required parameter including code_challenge_method=S256 and the legacy
-// `code=true` flag claude.ai's authorize endpoint expects.
+// `code=true` flag claude.ai's authorize endpoint expects, and the redirect_uri
+// is the ONE registered hosted callback (a local path is rejected live with
+// "Redirect URI is not supported by client").
 func TestClaudeCode_AuthorizeURL(t *testing.T) {
 	a := NewClaudeCodeAdapter((&fakeClaudeToken{}).probe, claudeGet(200, claudeProfilePro).probe)
 	raw, err := a.BeginOAuth(context.Background(), "http://localhost/cb", "state-xyz", "challenge-abc")
@@ -102,8 +104,11 @@ func TestClaudeCode_AuthorizeURL(t *testing.T) {
 	if q.Get("code_challenge_method") != "S256" {
 		t.Fatalf("code_challenge_method = %q, want S256", q.Get("code_challenge_method"))
 	}
+	if q.Get("redirect_uri") != claudeCodeRedirectURI {
+		t.Fatalf("redirect_uri = %q, want the registered hosted %q (a local path is rejected by claude.ai)", q.Get("redirect_uri"), claudeCodeRedirectURI)
+	}
 	for k, want := range map[string]string{
-		"response_type": "code", "client_id": claudeCodeClientID, "redirect_uri": "http://localhost/cb",
+		"response_type": "code", "client_id": claudeCodeClientID,
 		"state": "state-xyz", "code_challenge": "challenge-abc", "scope": claudeCodeScopes,
 		"code": "true",
 	} {
@@ -113,19 +118,42 @@ func TestClaudeCode_AuthorizeURL(t *testing.T) {
 	}
 }
 
-// TestClaudeCode_CompleteExchangesJSONAndIdentity proves the token exchange
-// POSTs a JSON body (03 §3's "JSON token exchange" — not a form), carries the
-// verifier/client_id, and derives identity + paid funding from the profile's
-// organization fields.
-func TestClaudeCode_CompleteExchangesJSONAndIdentity(t *testing.T) {
+// TestClaudeCode_RequiresManualCode pins the structural fact that claude-code
+// never redirects back to Venom: the UI must show a paste field, and the
+// enrollment service resolves the transaction by id on the paste-complete leg.
+func TestClaudeCode_RequiresManualCode(t *testing.T) {
+	a := NewClaudeCodeAdapter((&fakeClaudeToken{}).probe, claudeGet(200, claudeProfilePro).probe)
+	if !a.RequiresManualCode() {
+		t.Fatal("claude-code must require the manual paste flow (its client's only redirect is Anthropic's hosted code page)")
+	}
+}
+
+// TestClaudeCode_CompleteExchangesFormAndIdentity proves the token exchange
+// POSTs a FORM body (the endpoint rejects JSON with invalid_grant), carries
+// the verifier/client_id, strips the `#` fragment from the pasted code, hands
+// the fragment (the echoed state) back to the token endpoint, and derives
+// identity + paid funding from the profile's organization fields.
+func TestClaudeCode_CompleteExchangesFormAndIdentity(t *testing.T) {
 	tok := &fakeClaudeToken{body: claudeTokenOK}
 	a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfilePro).probe)
-	id, creds, err := a.CompleteOAuth(context.Background(), "the-code", "the-verifier", "http://localhost/cb")
+	// The platform page displays "<auth_code>#<fragment>"; the whole string
+	// is what the owner pastes.
+	id, creds, err := a.CompleteOAuth(context.Background(), "the-code#the-state-fragment", "the-verifier", "http://localhost/cb")
 	if err != nil {
 		t.Fatalf("CompleteOAuth: %v", err)
 	}
-	if len(tok.lastBody) == 0 || !strings.Contains(string(tok.lastBody), "authorization_code") || !strings.Contains(string(tok.lastBody), "the-verifier") || !strings.Contains(string(tok.lastBody), claudeCodeClientID) {
-		t.Fatalf("token body = %q, want JSON with authorization_code grant + verifier + client_id", tok.lastBody)
+	body := string(tok.lastBody)
+	if !strings.Contains(body, "authorization_code") || !strings.Contains(body, "the-verifier") || !strings.Contains(body, claudeCodeClientID) {
+		t.Fatalf("token body = %q, want form with authorization_code grant + verifier + client_id", tok.lastBody)
+	}
+	if strings.Contains(body, "the-code#the-state-fragment") || !strings.Contains(body, "code=the-code") {
+		t.Fatalf("token body = %q, want the fragment-stripped code", tok.lastBody)
+	}
+	if !strings.Contains(body, "state=the-state-fragment") {
+		t.Fatalf("token body = %q, want the echoed state fragment handed back", tok.lastBody)
+	}
+	if !strings.Contains(body, "redirect_uri="+url.QueryEscape(claudeCodeRedirectURI)) {
+		t.Fatalf("token body = %q, want the hosted redirect_uri", tok.lastBody)
 	}
 	if id.ExternalID != "acc-123" || id.Funding != string(FundingPaid) || id.Plan != "Pro Plan" {
 		t.Fatalf("identity = %+v, want uuid acc-123 + paid + Pro Plan (derived from org flags)", id)
@@ -136,16 +164,17 @@ func TestClaudeCode_CompleteExchangesJSONAndIdentity(t *testing.T) {
 	}
 }
 
-// TestClaudeCode_CodeFragmentIsStripped proves the `#`-suffix quirk: a code
-// like "abc#fragment" exchanges as "abc" (legacy 2026-08-03).
+// TestClaudeCode_CodeFragmentIsStripped proves the `#`-suffix quirk: a pasted
+// code like "abc#fragment" exchanges as "abc" with the fragment handed back as
+// state (legacy/coqu 2026-08-03).
 func TestClaudeCode_CodeFragmentIsStripped(t *testing.T) {
 	tok := &fakeClaudeToken{body: claudeTokenOK}
 	a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfilePro).probe)
 	if _, _, err := a.CompleteOAuth(context.Background(), "abc#frag", "v", "cb"); err != nil {
 		t.Fatalf("CompleteOAuth: %v", err)
 	}
-	if !strings.Contains(string(tok.lastBody), `"code":"abc"`) {
-		t.Fatalf("token body = %q, want the fragment-stripped code", tok.lastBody)
+	if !strings.Contains(string(tok.lastBody), "code=abc") || !strings.Contains(string(tok.lastBody), "state=frag") {
+		t.Fatalf("token body = %q, want the fragment-stripped code + fragment-as-state", tok.lastBody)
 	}
 }
 

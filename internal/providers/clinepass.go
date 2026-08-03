@@ -106,6 +106,14 @@ func NewClinePassAdapter(postProbe ClinePassPostProbe, getProbe ClinePassGetProb
 	return &ClinePassAdapter{postProbe: postProbe, getProbe: getProbe}
 }
 
+// OmitStateFromCallback reports true: clinepass's authorize redirect does NOT
+// echo the `state` parameter back to the callback URL (verified against the
+// legacy implementation 2026-08-03, which handled it with a per-flow
+// "__recovered__" sentinel). The enrollment service therefore embeds the
+// unguessable transaction id into the callback URL path so the callback can
+// still be bound to exactly one transaction.
+func (a *ClinePassAdapter) OmitStateFromCallback() bool { return true }
+
 // BeginOAuth builds the extension-flow authorize URL with EXACTLY the four
 // parameters the reference flow sends (03 §3 / legacy 2026-08-03):
 // client_type=extension, callback_url, redirect_uri, state. The PKCE verifier
@@ -129,11 +137,12 @@ func (a *ClinePassAdapter) BeginOAuth(_ context.Context, redirectURI, state, _ s
 // Funding is reported paid (see TestClinePass_FundingPaidAndLocked for why the
 // lock lives in the catalog, not here).
 func (a *ClinePassAdapter) CompleteOAuth(ctx context.Context, code, _ /*pkceVerifier*/, redirectURI string) (IdentityResult, StoredCredentials, error) {
+	authCode, _ := splitOAuthCode(code) // clinepass takes the pre-# code only; the fragment is not sent back
 	reqBody, _ := json.Marshal(map[string]string{
 		"grant_type":   "authorization_code",
 		"client_type":  "extension",
 		"provider":     "clinepass",
-		"code":         splitOAuthCode(code),
+		"code":         authCode,
 		"redirect_uri": redirectURI,
 	})
 	tok, err := a.exchange(ctx, ClinePassBaseURL+clinePassTokenPath, reqBody)

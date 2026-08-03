@@ -50,10 +50,10 @@ func TestClaudeCodeGetSeam_RequiredHeaders(t *testing.T) {
 	}
 }
 
-// TestClaudeCodeTokenSeam_PostsJSON proves the token seam POSTs the JSON body
-// (03 §3's "JSON token exchange" — the form-encoded variant was the drift the
-// legacy reference corrected).
-func TestClaudeCodeTokenSeam_PostsJSON(t *testing.T) {
+// TestClaudeCodeTokenSeam_PostsForm proves the token seam POSTs the form body
+// as x-www-form-urlencoded — the reference exchange (the endpoint rejects a
+// JSON body with invalid_grant).
+func TestClaudeCodeTokenSeam_PostsForm(t *testing.T) {
 	var gotCT string
 	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -63,13 +63,13 @@ func TestClaudeCodeTokenSeam_PostsJSON(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	if _, err := claudeCodeTokenSeam(context.Background(), srv.URL, []byte(`{"grant_type":"authorization_code"}`)); err != nil {
+	if _, err := claudeCodeTokenSeam(context.Background(), srv.URL, []byte(`grant_type=authorization_code`)); err != nil {
 		t.Fatalf("seam error = %v", err)
 	}
-	if gotCT != "application/json" {
-		t.Fatalf("Content-Type = %q, want application/json", gotCT)
+	if gotCT != "application/x-www-form-urlencoded" {
+		t.Fatalf("Content-Type = %q, want application/x-www-form-urlencoded", gotCT)
 	}
-	if string(gotBody) != `{"grant_type":"authorization_code"}` {
-		t.Fatalf("body = %q, want the JSON body passed through", gotBody)
+	if string(gotBody) != `grant_type=authorization_code` {
+		t.Fatalf("body = %q, want the form body passed through", gotBody)
 	}
 }

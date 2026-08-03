@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -51,13 +52,21 @@ func NewOAuthHandler(service *application.OAuthEnrollmentService, reg *providers
 	}
 }
 
-// callbackURL builds the deterministic redirect_uri for providerID's
-// callback route on this control-plane bind — the same value is used at
-// Begin (handed to the adapter) and reconstructed at Complete (handed to
-// the adapter again, unchanged, per the OAuth spec's requirement that
-// the redirect_uri match across both legs of the flow).
-func (h *OAuthHandler) callbackURL(providerID string) string {
-	return "http://" + h.allowedHost + "/api/control/v1/oauth/" + providerID + "/callback"
+// callbackURL builds the deterministic redirect_uri every OAuth begin hands
+// its adapter: http://<allowedHost>/callback. This is the ONE shape the
+// claude-code/clinepass/antigravity public clients have REGISTERED — the
+// legacy implementation sent `${window.location.origin}/callback` for every
+// non-fixed-redirect provider (verified against venom-router-legacy
+// 2026-08-03), and claude.ai rejects any other path with "Redirect URI is not
+// supported by client". It is provider-agnostic on purpose: the callback route
+// is GET /callback and the handler resolves the provider from the `state`
+// (the oauth_transactions row stores provider_id), never from the URL path.
+// The same value is reconstructed at Complete (handed to the adapter again,
+// unchanged, per the OAuth spec's requirement that the redirect_uri match
+// across both legs of the flow). Fixed-redirect providers (Codex, xAI) are
+// future scope and will override this per-provider when they land.
+func (h *OAuthHandler) callbackURL() string {
+	return "http://" + h.allowedHost + "/callback"
 }
 
 // beginOAuthJSON is POST .../oauth/begin's success payload.
@@ -85,10 +94,16 @@ func (h *OAuthHandler) ServeBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	omitState := false
+	if om, ok := adapter.(providers.OmitStateFromCallback); ok && om.OmitStateFromCallback() {
+		omitState = true
+	}
+
 	result, err := h.service.Begin(r.Context(), application.BeginOAuthParams{
-		ProviderID:  id,
-		Adapter:     adapter,
-		RedirectURI: h.callbackURL(id),
+		ProviderID:            id,
+		Adapter:               adapter,
+		RedirectURI:           h.callbackURL(),
+		OmitStateFromCallback: omitState,
 	})
 	if err != nil {
 		h.audit.Emit(r.Context(), AuditActionOAuthBegin, AuditResultFailure, AuditResourceProvider, id, "internal_error")
@@ -104,25 +119,56 @@ func (h *OAuthHandler) ServeBegin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ServeCallback implements GET /api/control/v1/oauth/{provider}/callback:
-// sits behind networkGate ONLY (no owner session/CSRF — the provider's
-// redirect carries neither). Before calling Complete, it peeks (via
-// PeekTransactionIDByStateHash — a non-consuming, side-effect-free
-// lookup) whether this state hashes to a transaction the reauth-binding
-// cache marked as a TARGETED reauthentication (POST .../accounts/{id}/
-// reauth/begin, P2b-PROV-008); if so, the bound account id is threaded
-// into Complete as ReauthAccountID so the account_identity_mismatch
-// guard applies BEFORE anything is staged/swapped — Complete cannot
-// undo a swap after the fact, so this binding must be resolved ahead of
-// the call, not after. It then completes the transaction via
-// OAuthEnrollmentService.Complete, caches the terminal outcome (status +
-// account id OR a safe error code — never the code/tokens/verifier) keyed
-// by whatever transaction id Complete reports, and renders a minimal,
-// secret-free HTML page telling the owner to return to the dashboard.
+// ServeCallback implements the OAuth redirect target — GET /callback (the
+// registered, provider-agnostic shape; the legacy provider-specific GET
+// /api/control/v1/oauth/{provider}/callback also lands here and supplies the
+// provider directly): sits behind networkGate ONLY (no owner session/CSRF — the
+// provider's redirect carries neither). The provider is resolved from the
+// `state` via the transaction row (which stores provider_id) when the URL path
+// carries no provider. Before calling Complete, it peeks (via
+// PeekTransactionIDByStateHash — a non-consuming, side-effect-free lookup)
+// whether this state hashes to a transaction the reauth-binding cache marked as
+// a TARGETED reauthentication (POST .../accounts/{id}/reauth/begin,
+// P2b-PROV-008); if so, the bound account id is threaded into Complete as
+// ReauthAccountID so the account_identity_mismatch guard applies BEFORE
+// anything is staged/swapped — Complete cannot undo a swap after the fact, so
+// this binding must be resolved ahead of the call, not after. It then completes
+// the transaction via OAuthEnrollmentService.Complete, caches the terminal
+// outcome (status + account id OR a safe error code — never the
+// code/tokens/verifier) keyed by whatever transaction id Complete reports, and
+// renders a minimal, secret-free HTML page telling the owner to return to the
+// dashboard.
 func (h *OAuthHandler) ServeCallback(w http.ResponseWriter, r *http.Request) {
-	providerID := r.PathValue("provider")
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
+
+	// Provider-agnostic redirect target: resolve the provider from the
+	// transaction the state names (the row stores provider_id). A state that
+	// names no row fails closed exactly like an unknown provider on the
+	// legacy provider-specific path — no oracle, no guessed provider.
+	//
+	// For providers that omit `state` (providers.OmitStateFromCallback,
+	// e.g. clinepass), the `state` query parameter carries the unguessable
+	// TRANSACTION id instead (Begin built the redirect_uri as
+	// callback?state=<txid>, and the provider preserves query params it
+	// does not consume while appending `code`). The provider is then
+	// resolved by transaction id, and Complete consumes by transaction id.
+	providerID := r.PathValue("provider")
+	stateIsTransactionID := false
+	if providerID == "" {
+		if pid, ok, err := h.tx.ProviderIDByTransactionID(r.Context(), state); err == nil && ok {
+			providerID = pid
+			stateIsTransactionID = true
+		} else {
+			pid, ok, err := h.tx.ProviderIDByStateHash(r.Context(), application.HashOAuthState(state))
+			if err != nil || !ok {
+				h.audit.Emit(r.Context(), AuditActionOAuthComplete, AuditResultFailure, AuditResourceProvider, "", "not_found")
+				renderOAuthCallbackPage(w, false)
+				return
+			}
+			providerID = pid
+		}
+	}
 
 	adapter, ok := h.reg.OAuthAdapter(providers.ProviderID(providerID))
 	if !ok {
@@ -138,21 +184,36 @@ func (h *OAuthHandler) ServeCallback(w http.ResponseWriter, r *http.Request) {
 	// that happens to resolve to an existing account is still
 	// reauthenticated regardless (see Complete's doc comment).
 	var reauthAccountID string
-	if peekedTxID, ok, _ := h.tx.PeekTransactionIDByStateHash(r.Context(), application.HashOAuthState(state)); ok {
-		if binding, bound := h.reauth.get(peekedTxID); bound {
-			reauthAccountID = binding.accountID
-		}
+	// For the state-less path, the reauth peek is keyed on the transaction
+	// id itself (no state hash exists to peek with).
+	var peekTxID string
+	if stateIsTransactionID {
+		peekTxID = state
+	} else if peeked, ok, _ := h.tx.PeekTransactionIDByStateHash(r.Context(), application.HashOAuthState(state)); ok {
+		peekTxID = peeked
+	}
+	if binding, bound := h.reauth.get(peekTxID); bound {
+		reauthAccountID = binding.accountID
 	}
 
-	txID, account, err := h.service.Complete(r.Context(), application.CompleteOAuthParams{
+	completeParams := application.CompleteOAuthParams{
 		ProviderID:      providerID,
 		Adapter:         adapter,
 		RawState:        state,
 		Code:            code,
-		RedirectURI:     h.callbackURL(providerID),
+		RedirectURI:     h.callbackURL(),
 		FundingMode:     catalogFundingModeFor(providerID),
 		ReauthAccountID: reauthAccountID,
-	})
+	}
+	if stateIsTransactionID {
+		// The state query parameter IS the transaction id; the redirect_uri
+		// must match the one Begin built (callback?state=<txid>), and the
+		// service consumes the row by transaction id.
+		completeParams.RawState = ""
+		completeParams.TransactionID = state
+		completeParams.RedirectURI = h.callbackURL() + "?state=" + state
+	}
+	txID, account, err := h.service.Complete(r.Context(), completeParams)
 	if err != nil {
 		if txID != "" {
 			h.cache.storeFailed(txID, safeOAuthErrorCode(err))
@@ -216,6 +277,97 @@ func (h *OAuthHandler) ServeStatus(w http.ResponseWriter, r *http.Request) {
 	writeData(w, http.StatusOK, statusJSON{Status: status})
 }
 
+// completeCodeJSON is POST .../oauth/complete's request payload.
+type completeCodeJSON struct {
+	// TransactionID is the id POST .../oauth/begin returned. It is the
+	// unguessable capability token that binds the pasted code to exactly
+	// one transaction (the same token the status endpoint uses).
+	TransactionID string `json:"transaction_id"`
+	// Code is the RAW string the owner copies from the provider's hosted
+	// code page (claude-code's platform.claude.com page shows
+	// `<auth_code>#<fragment>`; the fragment is the echoed state and is
+	// preserved verbatim so the exchange can hand it back).
+	Code string `json:"code"`
+}
+
+// ServeCompleteCode implements POST /api/control/v1/oauth/complete —
+// owner-session + CSRF gated like every mutating control route. It is the
+// paste-completion leg for providers whose client NEVER redirects back to
+// Venom (providers.RequiresManualCode — claude-code is the proven case): the
+// owner authorizes on the provider's HOSTED page, copies the displayed code,
+// and the dashboard submits it here. The transaction is resolved by id, the
+// provider from the transaction row, and the code is exchanged exactly as the
+// browser callback would — replay-safe (consume-before-exchange), code never
+// persisted, terminal outcome cached for the status endpoint. The response
+// mirrors the status payload so the UI can react without a second call.
+func (h *OAuthHandler) ServeCompleteCode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAuthError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", false)
+		return
+	}
+
+	var req completeCodeJSON
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAuthError(w, http.StatusBadRequest, "validation_error", "invalid request body", false)
+		return
+	}
+	if req.TransactionID == "" || req.Code == "" {
+		writeAuthError(w, http.StatusBadRequest, "validation_error", "transaction_id and code are required", false)
+		return
+	}
+
+	// Resolve the provider from the transaction row (never from the client).
+	providerID, ok, err := h.tx.ProviderIDByTransactionID(r.Context(), req.TransactionID)
+	if err != nil {
+		h.audit.Emit(r.Context(), AuditActionOAuthComplete, AuditResultFailure, AuditResourceProvider, "", "internal_error")
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+	if !ok {
+		h.audit.Emit(r.Context(), AuditActionOAuthComplete, AuditResultFailure, AuditResourceProvider, "", "not_found")
+		writeAuthError(w, http.StatusNotFound, "not_found", "transaction not found", false)
+		return
+	}
+
+	adapter, ok := h.reg.OAuthAdapter(providers.ProviderID(providerID))
+	if !ok {
+		h.audit.Emit(r.Context(), AuditActionOAuthComplete, AuditResultFailure, AuditResourceProvider, providerID, "not_found")
+		writeAuthError(w, http.StatusNotFound, "not_found", "provider has no OAuth adapter registered", false)
+		return
+	}
+
+	// Reauth binding: if this transaction is a TARGETED reauthentication
+	// (POST .../accounts/{id}/reauth/begin), the binding must be threaded
+	// into Complete so the account_identity_mismatch guard applies before
+	// anything is staged/swapped.
+	var reauthAccountID string
+	if binding, bound := h.reauth.get(req.TransactionID); bound {
+		reauthAccountID = binding.accountID
+	}
+
+	txID, account, err := h.service.Complete(r.Context(), application.CompleteOAuthParams{
+		ProviderID:      providerID,
+		Adapter:         adapter,
+		TransactionID:   req.TransactionID,
+		Code:            req.Code,
+		RedirectURI:     h.callbackURL(),
+		FundingMode:     catalogFundingModeFor(providerID),
+		ReauthAccountID: reauthAccountID,
+	})
+	if err != nil {
+		if txID != "" {
+			h.cache.storeFailed(txID, safeOAuthErrorCode(err))
+		}
+		h.audit.Emit(r.Context(), AuditActionOAuthComplete, AuditResultFailure, AuditResourceProvider, providerID, safeOAuthErrorCode(err))
+		writeAuthError(w, http.StatusBadRequest, safeOAuthErrorCode(err), "the OAuth code could not be completed", false)
+		return
+	}
+
+	h.cache.storeCompleted(txID, account.ID)
+	h.audit.Emit(r.Context(), AuditActionOAuthComplete, AuditResultSuccess, AuditResourceAccount, account.ID, "")
+	writeData(w, http.StatusOK, statusJSON{Status: "completed", AccountID: account.ID})
+}
+
 // safeOAuthErrorCode maps a Complete error to a small, fixed vocabulary
 // of canary-safe codes — never the error's own message text, which may
 // wrap adapter-supplied detail this package cannot vouch for.
@@ -270,10 +422,16 @@ func (h *OAuthHandler) ServeReauthBegin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	omitState := false
+	if om, ok := adapter.(providers.OmitStateFromCallback); ok && om.OmitStateFromCallback() {
+		omitState = true
+	}
+
 	result, err := h.service.Begin(r.Context(), application.BeginOAuthParams{
-		ProviderID:  acct.ProviderID,
-		Adapter:     adapter,
-		RedirectURI: h.callbackURL(acct.ProviderID),
+		ProviderID:            acct.ProviderID,
+		Adapter:               adapter,
+		RedirectURI:           h.callbackURL(),
+		OmitStateFromCallback: omitState,
 	})
 	if err != nil {
 		h.audit.Emit(r.Context(), AuditActionReauthBegin, AuditResultFailure, AuditResourceAccount, id, "internal_error")

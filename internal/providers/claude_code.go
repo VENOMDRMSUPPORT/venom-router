@@ -24,6 +24,22 @@ const (
 	claudeCodeClientID     = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	claudeCodeScopes       = "org:create_api_key user:profile user:inference"
 
+	// claudeCodeRedirectURI is the ONLY redirect_uri claude.ai's authorize
+	// endpoint accepts for this public client (verified 2026-08-03 against
+	// the live authorize endpoint: BOTH a local /callback path and
+	// /api/control/v1/... were rejected with "Redirect URI is not supported
+	// by client"). It is a HOSTED page: after the owner authorizes, the
+	// browser lands on platform.claude.com which DISPLAYS a copy-paste code
+	// in the form <auth_code>#<fragment> — it never redirects back to Venom.
+	// The token endpoint validates this exact redirect_uri, so the SAME
+	// value is used at authorize and at exchange. The fragment after `#` is
+	// the echoed `state` (43-char base64url — the exact length of the
+	// state/verifier this adapter's BeginOAuth generates), so the pasted
+	// code still binds to the transaction via the state-hash path.
+	// Sources: coqu's Claude Code OAuth implementation ("from Claude CLI
+	// source"), the ANTHROPIC_AUTH.md reference, and the live rejection.
+	claudeCodeRedirectURI = "https://platform.claude.com/oauth/code/callback"
+
 	// ClaudeCodeAPIBase is the identity/discovery/quota base (03 §3). It MUST
 	// equal the BuiltinCatalog entry — asserted by a test. The native_oauth
 	// transport is handed this same base and appends /v1/messages.
@@ -149,24 +165,40 @@ func NewClaudeCodeAdapter(tokenProbe ClaudeCodeTokenProbe, getProbe ClaudeCodeGe
 	return &ClaudeCodeAdapter{tokenProbe: tokenProbe, getProbe: getProbe}
 }
 
-// splitOAuthCode handles providers that return the code with a `#`-joined
-// suffix (claude.ai's authorize quirks, legacy 2026-08-03): the code is
-// everything before the first `#`.
-func splitOAuthCode(code string) string {
+// splitOAuthCode handles the claude-code paste quirk: the platform page
+// displays a 92-char string `<auth_code>#<fragment>` where ONLY the part
+// before `#` (48 chars) is the actual authorization code. The fragment after
+// `#` is the echoed `state` (43-char base64url) and is returned separately so
+// the exchange can hand it back to the token endpoint ("state when the
+// returned value includes it" — ANTHROPIC_AUTH.md / legacy 2026-08-03).
+func splitOAuthCode(code string) (authCode, state string) {
 	if i := strings.Index(code, "#"); i >= 0 {
-		return code[:i]
+		return code[:i], code[i+1:]
 	}
-	return code
+	return code, ""
 }
 
+// RequiresManualCode reports true: claude-code's OAuth NEVER redirects back to
+// Venom. The authorize flow ends on Anthropic's HOSTED code page
+// (claudeCodeRedirectURI), which displays a code the owner must copy and paste
+// back into the dashboard. The enrollment UI shows a paste field instead of a
+// popup-and-poll when this is true (see httpapi's ServeBegin and the Connect
+// dialog). This is a STRUCTURAL fact about the provider's registered client,
+// not a per-account state.
+func (a *ClaudeCodeAdapter) RequiresManualCode() bool { return true }
+
 // BeginOAuth builds the authorize URL (pure string construction). The verifier
-// is the framework's; code_challenge_method is always S256; `code=true` is sent
-// exactly as the legacy implementation does (claude.ai's authorize endpoint
-// expects it to hand back an exchangeable code).
-func (a *ClaudeCodeAdapter) BeginOAuth(_ context.Context, redirectURI, state, pkceChallenge string) (string, error) {
+// is the framework's; code_challenge_method is always S256; `code=true` tells
+// claude.ai to use the manual code flow (hosted redirect that displays a
+// copy-paste code). redirectURI is IGNORED on purpose: this public client is
+// registered with exactly one redirect_uri — claudeCodeRedirectURI — and
+// claude.ai rejects any other with "Redirect URI is not supported by client"
+// (live-verified 2026-08-03). The token exchange uses the SAME constant, so
+// the two legs always match.
+func (a *ClaudeCodeAdapter) BeginOAuth(_ context.Context, _ /*redirectURI*/, state, pkceChallenge string) (string, error) {
 	q := url.Values{}
 	q.Set("client_id", claudeCodeClientID)
-	q.Set("redirect_uri", redirectURI)
+	q.Set("redirect_uri", claudeCodeRedirectURI)
 	q.Set("response_type", "code")
 	q.Set("code_challenge", pkceChallenge)
 	q.Set("code_challenge_method", "S256")
@@ -176,24 +208,28 @@ func (a *ClaudeCodeAdapter) BeginOAuth(_ context.Context, redirectURI, state, pk
 	return claudeCodeAuthorizeURL + "?" + q.Encode(), nil
 }
 
-// CompleteOAuth exchanges the code over a JSON body (public client — no
-// secret), then fetches the profile for the stable account uuid. A 2xx profile
+// CompleteOAuth exchanges the pasted code over a form-encoded body (public
+// client — no secret; the token endpoint REJECTS a JSON body with
+// invalid_grant — coqu, "from Claude CLI source"), then fetches the profile
+// for the stable account uuid. code is the RAW pasted string
+// `<auth_code>#<fragment>`: the part before `#` is exchanged, and the fragment
+// (the echoed state) is handed back to the token endpoint. A 2xx profile
 // without a uuid is a typed failure, never a fabricated identity. The plan is
 // derived from the profile's org/flags (see claudeCodePlanForProfile); funding
 // follows it.
-func (a *ClaudeCodeAdapter) CompleteOAuth(ctx context.Context, code, pkceVerifier, redirectURI string) (IdentityResult, StoredCredentials, error) {
-	body, err := json.Marshal(map[string]string{
-		"grant_type":    "authorization_code",
-		"client_id":     claudeCodeClientID,
-		"code":          splitOAuthCode(code),
-		"code_verifier": pkceVerifier,
-		"redirect_uri":  redirectURI,
-	})
-	if err != nil {
-		return IdentityResult{}, StoredCredentials{}, fmt.Errorf("providers: claude-code: marshal token request: %w", err)
+func (a *ClaudeCodeAdapter) CompleteOAuth(ctx context.Context, code, pkceVerifier, _ /*redirectURI*/ string) (IdentityResult, StoredCredentials, error) {
+	authCode, state := splitOAuthCode(code)
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("client_id", claudeCodeClientID)
+	form.Set("code", authCode)
+	form.Set("code_verifier", pkceVerifier)
+	form.Set("redirect_uri", claudeCodeRedirectURI)
+	if state != "" {
+		form.Set("state", state)
 	}
 
-	tok, err := a.exchangeToken(ctx, body)
+	tok, err := a.exchangeToken(ctx, form)
 	if err != nil {
 		return IdentityResult{}, StoredCredentials{}, err
 	}
@@ -226,11 +262,11 @@ func (a *ClaudeCodeAdapter) CompleteOAuth(ctx context.Context, code, pkceVerifie
 	return identity, stored, nil
 }
 
-// RefreshCredentials re-mints the access token (JSON body carrying client_id,
-// exactly as the legacy refresh does). A NEW refresh token replaces the old
-// one; if none is returned the existing one is KEPT (never blanked). A failed
-// refresh returns a typed error and leaves the stored credential untouched
-// (the caller keeps the old envelope).
+// RefreshCredentials re-mints the access token (form-encoded body carrying
+// client_id, exactly as the reference refresh does). A NEW refresh token
+// replaces the old one; if none is returned the existing one is KEPT (never
+// blanked). A failed refresh returns a typed error and leaves the stored
+// credential untouched (the caller keeps the old envelope).
 func (a *ClaudeCodeAdapter) RefreshCredentials(ctx context.Context, creds StoredCredentials) (StoredCredentials, error) {
 	var stored claudeCodeStoredToken
 	if err := json.Unmarshal([]byte(creds.Value), &stored); err != nil {
@@ -240,16 +276,12 @@ func (a *ClaudeCodeAdapter) RefreshCredentials(ctx context.Context, creds Stored
 		return StoredCredentials{}, errors.New("providers: claude-code: refresh: no refresh token available")
 	}
 
-	body, err := json.Marshal(map[string]string{
-		"grant_type":    "refresh_token",
-		"client_id":     claudeCodeClientID,
-		"refresh_token": stored.RefreshToken,
-	})
-	if err != nil {
-		return StoredCredentials{}, fmt.Errorf("providers: claude-code: refresh: marshal request: %w", err)
-	}
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("client_id", claudeCodeClientID)
+	form.Set("refresh_token", stored.RefreshToken)
 
-	tok, err := a.exchangeToken(ctx, body)
+	tok, err := a.exchangeToken(ctx, form)
 	if err != nil {
 		return StoredCredentials{}, err
 	}
@@ -260,8 +292,8 @@ func (a *ClaudeCodeAdapter) RefreshCredentials(ctx context.Context, creds Stored
 	return marshalClaudeCodeToken(tok.AccessToken, newRefresh, tok.ExpiresIn)
 }
 
-func (a *ClaudeCodeAdapter) exchangeToken(ctx context.Context, body []byte) (claudeCodeTokenResponse, error) {
-	respBody, err := a.tokenProbe(ctx, claudeCodeTokenURL, body)
+func (a *ClaudeCodeAdapter) exchangeToken(ctx context.Context, form url.Values) (claudeCodeTokenResponse, error) {
+	respBody, err := a.tokenProbe(ctx, claudeCodeTokenURL, []byte(form.Encode()))
 	if err != nil {
 		return claudeCodeTokenResponse{}, fmt.Errorf("providers: claude-code: token endpoint: %w", err)
 	}

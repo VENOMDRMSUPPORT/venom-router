@@ -152,6 +152,29 @@ type OAuthTransactionRepo interface {
 	// not win", never which of the three reasons applied.
 	ConsumeByStateHash(ctx context.Context, stateHash string, now time.Time) (providerID, transactionID string, verifierEnv secrets.Envelope, ok bool, err error)
 
+	// ConsumeByTransactionID is the state-less sibling of
+	// ConsumeByStateHash, for providers whose authorize redirect omits
+	// `state` (see providers.OmitStateFromCallback). The callback carries
+	// the unguessable transaction id in the URL path and consumption is
+	// keyed on it instead of on the state hash; the same guarded,
+	// affected-count-exactly-1 anti-replay invariant applies. ok is false
+	// — with the row untouched — for every failure case uniformly (no
+	// such row, already consumed, expired). transactionID is not returned
+	// because it is the lookup key itself.
+	ConsumeByTransactionID(ctx context.Context, transactionID string, now time.Time) (providerID string, verifierEnv secrets.Envelope, ok bool, err error)
+
+	// ProviderIDByStateHash is a read-only, non-consuming lookup of the
+	// provider_id for a row named by stateHash — used by the provider-
+	// agnostic callback route to resolve which provider a callback belongs
+	// to from the `state` alone, before calling Complete.
+	ProviderIDByStateHash(ctx context.Context, stateHash string) (providerID string, ok bool, err error)
+
+	// ProviderIDByTransactionID is the state-less sibling of
+	// ProviderIDByStateHash: the callback's `state` query parameter carries
+	// the unguessable transaction id (providers.OmitStateFromCallback), and
+	// the provider is resolved from the row's transaction_id column.
+	ProviderIDByTransactionID(ctx context.Context, transactionID string) (providerID string, ok bool, err error)
+
 	// GetStatusByTransactionID reads just enough of a row's lifecycle to
 	// derive pending/expired for the status endpoint when no cached
 	// terminal result exists: whether a row named by transactionID

@@ -123,15 +123,20 @@ plane. The public inference API (`/v1/*`) is out of scope for this doc (it is Op
   persist a pending `oauth_transaction` storing `sha256(state)`, provider slug, `transaction_id`,
   **encrypted** verifier, 10-min expiry. **Response (202):**
   `{ data: { transaction_id, authorize_url, expires_at } }`. No session reference is stored on the
-  transaction (callback uses state-based lookup). For fixed-redirect providers (Codex, xAI) the
+  transaction (callback uses state-based lookup). The `redirect_uri` handed to the adapter is the
+  registered, provider-agnostic **`http://<control-bind>/callback`** — the shape every
+  non-fixed-redirect provider's public client allows (claude-code, clinepass, antigravity; verified
+  against the legacy implementation, 2026-08-03). For fixed-redirect providers (Codex, xAI) the
   authorize URL targets the fixed-port loopback listener; multi-account Auth0 providers add
   `prompt=login`.
-- **`GET /oauth/{provider}/callback?code&state`** → look up tx by `sha256(state)`; constant-time
-  verify provider; check not expired; decrypt verifier; **mark consumed and null the verifier**;
-  commit; *then* exchange code for tokens and `FetchIdentity`. The auth `code` is **never stored**;
-  the `state` nonce is **always** verified. Persists account + encrypted credential + first funding
-  evidence, or routes to reauthentication (§3.4). Response is a thin page/redirect; the originating
-  UI learns the result via the status endpoint.
+- **`GET /callback?code&state`** (redirect target; the legacy provider-specific
+  `GET /oauth/{provider}/callback` also works and supplies the provider directly) → look up tx by
+  `sha256(state)`; resolve the provider from the transaction row (the path carries none);
+  constant-time verify provider; check not expired; decrypt verifier; **mark consumed and null the
+  verifier**; commit; *then* exchange code for tokens and `FetchIdentity`. The auth `code` is
+  **never stored**; the `state` nonce is **always** verified. Persists account + encrypted
+  credential + first funding evidence, or routes to reauthentication (§3.4). Response is a thin
+  page/redirect; the originating UI learns the result via the status endpoint.
 - **`GET /oauth/{transaction_id}/status`** →
   `{ data: { status: "pending"|"completed"|"failed"|"expired", account_id?, error? } }`.
 

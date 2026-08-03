@@ -76,6 +76,12 @@ type BeginOAuthParams struct {
 	// back to after the owner authorizes — echoed unchanged to
 	// CompleteOAuth by Complete.
 	RedirectURI string
+	// OmitStateFromCallback is true when Adapter implements
+	// providers.OmitStateFromCallback and the provider's authorize
+	// redirect does NOT echo `state`. Begin then uses a state-less
+	// transaction id + callback URL (see Begin), so the callback can
+	// still be bound to exactly one transaction.
+	OmitStateFromCallback bool
 }
 
 // BeginOAuthResult is Begin's output: everything the caller needs to
@@ -95,8 +101,16 @@ type CompleteOAuthParams struct {
 	// rather than this service caching it across the two calls.
 	Adapter providers.OAuthAdapter
 	// RawState is the callback's `state` query parameter exactly as
-	// received. It is hashed immediately and never stored or logged.
+	// received. It is hashed immediately and never stored or logged. For
+	// providers that omit state (see OmitStateFromCallback), RawState is
+	// empty and TransactionID carries the callback's binding instead.
 	RawState string
+	// TransactionID, when non-empty, is the callback's transaction id for
+	// the state-less path (providers.OmitStateFromCallback): the callback
+	// URL carried the unguessable transaction id in its path, and
+	// Complete consumes the row by id rather than by state hash. It is
+	// ignored when RawState is non-empty (the state-hash path wins).
+	TransactionID string
 	// Code is the callback's `code` query parameter. It is handed to
 	// Adapter.CompleteOAuth and NEVER persisted anywhere — no DB column,
 	// no cache entry, no log line.
@@ -213,7 +227,22 @@ func (s *OAuthEnrollmentService) Begin(ctx context.Context, p BeginOAuthParams) 
 		return BeginOAuthResult{}, fmt.Errorf("application: oauth: persist transaction: %w", err)
 	}
 
-	authorizeURL, err := p.Adapter.BeginOAuth(ctx, p.RedirectURI, state, challenge)
+	// A provider that omits `state` from its redirect (clinepass, per
+	// providers.OmitStateFromCallback / legacy 2026-08-03) cannot bind the
+	// callback to this transaction via the state nonce. The transaction id
+	// IS echoed back — we carry it in the `state` query parameter of the
+	// redirect_uri we hand the adapter, and the provider's redirect
+	// preserves the callback URL's own query parameters while appending
+	// `code`. The transaction id is the same unguessable capability token
+	// the status endpoint already relies on, so the binding is as strong as
+	// the state nonce without depending on the provider to echo it.
+	// Complete reconstructs this identical redirect_uri (base + "?state=" +
+	// transactionID) and consumes the row by transaction id.
+	authorizeRedirect := p.RedirectURI
+	if p.OmitStateFromCallback {
+		authorizeRedirect = p.RedirectURI + "?state=" + transactionID
+	}
+	authorizeURL, err := p.Adapter.BeginOAuth(ctx, authorizeRedirect, state, challenge)
 	if err != nil {
 		return BeginOAuthResult{}, fmt.Errorf("application: oauth: adapter BeginOAuth: %w", err)
 	}
@@ -240,6 +269,39 @@ func (s *OAuthEnrollmentService) Begin(ctx context.Context, p BeginOAuthParams) 
 // report in that case; the row (if any) is untouched.
 func (s *OAuthEnrollmentService) Complete(ctx context.Context, p CompleteOAuthParams) (transactionID string, account domain.Account, err error) {
 	now := s.now()
+
+	// State-less providers (providers.OmitStateFromCallback): the callback
+	// carries the unguessable transaction id, not a state nonce. Consume
+	// by id; the state-hash path is the default and wins whenever a state
+	// was actually echoed.
+	if p.RawState == "" && p.TransactionID != "" {
+		rowProviderID, verifierEnv, ok, err := s.tx.ConsumeByTransactionID(ctx, p.TransactionID, now)
+		if err != nil {
+			return "", domain.Account{}, fmt.Errorf("application: oauth: consume transaction by id: %w", err)
+		}
+		if !ok {
+			return "", domain.Account{}, ErrOAuthTransactionInvalid
+		}
+		if subtle.ConstantTimeCompare([]byte(rowProviderID), []byte(p.ProviderID)) != 1 {
+			return p.TransactionID, domain.Account{}, ErrOAuthTransactionInvalid
+		}
+
+		verifierIdentity := secrets.RecordIdentity{
+			Purpose:  oauthVerifierAADPurpose,
+			Provider: rowProviderID,
+			Account:  "",
+			Record:   p.TransactionID,
+			Kind:     oauthVerifierAADKind,
+		}
+		verifier, err := secrets.Decrypt(s.kr, verifierIdentity, verifierEnv)
+		if err != nil {
+			return p.TransactionID, domain.Account{}, fmt.Errorf("application: oauth: decrypt verifier: %w", err)
+		}
+		defer zeroBytes(verifier)
+
+		return s.completeAfterConsume(ctx, p, p.TransactionID, rowProviderID, verifier, now)
+	}
+
 	stateHash := HashOAuthState(p.RawState)
 
 	rowProviderID, rowTransactionID, verifierEnv, ok, err := s.tx.ConsumeByStateHash(ctx, stateHash, now)
@@ -271,21 +333,33 @@ func (s *OAuthEnrollmentService) Complete(ctx context.Context, p CompleteOAuthPa
 	}
 	defer zeroBytes(verifier)
 
+	return s.completeAfterConsume(ctx, p, rowTransactionID, rowProviderID, verifier, now)
+}
+
+// completeAfterConsume is the shared tail of Complete for BOTH the
+// state-hash path and the state-less (transaction-id) path: the row has
+// already been irreversibly consumed, the verifier has already been
+// decrypted (and will be zeroed by the caller's deferred zeroBytes),
+// and everything left — the adapter exchange, the existing-account /
+// reauthentication branch, and the new-account enrollment — is
+// identical regardless of how the row was looked up. transactionID is
+// the row's transaction id (used for reporting on every failure path).
+func (s *OAuthEnrollmentService) completeAfterConsume(ctx context.Context, p CompleteOAuthParams, transactionID, rowProviderID string, verifier []byte, now time.Time) (string, domain.Account, error) {
 	identity, storedCreds, err := p.Adapter.CompleteOAuth(ctx, p.Code, string(verifier), p.RedirectURI)
 	if err != nil {
 		switch {
 		case errors.Is(err, providers.ErrInvalidCredential):
-			return rowTransactionID, domain.Account{}, providers.ErrInvalidCredential
+			return transactionID, domain.Account{}, providers.ErrInvalidCredential
 		case errors.Is(err, providers.ErrProviderUnavailable):
-			return rowTransactionID, domain.Account{}, providers.ErrProviderUnavailable
+			return transactionID, domain.Account{}, providers.ErrProviderUnavailable
 		default:
-			return rowTransactionID, domain.Account{}, fmt.Errorf("application: oauth: adapter CompleteOAuth: %w", err)
+			return transactionID, domain.Account{}, fmt.Errorf("application: oauth: adapter CompleteOAuth: %w", err)
 		}
 	}
 
 	existingAccount, foundExisting, err := s.accounts.GetByProviderExternalID(ctx, rowProviderID, identity.ExternalID)
 	if err != nil {
-		return rowTransactionID, domain.Account{}, fmt.Errorf("application: oauth: check existing account: %w", err)
+		return transactionID, domain.Account{}, fmt.Errorf("application: oauth: check existing account: %w", err)
 	}
 
 	// A targeted reauthentication (POST .../accounts/{id}/reauth/begin,
@@ -294,7 +368,7 @@ func (s *OAuthEnrollmentService) Complete(ctx context.Context, p CompleteOAuthPa
 	// account at all, is rejected uniformly with
 	// ErrOAuthAccountIdentityMismatch and nothing is staged or swapped.
 	if p.ReauthAccountID != "" && (!foundExisting || existingAccount.ID != p.ReauthAccountID) {
-		return rowTransactionID, domain.Account{}, ErrOAuthAccountIdentityMismatch
+		return transactionID, domain.Account{}, ErrOAuthAccountIdentityMismatch
 	}
 
 	// An identity that resolves to an existing account — targeted or
@@ -305,9 +379,9 @@ func (s *OAuthEnrollmentService) Complete(ctx context.Context, p CompleteOAuthPa
 	if foundExisting {
 		updated, err := s.reauthenticate(ctx, existingAccount, rowProviderID, storedCreds, p, now)
 		if err != nil {
-			return rowTransactionID, domain.Account{}, err
+			return transactionID, domain.Account{}, err
 		}
-		return rowTransactionID, updated, nil
+		return transactionID, updated, nil
 	}
 
 	accountID := s.newID()
@@ -329,7 +403,7 @@ func (s *OAuthEnrollmentService) Complete(ctx context.Context, p CompleteOAuthPa
 
 	funding, err := s.firstFundingEvidence(p, identity, accountID, fundingID, now)
 	if err != nil {
-		return rowTransactionID, domain.Account{}, fmt.Errorf("application: oauth: stamp funding: %w", err)
+		return transactionID, domain.Account{}, fmt.Errorf("application: oauth: stamp funding: %w", err)
 	}
 
 	fingerprint := fingerprintCredentialKey(storedCreds.Value)
@@ -342,15 +416,15 @@ func (s *OAuthEnrollmentService) Complete(ctx context.Context, p CompleteOAuthPa
 	}
 	credEnv, err := secrets.Encrypt(s.kr, credIdentity, []byte(storedCreds.Value))
 	if err != nil {
-		return rowTransactionID, domain.Account{}, fmt.Errorf("application: oauth: encrypt credential: %w", err)
+		return transactionID, domain.Account{}, fmt.Errorf("application: oauth: encrypt credential: %w", err)
 	}
 	cred := domain.Credential{ID: credentialID, AccountID: accountID, Kind: domain.CredentialKindOAuth2, State: domain.CredentialActive, Fingerprint: fingerprint}
 
 	if err := s.enrollment.CreateConnectedAccount(ctx, newAccount, rowProviderID, cred, credEnv, funding); err != nil {
-		return rowTransactionID, domain.Account{}, fmt.Errorf("application: oauth: enrollment: %w", err)
+		return transactionID, domain.Account{}, fmt.Errorf("application: oauth: enrollment: %w", err)
 	}
 
-	return rowTransactionID, newAccount, nil
+	return transactionID, newAccount, nil
 }
 
 // firstFundingEvidence mirrors ConnectService.firstFundingEvidence for

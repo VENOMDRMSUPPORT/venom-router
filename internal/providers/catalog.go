@@ -239,6 +239,17 @@ func DerivedCapabilities(reg *Registry, id ProviderID) []string {
 	if _, ok := reg.IdentityAdapter(id); ok {
 		caps = append(caps, "identity")
 	}
+	if _, ok := reg.Definition(id); ok {
+		def, _ := reg.Definition(id)
+		if def.OAuth != nil {
+			if mc, ok := def.OAuth.(RequiresManualCode); ok && mc.RequiresManualCode() {
+				caps = append(caps, "manual_code")
+			}
+			if om, ok := def.OAuth.(OmitStateFromCallback); ok && om.OmitStateFromCallback() {
+				caps = append(caps, "omit_state_callback")
+			}
+		}
+	}
 
 	sort.Strings(caps)
 	return caps

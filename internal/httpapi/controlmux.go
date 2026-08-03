@@ -216,8 +216,21 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	)
 	oauthHandler := NewOAuthHandler(oauthService, reg, oauthTxRepo, accountRepo, allowedHost, audit)
 	mux.Handle("/api/control/v1/providers/{id}/oauth/begin", gated(oauthHandler.ServeBegin))
+	// GET /callback is the REGISTERED OAuth redirect target — the
+	// `{origin}/callback` shape every non-fixed-redirect provider's public
+	// client allows (legacy 2026-08-03). The handler resolves the provider
+	// from the `state` via the transaction row, so this one route serves
+	// claude-code, clinepass, and antigravity alike. The provider-specific
+	// path below is kept for the status/gating contract and direct
+	// navigation; the provider's redirect itself always targets /callback.
+	mux.Handle("/callback", networkGate(allowedHost, http.HandlerFunc(oauthHandler.ServeCallback)))
 	mux.Handle("/api/control/v1/oauth/{provider}/callback", networkGate(allowedHost, http.HandlerFunc(oauthHandler.ServeCallback)))
 	mux.Handle("/api/control/v1/oauth/{transaction_id}/status", networkGateJSON(allowedHost, http.HandlerFunc(oauthHandler.ServeStatus)))
+	// POST /oauth/complete is the manual-code completion leg for providers
+	// whose client never redirects back (providers.RequiresManualCode —
+	// claude-code's hosted code page). It is owner-session + CSRF gated like
+	// every mutating control route.
+	mux.Handle("/api/control/v1/oauth/complete", gated(oauthHandler.ServeCompleteCode))
 	mux.Handle("/api/control/v1/accounts/{id}/reauth/begin", gated(oauthHandler.ServeReauthBegin))
 
 	// API-key enrollment (P2b-CAPI-003): POST /providers/{id}/accounts,

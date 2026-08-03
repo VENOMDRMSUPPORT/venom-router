@@ -119,6 +119,96 @@ func (r *OAuthTransactionRepo) ConsumeByStateHash(ctx context.Context, stateHash
 	return providerID, transactionID, secrets.Envelope{KeyID: keyID, Nonce: nonce, Ciphertext: ciphertext}, true, nil
 }
 
+// ConsumeByTransactionID is the state-less sibling of
+// ConsumeByStateHash, for providers whose authorize redirect omits `state`
+// (see providers.OmitStateFromCallback). The callback then carries the
+// UNGUESSABLE transaction id (already this project's capability token for the
+// OAuth status endpoint) in the URL path, and consumption is keyed on it
+// instead of on the state hash. It is replay-safe in exactly the same way:
+// one storage-side transaction captures the pending row and marks it consumed
+// via a guarded UPDATE ... WHERE transaction_id = ? AND consumed = 0 whose
+// affected-row count must be exactly 1, so at most one concurrent caller can
+// ever win. The consumed-row's key_id/nonce/ciphertext are zeroed exactly as
+// ConsumeByStateHash does. ok is false — with the row untouched — for every
+// failure case uniformly: no such row, already consumed, or expired.
+func (r *OAuthTransactionRepo) ConsumeByTransactionID(ctx context.Context, transactionID string, now time.Time) (providerID string, verifierEnv secrets.Envelope, ok bool, err error) {
+	tx, err := r.db.Conn().BeginTx(ctx, nil)
+	if err != nil {
+		return "", secrets.Envelope{}, false, fmt.Errorf("storage: begin oauth consume tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once Commit has succeeded
+
+	var (
+		keyID          string
+		nonce, cipher  []byte
+		expiresAtEpoch int64
+		consumedFlag   int
+	)
+	scanErr := tx.QueryRowContext(ctx,
+		`SELECT provider_id, key_id, nonce, ciphertext, expires_at, consumed
+		 FROM oauth_transactions WHERE transaction_id = ?`,
+		transactionID,
+	).Scan(&providerID, &keyID, &nonce, &cipher, &expiresAtEpoch, &consumedFlag)
+	if errors.Is(scanErr, sql.ErrNoRows) {
+		return "", secrets.Envelope{}, false, nil
+	}
+	if scanErr != nil {
+		return "", secrets.Envelope{}, false, fmt.Errorf("storage: consume oauth transaction by id: select: %w", scanErr)
+	}
+
+	if consumedFlag != 0 || expiresAtEpoch <= now.Unix() {
+		return "", secrets.Envelope{}, false, nil
+	}
+
+	res, execErr := tx.ExecContext(ctx,
+		`UPDATE oauth_transactions SET consumed = 1, key_id = '', nonce = x'', ciphertext = x''
+		 WHERE transaction_id = ? AND consumed = 0`,
+		transactionID,
+	)
+	if execErr != nil {
+		return "", secrets.Envelope{}, false, fmt.Errorf("storage: consume oauth transaction by id: update: %w", execErr)
+	}
+	affected, raErr := res.RowsAffected()
+	if raErr != nil {
+		return "", secrets.Envelope{}, false, fmt.Errorf("storage: consume oauth transaction by id: rows affected: %w", raErr)
+	}
+	if affected != 1 {
+		// Defensive: with the SELECT's consumed=0 check just above and
+		// this package's single-connection/single-writer discipline, this
+		// should be unreachable — but the guard clause is the actual
+		// anti-replay invariant, not the preceding SELECT, so it is still
+		// checked and still fails closed if it ever changes.
+		return "", secrets.Envelope{}, false, nil
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", secrets.Envelope{}, false, fmt.Errorf("storage: consume oauth transaction by id: commit: %w", err)
+	}
+
+	return providerID, secrets.Envelope{KeyID: keyID, Nonce: nonce, Ciphertext: cipher}, true, nil
+}
+
+// ProviderIDByTransactionID is the transaction-id sibling of
+// ProviderIDByStateHash, for the state-less callback path
+// (providers.OmitStateFromCallback): the callback's `state` query
+// parameter carries the unguessable transaction id, and the provider is
+// resolved from the row's transaction_id column. It is read-only and
+// non-consuming — Complete's ConsumeByTransactionID remains the sole
+// authority on validity. ok is false if transactionID names no row.
+func (r *OAuthTransactionRepo) ProviderIDByTransactionID(ctx context.Context, transactionID string) (providerID string, ok bool, err error) {
+	scanErr := r.db.Conn().QueryRowContext(ctx,
+		`SELECT provider_id FROM oauth_transactions WHERE transaction_id = ?`,
+		transactionID,
+	).Scan(&providerID)
+	if errors.Is(scanErr, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if scanErr != nil {
+		return "", false, fmt.Errorf("storage: provider by oauth transaction id: %w", scanErr)
+	}
+	return providerID, true, nil
+}
+
 // PeekTransactionIDByStateHash is a read-only, non-consuming lookup of
 // the transaction_id for a still-pending row named by stateHash — used
 // only by httpapi's callback handler (P2b-PROV-008) to resolve, BEFORE
@@ -145,6 +235,29 @@ func (r *OAuthTransactionRepo) PeekTransactionIDByStateHash(ctx context.Context,
 		return "", false, fmt.Errorf("storage: peek oauth transaction by state hash: %w", scanErr)
 	}
 	return transactionID, true, nil
+}
+
+// ProviderIDByStateHash is a read-only, non-consuming lookup of the
+// provider_id for a row named by stateHash. It exists so the provider-
+// AGNOSTIC OAuth callback route (GET /callback, the redirect target the
+// claude-code/clinepass/antigravity clients have registered — the legacy
+// `{origin}/callback` shape) can resolve which provider a callback
+// belongs to from the `state` alone, before calling Complete. Like
+// PeekTransactionIDByStateHash, it performs no consume/update side effect
+// and does not itself check expiry — Complete's ConsumeByStateHash remains
+// the sole authority on validity. ok is false if stateHash names no row.
+func (r *OAuthTransactionRepo) ProviderIDByStateHash(ctx context.Context, stateHash string) (providerID string, ok bool, err error) {
+	scanErr := r.db.Conn().QueryRowContext(ctx,
+		`SELECT provider_id FROM oauth_transactions WHERE state_sha256 = ?`,
+		stateHash,
+	).Scan(&providerID)
+	if errors.Is(scanErr, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if scanErr != nil {
+		return "", false, fmt.Errorf("storage: peek oauth provider by state hash: %w", scanErr)
+	}
+	return providerID, true, nil
 }
 
 // GetStatusByTransactionID reads only consumed/expires_at for the row

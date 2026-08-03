@@ -13,7 +13,13 @@
 // module-level cache of any token or secret.
 
 import type { AccentName, DensityName, ThemeName } from "../theme-runtime";
-import { AuthApiError, isSessionExpired, request as sharedRequest, throwApiError, toApiError } from "./http";
+import {
+  AuthApiError,
+  isSessionExpired,
+  request as sharedRequest,
+  throwApiError,
+  toApiError,
+} from "./http";
 
 export { AuthApiError, isSessionExpired, toApiError };
 
@@ -140,7 +146,10 @@ export async function getSettings(): Promise<SettingsResponse> {
 /** PUT /settings — persists all five appearance fields (the server
  * validates each fail-closed and rejects a partial body). There is no
  * `version` field, so no `If-Match` is ever sent here. */
-export async function putSettings(next: SettingsResponse, csrfToken: string): Promise<SettingsResponse> {
+export async function putSettings(
+  next: SettingsResponse,
+  csrfToken: string,
+): Promise<SettingsResponse> {
   const body = await request<{ data: SettingsResponse }>("/settings", {
     method: "PUT",
     headers: { [CSRF_HEADER]: csrfToken },
@@ -206,7 +215,10 @@ export async function getFullSettings(): Promise<FullSettings> {
 /** PUT /settings — persists the appearance five plus whichever operational fields
  * the caller included. Typed error to expect: `validation_error` (400), whose
  * message NAMES the offending field. */
-export async function putFullSettings(next: SettingsUpdate, csrfToken: string): Promise<FullSettings> {
+export async function putFullSettings(
+  next: SettingsUpdate,
+  csrfToken: string,
+): Promise<FullSettings> {
   const body = await request<{ data: FullSettings }>("/settings", {
     method: "PUT",
     headers: { [CSRF_HEADER]: csrfToken },
@@ -242,7 +254,9 @@ export async function listProviders(): Promise<Provider[]> {
 
 /** GET /providers/{id} — a single catalog entry. */
 export async function getProvider(id: string): Promise<Provider> {
-  const body = await request<{ data: Provider }>(`/providers/${encodeURIComponent(id)}`, { method: "GET" });
+  const body = await request<{ data: Provider }>(`/providers/${encodeURIComponent(id)}`, {
+    method: "GET",
+  });
   return body.data;
 }
 
@@ -352,17 +366,19 @@ export async function listAccounts(params: ListAccountsParams = {}): Promise<Lis
   if (params.cursor) query.set("cursor", params.cursor);
   if (params.limit) query.set("limit", String(params.limit));
   const qs = query.toString();
-  const body = await request<{ data: { accounts: AccountProjection[] }; meta?: { next_cursor?: string } }>(
-    `/accounts${qs ? `?${qs}` : ""}`,
-    { method: "GET" },
-  );
+  const body = await request<{
+    data: { accounts: AccountProjection[] };
+    meta?: { next_cursor?: string };
+  }>(`/accounts${qs ? `?${qs}` : ""}`, { method: "GET" });
   return { accounts: body.data.accounts, nextCursor: body.meta?.next_cursor };
 }
 
 /** GET /accounts/{id} — the same projection for one account, including the
  * funding version token. */
 export async function getAccount(id: string): Promise<AccountProjection> {
-  const body = await request<{ data: AccountProjection }>(`/accounts/${encodeURIComponent(id)}`, { method: "GET" });
+  const body = await request<{ data: AccountProjection }>(`/accounts/${encodeURIComponent(id)}`, {
+    method: "GET",
+  });
   return body.data;
 }
 
@@ -401,11 +417,14 @@ export async function connectApiKeyAccount(
 ): Promise<ConnectedAccount> {
   const headers: Record<string, string> = { [CSRF_HEADER]: csrfToken };
   if (idempotencyKey) headers[IDEMPOTENCY_HEADER] = idempotencyKey;
-  const resp = await request<{ data: ConnectedAccount }>(`/providers/${encodeURIComponent(providerId)}/accounts`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+  const resp = await request<{ data: ConnectedAccount }>(
+    `/providers/${encodeURIComponent(providerId)}/accounts`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    },
+  );
   return resp.data;
 }
 
@@ -452,10 +471,24 @@ export async function revealCredential(accountId: string, csrfToken: string): Pr
     // This call bypasses the shared request helper (its success body is raw
     // plaintext), so it records its own debug event — method/path/status
     // only, exactly like every other call; the plaintext never gets near it.
-    recordDebugEvent({ at: Date.now(), method: "POST", path, status: "network_error", ok: false, durationMs: Date.now() - startedAt });
+    recordDebugEvent({
+      at: Date.now(),
+      method: "POST",
+      path,
+      status: "network_error",
+      ok: false,
+      durationMs: Date.now() - startedAt,
+    });
     throw err;
   }
-  recordDebugEvent({ at: Date.now(), method: "POST", path, status: response.status, ok: response.ok, durationMs: Date.now() - startedAt });
+  recordDebugEvent({
+    at: Date.now(),
+    method: "POST",
+    path,
+    status: response.status,
+    ok: response.ok,
+    durationMs: Date.now() - startedAt,
+  });
   if (!response.ok) {
     await throwApiError(response);
   }
@@ -473,23 +506,38 @@ export interface UpdateFundingBody {
 
 /** PUT /accounts/{id}/funding. Typed errors to expect: funding_locked
  * (409), precondition_failed (412), validation_error (400). */
-export async function updateFunding(accountId: string, body: UpdateFundingBody, csrfToken: string): Promise<AccountProjection> {
-  const resp = await request<{ data: AccountProjection }>(`/accounts/${encodeURIComponent(accountId)}/funding`, {
-    method: "PUT",
-    headers: { [CSRF_HEADER]: csrfToken },
-    body: JSON.stringify(body),
-  });
+export async function updateFunding(
+  accountId: string,
+  body: UpdateFundingBody,
+  csrfToken: string,
+): Promise<AccountProjection> {
+  const resp = await request<{ data: AccountProjection }>(
+    `/accounts/${encodeURIComponent(accountId)}/funding`,
+    {
+      method: "PUT",
+      headers: { [CSRF_HEADER]: csrfToken },
+      body: JSON.stringify(body),
+    },
+  );
   return resp.data;
 }
 
 // --- Lifecycle mutations (P2b-CAPI-004) ---
 
-async function postAccountAction(accountId: string, action: string, csrfToken: string, body?: unknown): Promise<AccountProjection> {
-  const resp = await request<{ data: AccountProjection }>(`/accounts/${encodeURIComponent(accountId)}/${action}`, {
-    method: "POST",
-    headers: { [CSRF_HEADER]: csrfToken },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+async function postAccountAction(
+  accountId: string,
+  action: string,
+  csrfToken: string,
+  body?: unknown,
+): Promise<AccountProjection> {
+  const resp = await request<{ data: AccountProjection }>(
+    `/accounts/${encodeURIComponent(accountId)}/${action}`,
+    {
+      method: "POST",
+      headers: { [CSRF_HEADER]: csrfToken },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    },
+  );
   return resp.data;
 }
 
@@ -519,11 +567,17 @@ export function refreshHealth(accountId: string, csrfToken: string): Promise<Acc
  * internal/httpapi/accounts.go's ServeDisconnect via the method-specific
  * "DELETE /api/control/v1/accounts/{id}" route in controlmux.go.
  */
-export async function disconnectAccount(accountId: string, csrfToken: string): Promise<AccountProjection> {
-  const resp = await request<{ data: AccountProjection }>(`/accounts/${encodeURIComponent(accountId)}`, {
-    method: "DELETE",
-    headers: { [CSRF_HEADER]: csrfToken },
-  });
+export async function disconnectAccount(
+  accountId: string,
+  csrfToken: string,
+): Promise<AccountProjection> {
+  const resp = await request<{ data: AccountProjection }>(
+    `/accounts/${encodeURIComponent(accountId)}`,
+    {
+      method: "DELETE",
+      headers: { [CSRF_HEADER]: csrfToken },
+    },
+  );
   return resp.data;
 }
 
@@ -547,7 +601,8 @@ export interface CertificationRead {
   certified_at: string | null;
   evidence_ref?: string;
   certified_and_supported: boolean;
-  probe_execution?: "pending" | "running" | "succeeded" | "inconclusive" | "retryable_failure" | "terminal_failure";
+  probe_execution?:
+    "pending" | "running" | "succeeded" | "inconclusive" | "retryable_failure" | "terminal_failure";
   review_reasons: string[];
 }
 
@@ -714,7 +769,10 @@ export interface AsyncJobHandle {
 
 /** POST /accounts/{id}/discover — triggers account-scoped catalog discovery
  * (202 + job). */
-export async function startDiscovery(accountId: string, csrfToken: string): Promise<AsyncJobHandle> {
+export async function startDiscovery(
+  accountId: string,
+  csrfToken: string,
+): Promise<AsyncJobHandle> {
   const resp = await request<{ data: AsyncJobHandle }>(
     `/accounts/${encodeURIComponent(accountId)}/discover`,
     { method: "POST", headers: { [CSRF_HEADER]: csrfToken } },
@@ -734,7 +792,10 @@ export interface QuotaRefreshHandle {
  * trigger is NOT a completed one). Typed errors to expect:
  * quota_unsupported (409, the provider has no quota adapter),
  * credential_unavailable (409), not_found (404). */
-export async function refreshQuota(accountId: string, csrfToken: string): Promise<QuotaRefreshHandle> {
+export async function refreshQuota(
+  accountId: string,
+  csrfToken: string,
+): Promise<QuotaRefreshHandle> {
   const resp = await request<{ data: QuotaRefreshHandle }>(
     `/accounts/${encodeURIComponent(accountId)}/quota`,
     { method: "POST", headers: { [CSRF_HEADER]: csrfToken } },
@@ -757,7 +818,10 @@ export interface ProviderSyncResult {
 /** POST /providers/{id}/sync — best-effort sync of every account under one
  * provider (health · plan · usage, as far as the server's registered
  * adapters go). Synchronous 200, no job. */
-export async function syncProvider(providerId: string, csrfToken: string): Promise<ProviderSyncResult> {
+export async function syncProvider(
+  providerId: string,
+  csrfToken: string,
+): Promise<ProviderSyncResult> {
   const resp = await request<{ data: ProviderSyncResult }>(
     `/providers/${encodeURIComponent(providerId)}/sync`,
     { method: "POST", headers: { [CSRF_HEADER]: csrfToken } },
@@ -886,7 +950,9 @@ export interface TierPolicy {
 /** GET /routing/policy — the three tier policies. Read-only: 05 §8.4 defers
  * owner weight tuning past V1, so there is no writer here or server-side. */
 export async function getRoutingPolicy(): Promise<TierPolicy[]> {
-  const body = await request<{ data: { tiers: TierPolicy[] } }>("/routing/policy", { method: "GET" });
+  const body = await request<{ data: { tiers: TierPolicy[] } }>("/routing/policy", {
+    method: "GET",
+  });
   return body.data?.tiers ?? [];
 }
 
@@ -1043,14 +1109,13 @@ export async function actOnReconciliation(
   action: ReconciliationAction,
   csrfToken: string,
 ): Promise<{ reservation_id: string; account_id: string; action: string }> {
-  const resp = await request<{ data: { reservation_id: string; account_id: string; action: string } }>(
-    `/diagnostics/reconciliation/${encodeURIComponent(reservationID)}`,
-    {
-      method: "POST",
-      headers: { [CSRF_HEADER]: csrfToken },
-      body: JSON.stringify({ action }),
-    },
-  );
+  const resp = await request<{
+    data: { reservation_id: string; account_id: string; action: string };
+  }>(`/diagnostics/reconciliation/${encodeURIComponent(reservationID)}`, {
+    method: "POST",
+    headers: { [CSRF_HEADER]: csrfToken },
+    body: JSON.stringify({ action }),
+  });
   return resp.data;
 }
 
@@ -1115,7 +1180,9 @@ export async function getUsage(params: UsageQueryParams = {}): Promise<UsageAggr
   if (params.to !== undefined) query.set("to", String(params.to));
   if (params.limit !== undefined) query.set("limit", String(params.limit));
   const qs = query.toString();
-  const body = await request<{ data: UsageAggregate }>(`/usage${qs ? `?${qs}` : ""}`, { method: "GET" });
+  const body = await request<{ data: UsageAggregate }>(`/usage${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+  });
   return body.data;
 }
 
@@ -1164,10 +1231,13 @@ export interface OAuthBeginResult {
 
 /** POST /providers/{id}/oauth/begin. */
 export async function oauthBegin(providerId: string, csrfToken: string): Promise<OAuthBeginResult> {
-  const resp = await request<{ data: OAuthBeginResult }>(`/providers/${encodeURIComponent(providerId)}/oauth/begin`, {
-    method: "POST",
-    headers: { [CSRF_HEADER]: csrfToken },
-  });
+  const resp = await request<{ data: OAuthBeginResult }>(
+    `/providers/${encodeURIComponent(providerId)}/oauth/begin`,
+    {
+      method: "POST",
+      headers: { [CSRF_HEADER]: csrfToken },
+    },
+  );
   return resp.data;
 }
 
@@ -1180,8 +1250,29 @@ export interface OAuthStatusResult {
 /** GET /oauth/{transaction_id}/status — network-gated only, no CSRF (the
  * transaction id itself is the unguessable capability token). */
 export async function pollOAuthStatus(transactionId: string): Promise<OAuthStatusResult> {
-  const resp = await request<{ data: OAuthStatusResult }>(`/oauth/${encodeURIComponent(transactionId)}/status`, {
-    method: "GET",
+  const resp = await request<{ data: OAuthStatusResult }>(
+    `/oauth/${encodeURIComponent(transactionId)}/status`,
+    {
+      method: "GET",
+    },
+  );
+  return resp.data;
+}
+
+/** POST /oauth/complete — the manual-code completion leg for providers whose
+ * client never redirects back (capability "manual_code"; claude-code's hosted
+ * code page). Owner-session + CSRF gated. code is the RAW pasted string from
+ * the provider's hosted page (claude-code shows `<auth_code>#<fragment>`; the
+ * fragment is the echoed state and is preserved verbatim). */
+export async function oauthCompleteCode(
+  transactionId: string,
+  code: string,
+  csrfToken: string,
+): Promise<OAuthStatusResult> {
+  const resp = await request<{ data: OAuthStatusResult }>("/oauth/complete", {
+    method: "POST",
+    headers: { [CSRF_HEADER]: csrfToken },
+    body: JSON.stringify({ transaction_id: transactionId, code }),
   });
   return resp.data;
 }
@@ -1225,7 +1316,10 @@ export async function listApiKeys(): Promise<ApiKeySummary[]> {
 }
 
 /** POST /keys — mints a key and returns its raw value ONCE. */
-export async function createApiKey(body: CreateApiKeyBody, csrfToken: string): Promise<ApiKeyCreated> {
+export async function createApiKey(
+  body: CreateApiKeyBody,
+  csrfToken: string,
+): Promise<ApiKeyCreated> {
   const resp = await request<{ data: ApiKeyCreated }>("/keys", {
     method: "POST",
     headers: { [CSRF_HEADER]: csrfToken },
