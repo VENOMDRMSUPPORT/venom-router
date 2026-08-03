@@ -467,6 +467,20 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		release()
 		return nil, fmt.Errorf("app: build scheduler workers: %w", err)
 	}
+	// The opencode-zen model-usability sweep (design 2026-08-03): executes the
+	// per-model chat-usability probe for chat offering-ops the drainer stranded
+	// in `probing`, so a free account's model count reflects models that
+	// actually work. Its own composition root, like BuildSchedulerWorkers.
+	usabilityRun, err := httpapi.BuildUsabilityTick(db, kr, time.Now)
+	if err != nil {
+		_ = httpServer.Close()
+		if dataHTTP != nil {
+			_ = dataHTTP.Close()
+		}
+		closeDB()
+		release()
+		return nil, fmt.Errorf("app: build usability tick: %w", err)
+	}
 	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
 	scheduler := NewScheduler(cfg.SchedulerInterval, logger,
 		SchedulerTick{Name: "quota_reconcile", Run: func(ctx context.Context) error { _, err := quotaWorkers.ReconcileTick(ctx); return err }},
@@ -474,6 +488,7 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		SchedulerTick{Name: "probe_drain", Run: func(ctx context.Context) error { _, err := probeWorkers.DrainTick(ctx); return err }},
 		SchedulerTick{Name: "probe_recertify", Run: func(ctx context.Context) error { _, err := probeWorkers.RecertifyTick(ctx); return err }},
 		SchedulerTick{Name: "probe_reclaim", Run: func(ctx context.Context) error { _, err := probeWorkers.ReclaimTick(ctx); return err }},
+		SchedulerTick{Name: "opencode_zen_usability", Run: usabilityRun},
 	)
 	logger.Info("background scheduler started", observability.String("interval", scheduler.interval.String()))
 	scheduler.Start(schedulerCtx)
