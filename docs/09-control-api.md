@@ -71,7 +71,7 @@ plane. The public inference API (`/v1/*`) is out of scope for this doc (it is Op
 | Enrollment (API key) | `POST /providers/{id}/accounts` | Create an API-key account (authentic validation). |
 | Enrollment (custom) | `POST /providers/custom/accounts` | Create a Custom OpenAI-Compatible account. |
 | Enrollment (OAuth) | `POST /providers/{id}/oauth/begin` | Begin an OAuth transaction (PKCE); returns authorize URL + `transaction_id`. |
-| Enrollment (OAuth) | `GET /oauth/{provider}/callback` | OAuth redirect target (or fixed-port listener). |
+| Enrollment (OAuth) | `GET /callback` (hosted-code: `POST /oauth/complete`) | OAuth redirect target (or fixed-port listener; hosted-code providers never redirect back). |
 | Enrollment (OAuth) | `GET /oauth/{transaction_id}/status` | Poll an OAuth transaction. |
 | Reauthentication | `POST /accounts/{id}/reauth/begin` | Begin same-identity OAuth reauth (staged credential). |
 | Accounts | `GET /accounts` / `GET /accounts/{id}` | List / read accounts (multi-axis status projection). |

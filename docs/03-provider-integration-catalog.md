@@ -124,11 +124,22 @@ auth error as invalid; 429/5xx = provider-unavailable (retryable), **not** inval
    10-minute expiry. No session cookie reference is stored — the callback uses state-based
    lookup, not session binding. Adapter builds the authorize URL.
 2. **Browser** — navigate the owner to the authorize URL (`_self`).
-3. **Callback** — `GET /api/control/v1/oauth/{provider}/callback?code&state` for the main bind,
-   or the fixed-port listener for providers with a fixed redirect URI (see [01 §6](01-architecture.md#6-http-surfaces)).
-   The fixed-port callback **never depends on a session cookie** — it uses the state hash
-   to locate the transaction, executes the exchange, and stores the result for the originating
-   caller to retrieve via polling `GET /api/control/v1/oauth/{transaction_id}/status`.
+3. **Callback** — the redirect target depends on the provider's registered client:
+   - **Hosted-code providers** (claude-code): the client's ONLY registered redirect_uri is
+     Anthropic's hosted page (`https://platform.claude.com/oauth/code/callback`); the browser
+     NEVER returns to Venom. The owner copies the code the page displays (format
+     `<auth_code>#<fragment>`, where the fragment echoes the `state`) and pastes it into the
+     dashboard, which submits it to `POST /api/control/v1/oauth/complete` (owner-session +
+     CSRF gated; transaction resolved by id).
+   - **Redirect-back providers** (clinepass, antigravity): `GET /callback?code&state` on the main
+     bind — the registered `{origin}/callback` shape. The provider is resolved from the
+     transaction's stored slug (or from the legacy provider-specific path
+     `GET /api/control/v1/oauth/{provider}/callback`), never from an unvalidated client value.
+   - **Fixed-redirect providers** (codex, xAI): the fixed-port listener (see [01 §6](01-architecture.md#6-http-surfaces)).
+   The callback **never depends on a session cookie** — it uses the state hash (or the
+   unguessable transaction id for state-omitting providers) to locate the transaction, executes
+   the exchange, and stores the result for the originating caller to retrieve via polling
+   `GET /api/control/v1/oauth/{transaction_id}/status`.
 4. **Complete (one transaction)** — look up the pending tx by `sha256(state)`; constant-time
    verify provider; check not expired; decrypt the verifier; mark consumed and
    null the verifier fields; commit. Only *after* commit exchange the code for tokens, then
