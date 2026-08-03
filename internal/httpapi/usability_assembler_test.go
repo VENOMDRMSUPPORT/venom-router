@@ -23,6 +23,15 @@ func (f fakeOfferingLister) ListChatOfferingsToVerify(context.Context, string) (
 	return f.rows, f.err
 }
 
+type fakeDeclaredLister struct {
+	rows []storage.NonChatOperationToCertify
+	err  error
+}
+
+func (f fakeDeclaredLister) ListNonChatOperationsToCertify(context.Context, string) ([]storage.NonChatOperationToCertify, error) {
+	return f.rows, f.err
+}
+
 type fakeLeaser struct {
 	key    string
 	err    error
@@ -60,6 +69,38 @@ func TestUsabilityVerifier_LeasesAndRunsWhenThereIsWork(t *testing.T) {
 	}
 	if got.Probed != 2 || got.Usable != 2 {
 		t.Fatalf("summary = %+v, want Probed 2 Usable 2", got)
+	}
+	if len(lc.records) != 2 {
+		t.Fatalf("recorded %d attempts, want 2", len(lc.records))
+	}
+}
+
+func TestUsabilityVerifier_CertifiesDeclaredCapabilitiesWithoutLeasing(t *testing.T) {
+	lc := &fakeCertLifecycle{}
+	leaser := &fakeLeaser{key: "unused"}
+	v := &usabilityVerifier{
+		offerings: fakeOfferingLister{rows: nil}, // no chat runtime work
+		declared: fakeDeclaredLister{rows: []storage.NonChatOperationToCertify{
+			{OfferingOperationID: "op-tools", Operation: "tools"},
+			{OfferingOperationID: "op-vision", Operation: "vision"},
+		}},
+		creds:   leaser,
+		driver:  lc,
+		probe:   probeByModel(nil),
+		baseURL: "http://x",
+	}
+
+	got, err := v.verifyAccount(context.Background(), "acct-1", "cred-1")
+	if err != nil {
+		t.Fatalf("verifyAccount() error = %v", err)
+	}
+	// Declaration-certification runs a live probe for NOTHING, so it must never
+	// decrypt the credential — even though there is real (declared) work.
+	if leaser.called {
+		t.Fatal("credential was leased to certify declared capabilities")
+	}
+	if got.CertifiedDeclared != 2 {
+		t.Fatalf("CertifiedDeclared = %d, want 2", got.CertifiedDeclared)
 	}
 	if len(lc.records) != 2 {
 		t.Fatalf("recorded %d attempts, want 2", len(lc.records))

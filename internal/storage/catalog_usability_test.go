@@ -48,3 +48,49 @@ func TestCatalogRepo_ListChatOfferingsToVerify_ProbingChatOpsOnly(t *testing.T) 
 		t.Fatalf("returned %+v, want op-probing-chat/big-pickle", got[0])
 	}
 }
+
+// TestCatalogRepo_ListNonChatOperationsToCertify_ProbingNonChatOpsOnly proves
+// the declaration-certification lister returns exactly the account's NON-chat
+// offering-operations stranded in `probing` — never chat (that has its own
+// runtime prober), never an `observed` op (drainer's job), never a terminal
+// row, and never another account's rows.
+func TestCatalogRepo_ListNonChatOperationsToCertify_ProbingNonChatOpsOnly(t *testing.T) {
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-1")
+	insertAccount(t, db, "acct-1", "prov-1")
+	insertAccount(t, db, "acct-2", "prov-1")
+	insertModelFull(t, db, "model-free", "ck-free", "Free Model", nil, nil, nil)
+	insertModelFull(t, db, "model-two", "ck-two", "Second Model", nil, nil, nil)
+
+	insertOfferingFull(t, db, "acct-1", "prov-1", "big-pickle", "model-free", nil, nil, nil, nil, nil, 0, 0)
+	insertOfferingFull(t, db, "acct-1", "prov-1", "mimo-free", "model-two", nil, nil, nil, nil, nil, 0, 0)
+	insertOfferingFull(t, db, "acct-2", "prov-1", "big-pickle", "model-free", nil, nil, nil, nil, nil, 0, 0)
+
+	// MUST be returned: non-chat ops stranded in probing.
+	insertOfferingOperationFull(t, db, "op-tools", "acct-1", "prov-1", "big-pickle", "tools", "probing", "unknown", 0, nil, "")
+	insertOfferingOperationFull(t, db, "op-vision", "acct-1", "prov-1", "mimo-free", "vision", "probing", "unknown", 0, nil, "")
+	// Excluded: a chat op in probing (that is the runtime prober's job, not declaration).
+	insertOfferingOperationFull(t, db, "op-chat", "acct-1", "prov-1", "big-pickle", "chat", "probing", "unknown", 0, nil, "")
+	// Excluded: an observed non-chat op — the drainer moves it to probing first.
+	insertOfferingOperationFull(t, db, "op-observed-tools", "acct-1", "prov-1", "mimo-free", "tools", "observed", "unknown", 0, nil, "")
+	// Excluded: a non-chat op already certified.
+	insertOfferingOperationFull(t, db, "op-certified-vision", "acct-1", "prov-1", "big-pickle", "vision", "certified", "supported", 1, nil, "")
+	// Excluded: another account's probing non-chat op.
+	insertOfferingOperationFull(t, db, "op-other-account", "acct-2", "prov-1", "big-pickle", "tools", "probing", "unknown", 0, nil, "")
+
+	repo := NewCatalogRepo(db)
+	got, err := repo.ListNonChatOperationsToCertify(context.Background(), "acct-1")
+	if err != nil {
+		t.Fatalf("ListNonChatOperationsToCertify() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("returned %d ops, want 2; got %+v", len(got), got)
+	}
+	seen := map[string]string{}
+	for _, v := range got {
+		seen[v.OfferingOperationID] = v.Operation
+	}
+	if seen["op-tools"] != "tools" || seen["op-vision"] != "vision" {
+		t.Fatalf("returned %+v, want op-tools/tools + op-vision/vision", got)
+	}
+}

@@ -36,6 +36,34 @@ func probeByModel(m map[string]zenChatUsability) usabilityProbeFn {
 	}
 }
 
+func TestCertifyDeclaredCapabilities_RecordsDefinitiveSupportedForEach(t *testing.T) {
+	lc := &fakeCertLifecycle{}
+	caps := []declaredCapability{
+		{OfferingOperationID: "op-tools", Operation: "tools"},
+		{OfferingOperationID: "op-vision", Operation: "vision"},
+	}
+
+	got := certifyDeclaredCapabilities(context.Background(), lc, caps)
+
+	if got != 2 {
+		t.Fatalf("certified %d, want 2", got)
+	}
+	if len(lc.records) != 2 {
+		t.Fatalf("recorded %d attempts, want 2", len(lc.records))
+	}
+	// Each non-chat capability is certified FROM DECLARATION: a definitive,
+	// capability_confirmed "supported" verdict — the edge that drives
+	// probing -> certified carrying TruthSupported.
+	for _, r := range lc.records {
+		if !r.outcome.Definitive || r.outcome.Truth != models.TruthSupported {
+			t.Fatalf("op %s recorded %+v, want Definitive supported", r.op, r.outcome)
+		}
+		if r.outcome.Reason != intelligence.ReasonCapabilityConfirmed {
+			t.Fatalf("op %s reason = %q, want capability_confirmed", r.op, r.outcome.Reason)
+		}
+	}
+}
+
 func TestVerifyAccountChatUsability_ProbesEveryOfferingAndCountsUsable(t *testing.T) {
 	lc := &fakeCertLifecycle{}
 	offerings := []chatOffering{

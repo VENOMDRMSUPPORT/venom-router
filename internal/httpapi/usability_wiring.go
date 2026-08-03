@@ -49,8 +49,10 @@ func BuildUsabilityTick(db *storage.DB, kr *secrets.Keyring, now func() time.Tim
 	credentialRepo := storage.NewAccountCredentialRepo(db)
 	accountRepo := storage.NewAccountRepo(db)
 
+	catalogRepo := storage.NewCatalogRepo(db)
 	verifier := &usabilityVerifier{
-		offerings: storage.NewCatalogRepo(db),
+		offerings: catalogRepo,
+		declared:  catalogRepo,
 		creds:     application.NewCredentialService(credentialRepo, kr, nil),
 		driver:    driver,
 		probe:     probeOpenCodeZenChatUsability,

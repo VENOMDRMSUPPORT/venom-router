@@ -272,6 +272,51 @@ func (r *CatalogRepo) ListChatOfferingsToVerify(ctx context.Context, accountID s
 	return out, nil
 }
 
+// NonChatOperationToCertify is one declared non-chat capability (tools, vision,
+// …) awaiting certification-from-declaration.
+type NonChatOperationToCertify struct {
+	OfferingOperationID string
+	Operation           string
+}
+
+// ListNonChatOperationsToCertify returns the account's NON-chat offering-
+// operations whose certification is in `probing`. Unlike chat — which the
+// usability sweep verifies with a live runtime probe — these capabilities have
+// no runtime prober, so the drainer strands them in `probing` forever, which is
+// what makes every model read as "needs review". Their very existence as an
+// offering-operation IS the provider's declaration (discovery only creates a
+// tools/vision op when models.dev declares tool_call / image input), so the
+// sweep certifies them supported FROM THAT DECLARATION. Same `probing`-only
+// contract as ListChatOfferingsToVerify: `observed` is left to the drainer, and
+// already-certified/suspended/expired rows and other accounts are excluded.
+func (r *CatalogRepo) ListNonChatOperationsToCertify(ctx context.Context, accountID string) ([]NonChatOperationToCertify, error) {
+	rows, err := r.db.Conn().QueryContext(ctx,
+		`SELECT oo.id, oo.operation
+		 FROM offering_operations oo
+		 JOIN certifications c ON c.offering_operation_id = oo.id
+		 WHERE oo.account_id = ? AND oo.operation != 'chat' AND c.status = 'probing'
+		 ORDER BY oo.provider_model_id ASC, oo.operation ASC`,
+		accountID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("storage: list non-chat operations to certify for %q: %w", accountID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []NonChatOperationToCertify
+	for rows.Next() {
+		var v NonChatOperationToCertify
+		if err := rows.Scan(&v.OfferingOperationID, &v.Operation); err != nil {
+			return nil, fmt.Errorf("storage: list non-chat operations to certify for %q: scan: %w", accountID, err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: list non-chat operations to certify for %q: %w", accountID, err)
+	}
+	return out, nil
+}
+
 // catalogRowScanner is the shared shape of *sql.Row's and *sql.Rows' Scan
 // method (mirrors storage.scanner in accounts.go).
 type catalogRowScanner interface {

@@ -12,6 +12,13 @@ type freeChatOfferingLister interface {
 	ListChatOfferingsToVerify(ctx context.Context, accountID string) ([]storage.ChatOfferingToVerify, error)
 }
 
+// declaredCapabilityLister reads the account's declared NON-chat capabilities
+// stranded in `probing` (tools, vision, …) so the run can certify them from
+// their declaration: *storage.CatalogRepo satisfies it.
+type declaredCapabilityLister interface {
+	ListNonChatOperationsToCertify(ctx context.Context, accountID string) ([]storage.NonChatOperationToCertify, error)
+}
+
 // credentialLeaser is the decrypt-once lease the probe needs to obtain the
 // account key: the real CredentialService.Use satisfies it. The plaintext lives
 // only inside the callback (the lease zeroes it on return), so the probe runs
@@ -25,6 +32,7 @@ type credentialLeaser interface {
 // and run verifyAccountChatUsability with the leased key.
 type usabilityVerifier struct {
 	offerings freeChatOfferingLister
+	declared  declaredCapabilityLister
 	creds     credentialLeaser
 	driver    certRecorder
 	probe     usabilityProbeFn
@@ -37,12 +45,37 @@ type usabilityVerifier struct {
 // surfaced before any lease; a lease error is surfaced too. The probe itself
 // runs inside the lease callback, so the plaintext key never outlives it.
 func (v *usabilityVerifier) verifyAccount(ctx context.Context, accountID, credentialID string) (usabilityRunSummary, error) {
+	var summary usabilityRunSummary
+
+	// 1) Certify declared NON-chat capabilities (tools, vision, …) from their
+	// declaration. These have no runtime prober, so no credential is leased —
+	// the offering-operation's existence is the models.dev declaration, and that
+	// is the evidence. Done first so an account with only declared capabilities
+	// (no chat rows left to probe) is still certified rather than short-circuited.
+	if v.declared != nil {
+		declaredRows, err := v.declared.ListNonChatOperationsToCertify(ctx, accountID)
+		if err != nil {
+			return usabilityRunSummary{}, err
+		}
+		if len(declaredRows) > 0 {
+			caps := make([]declaredCapability, len(declaredRows))
+			for i, r := range declaredRows {
+				caps[i] = declaredCapability{OfferingOperationID: r.OfferingOperationID, Operation: r.Operation}
+			}
+			summary.CertifiedDeclared = certifyDeclaredCapabilities(ctx, v.driver, caps)
+		}
+	}
+
+	// 2) Verify chat with a LIVE runtime probe (04 §5): the credential is leased
+	// only when there is at least one chat offering to probe — an account with
+	// nothing observed never triggers a decrypt. The probe runs inside the lease
+	// callback, so the plaintext key never outlives it.
 	rows, err := v.offerings.ListChatOfferingsToVerify(ctx, accountID)
 	if err != nil {
 		return usabilityRunSummary{}, err
 	}
 	if len(rows) == 0 {
-		return usabilityRunSummary{}, nil
+		return summary, nil
 	}
 
 	offerings := make([]chatOffering, len(rows))
@@ -50,9 +83,11 @@ func (v *usabilityVerifier) verifyAccount(ctx context.Context, accountID, creden
 		offerings[i] = chatOffering{OfferingOperationID: r.OfferingOperationID, ProviderModelID: r.ProviderModelID}
 	}
 
-	var summary usabilityRunSummary
 	if err := v.creds.Use(ctx, credentialID, func(key []byte) error {
-		summary = verifyAccountChatUsability(ctx, v.driver, v.probe, v.baseURL, string(key), offerings)
+		chat := verifyAccountChatUsability(ctx, v.driver, v.probe, v.baseURL, string(key), offerings)
+		summary.Probed = chat.Probed
+		summary.Usable = chat.Usable
+		summary.StoppedOnAuth = chat.StoppedOnAuth
 		return nil
 	}); err != nil {
 		return usabilityRunSummary{}, err
