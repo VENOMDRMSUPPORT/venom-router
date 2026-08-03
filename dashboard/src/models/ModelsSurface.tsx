@@ -76,10 +76,22 @@ function capabilityRoutability(capability: OfferingCapability): {
   };
 }
 
-/** True when any of this offering's capabilities is not routable — the predicate
- * the review-backlog filter uses. */
+/** True when any of this offering's capabilities is not yet CERTIFIED as
+ * supported — the certification-review predicate, matching exactly what the
+ * review-census banner counts as `capability_not_certified` and what the
+ * backlog empty-state promises ("every offering-operation is certified and
+ * supported").
+ *
+ * Deliberately NOT full routability. End-to-end routability additionally
+ * requires the capability to be EFFECTIVE (native × provider × transport, 04
+ * §3), and this read model hardcodes native/transport as UNKNOWN this phase (no
+ * transport registry yet — see internal/httpapi/models.go), so `routable` is
+ * always false here. Keying "needs review" off routability therefore flagged
+ * EVERY model forever, contradicting the banner's own "nothing is waiting".
+ * Certification is the signal a human actually acts on; routability is shown
+ * per-capability in the expanded view for what it honestly is. */
 function offeringNeedsReview(o: EffectiveOffering): boolean {
-  return o.capabilities.some((c) => !capabilityRoutability(c).routable);
+  return o.capabilities.some((c) => !(c.state === "certified" && c.truth === "supported"));
 }
 
 function groupNeedsReview(g: ModelGroup): boolean {

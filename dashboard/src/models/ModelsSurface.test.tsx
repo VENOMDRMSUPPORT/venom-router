@@ -598,6 +598,32 @@ describe("ModelsSurface — review-queue banner integration (P6-UI-012)", () => 
     screen.getByText("Backlog Model");
   });
 
+  it("does NOT flag a fully certified+supported model as needing review, even when routable is false", async () => {
+    // The real /models read model hardcodes transport/native effectiveness as
+    // UNKNOWN this phase, so `routable` comes back false for EVERY capability.
+    // "Needs review" must key off certification (what the banner counts), not
+    // routability — otherwise every model reads "Needs review" forever.
+    mockModels([
+      group({
+        model_id: "model-certified",
+        display_name: "Certified Model",
+        offerings: [
+          offering({
+            provider_model_id: "cert-1",
+            capabilities: [
+              capability({ operation: "chat", state: "certified", truth: "supported", routable: false }),
+              capability({ operation: "tools", state: "certified", truth: "supported", routable: false }),
+            ],
+          }),
+        ],
+      }),
+    ]);
+    renderSurface();
+
+    await screen.findByText("Certified Model");
+    expect(screen.queryByText(/needs review/i)).toBeNull();
+  });
+
   it("shows the review banner's count grouped by reason", async () => {
     mockModels([group()], {
       [CENSUS_URL]: () =>
