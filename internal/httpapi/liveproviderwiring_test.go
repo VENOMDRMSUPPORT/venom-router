@@ -43,7 +43,7 @@ func liveAPIKeyRegistry(t *testing.T) *providers.Registry {
 // point.
 func TestLiveProviderWiring_EveryAPIKeyCatalogEntryIsWired(t *testing.T) {
 	reg := liveAPIKeyRegistry(t)
-	impls := liveTransportImpls(&http.Client{})
+	impls := liveTransportImpls(&http.Client{}, reg)
 	bases := liveProviderBaseURLs()
 
 	apiKeyEntries := 0
@@ -83,7 +83,7 @@ func TestLiveProviderWiring_ProbeMapsResolveEveryLiveProvider(t *testing.T) {
 	reg := liveAPIKeyRegistry(t)
 	bases := liveProviderBaseURLs()
 
-	probeTransports, probeBaseURLs, err := BuildProbeTransportMaps(reg, liveTransportImpls(&http.Client{}), bases)
+	probeTransports, probeBaseURLs, err := BuildProbeTransportMaps(reg, liveTransportImpls(&http.Client{}, reg), bases)
 	if err != nil {
 		t.Fatalf("BuildProbeTransportMaps() error = %v, want every live provider to resolve", err)
 	}

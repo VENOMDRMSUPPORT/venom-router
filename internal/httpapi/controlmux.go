@@ -343,7 +343,7 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// with the request path. Resolution is by typed capability
 	// (Definition.Transport -> TransportType), never a slug switch.
 	probeHTTPClient := &http.Client{Timeout: execution.DefaultOpenAICompatibleTimeout}
-	probeImpls := liveTransportImpls(probeHTTPClient)
+	probeImpls := liveTransportImpls(probeHTTPClient, reg)
 	probeTransports := make(map[string]execution.InferenceTransport)
 	probeBaseURLs := make(map[string]string)
 	for id, base := range liveProviderBaseURLs() {

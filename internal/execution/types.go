@@ -36,6 +36,13 @@ type ResolvedRoute struct {
 	Credential StoredCredentials
 	ModelID    string
 	BaseURL    string // resolved by Venom before dispatch
+	// WireSchema selects the wire PROTOCOL a native_oauth route speaks
+	// (P7-EXEC-001 part 2). It is stamped from the provider's catalog
+	// Definition before dispatch (never inferred from the model id or the
+	// provider slug); transports other than native_oauth ignore it. An empty
+	// WireSchema on a native_oauth route is a fail-closed error inside the
+	// transport, never a default.
+	WireSchema WireSchema
 }
 
 // Operation identifies a kind of inference capability (01 §4.1's

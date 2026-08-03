@@ -20,6 +20,7 @@ func newNativeOAuthTestRoute(baseURL string) ResolvedRoute {
 		Credential: StoredCredentials{Value: "ya29.canary-access-token"},
 		ModelID:    "gemini-1.5-pro",
 		BaseURL:    baseURL,
+		WireSchema: WireSchemaGoogleGenerateContent,
 	}
 }
 

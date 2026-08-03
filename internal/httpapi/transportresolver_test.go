@@ -38,6 +38,80 @@ func TestTransportKindVocabularySyncWithTransportType(t *testing.T) {
 	}
 }
 
+// TestWireSchemaVocabularySync proves providers.WireSchema and
+// execution.WireSchema carry byte-identical string values (P7-EXEC-001 part 2).
+// The two are duplicated across packages (providers may never import
+// execution); this is the guard the schemaStampingTransport's string cast
+// relies on.
+func TestWireSchemaVocabularySync(t *testing.T) {
+	pairs := []struct {
+		p providers.WireSchema
+		e execution.WireSchema
+	}{
+		{providers.WireSchemaGoogleGenerateContent, execution.WireSchemaGoogleGenerateContent},
+		{providers.WireSchemaAnthropicMessages, execution.WireSchemaAnthropicMessages},
+		{providers.WireSchemaOpenAIChat, execution.WireSchemaOpenAIChat},
+	}
+	for _, p := range pairs {
+		if string(p.p) != string(p.e) {
+			t.Errorf("wire-schema drift: providers %q vs execution %q — must be identical", p.p, p.e)
+		}
+	}
+}
+
+// TestSchemaStampingTransport_StampsFromRegistry is mutation row 7: the
+// decorator fills route.WireSchema from the provider's REGISTRY Definition, not
+// a literal. A provider registered as anthropic_messages must reach the wire at
+// /v1/messages; if the stamp used a literal (e.g. google) it would hit
+// :generateContent instead. This asserts over the PRODUCTION decorator, and the
+// route handed in carries NO schema (proving the decorator supplied it).
+func TestSchemaStampingTransport_StampsFromRegistry(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	reg := providers.NewRegistry()
+	if err := reg.Register(providers.Definition{
+		ID:         "p-anthropic",
+		AuthMode:   providers.AuthModeOAuth,
+		Transport:  providers.TransportKindNativeOAuth,
+		WireSchema: providers.WireSchemaAnthropicMessages,
+		OAuth:      resolverFakeOAuthAdapter{},
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	stamped := newSchemaStampingTransport(reg, execution.NewNativeOAuthTransport(&http.Client{}, 5*time.Second))
+	// Route carries NO WireSchema — the decorator must supply it from the registry.
+	_, err := stamped.Execute(context.Background(), execution.ResolvedRoute{
+		Provider: "p-anthropic", ModelID: "claude-x", BaseURL: srv.URL,
+		Credential: execution.StoredCredentials{Value: "tok"},
+	}, execution.NormalizedRequest{Operation: execution.OperationChat, Messages: []execution.Message{{Role: "user", Content: "hi"}}})
+	if err != nil {
+		t.Fatalf("Execute error = %v", err)
+	}
+	if gotPath != "/v1/messages" {
+		t.Fatalf("request path = %q, want /v1/messages (anthropic schema resolved from the registry)", gotPath)
+	}
+}
+
+// resolverFakeOAuthAdapter is a no-op OAuthAdapter for wiring tests.
+type resolverFakeOAuthAdapter struct{}
+
+func (resolverFakeOAuthAdapter) BeginOAuth(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+func (resolverFakeOAuthAdapter) CompleteOAuth(context.Context, string, string, string) (providers.IdentityResult, providers.StoredCredentials, error) {
+	return providers.IdentityResult{}, providers.StoredCredentials{}, nil
+}
+func (resolverFakeOAuthAdapter) RefreshCredentials(context.Context, providers.StoredCredentials) (providers.StoredCredentials, error) {
+	return providers.StoredCredentials{}, nil
+}
+
 // stubInferenceTransport satisfies execution.InferenceTransport for wiring in
 // resolver tests; none of its methods should be called (this stub is only used
 // to prove that BuildProbeTransportMaps places the correct instance in the output maps).
@@ -78,11 +152,18 @@ func (resolverFakeAPIKeyAdapter) ConnectAPIKey(_ context.Context, _ string) (pro
 // helper that must only be called from test functions.
 func registerTestProvider(t *testing.T, reg *providers.Registry, id providers.ProviderID, kind providers.TransportKind) {
 	t.Helper()
+	// native_oauth now requires a declared WireSchema (P7-EXEC-001 part 2);
+	// any other transport must leave it empty.
+	var schema providers.WireSchema
+	if kind == providers.TransportKindNativeOAuth {
+		schema = providers.WireSchemaGoogleGenerateContent
+	}
 	err := reg.Register(providers.Definition{
-		ID:        id,
-		AuthMode:  providers.AuthModeAPIKey,
-		Transport: kind,
-		APIKey:    resolverFakeAPIKeyAdapter{},
+		ID:         id,
+		AuthMode:   providers.AuthModeAPIKey,
+		Transport:  kind,
+		WireSchema: schema,
+		APIKey:     resolverFakeAPIKeyAdapter{},
 	})
 	if err != nil {
 		t.Fatalf("Register(%q): %v", id, err)
@@ -285,6 +366,7 @@ func TestBuildInferenceDispatcher_DispatchesByCatalogDeclaredType(t *testing.T) 
 	if _, err := d.Execute(context.Background(), execution.ResolvedRoute{
 		Provider: "p-anti", ModelID: "m2", BaseURL: geminiSrv.URL,
 		Credential: execution.StoredCredentials{Value: "tok"},
+		WireSchema: execution.WireSchemaGoogleGenerateContent,
 	}, req); err != nil {
 		t.Fatalf("Execute(p-anti) error = %v, want nil", err)
 	}

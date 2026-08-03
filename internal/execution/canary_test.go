@@ -98,7 +98,7 @@ func TestSecretCanary_NativeOAuth(t *testing.T) {
 
 	transport := NewNativeOAuthTransport(&http.Client{}, 5*time.Second)
 	route := ResolvedRoute{Provider: "p", AccountID: "a", ModelID: "m", BaseURL: srv.URL,
-		Credential: StoredCredentials{Value: "ya29.live-token"}}
+		Credential: StoredCredentials{Value: "ya29.live-token"}, WireSchema: WireSchemaGoogleGenerateContent}
 	_, err := transport.Execute(t.Context(), route, NormalizedRequest{
 		Operation: OperationChat, Messages: []Message{{Role: "user", Content: "hi"}},
 	})

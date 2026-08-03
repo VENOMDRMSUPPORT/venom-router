@@ -29,10 +29,14 @@ const usageWriteTimeout = 5 * time.Second
 // probe path are composed from this single table, so a provider whose catalog
 // entry declares a transport kind can never resolve on one path and fail on the
 // other.
-func liveTransportImpls(client *http.Client) map[execution.TransportType]execution.InferenceTransport {
+// reg is needed so the native_oauth transport can be wrapped in the
+// schema-stamping decorator (P7-EXEC-001 part 2): that transport serves several
+// wire schemas, and which one a route speaks is a catalog-declared value read
+// from the registry, never a literal. Every other transport is unwrapped.
+func liveTransportImpls(client *http.Client, reg *providers.Registry) map[execution.TransportType]execution.InferenceTransport {
 	return map[execution.TransportType]execution.InferenceTransport{
 		execution.TransportTypeOpenAICompatible: execution.NewOpenAICompatibleTransport(client, 0),
-		execution.TransportTypeNativeOAuth:      execution.NewNativeOAuthTransport(client, 0),
+		execution.TransportTypeNativeOAuth:      newSchemaStampingTransport(reg, execution.NewNativeOAuthTransport(client, 0)),
 		execution.TransportTypeNativeAPI:        execution.NewNativeAPITransport(client, 0),
 	}
 }
@@ -74,7 +78,7 @@ func liveProviderBaseURLs() map[providers.ProviderID]string {
 // fails closed at dispatch.
 func buildChatCompletionsHandler(db *storage.DB, kr *secrets.Keyring, reg *providers.Registry) *ChatCompletionsHandler {
 	httpClient := &http.Client{Timeout: execution.DefaultOpenAICompatibleTimeout}
-	impls := liveTransportImpls(httpClient)
+	impls := liveTransportImpls(httpClient, reg)
 	baseURLs := make(map[string]string, len(liveProviderBaseURLs()))
 	for id, base := range liveProviderBaseURLs() {
 		baseURLs[string(id)] = base

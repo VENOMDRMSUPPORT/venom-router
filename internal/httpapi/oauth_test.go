@@ -63,7 +63,7 @@ func newTestOAuthHandler(t *testing.T, providerID string, adapter providers.OAut
 	}
 
 	reg := providers.NewRegistry()
-	if err := reg.Register(providers.Definition{ID: providers.ProviderID(providerID), AuthMode: providers.AuthModeOAuth, Transport: providers.TransportKindNativeOAuth, OAuth: adapter}); err != nil {
+	if err := reg.Register(providers.Definition{ID: providers.ProviderID(providerID), AuthMode: providers.AuthModeOAuth, Transport: providers.TransportKindNativeOAuth, WireSchema: providers.WireSchemaGoogleGenerateContent, OAuth: adapter}); err != nil {
 		t.Fatalf("register fake adapter: %v", err)
 	}
 

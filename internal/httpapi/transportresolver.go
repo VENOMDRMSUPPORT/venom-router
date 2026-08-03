@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -44,6 +45,56 @@ func (r registryTransportResolver) TransportTypeFor(route execution.ResolvedRout
 	}
 	return execution.TransportType(kind), nil
 }
+
+// schemaStampingTransport wraps an InferenceTransport and stamps
+// route.WireSchema from the provider's catalog Definition before EVERY call
+// (P7-EXEC-001 part 2). This is how the native_oauth transport learns which
+// wire schema a route speaks — from the REGISTRY, never a literal at the call
+// site and never inferred from the model id. It is applied to the native_oauth
+// entry in liveTransportImpls, so BOTH the request-path dispatcher and the
+// certification probe path (which derive their transports from that one table)
+// get the same registry-sourced schema. Non-native_oauth providers carry an
+// empty WireSchema and their transports ignore it, so wrapping is harmless
+// there; only native_oauth is wrapped.
+type schemaStampingTransport struct {
+	reg   *providers.Registry
+	inner execution.InferenceTransport
+}
+
+func newSchemaStampingTransport(reg *providers.Registry, inner execution.InferenceTransport) *schemaStampingTransport {
+	return &schemaStampingTransport{reg: reg, inner: inner}
+}
+
+// stamp copies route with WireSchema resolved from the registry. The
+// providers.WireSchema -> execution.WireSchema cast is safe: the vocabulary
+// sync test proves the two sets carry byte-identical string values.
+func (s *schemaStampingTransport) stamp(route execution.ResolvedRoute) execution.ResolvedRoute {
+	if def, ok := s.reg.Definition(providers.ProviderID(route.Provider)); ok {
+		route.WireSchema = execution.WireSchema(def.WireSchema)
+	}
+	return route
+}
+
+func (s *schemaStampingTransport) Execute(ctx context.Context, route execution.ResolvedRoute, req execution.NormalizedRequest) (*execution.NormalizedResponse, error) {
+	return s.inner.Execute(ctx, s.stamp(route), req)
+}
+func (s *schemaStampingTransport) Stream(ctx context.Context, route execution.ResolvedRoute, req execution.NormalizedRequest) (<-chan execution.Chunk, error) {
+	return s.inner.Stream(ctx, s.stamp(route), req)
+}
+func (s *schemaStampingTransport) Cancel(ctx context.Context, route execution.ResolvedRoute, requestID string) error {
+	return s.inner.Cancel(ctx, s.stamp(route), requestID)
+}
+func (s *schemaStampingTransport) NormalizeError(err error, route execution.ResolvedRoute) execution.VenomError {
+	return s.inner.NormalizeError(err, s.stamp(route))
+}
+func (s *schemaStampingTransport) Failure(err error, route execution.ResolvedRoute) execution.TypedFailure {
+	return s.inner.Failure(err, s.stamp(route))
+}
+func (s *schemaStampingTransport) SupportedCapabilities(route execution.ResolvedRoute) []execution.Operation {
+	return s.inner.SupportedCapabilities(s.stamp(route))
+}
+
+var _ execution.InferenceTransport = (*schemaStampingTransport)(nil)
 
 // BuildInferenceDispatcher composes the single execution.Dispatcher
 // (01 §4.5: one execution path, one interface) from the provider

@@ -219,7 +219,13 @@ func TestRegistry_Register_AcceptsValidTransport(t *testing.T) {
 			authMode = AuthModeOAuth
 			oauth = fakeOAuthAdapter{}
 		}
-		err := reg.Register(Definition{ID: id, AuthMode: authMode, Transport: k, APIKey: apiKey, OAuth: oauth})
+		// native_oauth now requires a declared WireSchema (P7-EXEC-001 part 2);
+		// any other transport must leave it empty.
+		var schema WireSchema
+		if k == TransportKindNativeOAuth {
+			schema = WireSchemaGoogleGenerateContent
+		}
+		err := reg.Register(Definition{ID: id, AuthMode: authMode, Transport: k, WireSchema: schema, APIKey: apiKey, OAuth: oauth})
 		if err != nil {
 			t.Errorf("Register(transport=%q) error = %v, want nil", k, err)
 		}

@@ -23,12 +23,20 @@ type Definition struct {
 	// one of the five closed TransportKind values; empty or unknown is
 	// rejected by Register.
 	Transport TransportKind
-	APIKey    APIKeyAdapter         // set iff AuthMode == AuthModeAPIKey
-	OAuth     OAuthAdapter          // set iff AuthMode == AuthModeOAuth
-	Health    HealthAdapter         // optional
-	Discovery ModelDiscoveryAdapter // optional
-	Quota     QuotaAdapter          // optional
-	Identity  IdentityAdapter       // optional
+	// WireSchema is the SECOND catalog-declared dimension native_oauth needs
+	// (P7-EXEC-001 part 2): the wire PROTOCOL a native_oauth provider speaks,
+	// since one OAuth-bearer transport serves several differing schemas and
+	// selection may never be a slug switch. Register enforces exactly one rule:
+	// a native_oauth Definition MUST carry a valid WireSchema; any other
+	// transport MUST leave it empty. This is a bounded additive unfreeze of the
+	// frozen contract, mirroring the one P4-EXEC-001 made when it added Transport.
+	WireSchema WireSchema
+	APIKey     APIKeyAdapter         // set iff AuthMode == AuthModeAPIKey
+	OAuth      OAuthAdapter          // set iff AuthMode == AuthModeOAuth
+	Health     HealthAdapter         // optional
+	Discovery  ModelDiscoveryAdapter // optional
+	Quota      QuotaAdapter          // optional
+	Identity   IdentityAdapter       // optional
 }
 
 // Registry holds one Definition per provider and dispatches to adapters
@@ -71,6 +79,18 @@ func (r *Registry) Register(def Definition) error {
 
 	if _, err := ParseTransportKind(string(def.Transport)); err != nil {
 		return fmt.Errorf("providers: register %s: %w", def.ID, err)
+	}
+
+	// WireSchema is required for and exclusive to native_oauth (P7-EXEC-001
+	// part 2): that one transport serves several wire schemas, so a native_oauth
+	// provider that declares none cannot be dispatched (fail closed), and a
+	// non-native_oauth provider declaring one is a contradiction.
+	if def.Transport == TransportKindNativeOAuth {
+		if _, err := ParseWireSchema(string(def.WireSchema)); err != nil {
+			return fmt.Errorf("providers: register %s: native_oauth requires a wire schema: %w", def.ID, err)
+		}
+	} else if def.WireSchema != "" {
+		return fmt.Errorf("providers: register %s: transport %q must not declare a wire schema (only native_oauth may)", def.ID, def.Transport)
 	}
 
 	r.defs[def.ID] = def
