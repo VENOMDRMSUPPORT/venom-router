@@ -176,6 +176,7 @@ export const tokens = {
   },
   "semantic": {
     "accent.active": "var(--accent-active)",
+    "accent.border": "var(--accent-border)",
     "accent.default": "var(--accent-default)",
     "accent.hover": "var(--accent-hover)",
     "accent.subtle-bg": "var(--accent-subtle-bg)",

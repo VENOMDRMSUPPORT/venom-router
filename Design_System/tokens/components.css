@@ -19,7 +19,7 @@
   --input-bg: var(--surface-primary);
   --input-fg: var(--text-primary);
   --input-placeholder: var(--text-muted);
-  --input-border-default: var(--border-strong);
+  --input-border-default: var(--border-default);
   --input-border-focus: var(--border-focus);
   --input-border-invalid: var(--status-critical-border);
   --input-bg-disabled: var(--action-disabled-bg);
@@ -94,7 +94,7 @@
   --input-bg: var(--surface-primary);
   --input-fg: var(--text-primary);
   --input-placeholder: var(--text-muted);
-  --input-border-default: var(--border-strong);
+  --input-border-default: var(--border-default);
   --input-border-focus: var(--border-focus);
   --input-border-invalid: var(--status-critical-border);
   --input-bg-disabled: var(--action-disabled-bg);

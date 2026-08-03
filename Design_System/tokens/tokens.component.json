@@ -11,7 +11,7 @@
     "bg":            { "$value": "{surface.primary}" },
     "fg":            { "$value": "{text.primary}" },
     "placeholder":   { "$value": "{text.muted}" },
-    "border":        { "default": { "$value": "{border.strong}" }, "focus": { "$value": "{border.focus}" }, "invalid": { "$value": "{status.critical.border}" } },
+    "border":        { "default": { "$value": "{border.default}" }, "focus": { "$value": "{border.focus}" }, "invalid": { "$value": "{status.critical.border}" } },
     "bg-disabled":   { "$value": "{action.disabled.bg}" }
   },
   "card":  { "surface": { "$value": "{surface.primary}" }, "border": { "$value": "{border.default}" }, "shadow": { "$value": "{elevation.card}" } },

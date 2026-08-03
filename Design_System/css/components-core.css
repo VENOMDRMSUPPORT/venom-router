@@ -148,7 +148,7 @@
 .vn-badge--tier-lite { background: var(--tier-lite-bg); color: var(--tier-lite-fg); border-color: var(--tier-lite-border); }
 .vn-badge--tier-pro  { background: var(--tier-pro-bg);  color: var(--tier-pro-fg);  border-color: var(--tier-pro-border); }
 .vn-badge--tier-max  { background: var(--tier-max-bg);  color: var(--tier-max-fg);  border-color: var(--tier-max-border); }
-.vn-badge--accent { background: var(--accent-subtle-bg); color: var(--accent-text); border-color: var(--accent-default); }
+.vn-badge--accent { background: var(--accent-subtle-bg); color: var(--accent-text); border-color: var(--accent-border); }
 .vn-badge--outline { background: transparent; }
 .vn-badge--mono { font-family: var(--font-family-mono); font-weight: var(--font-weight-regular); }
 .vn-badge--dot::before { content: ""; width: 6px; height: 6px; border-radius: var(--radius-full); background: currentColor; }

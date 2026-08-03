@@ -1,14 +1,14 @@
 {
   "generatedBy": "validation/build-tokens.cjs",
-  "semanticTokenCount": 93,
+  "semanticTokenCount": 94,
   "completeness": {
     "venom-dark": {
-      "count": 93,
+      "count": 94,
       "missing": [],
       "extra": []
     },
     "venom-light": {
-      "count": 93,
+      "count": 94,
       "missing": [],
       "extra": []
     }
@@ -16,6 +16,7 @@
   "themes": {
     "venom-dark": {
       "accent.active": "#E4E4E7",
+      "accent.border": "#3F3F46",
       "accent.default": "#FFFFFF",
       "accent.hover": "#EAEAEA",
       "accent.subtle-bg": "#121215",
@@ -111,6 +112,7 @@
     },
     "venom-light": {
       "accent.active": "#121215",
+      "accent.border": "#A1A1AA",
       "accent.default": "#000000",
       "accent.hover": "#111111",
       "accent.subtle-bg": "#F4F4F5",

@@ -36,7 +36,8 @@
     "hover":     { "$value": "{color.gray.75}" },
     "active":    { "$value": "{color.gray.100}" },
     "subtle-bg": { "$value": "{color.gray.925}" },
-    "text":      { "$value": "{color.gray.0}" }
+    "text":      { "$value": "{color.gray.0}" },
+    "border":    { "$value": "{color.gray.700}" }
   },
   "status": {
     "$type": "color",

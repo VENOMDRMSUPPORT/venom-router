@@ -27,6 +27,7 @@
   --accent-active: var(--color-gray-100);
   --accent-subtle-bg: var(--color-gray-925);
   --accent-text: var(--color-gray-0);
+  --accent-border: var(--color-gray-700);
   --status-healthy-fg: var(--color-green-300);
   --status-healthy-bg: var(--color-green-900);
   --status-healthy-border: var(--color-green-700);

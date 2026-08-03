@@ -13,6 +13,7 @@ export const venomTailwindTheme = {
   "colors": {
     "accent": {
       "active": "var(--accent-active)",
+      "border": "var(--accent-border)",
       "default": "var(--accent-default)",
       "hover": "var(--accent-hover)",
       "subtle-bg": "var(--accent-subtle-bg)",
