@@ -58,7 +58,7 @@ export const CSRF_TOKEN_FIXTURE = "csrf-token-fixture-0001";
 /** The account id the whole fixture set is keyed on. */
 export const ACCOUNT_ID = "acct-fixture-0001";
 /** The request id the Overview activity link deep-links into
- * (`#diagnostics/routes/{request_id}` — AppShell.parseInitialHash). */
+ * (`/diagnostics/routes/{request_id}` — shell/route.pathForRoute). */
 export const REQUEST_ID = "req-fixture-0001";
 export const OFFERING_OPERATION_ID = "offop-fixture-0001";
 export const API_KEY_ID = "key-fixture-0001";

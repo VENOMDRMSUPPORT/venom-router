@@ -122,13 +122,19 @@ export async function installControlStub(page: Page): Promise<StubReport> {
 /**
  * Navigates to the app and waits for the authenticated shell.
  *
+ * `path` is a real URL PATH (the shell became path-routed in the SPA-routing
+ * change); callers that want a specific page pass `pathForRoute(...)` from
+ * src/shell/route so a test can never drift from the mapping the app itself
+ * uses — the earlier hash form silently stopped resolving and three specs
+ * failed on a missing row rather than on the routing change that caused it.
+ *
  * Waits on RENDERED STATE (the primary nav), never on a timer — there is no
  * `waitForTimeout` in this suite, by policy, because a sleep long enough to
  * be reliable on a loaded CI host is a sleep that makes every run slower and
  * still occasionally flakes.
  */
-export async function gotoShell(page: Page, hash = ""): Promise<void> {
-  await page.goto(`/${hash}`);
+export async function gotoShell(page: Page, path = "/"): Promise<void> {
+  await page.goto(path);
   await page.getByRole("navigation", { name: /primary/i }).waitFor();
   // Webfonts must have settled before any screenshot, or the first capture
   // races the fallback face and every baseline is a coin flip.

@@ -15,6 +15,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { gotoNav, gotoShell, installControlStub } from "./stub";
 import { REQUEST_ID } from "./fixtures";
+import { pathForRoute } from "../../src/shell/route";
 
 /** Every primary-nav destination, by its visible label. */
 const SURFACES = [
@@ -72,10 +73,11 @@ test.describe("accessibility in a real browser (color-contrast included)", () =>
 
   test("the route-explanation deep link has zero axe violations", async ({ page }) => {
     const report = await installControlStub(page);
-    // The one deep link the shell honours (AppShell.parseInitialHash) — a
+    // The one deep link the shell honours (shell/route.parseLocation) — a
     // different entry path than clicking through the nav, and therefore a
-    // different initial DOM.
-    await gotoShell(page, `#diagnostics/routes/${REQUEST_ID}`);
+    // different initial DOM. The URL comes from the app's own pathForRoute so
+    // this test cannot drift from the mapping the shell parses.
+    await gotoShell(page, pathForRoute("diagnostics", REQUEST_ID));
     await page.getByTestId(`route-row-${REQUEST_ID}`).waitFor();
     await expectAccessible(page, "diagnostics deep link");
     expect(report.unhandled).toEqual([]);

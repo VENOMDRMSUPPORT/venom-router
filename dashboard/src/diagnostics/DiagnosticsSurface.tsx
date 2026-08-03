@@ -20,7 +20,7 @@ export interface DiagnosticsSurfaceProps {
   csrfToken: string;
   onSessionExpired: () => void;
   /** A request id to open on mount — the Overview surface links here as
-   * `#diagnostics/routes/{request_id}`, and landing on the bare list would
+   * `/diagnostics/routes/{request_id}`, and landing on the bare list would
    * silently discard the operator's intent. */
   deepLinkRequestID?: string;
 }

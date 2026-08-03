@@ -272,7 +272,7 @@ describe("DiagnosticsSurface — the route explanation", () => {
 
 describe("DiagnosticsSurface — deep link", () => {
   it("opens the explanation for the request id it was given, without a click", async () => {
-    // Overview links here as #diagnostics/routes/{request_id}; landing on the bare
+    // Overview links here as /diagnostics/routes/{request_id}; landing on the bare
     // list would silently discard the operator's intent.
     mockAll({
       "GET /api/control/v1/diagnostics/routes/req-deep": () =>

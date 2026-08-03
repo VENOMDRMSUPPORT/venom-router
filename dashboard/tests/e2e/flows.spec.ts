@@ -13,6 +13,7 @@
 import { expect, test } from "@playwright/test";
 import { ACCOUNT_ID, KEY_PREFIX_FIXTURE, REQUEST_ID } from "./fixtures";
 import { RAW_VENOM_KEY_PATTERN, SENTINELS } from "../../src/test/noSecrets";
+import { pathForRoute } from "../../src/shell/route";
 import { gotoNav, gotoShell, installControlStub } from "./stub";
 
 test.describe("critical flows", () => {
@@ -67,10 +68,11 @@ test.describe("critical flows", () => {
   test("read a route explanation — the diagnostics deep link opens one request", async ({ page }) => {
     const report = await installControlStub(page);
 
-    // The exact hash AppShell.parseInitialHash honours, and the exact link
-    // Overview emits. If this route regressed, the owner would land on the
-    // bare list with no indication which request they asked about.
-    await gotoShell(page, `#diagnostics/routes/${REQUEST_ID}`);
+    // The exact URL shell/route.parseLocation honours, built with the very
+    // function Overview's link uses (pathForRoute). If this route regressed,
+    // the owner would land on the bare list with no indication which request
+    // they asked about.
+    await gotoShell(page, pathForRoute("diagnostics", REQUEST_ID));
 
     await expect(page.getByTestId(`route-row-${REQUEST_ID}`)).toBeVisible();
     // The explanation's substance: the chosen offering and the clamp the
@@ -125,7 +127,7 @@ test.describe("critical flows", () => {
     // from two different read models, and a mismatch would send an owner
     // debugging the wrong account.
     await installControlStub(page);
-    await gotoShell(page, `#diagnostics/routes/${REQUEST_ID}`);
+    await gotoShell(page, pathForRoute("diagnostics", REQUEST_ID));
     await expect(page.getByTestId(`route-row-${REQUEST_ID}`)).toBeVisible();
 
     const html = await page.content();
