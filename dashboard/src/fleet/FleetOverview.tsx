@@ -184,9 +184,13 @@ export default function FleetOverview(props: FleetOverviewProps) {
   // search/tab-scoped view) whenever fresh data lands.
   useEffect(() => {
     if (!providers || !accounts || !onCounts) return;
-    const withAccounts = new Set(accounts.map((a) => a.provider));
+    // A provider is "active" only if it has a LIVE (non-disconnected) account —
+    // the same rule the Active view uses. Counting raw accounts here made the
+    // "Active Providers" chip show a stale 1 while the view correctly showed
+    // none (a disconnected account still lingered under the old soft-disconnect).
+    const withLiveAccounts = new Set(accounts.filter((a) => a.connection_state !== "disconnected").map((a) => a.provider));
     onCounts({
-      active: providers.filter((p) => withAccounts.has(p.id)).length,
+      active: providers.filter((p) => withLiveAccounts.has(p.id)).length,
       total: providers.length,
     });
   }, [providers, accounts, onCounts]);
