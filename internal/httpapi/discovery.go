@@ -215,6 +215,41 @@ func (h *DiscoveryHandler) serveDiscover(w http.ResponseWriter, r *http.Request)
 	}()
 }
 
+// TriggerBackgroundDiscovery fires a best-effort model discovery for accountID
+// — the auto-discovery-on-connect path (design 2026-08-03). Unlike
+// ServeDiscover it writes no HTTP response and SWALLOWS every setup failure (a
+// missing discovery adapter, no active credential, or a job-row insert error
+// simply means no discovery runs): it must never disturb the connect that
+// called it. All of it — the resolution AND the run — happens on a detached,
+// timeout-bounded context in its own goroutine, so the connect response returns
+// immediately. The account was just created by that same connect, so GetByID
+// finds it. Reuses the exact runDiscovery the manual path is tested against.
+func (h *DiscoveryHandler) TriggerBackgroundDiscovery(ctx context.Context, accountID string) {
+	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), discoveryRunTimeout)
+	go func() {
+		defer cancel()
+
+		account, ok, err := h.accounts.GetByID(runCtx, accountID)
+		if err != nil || !ok {
+			return
+		}
+		adapter, ok := h.reg.ModelDiscoveryAdapter(providers.ProviderID(account.ProviderID))
+		if !ok {
+			return
+		}
+		credentialID, ok := activeCredentialIDFor(runCtx, h.credentials, account.ID)
+		if !ok {
+			return
+		}
+		jobID := h.newID()
+		runID := h.newID()
+		if err := h.jobs.Create(runCtx, jobID, string(storage.JobKindDiscovery), h.now()); err != nil {
+			return
+		}
+		h.runDiscovery(runCtx, jobID, runID, account.ID, account.ProviderID, credentialID, adapter)
+	}()
+}
+
 // runDiscovery executes the actual discovery run and terminates jobID
 // accordingly. It is panic-safe: a recovered panic marks the job failed
 // with a generic internal code rather than crashing the process.

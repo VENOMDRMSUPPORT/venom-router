@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +12,14 @@ import (
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
+
+// discoveryTrigger fires a best-effort background model discovery for a newly
+// connected account, so its models are fetched (and then verified by the
+// usability sweep) without a manual "Refresh models". *DiscoveryHandler
+// implements it; a nil trigger disables auto-discovery.
+type discoveryTrigger interface {
+	TriggerBackgroundDiscovery(ctx context.Context, accountID string)
+}
 
 // enrollmentRoute is the fixed route key idempotencyStore.Execute keys
 // replays under for this handler — matching route+Idempotency-Key
@@ -27,9 +36,17 @@ type EnrollmentHandler struct {
 	reg      *providers.Registry
 	funding  *storage.FundingEvidenceRepo
 	accounts *storage.AccountRepo
-	idem     *idempotencyStore
-	audit    *auditEmitter
-	now      func() time.Time
+	idem      *idempotencyStore
+	audit     *auditEmitter
+	now       func() time.Time
+	discovery discoveryTrigger
+}
+
+// SetDiscoveryTrigger wires the background-discovery trigger fired after a
+// successful connect. Optional (nil disables it); ControlMux sets it once the
+// DiscoveryHandler exists, since that handler is constructed after this one.
+func (h *EnrollmentHandler) SetDiscoveryTrigger(t discoveryTrigger) {
+	h.discovery = t
 }
 
 // NewEnrollmentHandler builds the handler over the shared provider
@@ -140,6 +157,14 @@ func (h *EnrollmentHandler) serveConnect(w http.ResponseWriter, r *http.Request)
 
 	if req.Label != "" {
 		_, _ = h.accounts.UpdateLabel(ctx, account.ID, req.Label, h.now())
+	}
+
+	// Fire-and-forget model discovery for the new account so its models are
+	// fetched and then verified by the usability sweep without a manual
+	// "Refresh models". Best-effort: the trigger detaches its own context and
+	// never blocks or fails the connect response.
+	if h.discovery != nil {
+		h.discovery.TriggerBackgroundDiscovery(ctx, account.ID)
 	}
 
 	h.audit.Emit(ctx, AuditActionAccountConnect, AuditResultSuccess, AuditResourceAccount, account.ID, "")

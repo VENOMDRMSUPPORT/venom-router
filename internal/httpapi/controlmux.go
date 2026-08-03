@@ -297,6 +297,10 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	jobRepo := storage.NewJobRepo(db)
 	discoveryHandler := NewDiscoveryHandler(accountRepo, credentialRepo, catalogRepo, jobRepo, discoveryRepo, reg, credentialService, audit, idem, newOAuthTransactionID, nil)
 	mux.Handle("/api/control/v1/accounts/{id}/discover", gated(discoveryHandler.ServeDiscover))
+	// Auto-discovery on connect: a successful enrollment fires a best-effort
+	// background discovery through this same handler (wired here because the
+	// DiscoveryHandler is constructed after the EnrollmentHandler above).
+	enrollmentHandler.SetDiscoveryTrigger(discoveryHandler)
 
 	// Probe (P3c-DB-EXTRA/CAPI-001, 09 §3.8): POST /offerings/{id}/probe,
 	// async 202 + the canonical shared job surface, exactly like
