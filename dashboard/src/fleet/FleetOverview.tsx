@@ -226,8 +226,16 @@ export default function FleetOverview(props: FleetOverviewProps) {
     return <Spinner size="lg" label="Loading the provider fleet" />;
   }
 
+  // A disconnected account is retained server-side for history, but it is no
+  // longer active: it must not keep its provider in the Active Providers view,
+  // render as a live account row, or count toward the fleet stat cards. Every
+  // "active fleet" derivation below works off liveAccounts, so a provider whose
+  // only account is disconnected drops out of Active and is found again under
+  // All Integrations (its original, un-connected catalog state).
+  const liveAccounts = accounts.filter((a) => a.connection_state !== "disconnected");
+
   const accountsByProvider = new Map<string, AccountProjection[]>();
-  for (const account of accounts) {
+  for (const account of liveAccounts) {
     const list = accountsByProvider.get(account.provider);
     if (list) list.push(account);
     else accountsByProvider.set(account.provider, [account]);
@@ -239,7 +247,7 @@ export default function FleetOverview(props: FleetOverviewProps) {
 
   const categoryProviders = providers.filter((p) => matchesCategory(p, category));
   const scopedConnectedCount = categoryProviders.filter((p) => connectedProviders.has(p.id)).length;
-  const scopedAccounts = accounts.filter((a) => {
+  const scopedAccounts = liveAccounts.filter((a) => {
     const provider = providersById.get(a.provider);
     return provider ? matchesCategory(provider, category) : category === "all";
   });

@@ -454,6 +454,27 @@ describe("FleetOverview — Active Providers rows", () => {
     screen.getByRole("link", { name: /open opencode\.ai in a new tab/i });
   });
 
+  it("drops a provider from the active view once its only account is disconnected", async () => {
+    // A disconnected account's row is retained server-side for history, but a
+    // provider whose ONLY account is disconnected is no longer active — it must
+    // vanish from Active Providers and fall back to the empty state (the owner
+    // finds it again under All Integrations).
+    const disconnected = account({
+      id: "acct-gone",
+      connection_state: "disconnected",
+      display_status: "disconnected",
+    });
+    const fetchMock = baseHandlers({
+      "GET /api/control/v1/accounts?limit=200": () =>
+        jsonResponse(200, { data: { accounts: [disconnected] } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
+
+    await screen.findByText(/No provider accounts are connected/i);
+    expect(screen.queryByText("OpenCode Zen")).toBeNull();
+  });
+
   it("wires zap to POST /providers/{id}/sync and refetches", async () => {
     const fetchMock = await renderFleet(
       {
