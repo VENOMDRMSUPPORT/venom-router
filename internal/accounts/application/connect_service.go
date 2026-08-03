@@ -119,14 +119,19 @@ func (s *ConnectService) ConnectAPIKeyAccount(ctx context.Context, p ConnectAPIK
 		ExternalID:      identity.ExternalID,
 		AuthType:        "api_key",
 		ConnectionState: domain.ConnectionConnected,
-		// HealthState starts unknown: this unit performs no health probe
-		// of its own (03 §2b's "best-effort connect-time sync" is
-		// satisfied by using the adapter's already-returned identity;
-		// no HealthAdapter is registered for opencode-zen this phase).
-		HealthState:  domain.HealthUnknown,
-		IdentityPlan: identity.Plan,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		// HealthState starts HEALTHY, check-timestamp stamped: reaching this
+		// point means p.Adapter.ConnectAPIKey AUTHENTICATED the key (03 §1's
+		// authentic-validation rule, PROV-004 — an invalid or unreachable key
+		// returns above and creates nothing). That successful authenticated
+		// call IS a health check, so leaving the account HealthUnknown /
+		// "Checked: —" here would understate a credential we just proved live.
+		// A later credential death is caught by the ongoing usability sweep /
+		// health re-checks, which flip it to expired.
+		HealthState:       domain.HealthHealthy,
+		LastHealthCheckAt: &now,
+		IdentityPlan:      identity.Plan,
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 
 	funding, err := s.firstFundingEvidence(p, accountID, fundingID, now)

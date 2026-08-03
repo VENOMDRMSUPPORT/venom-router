@@ -123,6 +123,50 @@ func TestConnectService_ValidKey_CreatesExactlyOneAccountCredentialFunding(t *te
 	}
 }
 
+func TestConnectService_ValidKey_MarksAccountHealthyWithCheckTimestamp(t *testing.T) {
+	server := fixtureOpenCodeZenServer(t)
+	defer server.Close()
+
+	db := migratedDB(t)
+	seedProvider(t, db, "opencode-zen")
+
+	adapter := providers.NewOpenCodeZenAdapter(fixtureChatProbe(server.URL), fixtureModelsProbe(server.URL), fixtureUnusedModelsDevProbe(t), nil)
+	enrollment := storage.NewEnrollmentRepo(db)
+	accounts := storage.NewAccountRepo(db)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	svc := application.NewConnectService(enrollment, accounts, newTestKeyring(t), sequentialIDGenerator("id"), func() time.Time { return now })
+
+	account, err := svc.ConnectAPIKeyAccount(context.Background(), application.ConnectAPIKeyAccountParams{
+		ProviderID: "opencode-zen", Adapter: adapter, PlaintextKey: "good-key",
+		FundingMode: domain.FundingModeOwnerPolicy,
+	})
+	if err != nil {
+		t.Fatalf("ConnectAPIKeyAccount: %v", err)
+	}
+
+	// The adapter authenticated the key (03 §1 authentic-validation rule) to
+	// reach this point, so the account is HEALTHY on connect, with the check
+	// timestamp stamped — not left HealthUnknown / "Checked: —".
+	if account.HealthState != domain.HealthHealthy {
+		t.Fatalf("returned HealthState = %q, want healthy", account.HealthState)
+	}
+	if account.LastHealthCheckAt == nil || !account.LastHealthCheckAt.Equal(now) {
+		t.Fatalf("returned LastHealthCheckAt = %v, want %v", account.LastHealthCheckAt, now)
+	}
+
+	// And the durable row reflects it (not just the returned struct).
+	persisted, ok, err := accounts.GetByID(context.Background(), account.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetByID: ok=%v err=%v", ok, err)
+	}
+	if persisted.HealthState != domain.HealthHealthy {
+		t.Fatalf("persisted HealthState = %q, want healthy", persisted.HealthState)
+	}
+	if persisted.LastHealthCheckAt == nil || !persisted.LastHealthCheckAt.Equal(now) {
+		t.Fatalf("persisted LastHealthCheckAt = %v, want %v", persisted.LastHealthCheckAt, now)
+	}
+}
+
 func TestConnectService_OwnerOverride_StampsOwnerOverrideSource(t *testing.T) {
 	server := fixtureOpenCodeZenServer(t)
 	defer server.Close()

@@ -116,18 +116,19 @@ func TestConnectService_OpenCodeZen_E2E_IdentityFundingHealthAndKeyNeverLeaks(t 
 		t.Fatalf("funding = %+v, want free/owner_policy", fund)
 	}
 
-	// Health: HealthUnknown — ConnectAPIKeyAccount performs no health
-	// probe of its own this phase (connect_service.go's own doc comment
-	// on the account literal it builds).
-	if account.HealthState != domain.HealthUnknown {
-		t.Fatalf("account.HealthState = %q, want %q (no health probe at connect time this phase)", account.HealthState, domain.HealthUnknown)
+	// Health: HealthHealthy — ConnectAPIKey authenticated the key to reach
+	// this point (an invalid/unreachable key creates nothing), so that
+	// successful authenticated call IS the connect-time health check
+	// (connect_service.go's own doc comment on the account literal it builds).
+	if account.HealthState != domain.HealthHealthy {
+		t.Fatalf("account.HealthState = %q, want %q (connect authenticated the key)", account.HealthState, domain.HealthHealthy)
 	}
 	got, ok, err := accounts.GetByID(context.Background(), account.ID)
 	if err != nil || !ok {
 		t.Fatalf("GetByID: ok=%v err=%v", ok, err)
 	}
-	if got.HealthState != domain.HealthUnknown {
-		t.Fatalf("persisted HealthState = %q, want %q", got.HealthState, domain.HealthUnknown)
+	if got.HealthState != domain.HealthHealthy {
+		t.Fatalf("persisted HealthState = %q, want %q", got.HealthState, domain.HealthHealthy)
 	}
 	if got.ConnectionState != domain.ConnectionConnected {
 		t.Fatalf("persisted ConnectionState = %q, want connected", got.ConnectionState)

@@ -45,13 +45,20 @@ func (r *EnrollmentRepo) CreateConnectedAccount(
 	defer func() { _ = tx.Rollback() }() // no-op once Commit has succeeded
 
 	accountEpoch := account.CreatedAt.Unix()
+	// last_health_check_at is stamped when the account is created already
+	// health-observed (the API-key connect authenticates the key before
+	// enrollment); nil stays NULL ("never checked"), e.g. the OAuth path.
+	var lastHealthCheckArg any
+	if account.LastHealthCheckAt != nil {
+		lastHealthCheckArg = account.LastHealthCheckAt.Unix()
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO accounts
-			(id, provider_id, external_id, display_name, auth_type, connection_state, health_state, identity_email, identity_plan, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, provider_id, external_id, display_name, auth_type, connection_state, health_state, identity_email, identity_plan, last_health_check_at, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		account.ID, account.ProviderID, account.ExternalID, account.DisplayName, account.AuthType,
 		string(account.ConnectionState), string(account.HealthState),
-		account.IdentityEmail, account.IdentityPlan, accountEpoch, accountEpoch,
+		account.IdentityEmail, account.IdentityPlan, lastHealthCheckArg, accountEpoch, accountEpoch,
 	); err != nil {
 		return fmt.Errorf("storage: enrollment: insert account: %w", err)
 	}
