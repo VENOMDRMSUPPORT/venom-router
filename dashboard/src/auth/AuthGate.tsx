@@ -13,6 +13,41 @@ type GateState =
   | { kind: "login" }
   | { kind: "authenticated"; session: SessionTimes; csrfToken: string };
 
+// Bootstrap auto-retry: a dashboard opened while its backend is still booting
+// (notably the dev dashboard on 8088 whose backend on 8081 is mid-`air`-build)
+// gets a transient 5xx or a connection-refused on GET /auth/status. Retry a
+// few times before surfacing the error screen, so a brief startup gap heals
+// itself instead of sticking until a manual retry.
+const MAX_BOOTSTRAP_ATTEMPTS = 4;
+const BOOTSTRAP_RETRY_MS = 600;
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** A bootstrap failure worth retrying: a raw fetch rejection (offline /
+ * connection refused before the backend is listening) — not an AuthApiError —
+ * or a typed error that is 5xx, an explicit network_error, or flagged
+ * retryable. A 4xx (e.g. a real bad request) is surfaced immediately. */
+function isTransientBootstrapError(err: unknown): boolean {
+  if (!(err instanceof AuthApiError)) return true;
+  return err.retryable || err.status >= 500 || err.code === "network_error";
+}
+
+/** GET /auth/status, retrying transient failures up to the attempt cap with a
+ * fixed backoff. isCancelled short-circuits if the component unmounted. */
+async function fetchAuthStatusWithRetry(isCancelled: () => boolean) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fetchAuthStatus();
+    } catch (err) {
+      if (isCancelled() || attempt >= MAX_BOOTSTRAP_ATTEMPTS || !isTransientBootstrapError(err)) {
+        throw err;
+      }
+      await delay(BOOTSTRAP_RETRY_MS);
+      if (isCancelled()) throw err;
+    }
+  }
+}
+
 /**
  * App-wide owner-auth gate (P2b-UI-002). On mount: GET /auth/status to
  * decide first-run vs. an existing owner, then (for an existing owner)
@@ -36,7 +71,7 @@ export default function AuthGate() {
     async function bootstrap() {
       let setupComplete: boolean;
       try {
-        const status = await fetchAuthStatus();
+        const status = await fetchAuthStatusWithRetry(() => cancelled);
         setupComplete = status.setupComplete;
       } catch (err) {
         if (!cancelled) {

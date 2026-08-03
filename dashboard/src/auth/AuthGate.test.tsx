@@ -225,6 +225,66 @@ describe("AuthGate — login", () => {
 // real production caller now: the credential-reveal flow in
 // src/fleet/ProviderFleet.test.tsx (P2b-UI-003), which reuses this same
 // ReverifyModal component.
+describe("AuthGate — bootstrap auto-retry", () => {
+  // A dev dashboard opened while its backend (8081) is still booting sees a
+  // transient 5xx/network failure on GET /auth/status. Rather than surfacing
+  // the error screen (which the SPA otherwise sticks on until a manual retry),
+  // the gate retries a few times before giving up.
+  it("auto-retries a transient bootstrap failure and recovers without showing the error screen", async () => {
+    let statusCalls = 0;
+    const fetchMock = createFetchMock({
+      "GET /api/control/v1/auth/status": () => {
+        statusCalls += 1;
+        if (statusCalls < 3) return jsonResponse(500, {}); // backend still starting
+        return jsonResponse(200, { data: { setup_complete: false } });
+      },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AuthGate />);
+
+    // Recovers all the way to first-run setup — proof it retried past the 500s.
+    await screen.findByText(/welcome to venom router/i, undefined, { timeout: 4000 });
+    expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+    expect(statusCalls).toBeGreaterThanOrEqual(3);
+  });
+
+  it("gives up after the retry cap on a persistent failure and shows the error screen", async () => {
+    let statusCalls = 0;
+    const fetchMock = createFetchMock({
+      "GET /api/control/v1/auth/status": () => {
+        statusCalls += 1;
+        return jsonResponse(500, {});
+      },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AuthGate />);
+
+    await screen.findByRole("button", { name: /retry/i }, { timeout: 4000 });
+    // Retried up to the cap — not once, and not forever.
+    expect(statusCalls).toBe(4);
+  });
+
+  it("does NOT retry a non-transient bootstrap failure", async () => {
+    let statusCalls = 0;
+    const fetchMock = createFetchMock({
+      "GET /api/control/v1/auth/status": () => {
+        statusCalls += 1;
+        return jsonResponse(400, {
+          error: { code: "bad_request", message: "nope", request_id: "r", retryable: false },
+        });
+      },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AuthGate />);
+
+    await screen.findByRole("button", { name: /retry/i }, { timeout: 4000 });
+    expect(statusCalls).toBe(1); // 4xx non-retryable → surfaced immediately
+  });
+});
+
 describe("AuthGate — session expiry via an authenticated mutating call", () => {
   async function renderAuthenticated(extraHandlers: Record<string, () => Response> = {}) {
     const fetchMock = createFetchMock({
