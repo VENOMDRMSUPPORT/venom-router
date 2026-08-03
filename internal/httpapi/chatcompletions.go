@@ -41,6 +41,7 @@ func buildChatCompletionsHandler(db *storage.DB, kr *secrets.Keyring, reg *provi
 		string(providers.OpenCodeZenID): providers.OpenCodeZenBaseURL + "/v1",
 		string(providers.OllamaCloudID): providers.OllamaCloudBaseURL,
 		string(providers.AgnesAIID):     providers.AgnesAIBaseURL,
+		string(providers.NvidiaNIMID):   providers.NvidiaNIMBaseURL,
 	}
 	credentialRepo := storage.NewAccountCredentialRepo(db)
 	engine := &EngineDeps{

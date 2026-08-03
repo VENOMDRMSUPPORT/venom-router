@@ -111,6 +111,7 @@ func publicMux(db *storage.DB, kr *secrets.Keyring, reg *providers.Registry, now
 			_ = registerOpenCodeZen(reg)
 			_ = registerOllamaCloud(reg)
 			_ = registerAgnesAI(reg)
+			_ = registerNvidiaNIM(reg)
 			_ = registerAntigravityIfConfigured(reg)
 		}
 		chat = buildChatCompletionsHandler(db, kr, reg)
