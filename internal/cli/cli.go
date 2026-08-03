@@ -203,6 +203,12 @@ func runTrayLoop(parent context.Context, stdout io.Writer) error {
 	}
 	logger.Info("tray: dev root", observability.String("root", devRoot))
 
+	// On Quit/shutdown, gracefully stop any active dev session (dev.Stop kills
+	// the children and WAITS for the backend to fully exit — lock freed, WAL
+	// quiescent) before the prod shutdown, instead of leaving it to the OS's
+	// kill-on-exit of the dev Job Object. No-op when dev is idle.
+	ctrl.SetPreShutdown(dev.Stop)
+
 	if err := lc.Boot(ctx); err != nil {
 		// Bare tray mode has no console: a double-click user whose boot
 		// fails (e.g. a corrupt keyring) would otherwise see NOTHING — the

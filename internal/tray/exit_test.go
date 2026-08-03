@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -113,6 +114,38 @@ func TestExit_HangBoth_BoundedNonZero(t *testing.T) {
 	code, el := runChild(t, "hang-both")
 	if code != ExitShutdownHang || el < 3*time.Second || el > hardBound {
 		t.Fatalf("code=%d elapsed=%v; want exit 2, bounded", code, el)
+	}
+}
+
+// TestShutdownAndExit_RunsPreShutdownBeforeExit pins that the graceful
+// pre-shutdown hook (wired to dev.Stop in the tray) runs BEFORE the process
+// exits — so an active dev session is torn down (backend fully stopped, WAL
+// quiescent) rather than left to the OS's kill-on-exit of the Job Object.
+func TestShutdownAndExit_RunsPreShutdownBeforeExit(t *testing.T) {
+	var mu sync.Mutex
+	var order []string
+	exited := make(chan int, 1)
+
+	c := NewController(fakeLC{}, noopOpener{}, Options{
+		ShutdownTimeout: 2 * time.Second,
+		WatchdogMargin:  2 * time.Second,
+		Exit:            func(code int) { mu.Lock(); order = append(order, "exit"); mu.Unlock(); exited <- code },
+		UIStop:          func() {},
+	})
+	c.SetPreShutdown(func() { mu.Lock(); order = append(order, "preShutdown"); mu.Unlock() })
+
+	go c.ShutdownAndExit()
+
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ShutdownAndExit never exited")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) != 2 || order[0] != "preShutdown" || order[1] != "exit" {
+		t.Fatalf("order = %v, want [preShutdown exit] (dev stopped gracefully before exit)", order)
 	}
 }
 

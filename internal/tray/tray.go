@@ -90,6 +90,14 @@ type Controller struct {
 	exitOnce      sync.Once
 	lifecycleMu   sync.Mutex
 
+	// preShutdown, if set, runs once inside ShutdownAndExit AFTER the absolute
+	// watchdog is armed and BEFORE the bounded prod shutdown. The tray wires it
+	// to dev.Stop so an active dev session is torn down gracefully (backend
+	// fully stopped, lock freed) rather than left to the OS's kill-on-exit of
+	// the dev Job Object. Watchdog-armed-first means a hung hook still can't
+	// block the bounded exit.
+	preShutdown func()
+
 	// hangAfterArm is test-only: when true, ShutdownAndExit blocks forever right
 	// after arming the watchdog, proving the watchdog is independent of cleanup.
 	hangAfterArm bool
@@ -131,6 +139,14 @@ func NewController(lc ServerLifecycle, op Opener, opts Options) *Controller {
 func (c *Controller) SetUIStop(fn func()) {
 	c.mu.Lock()
 	c.uiStop = fn
+	c.mu.Unlock()
+}
+
+// SetPreShutdown installs the graceful pre-shutdown hook (the tray wires it to
+// dev.Stop). Called once inside ShutdownAndExit, after the watchdog is armed.
+func (c *Controller) SetPreShutdown(fn func()) {
+	c.mu.Lock()
+	c.preShutdown = fn
 	c.mu.Unlock()
 }
 
@@ -293,6 +309,16 @@ func (c *Controller) ShutdownAndExit() {
 
 	if c.hangAfterArm { // test-only
 		select {}
+	}
+
+	// Graceful pre-shutdown (dev.Stop): tear down any active dev session before
+	// the prod shutdown. The watchdog is already armed, so even a hung hook
+	// cannot defeat the bounded exit.
+	c.mu.Lock()
+	pre := c.preShutdown
+	c.mu.Unlock()
+	if pre != nil {
+		pre()
 	}
 
 	err := c.boundedShutdown()
