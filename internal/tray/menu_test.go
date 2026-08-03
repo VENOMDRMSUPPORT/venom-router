@@ -47,12 +47,16 @@ func TestDevEnablement(t *testing.T) {
 			menuEnablement{Open: false, Start: true, Stop: false, Restart: false}},
 		{"starting", DevStatusView{Overall: DevStarting, Frontend: DevStarting},
 			menuEnablement{Open: false, Start: false, Stop: true, Restart: true}},
-		{"running", DevStatusView{Overall: DevRunning, Frontend: DevRunning},
+		{"both running", DevStatusView{Overall: DevRunning, Backend: DevRunning, Frontend: DevRunning},
 			menuEnablement{Open: true, Start: false, Stop: true, Restart: true}},
+		// Frontend up but backend still building/booting: Open must be OFF. The
+		// dev dashboard's API is served by the backend (8081); opening it before
+		// the backend is ready yields a transient 500 the SPA gets stuck on.
+		{"frontend up, backend starting", DevStatusView{Overall: DevStarting, Backend: DevStarting, Frontend: DevRunning},
+			menuEnablement{Open: false, Start: false, Stop: true, Restart: true}},
 		// Backend live while the frontend is Stopped: the section is active, so
 		// Start must NOT be offered (it would double-start the backend). Open
-		// stays off — the dashboard follows the frontend/vite specifically,
-		// which is not up.
+		// stays off — the dashboard needs the frontend (vite), which is not up.
 		{"backend-only active", DevStatusView{Overall: DevRunning, Backend: DevRunning, Frontend: DevStopped},
 			menuEnablement{Open: false, Start: false, Stop: true, Restart: true}},
 		// Error never offers Start: recovery is Restart (clean recycle of the

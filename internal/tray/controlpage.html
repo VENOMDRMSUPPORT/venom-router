@@ -124,7 +124,9 @@ async function refresh() {
   badge(document.getElementById("dev-badge"), st.devAvailable ? st.devOverall : "N/A");
   document.getElementById("dev-status").textContent =
     st.devAvailable ? ("Backend: " + st.devBackend + " · Frontend: " + st.devFrontend) : "No dev repo found";
-  document.getElementById("dev-open").disabled = st.devFrontend !== "Running";
+  // Open needs BOTH vite (frontend) and the backend (8081) up — opening the
+  // dashboard before its API is ready yields a transient 500 the SPA sticks on.
+  document.getElementById("dev-open").disabled = !(st.devFrontend === "Running" && st.devBackend === "Running");
   document.getElementById("dev-start").disabled = !st.devAvailable || devActive;
   document.getElementById("dev-stop").disabled = !devActive;
 

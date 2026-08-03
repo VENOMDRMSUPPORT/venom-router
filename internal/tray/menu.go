@@ -48,7 +48,11 @@ func devEnablement(available bool, v DevStatusView) menuEnablement {
 	}
 	anyActive := v.Overall != DevStopped
 	return menuEnablement{
-		Open:    v.Frontend == DevRunning,
+		// Open needs BOTH children up: the dashboard is served by vite
+		// (frontend) but its API is the backend (8081). Enabling Open on the
+		// frontend alone lets the owner open it before the backend has finished
+		// building/booting, yielding a transient 500 the SPA sticks on.
+		Open:    v.Frontend == DevRunning && v.Backend == DevRunning,
 		Start:   !anyActive,
 		Stop:    anyActive,
 		Restart: anyActive,
