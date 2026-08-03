@@ -19,6 +19,10 @@ function px(n: number): string {
 
 afterEach(() => {
   cleanup();
+  // Navigation now writes the real URL path (history.pushState), and jsdom keeps
+  // that across tests — reset to root so each test starts on the default page
+  // rather than inheriting the previous test's route.
+  window.history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -213,19 +217,19 @@ describe("AppShell — responsive section deck", () => {
   // assert the planned-surface treatment. P6-UI-004/005/008/010 gave every nav.ts
   // key a real surface, so it was renamed to "…for an unrecognised destination" —
   // but the NAME and the comment then described a path the body never exercises.
-  // parseInitialHash clamps any unrecognised hash to DEFAULT_NAV_KEY (see its
-  // final `return`), so an unknown destination NEVER reaches renderSurface's
-  // PlannedSurface fallback; what the body actually proves is that the operator
-  // lands on the default surface instead of a dead page. Renamed to say exactly
-  // that, so no future reader trusts a coverage claim this file does not make.
+  // parseLocation clamps any unrecognised PATH to DEFAULT_NAV_KEY (see ./route),
+  // so an unknown destination NEVER reaches renderSurface's PlannedSurface
+  // fallback; what the body actually proves is that the operator lands on the
+  // default surface instead of a dead page. Renamed to say exactly that, so no
+  // future reader trusts a coverage claim this file does not make.
   //
   // The PlannedSurface fallback is therefore unreachable through the UI while
   // every nav key has a surface. It is kept as a defensive default, and the guard
   // that it stays unreachable is the NAV loop below: add a nav key without a
   // surface and that test fails.
-  it("resolves an unrecognised hash to the default surface, never a dead page", async () => {
+  it("resolves an unrecognised path to the default surface, never a dead page", async () => {
     vi.stubGlobal("fetch", baseHandlers());
-    window.location.hash = "#no-such-surface";
+    window.history.replaceState(null, "", "/no-such-surface");
     render(
       <AppShell
         session={SESSION}
@@ -235,9 +239,8 @@ describe("AppShell — responsive section deck", () => {
       />,
     );
     await screen.findByRole("navigation", { name: /primary/i });
-    window.location.hash = "";
 
-    // An unknown hash resolves to the DEFAULT surface, so the operator lands
+    // An unknown path resolves to the DEFAULT surface, so the operator lands
     // somewhere real rather than on a dead page.
     await screen.findByTestId("overview-card-fleet");
     expect(screen.queryByText(/later phase/i)).toBeNull();
@@ -280,6 +283,53 @@ describe("AppShell — responsive section deck", () => {
     fireEvent.click(screen.getByRole("button", { name: /new api key/i }));
 
     expect(screen.getByRole("dialog", { name: /create an api key/i })).toBeTruthy();
+  });
+});
+
+describe("AppShell — URL routing (each page its own link, refresh stays put)", () => {
+  it("writes the page's own path to the URL bar when navigating", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+    render(
+      <AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />,
+    );
+    const primary = within(await screen.findByRole("navigation", { name: /primary/i }));
+
+    fireEvent.click(primary.getByRole("link", { name: /^providers$/i }));
+    expect(window.location.pathname).toBe("/providers");
+
+    fireEvent.click(primary.getByRole("link", { name: /^models$/i }));
+    expect(window.location.pathname).toBe("/models");
+  });
+
+  it("opens the page named by the URL path on mount — a refresh does NOT snap back to Overview", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+    // Simulate the browser reloading the app while on /models.
+    window.history.replaceState(null, "", "/models");
+    render(
+      <AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />,
+    );
+    const primary = within(await screen.findByRole("navigation", { name: /primary/i }));
+    expect(primary.getByRole("link", { name: /^models$/i }).getAttribute("aria-current")).toBe("page");
+    // And NOT the default page.
+    expect(primary.getByRole("link", { name: /^overview$/i }).getAttribute("aria-current")).toBeNull();
+  });
+
+  it("follows browser back/forward (popstate) to whatever page the URL now names", async () => {
+    vi.stubGlobal("fetch", baseHandlers());
+    render(
+      <AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />,
+    );
+    const primary = within(await screen.findByRole("navigation", { name: /primary/i }));
+    fireEvent.click(primary.getByRole("link", { name: /^providers$/i }));
+    expect(primary.getByRole("link", { name: /^providers$/i }).getAttribute("aria-current")).toBe("page");
+
+    // The browser Back button restores the previous URL then fires popstate.
+    window.history.replaceState(null, "", "/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    await waitFor(() =>
+      expect(primary.getByRole("link", { name: /^overview$/i }).getAttribute("aria-current")).toBe("page"),
+    );
   });
 });
 

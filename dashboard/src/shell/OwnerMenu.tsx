@@ -93,7 +93,10 @@ export default function OwnerMenu(props: OwnerMenuProps) {
           icon: "settings",
           onSelect: () => {
             if (onNavigate) onNavigate("settings");
-            else window.location.hash = "#settings";
+            // Fallback only if this menu is ever mounted without the shell's
+            // navigate wired (it always is in-app): a real path navigation lands
+            // on Settings via the SPA fallback.
+            else window.location.assign("/settings");
           },
         },
         { type: "separator" },

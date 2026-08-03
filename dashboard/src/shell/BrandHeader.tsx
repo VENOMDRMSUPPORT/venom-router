@@ -17,7 +17,7 @@ export default function BrandHeader(props: BrandHeaderProps) {
   return (
     <div className="vn-nav-brand select-text">
       <a
-        href="#overview"
+        href="/"
         onClick={handleClick}
         className="vn-brand-tile group"
         aria-label="Venom Router home"

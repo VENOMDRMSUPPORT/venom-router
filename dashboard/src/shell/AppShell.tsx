@@ -46,6 +46,7 @@ import BreadcrumbBar from "./BreadcrumbBar";
 import ChromeHeader from "./ChromeHeader";
 import EnterpriseCustomizer, { type CustomizerValue } from "./EnterpriseCustomizer";
 import { DEFAULT_NAV_KEY, NAV, NAV_GROUPS, NAV_SECTIONS, navItemByKey } from "./nav";
+import { CONNECT_CLIENT_KEY, parseLocation, pathForRoute } from "./route";
 import NotificationBell from "./NotificationBell";
 import OwnerMenu from "./OwnerMenu";
 import SearchBar from "./SearchBar";
@@ -118,12 +119,10 @@ function appearanceToSettings(appearance: Appearance): SettingsResponse {
 export default function AppShell(props: AppShellProps) {
   const { session, csrfToken, onSessionExpired, onLoggedOut } = props;
 
-  // The location hash, read ONCE at mount. The Overview surface links to a single
-  // request's route explanation as `#diagnostics/routes/{request_id}`, so the
-  // shell has to honour that shape — otherwise the link lands on the bare list and
-  // silently discards which request the operator asked about. Any other hash falls
-  // through to the default surface.
-  const [initialRoute] = useState(parseInitialHash);
+  // The current page is derived from the URL PATH: read once at mount (so a
+  // refresh or a pasted /providers link opens that page, not Overview) and kept
+  // in sync both ways below — activeNav -> pushState, and popstate -> activeNav.
+  const [initialRoute] = useState(routeFromLocation);
   const [activeNav, setActiveNav] = useState(initialRoute.navKey);
   // Cleared the first time the owner navigates by hand, so a deep link opens once
   // rather than re-asserting itself every time they return to Diagnostics.
@@ -178,6 +177,31 @@ export default function AppShell(props: AppShellProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep the URL bar in step with the active page so every page has its own
+  // shareable link and a refresh stays put. pushState ONLY when the path
+  // actually changes: on mount (path already matches the parsed route) and on a
+  // popstate-driven change (handled below, which sets state to match the URL)
+  // the guard is a no-op, so there is no feedback loop and no duplicate history
+  // entry.
+  useEffect(() => {
+    const target = pathForRoute(activeNav, deepLinkRequestID);
+    if (window.location.pathname !== target) {
+      window.history.pushState(null, "", target);
+    }
+  }, [activeNav, deepLinkRequestID]);
+
+  // Back/forward (and any external path change) re-derive the active page from
+  // the URL. This is the counterpart to the pushState above.
+  useEffect(() => {
+    function onPopState() {
+      const route = routeFromLocation();
+      setActiveNav(route.navKey);
+      setDeepLinkRequestID(route.requestID);
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
   function applyAppearance(next: Appearance) {
@@ -241,14 +265,15 @@ export default function AppShell(props: AppShellProps) {
     }
   }
 
-  function handleNavigate(next: string) {
+  function handleNavigate(next: string, requestID?: string) {
     if (next !== "api-keys") setApiKeyCreateOpen(false);
     // The Debug chip only exists on the providers page — its panel leaves
     // with it.
     if (next !== "providers") setDebugOpen(false);
-    // A hand navigation supersedes the deep link: the operator is asking for the
-    // surface, not for the one request the hash named.
-    setDeepLinkRequestID(undefined);
+    // A hand navigation supersedes any prior deep link, UNLESS this navigation
+    // is itself a deep link (an Overview activity row asking for one request's
+    // explanation), in which case we carry its request id through.
+    setDeepLinkRequestID(requestID);
     setActiveNav(next);
   }
 
@@ -269,7 +294,7 @@ export default function AppShell(props: AppShellProps) {
   return (
     <div className="vn-shell">
       <nav className="vn-shell-nav vn-scroll" aria-label="Primary">
-        <BrandHeader onNavigate={(key) => setActiveNav(key)} />
+        <BrandHeader onNavigate={(key) => handleNavigate(key)} />
         {NAV_GROUPS.map((group) => (
           <div key={group}>
             <div className="vn-nav-group vn-overline">{group}</div>
@@ -277,7 +302,7 @@ export default function AppShell(props: AppShellProps) {
               <a
                 key={item.key}
                 className="vn-nav-item"
-                href={`#${item.key}`}
+                href={pathForRoute(item.key)}
                 aria-current={activeNav === item.key ? "page" : undefined}
                 onClick={(e) => {
                   e.preventDefault();
@@ -406,16 +431,12 @@ export default function AppShell(props: AppShellProps) {
   );
 }
 
-/**
- * The Connect-a-client page's internal route key (P6-UI-011).
- *
- * It is deliberately NOT a nav.ts entry: the card reaches this page from
- * Overview's Quick Start, and nav.ts is owned elsewhere. The `__` prefix keeps it
- * from ever colliding with a real nav key, and navItemByKey returns undefined for
- * it — which is why the page supplies its own header rather than relying on the
- * shared nav metadata.
- */
-export const CONNECT_CLIENT_KEY = "__connect-client";
+// The Connect-a-client page's internal route key (P6-UI-011) is owned by
+// ./route (single source of truth for the URL <-> page mapping) and re-exported
+// here so existing importers keep working. It is deliberately NOT a nav.ts
+// entry: the card reaches this page from Overview's Quick Start, so navItemByKey
+// returns undefined for it and the page supplies its own header.
+export { CONNECT_CLIENT_KEY };
 
 /** The providers-page breadcrumb's third segment per auth filter (the
  * documented "All Providers / OAuth Providers / API KEY Providers"). */
@@ -425,37 +446,13 @@ const FLEET_CATEGORY_CRUMB: Record<AuthCategory, string> = {
   api_key: "API KEY Providers",
 };
 
-/** What an initial location hash resolved to. */
-interface InitialRoute {
-  navKey: string;
-  requestID?: string;
-}
-
-/**
- * Parses the location hash ONCE at mount.
- *
- * Two shapes are recognised, and nothing else:
- *
- *   #diagnostics/routes/{request_id}  -> the Diagnostics surface, opened on that
- *                                        request (the link Overview emits)
- *   #{navKey}                         -> that nav destination
- *
- * An unrecognised hash falls through to DEFAULT_NAV_KEY rather than to a blank
- * surface. The request id is decoded, because it travels through
- * encodeURIComponent on the way out.
- */
-function parseInitialHash(): InitialRoute {
-  const raw = typeof window === "undefined" ? "" : window.location.hash.replace(/^#/, "");
-  if (raw === "") return { navKey: DEFAULT_NAV_KEY };
-
-  const segments = raw.split("/").filter((s) => s !== "");
-  if (segments[0] === "diagnostics" && segments[1] === "routes" && segments[2]) {
-    return { navKey: "diagnostics", requestID: decodeURIComponent(segments[2]) };
-  }
-  if (segments.length === 1 && navItemByKey(segments[0])) {
-    return { navKey: segments[0] };
-  }
-  return { navKey: DEFAULT_NAV_KEY };
+/** Reads the current browser path into a route (see ./route). Used at mount and
+ * on every history popstate so a refresh, a back/forward, or a pasted URL all
+ * resolve to the right page. Safe on the server (no window) — falls back to the
+ * default page. */
+function routeFromLocation(): { navKey: string; requestID?: string } {
+  const pathname = typeof window === "undefined" ? "/" : window.location.pathname;
+  return parseLocation(pathname);
 }
 
 // Mounts each nav destination's real surface, falling through to an honest
@@ -474,7 +471,7 @@ function renderSurface(
   onFleetCategoryChange: (category: AuthCategory) => void,
   apiKeyCreateOpen: boolean,
   onApiKeyCreateOpenChange: (open: boolean) => void,
-  onNavigate: (navKey: string) => void,
+  onNavigate: (navKey: string, requestID?: string) => void,
   deepLinkRequestID?: string,
 ): ReactNode {
   if (navKey === "providers") {
@@ -565,6 +562,7 @@ function renderSurface(
         csrfToken={csrfToken}
         onSessionExpired={onSessionExpired}
         onOpenQuickStart={() => onNavigate(CONNECT_CLIENT_KEY)}
+        onOpenRequest={(requestID) => onNavigate("diagnostics", requestID)}
       />
     );
   }

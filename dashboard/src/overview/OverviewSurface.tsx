@@ -16,6 +16,7 @@ import {
   type RouteDecisionEntry,
   type TierPolicy,
 } from "../api/controlClient";
+import { pathForRoute } from "../shell/route";
 import ReviewQueueBanner from "../models/ReviewQueueBanner";
 
 export interface OverviewSurfaceProps {
@@ -24,6 +25,10 @@ export interface OverviewSurfaceProps {
   /** Opens the Connect-a-client page (P6-UI-011). That page is reached from here
    * rather than from a nav entry, so the shell hands Overview the navigation. */
   onOpenQuickStart?: () => void;
+  /** Opens the Diagnostics surface on one request's route explanation. The shell
+   * owns navigation (and the URL), so an activity row asks it to route rather
+   * than driving the location itself. */
+  onOpenRequest?: (requestID: string) => void;
 }
 
 /**
@@ -183,8 +188,8 @@ function ActivityOutcome(props: { entry: RouteDecisionEntry }) {
 }
 
 /** One recent-activity row. */
-function ActivityRow(props: { entry: RouteDecisionEntry }) {
-  const { entry } = props;
+function ActivityRow(props: { entry: RouteDecisionEntry; onOpenRequest?: (requestID: string) => void }) {
+  const { entry, onOpenRequest } = props;
   const chosen = entry.chosen;
   const clamped = entry.thinking.tier_clamped || entry.thinking.certified_clamped;
 
@@ -224,8 +229,20 @@ function ActivityRow(props: { entry: RouteDecisionEntry }) {
           )}
         </div>
         {/* P6-UI-008 owns the per-request detail view. This links by request id
-            and builds nothing. */}
-        <Link href={`#diagnostics/routes/${encodeURIComponent(entry.request_id)}`} data-testid={`activity-link-${entry.request_id}`}>
+            to the real diagnostics path (so it is a shareable URL and opens on
+            refresh) and asks the shell to route client-side on click. */}
+        <Link
+          href={pathForRoute("diagnostics", entry.request_id)}
+          data-testid={`activity-link-${entry.request_id}`}
+          onClick={
+            onOpenRequest
+              ? (e) => {
+                  e.preventDefault();
+                  onOpenRequest(entry.request_id);
+                }
+              : undefined
+          }
+        >
           Explain
         </Link>
       </div>
@@ -266,7 +283,7 @@ function ActivityRow(props: { entry: RouteDecisionEntry }) {
  * a literal list of three names.
  */
 export default function OverviewSurface(props: OverviewSurfaceProps) {
-  const { onSessionExpired, onOpenQuickStart } = props;
+  const { onSessionExpired, onOpenQuickStart, onOpenRequest } = props;
 
   const providers = useCardData<Provider[]>(() => listProviders(), onSessionExpired);
   const accounts = useCardData<AccountProjection[]>(() => fetchAllAccounts(), onSessionExpired);
@@ -462,7 +479,7 @@ export default function OverviewSurface(props: OverviewSurfaceProps) {
           ) : (
             <div className="flex flex-col gap-3">
               {entries.map((entry) => (
-                <ActivityRow key={entry.decision_id} entry={entry} />
+                <ActivityRow key={entry.decision_id} entry={entry} onOpenRequest={onOpenRequest} />
               ))}
             </div>
           )
