@@ -40,9 +40,12 @@ const dirPerm = 0o700
 // any missing parents, if it does not already exist. Creation is idempotent.
 //
 // Resolution order: the VENOM_DATA_DIR environment variable when set and
-// non-empty (a dev/ops override — the tray's Development section uses it to
-// give the supervised dev backend a fully isolated lock/DB/keyring), then the
-// OS-specific DataDir default.
+// non-empty, then the OS-specific DataDir default. Normal dev AND prod both run
+// on the default — the ONE canonical database. VENOM_DATA_DIR is a deliberate,
+// opt-in escape hatch for a fully isolated scratch instance (throwaway lock/DB/
+// keyring), used only when explicitly set — e.g. safe testing that must never
+// touch the real DB. It is not set by any normal launch path, so it can never
+// silently open a second database.
 func EnsureDataDir() (string, error) {
 	dir, ok := os.LookupEnv("VENOM_DATA_DIR")
 	if !ok || dir == "" {

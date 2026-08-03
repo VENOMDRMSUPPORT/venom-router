@@ -6,6 +6,31 @@ tasks:
     cmds:
       - go build ./...
 
+  dev:
+    desc: >
+      One-command live-reload dev environment. Backend: headless `venom serve`
+      on 127.0.0.1:8081 against the ONE canonical DB (never a dev DB) — it
+      auto-rebuilds and restarts on any Go change (air, graceful stop).
+      Frontend: Vite HMR at http://127.0.0.1:8088 (proxies /api -> 8081). Edit
+      Go or React and see it live; Ctrl-C stops both. STOP the prod tray first
+      (both take the single-instance lock on the one DB + port 8081).
+    deps: [dev-backend, dev-frontend]
+
+  dev-backend:
+    internal: true
+    desc: Backend watcher (headless serve, one DB, auto-reload). Used by `task dev`.
+    cmds:
+      # `go run air@latest` downloads air on first use and caches it — no manual
+      # install. No VENOM_DATA_DIR: this runs against the ONE canonical database.
+      - go run github.com/air-verse/air@latest -c .air.toml
+
+  dev-frontend:
+    internal: true
+    desc: Vite dev server (HMR, port 8088). Used by `task dev`.
+    dir: dashboard
+    cmds:
+      - npm run dev
+
   bundle:
     desc: >
       Build the single double-clickable venom.exe with the dashboard embedded:

@@ -123,7 +123,7 @@ func TestAcquireLock_SeparateDataDirsDoNotCollide(t *testing.T) {
 	t.Setenv("VENOM_DATA_DIR", filepath.Join(t.TempDir(), "b"))
 	l2, err := AcquireLock()
 	if err != nil {
-		t.Fatalf("AcquireLock() in a second data dir error = %v, want success (dev backend isolation)", err)
+		t.Fatalf("AcquireLock() in a second data dir error = %v, want success (separate data dirs get separate locks)", err)
 	}
 	defer func() { _ = l2.Release() }()
 }

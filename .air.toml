@@ -1,0 +1,25 @@
+# Live-reload for `task dev`: rebuild + restart the HEADLESS backend
+# (`venom serve`) on any Go change, against the ONE canonical database (the
+# default data dir — NEVER a separate dev DB; VENOM_DATA_DIR is deliberately
+# not set here). send_interrupt + a generous kill_delay let the backend take
+# the shutdown signal and checkpoint/close the DB cleanly before each restart,
+# so auto-reload is safe on the real DB (the DB-corruption incident was a
+# FORCED kill, not a graceful one).
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/venom-dev.exe ./cmd/venom"
+  bin = "tmp/venom-dev.exe"
+  args_bin = ["serve"]
+  include_ext = ["go"]
+  include_dir = ["cmd", "internal"]
+  exclude_dir = ["dashboard", "dist", "docs", "third_party", "tmp", ".git", ".worktrees", "Design_System"]
+  exclude_regex = ["_test\\.go"]
+  delay = 800
+  stop_on_error = true
+  send_interrupt = true
+  kill_delay = "5s"
+
+[misc]
+  clean_on_exit = true

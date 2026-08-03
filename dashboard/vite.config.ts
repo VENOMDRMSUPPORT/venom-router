@@ -12,6 +12,13 @@ const apiTarget = process.env.VENOM_DEV_API_TARGET ?? "http://127.0.0.1:8081";
 export default defineConfig({
   plugins: [react()],
   server: {
+    // Pin the dev frontend to the ONE canonical dev port so it is identical
+    // however it is launched (`npm run dev`, `task dev`, or the tray) — never
+    // Vite's default 5173. strictPort fails loudly instead of silently drifting
+    // to another port if 8088 is taken.
+    host: "127.0.0.1",
+    port: 8088,
+    strictPort: true,
     // @venom/design-system is a file:../Design_System dependency, so its
     // icon CSS (icons.css) references SVGs that live OUTSIDE this package —
     // vite dev rewrites those urls to /@fs/ absolute-path requests. The
