@@ -393,12 +393,12 @@ func scanRowsAccount(rows *sql.Rows) (domain.Account, bool, error) {
 
 func scanOneAccount(s scanner) (domain.Account, bool, error) {
 	var (
-		a                                                              domain.Account
-		connectionState, healthState                                   string
-		reauthInProgress                                               int
+		a                                                                domain.Account
+		connectionState, healthState                                     string
+		reauthInProgress                                                 int
 		displayName, label, identityEmail, identityPlan, lastHealthError sql.NullString
-		lastHealthCheckAt                                              sql.NullInt64
-		createdAt, updatedAt                                           int64
+		lastHealthCheckAt                                                sql.NullInt64
+		createdAt, updatedAt                                             int64
 	)
 	err := s.Scan(
 		&a.ID, &a.ProviderID, &a.ExternalID, &displayName, &label, &a.AuthType,

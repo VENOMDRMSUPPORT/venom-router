@@ -23,7 +23,7 @@ func TestZenUsabilityProbeOutcome(t *testing.T) {
 		wantReschedule bool
 	}{
 		{
-			name: "usable certifies chat as supported",
+			name:           "usable certifies chat as supported",
 			verdict:        zenChatUsable,
 			wantDefinitive: true,
 			wantTruth:      models.TruthSupported,
@@ -31,7 +31,7 @@ func TestZenUsabilityProbeOutcome(t *testing.T) {
 			wantReschedule: false,
 		},
 		{
-			name: "paid model is a definitive unsupported verdict",
+			name:           "paid model is a definitive unsupported verdict",
 			verdict:        zenChatPaidUnusable,
 			wantDefinitive: true,
 			wantTruth:      models.TruthUnsupported,
@@ -39,7 +39,7 @@ func TestZenUsabilityProbeOutcome(t *testing.T) {
 			wantReschedule: false,
 		},
 		{
-			name: "free-exhausted is retryable, never a permanent verdict",
+			name:           "free-exhausted is retryable, never a permanent verdict",
 			verdict:        zenChatFreeExhausted,
 			wantDefinitive: false,
 			wantTruth:      models.TruthUnknown,
@@ -47,7 +47,7 @@ func TestZenUsabilityProbeOutcome(t *testing.T) {
 			wantReschedule: true,
 		},
 		{
-			name: "auth failure is a terminal credential block, not a model verdict",
+			name:           "auth failure is a terminal credential block, not a model verdict",
 			verdict:        zenChatAuthFailure,
 			wantDefinitive: false,
 			wantTruth:      models.TruthUnknown,
@@ -55,7 +55,7 @@ func TestZenUsabilityProbeOutcome(t *testing.T) {
 			wantReschedule: false,
 		},
 		{
-			name: "inconclusive establishes nothing",
+			name:           "inconclusive establishes nothing",
 			verdict:        zenChatInconclusive,
 			wantDefinitive: false,
 			wantTruth:      models.TruthUnknown,

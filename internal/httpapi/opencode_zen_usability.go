@@ -132,11 +132,11 @@ func probeOpenCodeZenChatUsability(ctx context.Context, baseURL, key, modelID st
 //
 //   - usable        -> capability_response (definitive supported -> routable chat)
 //   - paid-unusable -> semantic_rejection  (definitive unsupported: the account
-//                      cannot use this paid model, a proven-negative verdict)
+//     cannot use this paid model, a proven-negative verdict)
 //   - free-exhausted-> rate_limited        (retryable, reschedules: a spent free
-//                      quota is transient, never a permanent unsupported)
+//     quota is transient, never a permanent unsupported)
 //   - auth-failure  -> unauthorized        (terminal credential block; the caller
-//                      also stops probing the rest of the account)
+//     also stops probing the rest of the account)
 //   - inconclusive  -> malformed_request   (establishes nothing)
 func zenUsabilitySignal(v zenChatUsability) intelligence.ProbeSignalKind {
 	switch v {

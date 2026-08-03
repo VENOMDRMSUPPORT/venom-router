@@ -32,10 +32,10 @@ const enrollmentRoute = "POST /providers/{id}/accounts"
 // control route, and Idempotency-Key aware via idem.Execute so a
 // retried request with the same key never re-runs ConnectAPIKeyAccount.
 type EnrollmentHandler struct {
-	connect  *application.ConnectService
-	reg      *providers.Registry
-	funding  *storage.FundingEvidenceRepo
-	accounts *storage.AccountRepo
+	connect   *application.ConnectService
+	reg       *providers.Registry
+	funding   *storage.FundingEvidenceRepo
+	accounts  *storage.AccountRepo
 	idem      *idempotencyStore
 	audit     *auditEmitter
 	now       func() time.Time

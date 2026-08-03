@@ -20,10 +20,10 @@ import (
 
 // fakeCertRecorder captures the single RecordAttempt call a verify makes.
 type fakeCertRecorder struct {
-	calls    int
-	lastOp   string
-	lastOut  intelligence.ProbeOutcome
-	lastTry  int
+	calls   int
+	lastOp  string
+	lastOut intelligence.ProbeOutcome
+	lastTry int
 }
 
 func (f *fakeCertRecorder) RecordAttempt(_ context.Context, offeringOperationID string, outcome intelligence.ProbeOutcome, attempts int) (models.Certification, error) {

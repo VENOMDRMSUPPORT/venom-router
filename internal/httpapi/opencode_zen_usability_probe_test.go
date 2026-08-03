@@ -18,10 +18,10 @@ import (
 
 func TestProbeOpenCodeZenChatUsability(t *testing.T) {
 	const (
-		usableBody   = `{"id":"x","object":"chat.completion","choices":[{"index":0,"finish_reason":"length","message":{"role":"assistant","content":""}}],"cost":"0"}`
+		usableBody    = `{"id":"x","object":"chat.completion","choices":[{"index":0,"finish_reason":"length","message":{"role":"assistant","content":""}}],"cost":"0"}`
 		exhaustedBody = `{"type":"error","error":{"type":"FreeUsageLimitError","message":"Free usage exceeded, subscribe to Go"}}`
-		creditsBody  = `{"type":"error","error":{"type":"CreditsError","message":"Insufficient balance."}}`
-		authBody     = `{"type":"error","error":{"type":"AuthError","message":"Invalid API key."}}`
+		creditsBody   = `{"type":"error","error":{"type":"CreditsError","message":"Insufficient balance."}}`
+		authBody      = `{"type":"error","error":{"type":"AuthError","message":"Invalid API key."}}`
 	)
 
 	tests := []struct {
