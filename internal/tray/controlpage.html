@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Venom Router</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36;
+    --fg: #e6e9ef; --muted: #9aa4b2;
+    --accent: #6ea8fe; --ok: #3fb950; --warn: #d29922; --err: #f85149;
+    --btn: #21262d; --btnh: #2c333c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 18px; min-width: 320px;
+  }
+  h1 { font-size: 15px; margin: 0 0 14px; letter-spacing: .3px; }
+  h1 .dot { color: var(--accent); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px; margin-bottom: 14px;
+  }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .title { font-weight: 600; }
+  .status { font-size: 12px; color: var(--muted); }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
+  .b-running { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+  .b-starting { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+  .b-error { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, var(--line)); }
+  .b-stopped { color: var(--muted); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  button {
+    background: var(--btn); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 12px; font-size: 13px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: var(--btnh); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  button.danger { border-color: color-mix(in srgb, var(--err) 45%, var(--line)); color: var(--err); }
+  .foot { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+  label.chk { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; cursor: pointer; }
+</style>
+</head>
+<body>
+  <h1><span class="dot">●</span> Venom Router</h1>
+
+  <div class="card">
+    <div class="row">
+      <span class="title">Production</span>
+      <span id="prod-badge" class="badge b-stopped">…</span>
+    </div>
+    <div class="status" id="prod-status">loading…</div>
+    <div class="actions">
+      <button id="prod-open" class="primary">Open Dashboard</button>
+      <button id="prod-start">Start</button>
+      <button id="prod-stop">Stop</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <span class="title">Development</span>
+      <span id="dev-badge" class="badge b-stopped">…</span>
+    </div>
+    <div class="status" id="dev-status">loading…</div>
+    <div class="actions">
+      <button id="dev-open" class="primary">Open Dashboard</button>
+      <button id="dev-start">Start</button>
+      <button id="dev-stop">Stop</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="foot">
+      <label class="chk"><input type="checkbox" id="autostart"> Start with Windows</label>
+      <button id="logs">View Logs</button>
+    </div>
+    <div class="actions">
+      <button id="quit" class="danger">Quit Venom Router</button>
+    </div>
+  </div>
+
+<script>
+const TOKEN = "__VENOM_CONTROL_TOKEN__";
+
+async function post(path, body) {
+  const opts = { method: "POST", headers: { "X-Control-Token": TOKEN } };
+  if (body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  try { await fetch(path, opts); } catch (e) { /* tray may be mid-transition */ }
+  setTimeout(refresh, 250);
+}
+
+function badge(el, state) {
+  const s = (state || "Stopped").toLowerCase();
+  el.textContent = state || "Stopped";
+  el.className = "badge b-" + s;
+}
+
+async function refresh() {
+  let st;
+  try {
+    const r = await fetch("/state", { headers: { "X-Control-Token": TOKEN } });
+    st = await r.json();
+  } catch (e) { return; }
+
+  // Production
+  const prodState = st.prod.charAt(0).toUpperCase() + st.prod.slice(1);
+  badge(document.getElementById("prod-badge"), prodState);
+  document.getElementById("prod-status").textContent = "Status: " + prodState;
+  const prodRunning = st.prod === "running";
+  const devActive = st.devAvailable && st.devOverall !== "Stopped";
+  document.getElementById("prod-open").disabled = !prodRunning;
+  // Start is hidden while dev holds 8081 + the one-DB lock (mirrors the menu).
+  document.getElementById("prod-start").disabled = prodRunning || devActive;
+  document.getElementById("prod-stop").disabled = !prodRunning;
+
+  // Development
+  badge(document.getElementById("dev-badge"), st.devAvailable ? st.devOverall : "N/A");
+  document.getElementById("dev-status").textContent =
+    st.devAvailable ? ("Backend: " + st.devBackend + " · Frontend: " + st.devFrontend) : "No dev repo found";
+  document.getElementById("dev-open").disabled = st.devFrontend !== "Running";
+  document.getElementById("dev-start").disabled = !st.devAvailable || devActive;
+  document.getElementById("dev-stop").disabled = !devActive;
+
+  document.getElementById("autostart").checked = !!st.autostart;
+}
+
+document.getElementById("prod-open").onclick  = () => post("/prod/open");
+document.getElementById("prod-start").onclick = () => post("/prod/start");
+document.getElementById("prod-stop").onclick  = () => post("/prod/stop");
+document.getElementById("dev-open").onclick    = () => post("/dev/open");
+document.getElementById("dev-start").onclick   = () => post("/dev/start");
+document.getElementById("dev-stop").onclick    = () => post("/dev/stop");
+document.getElementById("logs").onclick        = () => post("/logs");
+document.getElementById("autostart").onchange  = (e) => post("/autostart", { enabled: e.target.checked });
+document.getElementById("quit").onclick = () => {
+  if (confirm("Stop Venom Router completely and exit?")) post("/quit");
+};
+
+refresh();
+setInterval(refresh, 1500);
+</script>
+</body>
+</html>

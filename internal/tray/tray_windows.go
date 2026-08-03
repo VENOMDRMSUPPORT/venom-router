@@ -34,10 +34,40 @@ func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller, 
 	})
 	hideConsoleIfOwned()
 
+	// Control window backend: a tray-owned loopback server the left-click
+	// app-window drives. Optional — if it fails to bind, the tray still works
+	// (left-click falls back to showing the menu).
+	var controlURL string
+	if server, err := NewControlServer(&trayControlsAdapter{ctx: ctx, c: c, dev: dev, cancel: cancel}); err != nil {
+		c.log.Error("tray: control server unavailable", observability.String("err", err.Error()))
+	} else {
+		server.Start()
+		controlURL = server.URL()
+		defer func() {
+			sctx, scancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer scancel()
+			_ = server.Shutdown(sctx)
+		}()
+	}
+
 	onReady := func() {
 		systray.SetIcon(trayIcon)
 		systray.SetTitle("Venom Router")
 		systray.SetTooltip("Venom Router")
+
+		// Left-click opens the control window (app-window of the control page);
+		// right-click still shows the menu below (we leave the secondary tap
+		// unset, so systray's default menu appears). When the control server is
+		// unavailable, leaving the tap unset makes left-click show the menu too.
+		if controlURL != "" {
+			systray.SetOnTapped(func() {
+				go func() {
+					if err := openControlWindow(controlURL); err != nil {
+						c.log.Error("tray: open control window failed", observability.String("err", err.Error()))
+					}
+				}()
+			})
+		}
 
 		mOpenProd := systray.AddMenuItem("Open Production Dashboard", "Open the production dashboard in your browser")
 		mStatus := systray.AddMenuItem(statusTitle(c.Status()), "")
