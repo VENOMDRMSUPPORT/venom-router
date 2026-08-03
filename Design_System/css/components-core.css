@@ -543,7 +543,7 @@
 .vn-shell-nav { grid-row: 1 / 3; display: flex; flex-direction: column; background: var(--nav-bg); border-right: var(--border-hairline) solid var(--border-default); overflow-y: auto; }
 .vn-shell-topbar { display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-4); border-bottom: var(--border-hairline) solid var(--border-default); background: var(--surface-primary); }
 .vn-shell-main { min-width: 0; overflow: auto; }
-.vn-shell-content { width: 100%; min-width: 0; padding: var(--density-page-pad); display: flex; flex-direction: column; gap: var(--density-page-section-gap); max-width: 1400px; }
+.vn-shell-content { width: 100%; min-width: 0; padding: var(--density-page-pad); display: flex; flex-direction: column; gap: var(--density-page-section-gap); max-width: 100%; }
 
 .vn-nav-brand { display: flex; align-items: center; gap: var(--space-3); height: 60px; flex: none; padding: 0 var(--space-4); border-bottom: var(--border-hairline) solid var(--border-default); font-weight: var(--font-weight-semibold); letter-spacing: -0.01em; user-select: text; cursor: default; }
 

@@ -28,16 +28,17 @@ afterEach(() => {
 
 /** The secrets that must never appear once the owner is inside the shell.
  *
- * `accountExternalID` is deliberately ABSENT from this list: the Fleet surface
- * renders it on purpose as the owner's handle on an account (AccountRow's
- * AccountIdentity), and it is non-secret by design. Banning it globally would
- * make the canary fire on correct shipped behaviour. It IS declared on the
- * surfaces that have no business showing it — see the cross-surface test at
- * the bottom of this file, which is where that check has teeth. */
+ * `accountExternalID` is now included: the Fleet surface no longer renders the
+ * account's opaque external_id anywhere (it identifies an account by its
+ * owner-set label, its identity email, or a numbered default — never the
+ * 64-char fingerprint), and the row's test hook is the non-sensitive internal
+ * account id, not the external_id. So the external_id must not surface on ANY
+ * shell surface, and this list now has teeth on every step. */
 const SHELL_SECRETS = [
   { label: "owner password", value: SENTINELS.ownerPassword },
   { label: "provider credential", value: SENTINELS.providerCredential },
   { label: "raw Venom API key", value: SENTINELS.rawVenomKey },
+  { label: "account external id", value: SENTINELS.accountExternalID },
 ];
 
 /**
@@ -81,10 +82,10 @@ describe("journey — sign in, then move through the shell", () => {
     // is expanded, so the expansion is part of the journey, not a shortcut.
     await gotoNav("Providers");
     await expandProviderCard("OpenCode Zen");
-    // AccountRow identifies an account by email/external id (AccountIdentity),
-    // not by display_name — so this is what "the table is populated" looks
-    // like on this surface.
-    await screen.findByText(new RegExp(SENTINELS.accountExternalID));
+    // AccountRow now identifies an account by its label / identity email /
+    // numbered default — never the opaque external_id. The seeded account
+    // carries an email, so that is what "the table is populated" looks like.
+    await screen.findByText("owner@example.test");
     await assertNoAxeViolations(container);
     assertNoSecretsRendered(container, SHELL_SECRETS);
 
@@ -241,23 +242,24 @@ describe("journey — connect a client", () => {
 });
 
 describe("journey — nothing bleeds across surfaces", () => {
-  it("does not carry the account external id from Providers into Diagnostics", async () => {
+  it("never shows the account external id on Providers, and it does not reach Diagnostics", async () => {
     const { view } = await renderShell();
     const { container } = view;
 
-    // Providers renders the external id on purpose — assert that, so the
-    // check below is proven to be about SURVIVAL rather than about a value
-    // that was never on screen in the first place.
+    // The Providers surface is populated (the seeded account's email renders),
+    // yet the opaque external_id appears nowhere on it — not as text, and not
+    // in any attribute (the row's test hook is the internal account id).
     await gotoNav("Providers");
     await expandProviderCard("OpenCode Zen");
-    await screen.findByText(new RegExp(SENTINELS.accountExternalID));
+    await screen.findByText("owner@example.test");
+    assertNoSecretsRendered(container, [{ label: "account external id", value: SENTINELS.accountExternalID }]);
 
     await gotoNav("Diagnostics");
     await screen.findByTestId(`route-row-${REQUEST_ID}`);
 
     // The route-diagnostics payload has no field for an account external id
-    // (see controlClient's RouteDecisionEntry doc comment). This proves the
-    // previous surface's value did not survive the navigation either.
+    // (see controlClient's RouteDecisionEntry doc comment) — so it is absent
+    // here too, having never been on the previous surface to begin with.
     assertNoSecretsRendered(container, [
       ...SHELL_SECRETS,
       { label: "account external id", value: SENTINELS.accountExternalID },

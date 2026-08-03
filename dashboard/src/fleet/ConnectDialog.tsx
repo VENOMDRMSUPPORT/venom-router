@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { Alert, Button, Dialog, FormField, RadioGroup, Spinner, Textarea } from "@venom/design-system/primitives";
+import { Alert, Button, Dialog, FormField, Input, RadioGroup, Spinner, Textarea } from "@venom/design-system/primitives";
 import { Icon } from "@venom/design-system/icons";
 import { TypedErrorDisplay } from "@venom/design-system/domain";
 import {
@@ -58,15 +58,12 @@ function newIdempotencyKey(): string {
  * re-opens the SAME authorize URL — it is also the recovery path when the
  * popup was blocked (window.open returned null). Neither mode ever
  * displays a code, token, or the submitted key anywhere.
- *
- * DELIBERATE DEVIATION from the documented UI: no "Label (optional)"
- * field — the connect body accepts only {api_key, funding} server-side,
- * so a label input would be an inert control.
  */
 export default function ConnectDialog(props: ConnectDialogProps) {
   const { provider, csrfToken, onSessionExpired, onClose, onConnected } = props;
 
   const [apiKey, setApiKey] = useState("");
+  const [label, setLabel] = useState("");
   const [funding, setFunding] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<AuthApiError | null>(null);
@@ -90,6 +87,7 @@ export default function ConnectDialog(props: ConnectDialogProps) {
 
   function reset() {
     setApiKey("");
+    setLabel("");
     setFunding("");
     setSubmitting(false);
     setError(null);
@@ -116,7 +114,11 @@ export default function ConnectDialog(props: ConnectDialogProps) {
     try {
       await connectApiKeyAccount(
         provider.id,
-        { api_key: candidate, funding: (funding || undefined) as "free" | "paid" | "unknown" | undefined },
+        {
+          api_key: candidate,
+          funding: (funding || undefined) as "free" | "paid" | "unknown" | undefined,
+          label: label.trim() || undefined,
+        },
         csrfToken,
         newIdempotencyKey(),
       );
@@ -289,6 +291,15 @@ export default function ConnectDialog(props: ConnectDialogProps) {
               onChange={setFunding}
             />
           </div>
+          <FormField label="Label" description="Optional. Shown instead of the auto-generated account number.">
+            <Input
+              placeholder="#account 01"
+              maxLength={100}
+              value={label}
+              disabled={submitting}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setLabel(e.target.value)}
+            />
+          </FormField>
           <p className="vn-caption flex items-center gap-2" style={{ margin: 0 }}>
             <Icon name="shield-check" size={13} />
             Stored encrypted. A health check runs immediately after connect.

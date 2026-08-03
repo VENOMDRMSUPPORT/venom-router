@@ -154,11 +154,11 @@ const QUOTA_WINDOW = {
 
 /**
  * The one connected account. NOTE `external_id` carries a sentinel value:
- * the Fleet surface renders it deliberately (it is the owner's handle on the
- * account, non-secret by design — see AccountRow's AccountIdentity), so the
- * canary must NOT ban it there. It is declared as forbidden on the surfaces
- * that have no business showing it, which is what makes the cross-surface
- * leak assertion in the journey non-vacuous.
+ * the Fleet surface NO LONGER renders it anywhere — an account is identified
+ * by its owner-set label, its identity email, or a numbered default (see
+ * AccountRow), and the row's test hook is the internal account id, not the
+ * external_id. So the sentinel must not surface on ANY shell surface, which
+ * is what the cross-surface leak assertion in the journey now proves.
  */
 export const ACCOUNT = {
   id: ACCOUNT_ID,

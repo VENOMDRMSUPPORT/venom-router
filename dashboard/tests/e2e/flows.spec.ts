@@ -24,9 +24,10 @@ test.describe("critical flows", () => {
     await expect(page.getByText("OpenCode Zen")).toBeVisible();
 
     // Accounts live behind a per-card disclosure, so "view the fleet" is two
-    // steps, exactly as it is for an owner.
+    // steps, exactly as it is for an owner. The account is identified by its
+    // identity email (never the opaque external_id, which is no longer shown).
     await page.getByRole("button", { name: /Expand OpenCode Zen accounts/i }).click();
-    await expect(page.getByText(SENTINELS.accountExternalID)).toBeVisible();
+    await expect(page.getByText("owner@example.test")).toBeVisible();
 
     expect(report.unhandled).toEqual([]);
   });

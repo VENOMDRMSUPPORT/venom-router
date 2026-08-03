@@ -1,5 +1,5 @@
-import { useState, type ChangeEvent } from "react";
-import { Badge, Button, Dialog, FormField, IconButton, Select } from "@venom/design-system/primitives";
+import { useState, type ChangeEvent, type KeyboardEvent } from "react";
+import { Badge, Button, Dialog, FormField, IconButton, Input, Select } from "@venom/design-system/primitives";
 import {
   DestructiveActionConfirmation,
   FundingBadge,
@@ -15,6 +15,7 @@ import {
   AuthApiError,
   disconnectAccount,
   isSessionExpired,
+  patchAccountLabel,
   refreshHealth,
   refreshQuota,
   resumeAccount,
@@ -79,15 +80,6 @@ function latestQuotaObservedAt(account: AccountProjection): number | null {
   return latest;
 }
 
-/** A fingerprint-style external id (fingerprint-identity providers store a
- * 64-char hex SHA-256 there). Rendered truncated — the full value stays in
- * the title attribute, never lost. */
-const FINGERPRINT_ID = /^[0-9a-f]{32,}$/i;
-
-function shortExternalId(externalId: string): string {
-  return FINGERPRINT_ID.test(externalId) ? `${externalId.slice(0, 12)}…` : externalId;
-}
-
 /**
  * One connected account's row (image 2 layout): numbered index chip,
  * identity (email, uppercase plan badge, immutable external id), the
@@ -118,10 +110,14 @@ export default function AccountRow(props: AccountRowProps) {
   const [actionNote, setActionNote] = useState<string | null>(null);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
 
-  const [fundingOpen, setFundingOpen] = useState(false);
+  // One "Edit account" dialog drives both settings: the display label and
+  // the funding override. Its two writes are independent — each fires only
+  // when its own field actually changed.
+  const [editOpen, setEditOpen] = useState(false);
+  const [labelInput, setLabelInput] = useState("");
   const [fundingChoice, setFundingChoice] = useState<string>(account.funding?.funding ?? "unknown");
-  const [fundingSubmitting, setFundingSubmitting] = useState(false);
-  const [fundingError, setFundingError] = useState<AuthApiError | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState<AuthApiError | null>(null);
 
   async function attemptReveal() {
     setRevealPending(true);
@@ -241,35 +237,58 @@ export default function AccountRow(props: AccountRowProps) {
     void runLifecycleAction(() => disconnectAccount(account.id, csrfToken));
   }
 
-  async function handleFundingSubmit() {
-    setFundingSubmitting(true);
-    setFundingError(null);
+  const fundingLocked = account.funding?.locked ?? false;
+
+  /** Saves the Edit-account dialog. The label and the funding override are
+   * two separate server writes; each runs ONLY when its field changed, so an
+   * untouched (or locked) funding value is never re-submitted. */
+  async function handleEditSave() {
+    setEditSubmitting(true);
+    setEditError(null);
     try {
-      await updateFunding(
-        account.id,
-        { funding: fundingChoice as "free" | "paid" | "unknown", expected_version: account.funding?.version },
-        csrfToken,
-      );
-      setFundingOpen(false);
+      const nextLabel = labelInput.trim();
+      if (nextLabel !== (account.label ?? "")) {
+        await patchAccountLabel(account.id, nextLabel, csrfToken);
+      }
+      if (!fundingLocked && fundingChoice !== (account.funding?.funding ?? "unknown")) {
+        await updateFunding(
+          account.id,
+          { funding: fundingChoice as "free" | "paid" | "unknown", expected_version: account.funding?.version },
+          csrfToken,
+        );
+      }
+      setEditOpen(false);
       onChanged();
     } catch (err) {
       if (isSessionExpired(err)) {
         onSessionExpired();
         return;
       }
-      setFundingError(toApiError(err));
+      setEditError(toApiError(err));
     } finally {
-      setFundingSubmitting(false);
+      setEditSubmitting(false);
     }
   }
 
-  const fundingLocked = account.funding?.locked ?? false;
+  function openEdit() {
+    setLabelInput(account.label ?? "");
+    setFundingChoice(account.funding?.funding ?? "unknown");
+    setEditError(null);
+    setEditOpen(true);
+  }
   // A synthetic plan label that merely repeats the funding classification
   // ("Free" plan + free funding) would render as two identical badges —
   // keep the FundingBadge (the real classification) and drop the echo.
   const plan = account.identity.plan;
   const showPlanBadge = !!plan && plan.toLowerCase() !== (account.funding?.funding ?? "").toLowerCase();
-  const isFingerprintId = FINGERPRINT_ID.test(account.external_id);
+  // The row's headline: the owner's label when set, otherwise the real
+  // identity email, otherwise the numbered default. The opaque external_id
+  // (a 64-char SHA-256 fingerprint for API-key accounts) is never shown.
+  const defaultName = `#account ${String(index).padStart(2, "0")}`;
+  const displayName = account.label || account.identity.email || defaultName;
+  // When a custom label overrides a real email, keep the email as a muted
+  // caption so that identity isn't lost — but never the fingerprint hex.
+  const secondaryEmail = account.label && account.identity.email ? account.identity.email : null;
   const canStop = account.connection_state === "connected";
   const canResume = account.connection_state === "stopped";
   const powerTitle = canStop
@@ -284,51 +303,39 @@ export default function AccountRow(props: AccountRowProps) {
 
   return (
     <>
-      <div className="vnd-account">
+      <div className="vnd-account" data-account-id={account.id}>
         <span className="vnd-account-index" aria-hidden="true">
-          {index}
+          #{String(index).padStart(2, "0")}
         </span>
 
         <div className="vnd-account-body">
           <div className="vnd-account-identity">
-            {/* A fingerprint identity renders truncated with the full value
-                in the title — never a raw 64-char hex headline. */}
-            <span
-              className={`vnd-account-email${!account.identity.email && isFingerprintId ? " vn-mono-xs" : ""}`}
-              title={!account.identity.email && isFingerprintId ? account.external_id : undefined}
-            >
-              {account.identity.email || shortExternalId(account.external_id)}
+            {/* Headline: label > email > numbered default. The opaque
+                fingerprint external_id is deliberately never rendered. */}
+            <span className="vnd-account-email" title={displayName}>
+              {displayName}
             </span>
             {showPlanBadge && plan ? (
               <Badge tone="info" mono title={`plan: ${plan}`}>
                 {plan.toUpperCase()}
               </Badge>
             ) : null}
-            {account.identity.email ? (
-              <span className="vn-caption vn-mono-xs" title={account.external_id}>
-                {shortExternalId(account.external_id)}
+            {secondaryEmail ? (
+              <span className="vn-caption" title={secondaryEmail}>
+                {secondaryEmail}
               </span>
             ) : null}
-            <FundingBadge funding={account.funding?.funding} source={account.funding?.source} locked={fundingLocked} />
-            <IconButton
-              icon="sliders-horizontal"
-              label="Override funding"
-              variant="ghost"
-              size="sm"
-              disabled={fundingLocked}
-              onClick={() => {
-                setFundingChoice(account.funding?.funding ?? "unknown");
-                setFundingError(null);
-                setFundingOpen(true);
-              }}
+            <FundingBadge
+              funding={account.funding?.funding}
+              source={account.funding?.source}
+              locked={fundingLocked}
+              plan={isFreeAccount ? "Free / ∞" : undefined}
             />
           </div>
 
-          {/* self-start: the reveal control is a fit-content chip, never a
-              full-width slab stretched by the flex column. */}
-          <span className="self-start">
+          <div className="vnd-account-details">
             <SecretRevealControl
-              masked="••••••••"
+              masked={secret ? "•".repeat(secret.length) : "•".repeat(64)}
               secret={secret}
               revealed={revealed}
               blocked={!revealed}
@@ -336,15 +343,11 @@ export default function AccountRow(props: AccountRowProps) {
               onHide={handleHide}
               label="credential"
             />
-          </span>
+            <QuotaSummaryCompact windows={account.quota} />
+          </div>
           {revealError ? (
             <TypedErrorDisplay code={revealError.code} message={revealError.message} retryable={revealError.retryable} tone="critical" />
           ) : null}
-
-          <QuotaSummaryCompact
-            windows={account.quota}
-            isUnlimited={isFreeAccount && account.quota.length === 0}
-          />
 
           {/* P3c-UI-001: retained mount (no-removal rule). The per-account
            * LIVE certification surface is the Model Test Report modal
@@ -361,11 +364,20 @@ export default function AccountRow(props: AccountRowProps) {
         <div className="vnd-account-right">
           <div className="vnd-account-actions">
             <IconButton
+              icon="settings"
+              label="Edit account"
+              title="Edit label & funding"
+              variant="ghost"
+              size="md"
+              disabled={actionPending}
+              onClick={openEdit}
+            />
+            <IconButton
               icon="heart-pulse"
               label="Sync: health · plan · usage"
               title="Sync: health · plan · usage"
               variant="ghost"
-              size="sm"
+              size="md"
               disabled={actionPending || account.connection_state === "disconnected"}
               onClick={handleSync}
             />
@@ -374,7 +386,7 @@ export default function AccountRow(props: AccountRowProps) {
               label="Fetch models from provider"
               title="Fetch models from provider"
               variant="ghost"
-              size="sm"
+              size="md"
               disabled={actionPending || account.connection_state === "disconnected"}
               onClick={handleFetchModels}
             />
@@ -383,7 +395,7 @@ export default function AccountRow(props: AccountRowProps) {
               label="Open model test report"
               title={modelCount ? "Open model test report" : "No models discovered yet"}
               variant="ghost"
-              size="sm"
+              size="md"
               className="vnd-count-btn"
               disabled={!modelCount}
               onClick={onOpenModelReport}
@@ -396,7 +408,7 @@ export default function AccountRow(props: AccountRowProps) {
               label={powerTitle}
               title={powerTitle}
               variant="ghost"
-              size="sm"
+              size="md"
               disabled={actionPending || (!canStop && !canResume)}
               onClick={canStop ? handleStop : canResume ? handleResume : undefined}
             />
@@ -405,7 +417,7 @@ export default function AccountRow(props: AccountRowProps) {
               label="Disconnect account"
               title="Disconnect account"
               variant="ghost"
-              size="sm"
+              size="md"
               disabled={actionPending || account.connection_state === "disconnected"}
               onClick={() => setDisconnectOpen(true)}
             />
@@ -431,7 +443,7 @@ export default function AccountRow(props: AccountRowProps) {
 
       <DestructiveActionConfirmation
         open={disconnectOpen}
-        title={`Disconnect ${account.external_id}?`}
+        title={`Disconnect ${displayName}?`}
         consequence="Routing through this account stops immediately and its credentials are retired. The row and its sanitized history are retained — restoring it requires a new enrollment, not a resume."
         confirmWord="disconnect"
         confirmLabel="Disconnect account"
@@ -440,31 +452,51 @@ export default function AccountRow(props: AccountRowProps) {
       />
 
       <Dialog
-        open={fundingOpen}
-        onClose={() => setFundingOpen(false)}
-        title="Override funding classification"
-        description="Recorded as an owner override — it supersedes the current evidence row and is never auto-superseded back."
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        title="Edit account"
+        description="Set a display label and the funding classification for this account."
         footer={
           <>
-            <Button variant="ghost" onClick={() => setFundingOpen(false)}>
+            <Button variant="ghost" onClick={() => setEditOpen(false)}>
               Cancel
             </Button>
-            <Button variant="primary" loading={fundingSubmitting} onClick={() => void handleFundingSubmit()}>
+            <Button variant="primary" loading={editSubmitting} onClick={() => void handleEditSave()}>
               Save
             </Button>
           </>
         }
       >
         <div className="flex flex-col gap-3">
-          <FormField label="Funding">
+          <FormField label="Label" description="Optional. Shown instead of the auto-generated account number.">
+            <Input
+              placeholder={defaultName}
+              maxLength={100}
+              value={labelInput}
+              disabled={editSubmitting}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setLabelInput(e.target.value)}
+              onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
+                if (e.key === "Enter") void handleEditSave();
+              }}
+            />
+          </FormField>
+          <FormField
+            label="Funding"
+            description={
+              fundingLocked
+                ? "Locked by provider policy — this account's funding can't be overridden."
+                : "Recorded as an owner override; it supersedes the current evidence and is never auto-reverted."
+            }
+          >
             <Select
               options={FUNDING_OPTIONS}
               value={fundingChoice}
+              disabled={editSubmitting || fundingLocked}
               onChange={(e: ChangeEvent<HTMLSelectElement>) => setFundingChoice(e.target.value)}
             />
           </FormField>
-          {fundingError ? (
-            <TypedErrorDisplay code={fundingError.code} message={fundingError.message} retryable={fundingError.retryable} tone="critical" />
+          {editError ? (
+            <TypedErrorDisplay code={editError.code} message={editError.message} retryable={editError.retryable} tone="critical" />
           ) : null}
         </div>
       </Dialog>

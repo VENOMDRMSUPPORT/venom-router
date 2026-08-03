@@ -154,11 +154,6 @@ function CompactQuotaLine(props: { window: QuotaWindow; nowMs: number }) {
 
 export interface QuotaSummaryCompactProps {
   windows: QuotaWindow[];
-  /**
-   * When true and windows is empty, renders an "Unlimited" indicator instead
-   * of nothing — used for free providers that have no quota caps to report.
-   */
-  isUnlimited?: boolean;
   /** Injected clock for deterministic tests; defaults to Date.now(). */
   nowMs?: number;
 }
@@ -168,21 +163,14 @@ export interface QuotaSummaryCompactProps {
  * provider_evidence/owner_override windows as thin labelled meters,
  * local_safety windows through the same LocalSafetyBudgetIndicator the
  * full summary uses (Venom's own routing-safety budget is never presented
- * as provider evidence — docs/02 §3, 07 §5a). Zero windows with isUnlimited
- * render an "∞ Unlimited" label (free providers); zero windows without it
- * render nothing (the account row's meta line already reports "Quota: —").
+ * as provider evidence — docs/02 §3, 07 §5a). Zero windows render nothing —
+ * the account row's meta line already reports "Quota: —", and a free
+ * account's unlimited nature is conveyed by its "Free / ∞" funding badge.
  */
 export function QuotaSummaryCompact(props: QuotaSummaryCompactProps) {
-  const { windows, isUnlimited, nowMs = Date.now() } = props;
+  const { windows, nowMs = Date.now() } = props;
 
   if (windows.length === 0) {
-    if (isUnlimited) {
-      return (
-        <div className="vnd-quota-lines">
-          <span className="vn-caption">∞ Unlimited</span>
-        </div>
-      );
-    }
     return null;
   }
 

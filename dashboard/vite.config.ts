@@ -25,5 +25,11 @@ export default defineConfig({
     proxy: {
       "/api": { target: apiTarget, changeOrigin: true },
     },
+    watch: {
+      // chokidar native events are unreliable when files are edited by
+      // external tools (e.g. Claude Code, scripts). Polling guarantees
+      // HMR fires regardless of how a file was written.
+      usePolling: true,
+    },
   },
 });

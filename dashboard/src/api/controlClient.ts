@@ -315,6 +315,8 @@ export interface AccountProjection {
   provider: string;
   external_id: string;
   display_name?: string;
+  /** Owner-supplied human-readable label; absent = fall back to "#account NN". */
+  label?: string;
   auth_type: string;
   connection_state: "connecting" | "connected" | "stopped" | "disconnected";
   health_state: "unknown" | "healthy" | "degraded" | "unavailable" | "expired";
@@ -371,6 +373,8 @@ export interface ConnectApiKeyAccountBody {
   /** Owner-supplied funding override; omit to let the catalog's funding
    * policy decide. */
   funding?: "free" | "paid" | "unknown";
+  /** Optional human-readable label for the account. */
+  label?: string;
 }
 
 export interface ConnectedAccount {
@@ -402,6 +406,25 @@ export async function connectApiKeyAccount(
     headers,
     body: JSON.stringify(body),
   });
+  return resp.data;
+}
+
+// --- Account label (off-tracker) ---
+
+/** PATCH /accounts/{id} — set or clear the owner label. Pass "" to clear. */
+export async function patchAccountLabel(
+  accountId: string,
+  label: string,
+  csrfToken: string,
+): Promise<AccountProjection> {
+  const resp = await request<{ data: AccountProjection }>(
+    `${CONTROL_BASE}/accounts/${encodeURIComponent(accountId)}`,
+    {
+      method: "PATCH",
+      headers: { [CSRF_HEADER]: csrfToken },
+      body: JSON.stringify({ label }),
+    },
+  );
   return resp.data;
 }
 

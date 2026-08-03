@@ -19,7 +19,7 @@
   border: var(--border-hairline) solid var(--border-default);
   border-radius: var(--radius-lg);
   background: var(--surface-secondary);
-  padding: var(--space-3) var(--space-4);
+  overflow: hidden;
   min-width: 0;
 }
 
@@ -27,13 +27,29 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  padding: var(--space-2-5, 10px) var(--space-4);
+  background: var(--surface-secondary);
   min-width: 0;
+}
+
+.vnd-provider-row-main > .vn-btn {
+  color: var(--text-muted);
+  flex: none;
+}
+
+.vnd-provider-row-main > .vn-btn:hover {
+  color: var(--text-primary);
+}
+
+.vnd-provider-row--expanded .vnd-provider-row-main {
+  border-bottom: var(--border-hairline) solid var(--border-default);
 }
 
 .vnd-provider-row-body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  align-items: flex-start;
+  gap: 2px;
   min-width: 0;
   flex: 1;
 }
@@ -59,7 +75,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  flex-wrap: wrap;
+  line-height: 1.2;
 }
 
 .vnd-provider-row-actions {
@@ -69,12 +85,13 @@
   flex: none;
 }
 
-/* The expanded per-provider account panel: inset, green-tinted left edge. */
+/* The expanded per-provider account panel: full-width Body section with distinct surface color */
 .vnd-provider-row-accounts {
-  margin-top: var(--space-3);
+  margin-top: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  background: var(--surface-primary);
+  width: 100%;
 }
 
 /* --- Health dots ---------------------------------------------------------- */
@@ -99,28 +116,44 @@
 
 .vnd-account {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-3);
-  border: var(--border-hairline) solid var(--border-subtle);
-  border-left: 3px solid var(--status-healthy-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-primary);
-  padding: var(--space-3) var(--space-4);
+  border: none;
+  border-bottom: var(--border-hairline) solid var(--border-subtle);
+  border-radius: 0;
+  background: transparent;
+  padding: var(--space-2-5, 10px) var(--space-4);
+  width: 100%;
   min-width: 0;
 }
 
+.vnd-account:last-child {
+  border-bottom: none;
+}
+
 .vnd-account-index {
-  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 var(--space-1-5, 6px);
+  background: var(--surface-secondary);
+  border: var(--border-hairline) solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-2xs);
-  padding-top: var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  align-self: center;
   flex: none;
 }
 
 .vnd-account-body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  align-items: flex-start;
+  gap: var(--space-1-5, 6px);
   min-width: 0;
   flex: 1;
 }
@@ -133,6 +166,36 @@
   min-width: 0;
 }
 
+.vnd-account-identity .vn-icon--user-round {
+  display: none !important;
+}
+
+.vnd-account-details {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  min-width: 0;
+  width: 100%;
+}
+
+.vnd-account-details .vn-secret {
+  width: 520px;
+  max-width: 100%;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.vnd-account-details .vn-secret-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .vnd-account-email {
   color: var(--text-primary);
   font-size: var(--font-size-sm);
@@ -143,15 +206,36 @@
 .vnd-account-right {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-1);
   flex: none;
 }
 
 .vnd-account-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-1-5, 6px);
+}
+
+.vnd-account-actions .vn-btn--icon {
+  background: var(--surface-secondary);
+  border: var(--border-hairline) solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 3px 6px;
+  color: var(--text-secondary);
+  transition: all 0.15s ease-in-out;
+}
+
+.vnd-account-actions .vn-btn--icon:hover:not(:disabled) {
+  background: var(--surface-tertiary, var(--surface-primary));
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+  box-shadow: var(--elevation-flat, 0 1px 2px rgba(0, 0, 0, 0.2));
+}
+
+.vnd-account-actions .vn-btn--icon:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .vnd-account-meta {
