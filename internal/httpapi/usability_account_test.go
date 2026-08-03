@@ -22,19 +22,7 @@ type recordedAttempt struct {
 }
 
 type fakeCertLifecycle struct {
-	startErrOn map[string]error
-	starts     []string
-	records    []recordedAttempt
-}
-
-func (f *fakeCertLifecycle) StartProbe(_ context.Context, op string) (models.Certification, error) {
-	f.starts = append(f.starts, op)
-	if f.startErrOn != nil {
-		if err := f.startErrOn[op]; err != nil {
-			return models.Certification{}, err
-		}
-	}
-	return models.Certification{}, nil
+	records []recordedAttempt
 }
 
 func (f *fakeCertLifecycle) RecordAttempt(_ context.Context, op string, o intelligence.ProbeOutcome, a int) (models.Certification, error) {
@@ -89,33 +77,36 @@ func TestVerifyAccountChatUsability_AuthFailureStopsTheAccount(t *testing.T) {
 	if !got.StoppedOnAuth {
 		t.Fatal("StoppedOnAuth = false, want true")
 	}
-	// op-c must never be started once the account hit an auth failure.
-	for _, s := range lc.starts {
-		if s == "op-c" {
-			t.Fatalf("op-c was probed after an auth failure; starts = %v", lc.starts)
+	// op-c must never be probed/recorded once the account hit an auth failure.
+	for _, r := range lc.records {
+		if r.op == "op-c" {
+			t.Fatalf("op-c was recorded after an auth failure; records = %v", lc.records)
 		}
 	}
 }
 
-func TestVerifyAccountChatUsability_StartProbeErrorSkipsWithoutRecording(t *testing.T) {
-	lc := &fakeCertLifecycle{startErrOn: map[string]error{"op-a": errors.New("not in observed state")}}
+func TestVerifyAccountChatUsability_TransportFailureSkipsWithoutRecording(t *testing.T) {
+	lc := &fakeCertLifecycle{}
 	offerings := []chatOffering{
-		{OfferingOperationID: "op-a", ProviderModelID: "big-pickle"},
-		{OfferingOperationID: "op-b", ProviderModelID: "deepseek-v4-flash-free"},
+		{OfferingOperationID: "op-a", ProviderModelID: "unreachable"},
+		{OfferingOperationID: "op-b", ProviderModelID: "big-pickle"},
 	}
-	probe := probeByModel(map[string]zenChatUsability{
-		"big-pickle":             zenChatUsable,
-		"deepseek-v4-flash-free": zenChatUsable,
-	})
+	// op-a's probe hits a transport failure; op-b succeeds.
+	probe := func(_ context.Context, _, _, modelID string) (zenChatUsability, error) {
+		if modelID == "unreachable" {
+			return zenChatInconclusive, errors.New("connection refused")
+		}
+		return zenChatUsable, nil
+	}
 
 	got := verifyAccountChatUsability(context.Background(), lc, probe, "http://x", "key", offerings)
 
 	if got.Probed != 1 || got.Usable != 1 {
-		t.Fatalf("summary = %+v, want Probed 1 Usable 1 (op-a skipped)", got)
+		t.Fatalf("summary = %+v, want Probed 1 Usable 1 (op-a's transport failure skipped)", got)
 	}
 	for _, r := range lc.records {
 		if r.op == "op-a" {
-			t.Fatal("op-a recorded a verdict despite StartProbe failing")
+			t.Fatal("op-a recorded a verdict despite a transport failure")
 		}
 	}
 }

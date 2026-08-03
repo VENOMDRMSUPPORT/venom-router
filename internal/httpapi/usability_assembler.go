@@ -26,7 +26,7 @@ type credentialLeaser interface {
 type usabilityVerifier struct {
 	offerings freeChatOfferingLister
 	creds     credentialLeaser
-	driver    certLifecycle
+	driver    certRecorder
 	probe     usabilityProbeFn
 	baseURL   string
 }

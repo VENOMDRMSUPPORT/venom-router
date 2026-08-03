@@ -237,16 +237,19 @@ type ChatOfferingToVerify struct {
 }
 
 // ListChatOfferingsToVerify returns the account's chat offering-operations
-// whose certification is still `observed` — exactly the rows a usability probe
-// should run against. Non-chat operations, chat ops already past observed
-// (probing/certified/suspended/expired are handled by the existing probe/
-// recertify paths), and other accounts' rows are all excluded by the query.
+// whose certification is in `probing` — the rows the usability sweep must
+// execute. The existing ReviewDrainer already moves `observed` chat rows to
+// `probing` (it drains by state, not by operation) and nothing then executes
+// them, so `probing` is exactly where chat rows strand and where this sweep
+// picks them up; `observed` is deliberately left to the drainer. Non-chat
+// operations, chat ops already certified/suspended/expired, and other accounts'
+// rows are all excluded by the query.
 func (r *CatalogRepo) ListChatOfferingsToVerify(ctx context.Context, accountID string) ([]ChatOfferingToVerify, error) {
 	rows, err := r.db.Conn().QueryContext(ctx,
 		`SELECT oo.id, oo.provider_model_id
 		 FROM offering_operations oo
 		 JOIN certifications c ON c.offering_operation_id = oo.id
-		 WHERE oo.account_id = ? AND oo.operation = 'chat' AND c.status = 'observed'
+		 WHERE oo.account_id = ? AND oo.operation = 'chat' AND c.status = 'probing'
 		 ORDER BY oo.provider_model_id ASC`,
 		accountID,
 	)
