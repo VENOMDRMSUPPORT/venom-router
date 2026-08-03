@@ -49,9 +49,9 @@ func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller, 
 		mOpenDev := systray.AddMenuItem("Open Development Dashboard", "Open the vite dev server in your browser")
 		mDevStatus := systray.AddMenuItem(dev.StatusLine(), "")
 		mDevStatus.Disable()
-		mStartDev := systray.AddMenuItem("Start Development", "Start the dev frontend (vite) and dev backend")
-		mStopDev := systray.AddMenuItem("Stop Development", "Stop the dev frontend and backend")
-		mRestartDev := systray.AddMenuItem("Restart Development", "Restart the dev frontend and backend")
+		mStartDev := systray.AddMenuItem("Start Development", "Stop production, then start the dev frontend (vite) and the auto-reloading backend on the shared database")
+		mStopDev := systray.AddMenuItem("Stop Development", "Stop the dev frontend and backend, then restart production")
+		mRestartDev := systray.AddMenuItem("Restart Development", "Restart the dev frontend and backend (production stays stopped)")
 		systray.AddSeparator()
 		mLogs := systray.AddMenuItem("View Logs", "Open the log file")
 		mAutostart := systray.AddMenuItemCheckbox("Start with Windows", "Launch Venom Router automatically when you sign in", autostartEnabled())
@@ -101,9 +101,14 @@ func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller, 
 				case <-mOpenDev.ClickedCh:
 					c.OpenURL(dev.DashboardURL())
 				case <-mStartDev.ClickedCh:
-					go dev.Start()
+					// "Start Development" is the composite: stop production
+					// (frees 8081 + the lock), then start the dev children on
+					// the one DB. Run off the UI goroutine — prod.Stop blocks.
+					go EnterDevMode(ctx, c, dev)
 				case <-mStopDev.ClickedCh:
-					go dev.Stop()
+					// "Stop Development" reverses it: stop the dev children
+					// (backend blocks until fully dead), then restart production.
+					go ExitDevMode(ctx, c, dev)
 				case <-mRestartDev.ClickedCh:
 					go dev.Restart()
 				case <-mLogs.ClickedCh:

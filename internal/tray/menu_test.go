@@ -49,6 +49,12 @@ func TestDevEnablement(t *testing.T) {
 			menuEnablement{Open: false, Start: false, Stop: true, Restart: true}},
 		{"running", DevStatusView{Overall: DevRunning, Frontend: DevRunning},
 			menuEnablement{Open: true, Start: false, Stop: true, Restart: true}},
+		// Backend live while the frontend is Stopped: the section is active, so
+		// Start must NOT be offered (it would double-start the backend). Open
+		// stays off — the dashboard follows the frontend/vite specifically,
+		// which is not up.
+		{"backend-only active", DevStatusView{Overall: DevRunning, Backend: DevRunning, Frontend: DevStopped},
+			menuEnablement{Open: false, Start: false, Stop: true, Restart: true}},
 		// Error never offers Start: recovery is Restart (clean recycle of the
 		// frontend) or Stop (clears the error state). Offering Start alongside
 		// Stop+Restart is the owner-reported UX bug.

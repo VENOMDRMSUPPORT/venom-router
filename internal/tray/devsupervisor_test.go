@@ -70,6 +70,104 @@ func probeAlways(ok bool) HealthProbe {
 	return func(context.Context, string) bool { return ok }
 }
 
+// blockingHandle is a ProcessHandle whose Wait blocks until releaseExit is
+// called — Kill does NOT release Wait (it only records the kill). This models
+// a process that has been asked to die but has not finished exiting yet, so a
+// test can assert Stop blocks until the process is truly gone.
+type blockingHandle struct {
+	wait     chan error
+	killed   chan struct{}
+	killOnce sync.Once
+}
+
+func newBlockingHandle() *blockingHandle {
+	return &blockingHandle{wait: make(chan error, 1), killed: make(chan struct{})}
+}
+
+func (h *blockingHandle) Wait() error { return <-h.wait }
+
+func (h *blockingHandle) Kill() error {
+	h.killOnce.Do(func() { close(h.killed) })
+	return nil
+}
+
+// releaseExit simulates the process finally terminating (Wait returns).
+func (h *blockingHandle) releaseExit() { h.wait <- nil }
+
+// mixedRunner hands the backend (spec.Name == "go") a controllable
+// blockingHandle and every other child a normal fakeHandle, so a test can
+// drive the backend's exit timing precisely.
+type mixedRunner struct {
+	mu      sync.Mutex
+	specs   []ProcessSpec
+	backend *blockingHandle
+}
+
+func (r *mixedRunner) Start(spec ProcessSpec) (ProcessHandle, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.specs = append(r.specs, spec)
+	if spec.Name == "go" {
+		r.backend = newBlockingHandle()
+		return r.backend, nil
+	}
+	return newFakeHandle(), nil
+}
+
+// TestDevSupervisor_StopWaitsForBackendExit pins the WAL-safe teardown: Stop
+// must not return until the backend's process tree has fully exited (Wait
+// returned → OS lock freed, DB quiescent). Production only re-boots after
+// Stop returns, so this wait is what prevents two writers on the one DB.
+func TestDevSupervisor_StopWaitsForBackendExit(t *testing.T) {
+	r := &mixedRunner{}
+	s := newTestSupervisor(t, r, probeAlways(false))
+	s.Start()
+
+	stopped := make(chan struct{})
+	go func() { s.Stop(); close(stopped) }()
+
+	// The backend process is still alive (releaseExit not called): Stop must
+	// still be blocking.
+	select {
+	case <-stopped:
+		t.Fatal("Stop returned before the backend process exited")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	r.backend.releaseExit() // the process finally dies
+
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not return after the backend exited")
+	}
+}
+
+// TestDevSupervisor_StopBackstopUnblocksOnTimeout pins the backstop: a backend
+// that never finishes exiting must not wedge the UI forever — Stop falls
+// through after backendStopTimeout (safe because WAL is crash-safe). The kill
+// is still issued.
+func TestDevSupervisor_StopBackstopUnblocksOnTimeout(t *testing.T) {
+	r := &mixedRunner{}
+	s := newTestSupervisor(t, r, probeAlways(false))
+	s.backendStopTimeout = 100 * time.Millisecond
+	s.Start()
+
+	stopped := make(chan struct{})
+	go func() { s.Stop(); close(stopped) }()
+
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not fall through the backstop timeout")
+	}
+	select {
+	case <-r.backend.killed:
+	default:
+		t.Fatal("backend was not killed")
+	}
+}
+
 func newTestSupervisor(t *testing.T, runner ProcessRunner, probe HealthProbe) *DevSupervisor {
 	t.Helper()
 	return NewDevSupervisor(DevSupervisorOptions{
@@ -149,8 +247,10 @@ func TestDevSupervisor_StartSpawnsFrontendWithApprovedSpec(t *testing.T) {
 	s.Start()
 
 	specs := r.spawned()
-	if len(specs) != 1 {
-		t.Fatalf("spawned %d processes, want 1 (frontend only)", len(specs))
+	// Two children now: the frontend is spawned first (index 0), the backend
+	// watcher second (asserted by TestDevSupervisor_StartSpawnsBackendWatcher).
+	if len(specs) != 2 {
+		t.Fatalf("spawned %d processes, want 2 (frontend + backend)", len(specs))
 	}
 	fe := specs[0]
 
@@ -177,6 +277,49 @@ func TestDevSupervisor_StartSpawnsFrontendWithApprovedSpec(t *testing.T) {
 	}
 }
 
+// TestDevSupervisor_StartSpawnsBackendWatcher pins the second dev child added
+// for the tray-native live-reload backend: a WATCHED source backend
+// (`go run air -c .air.toml`) launched from the repo root against the ONE
+// canonical database. It carries NO VENOM_DATA_DIR — dev shares the single DB
+// with production — and runs `go` directly (a real executable, unlike npm
+// which needs cmd /c). Frontend is spawned first, backend second.
+func TestDevSupervisor_StartSpawnsBackendWatcher(t *testing.T) {
+	r := &fakeRunner{}
+	s := newTestSupervisor(t, r, probeAlways(false))
+
+	s.Start()
+
+	specs := r.spawned()
+	if len(specs) != 2 {
+		t.Fatalf("spawned %d processes, want 2 (frontend + backend watcher)", len(specs))
+	}
+	be := specs[1]
+
+	if be.Dir != filepath.Join("C:", "repo") {
+		t.Errorf("backend dir = %q, want the repo root", be.Dir)
+	}
+	// `go` is go.exe (a real binary): exec it directly, no cmd /c wrapper.
+	if be.Name != "go" {
+		t.Errorf("backend command = %q, want go", be.Name)
+	}
+	wantArgs := []string{"run", "github.com/air-verse/air@latest", "-c", ".air.toml"}
+	if strings.Join(be.Args, " ") != strings.Join(wantArgs, " ") {
+		t.Errorf("backend args = %v, want %v", be.Args, wantArgs)
+	}
+	// Crucial safety invariant: the backend watcher runs against the ONE
+	// canonical database. NO VENOM_DATA_DIR override may leak in — a second
+	// database is exactly the split-brain the one-DB design forbids.
+	for _, e := range be.ExtraEnv {
+		if strings.HasPrefix(e, "VENOM_DATA_DIR=") {
+			t.Errorf("backend must not set VENOM_DATA_DIR (one shared DB), got %q", e)
+		}
+	}
+
+	if v := s.Status(); v.Backend != DevStarting {
+		t.Errorf("after Start: backend = %v, want Starting", v.Backend)
+	}
+}
+
 func TestDevSupervisor_RefreshPromotesStartingToRunning(t *testing.T) {
 	r := &fakeRunner{}
 	s := newTestSupervisor(t, r, probeAlways(true))
@@ -187,6 +330,34 @@ func TestDevSupervisor_RefreshPromotesStartingToRunning(t *testing.T) {
 	v := s.Status()
 	if v.Frontend != DevRunning || v.Overall != DevRunning {
 		t.Errorf("after healthy Refresh: %+v, want Running", v)
+	}
+}
+
+// TestDevSupervisor_RefreshPromotesBackendOnItsOwnURL pins that each child is
+// probed on its OWN URL: a probe answering only the backend's 8081 health URL
+// promotes the backend to Running while the frontend (probed on 8088) stays
+// Starting. Overall stays Starting because Starting dominates Running.
+func TestDevSupervisor_RefreshPromotesBackendOnItsOwnURL(t *testing.T) {
+	r := &fakeRunner{}
+	probe := func(_ context.Context, url string) bool { return url == devBackendURL }
+	s := NewDevSupervisor(DevSupervisorOptions{
+		Root:   filepath.Join("C:", "repo"),
+		Runner: r,
+		Probe:  probe,
+	})
+	s.Start()
+
+	s.Refresh(context.Background())
+
+	v := s.Status()
+	if v.Backend != DevRunning {
+		t.Errorf("backend = %v, want Running (its 8081 probe answered)", v.Backend)
+	}
+	if v.Frontend != DevStarting {
+		t.Errorf("frontend = %v, want Starting (its 8088 probe did not answer)", v.Frontend)
+	}
+	if v.Overall != DevStarting {
+		t.Errorf("overall = %v, want Starting (Starting dominates Running)", v.Overall)
 	}
 }
 
@@ -290,14 +461,16 @@ func TestDevSupervisor_RestartAfterErrorSpawnsFreshProcess(t *testing.T) {
 	r := &fakeRunner{}
 	s := newTestSupervisor(t, r, probeAlways(false))
 	s.Start()
-	r.handle(0).exit(errors.New("crash"))
+	r.handle(0).exit(errors.New("crash")) // frontend (index 0) crashes
 	eventually(t, func() bool { return s.Status().Frontend == DevError },
 		"frontend never reached Error")
 
 	s.Restart()
 
-	if got := len(r.spawned()); got != 2 {
-		t.Fatalf("total spawns = %d, want 2 (1 initial + 1 restart)", got)
+	// Restart recycles BOTH children (Stop both, Start both): 2 initial spawns
+	// + 2 restart spawns = 4 total.
+	if got := len(r.spawned()); got != 4 {
+		t.Fatalf("total spawns = %d, want 4 (2 initial + 2 restart)", got)
 	}
 	if v := s.Status(); v.Overall != DevStarting {
 		t.Errorf("after Restart: %+v, want Starting", v)

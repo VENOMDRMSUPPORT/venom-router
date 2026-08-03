@@ -19,8 +19,18 @@ import (
 // runs npm through cmd /c. Ports are fixed by the approved design.
 const (
 	devFrontendURL = "http://127.0.0.1:8088/"
+	devBackendURL  = "http://127.0.0.1:8081/health"
 	devAPITarget   = "VENOM_DEV_API_TARGET=http://127.0.0.1:8081"
 )
+
+// devBackendStopTimeout bounds how long Stop waits for the backend watcher's
+// process tree to fully exit before proceeding anyway. The wait exists so the
+// single-instance lock + WAL are released and quiescent BEFORE production
+// re-boots (no two writers on the one DB — the actual cause of the prior
+// corruption incident). WAL crash-safety means proceeding after the timeout is
+// still non-corrupting; the timeout only prevents a wedged child from hanging
+// the UI forever.
+const devBackendStopTimeout = 10 * time.Second
 
 // DevComponentState is the dev child's coarse state.
 type DevComponentState int
@@ -88,12 +98,32 @@ func DefaultHealthProbe(ctx context.Context, url string) bool {
 	return true
 }
 
-// DevStatusView is an immutable snapshot for the UI. With a single component,
-// Overall simply mirrors Frontend; it is kept as its own field so the menu's
-// enablement logic and the status line read consistently.
+// DevStatusView is an immutable snapshot for the UI. Overall is the combined
+// state of the two dev children (see combineDevState); Backend and Frontend
+// are exposed individually so the menu's enablement logic (Open follows the
+// frontend/vite specifically) and any per-child diagnostics read consistently.
 type DevStatusView struct {
 	Overall  DevComponentState
+	Backend  DevComponentState
 	Frontend DevComponentState
+}
+
+// combineDevState reduces the two child states to the section's Overall, worst
+// first: any Error dominates, then any Starting, then any Running; only when
+// both children are Stopped is the section Stopped. This keeps "active"
+// (anything not Stopped) true whenever either child is live, so the menu never
+// offers Start while one child is still running.
+func combineDevState(a, b DevComponentState) DevComponentState {
+	switch {
+	case a == DevError || b == DevError:
+		return DevError
+	case a == DevStarting || b == DevStarting:
+		return DevStarting
+	case a == DevRunning || b == DevRunning:
+		return DevRunning
+	default:
+		return DevStopped
+	}
 }
 
 // statusLine renders the menu's dev info line, e.g. "Dev Status: Starting".
@@ -117,6 +147,12 @@ type devComponent struct {
 	// bumps it, so a Wait() return from a deliberately killed process can
 	// never flip Stopped to Error.
 	gen int
+	// exited is closed by the current watcher when the child's process has
+	// fully terminated (Wait returned). Captured per start so a restart's new
+	// channel never aliases a prior generation's. Stop reads it to block until
+	// the child is truly gone — the backend must be dead (lock freed, DB
+	// quiescent) before production re-boots.
+	exited chan struct{}
 }
 
 // DevSupervisor drives the single dev child (the vite frontend) through
@@ -129,6 +165,11 @@ type DevSupervisor struct {
 
 	mu       sync.Mutex
 	frontend devComponent
+	backend  devComponent
+
+	// backendStopTimeout bounds Stop's wait for the backend to fully exit.
+	// Defaults to devBackendStopTimeout; tests set it small.
+	backendStopTimeout time.Duration
 
 	lifecycleMu sync.Mutex
 }
@@ -146,6 +187,9 @@ func NewDevSupervisor(opts DevSupervisorOptions) *DevSupervisor {
 	}
 	if s.probe == nil {
 		s.probe = DefaultHealthProbe
+	}
+	if s.backendStopTimeout <= 0 {
+		s.backendStopTimeout = devBackendStopTimeout
 	}
 	return s
 }
@@ -208,7 +252,8 @@ func (s *DevSupervisor) Status() DevStatusView {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return DevStatusView{
-		Overall:  s.frontend.state,
+		Overall:  combineDevState(s.backend.state, s.frontend.state),
+		Backend:  s.backend.state,
 		Frontend: s.frontend.state,
 	}
 }
@@ -230,8 +275,26 @@ func (s *DevSupervisor) frontendSpec() ProcessSpec {
 	}
 }
 
-// Start spawns the frontend unless it is already Starting/Running. No-op
-// when the dev root is unavailable.
+// backendSpec runs the WATCHED source backend: air rebuilds and restarts
+// `venom serve` on 127.0.0.1:8081 on any Go change (see .air.toml), so dev
+// edits reload without ever rebuilding the shipped dist\venom.exe. It runs
+// from the repo root and carries NO VENOM_DATA_DIR, so it uses the ONE
+// canonical database — the same one production uses. `go` is a real
+// executable, so it is exec'd directly (unlike npm, which is a .cmd shim
+// needing cmd /c).
+func (s *DevSupervisor) backendSpec() ProcessSpec {
+	return ProcessSpec{
+		Dir:  s.root,
+		Name: "go",
+		Args: []string{"run", "github.com/air-verse/air@latest", "-c", ".air.toml"},
+	}
+}
+
+// Start spawns the frontend then the backend watcher, each unless it is
+// already Starting/Running. No-op when the dev root is unavailable. The
+// caller (EnterDevMode) must have stopped production first: both the backend
+// watcher and production bind 8081 and take the single-instance lock on the
+// one DB, so only one may run at a time.
 func (s *DevSupervisor) Start() {
 	if !s.Available() {
 		return
@@ -239,14 +302,20 @@ func (s *DevSupervisor) Start() {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 	s.startComponent(&s.frontend, "frontend", s.frontendSpec())
+	s.startComponent(&s.backend, "backend", s.backendSpec())
 }
 
-// Stop kills the frontend and marks it Stopped. Deliberate: the bumped
-// generation makes the watcher ignore the kill-induced Wait return.
+// Stop kills both dev children and marks them Stopped. The frontend (vite,
+// no database) is killed without waiting; the backend holds the one DB, so
+// Stop BLOCKS until its process tree has fully exited (bounded by
+// devBackendStopTimeout) — the lock must be free and the DB quiescent before
+// production re-boots. Deliberate: the bumped generation makes each watcher
+// ignore the kill-induced Wait return.
 func (s *DevSupervisor) Stop() {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
-	s.stopComponent(&s.frontend)
+	s.stopComponent(&s.frontend, false)
+	s.stopComponent(&s.backend, true)
 }
 
 // Restart is Stop then Start.
@@ -255,10 +324,12 @@ func (s *DevSupervisor) Restart() {
 	s.Start()
 }
 
-// Refresh promotes the frontend from Starting to Running once its health
-// probe answers (called from the UI ticker).
+// Refresh promotes each child from Starting to Running once its health probe
+// answers (called from the UI ticker): the frontend on the vite port, the
+// backend on 8081.
 func (s *DevSupervisor) Refresh(ctx context.Context) {
 	s.refreshComponent(ctx, &s.frontend, devFrontendURL)
+	s.refreshComponent(ctx, &s.backend, devBackendURL)
 }
 
 func (s *DevSupervisor) startComponent(c *devComponent, name string, spec ProcessSpec) {
@@ -291,14 +362,20 @@ func (s *DevSupervisor) startComponent(c *devComponent, name string, spec Proces
 	}
 	c.state = DevStarting
 	c.handle = h
-	go s.watch(c, name, h, gen)
+	exited := make(chan struct{})
+	c.exited = exited
+	go s.watch(c, name, h, gen, exited)
 }
 
 // watch turns an unexpected child exit — clean or not — into Error: the dev
 // frontend must not exit on its own, so a self-exit is always a defect the
 // owner should see (a deliberate Stop bumps gen first and is ignored here).
-func (s *DevSupervisor) watch(c *devComponent, name string, h ProcessHandle, gen int) {
+func (s *DevSupervisor) watch(c *devComponent, name string, h ProcessHandle, gen int, exited chan struct{}) {
 	err := h.Wait()
+	// Signal full process death FIRST, unconditionally: a deliberate Stop
+	// (which bumped gen) blocks on this channel and must be released whether
+	// or not this watcher is still the current generation.
+	close(exited)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if c.gen != gen {
@@ -315,15 +392,28 @@ func (s *DevSupervisor) watch(c *devComponent, name string, h ProcessHandle, gen
 		observability.String("err", detail))
 }
 
-func (s *DevSupervisor) stopComponent(c *devComponent) {
+// stopComponent kills the child and marks it Stopped. When wait is true it
+// then blocks until the watcher confirms the process tree has fully exited
+// (bounded by devBackendStopTimeout) — used for the backend so the DB lock is
+// released before anything re-opens the database.
+func (s *DevSupervisor) stopComponent(c *devComponent, wait bool) {
 	s.mu.Lock()
 	c.gen++
 	h := c.handle
+	exited := c.exited
 	c.handle = nil
 	c.state = DevStopped
 	s.mu.Unlock()
-	if h != nil {
-		_ = h.Kill()
+	if h == nil {
+		return
+	}
+	_ = h.Kill()
+	if wait && exited != nil {
+		select {
+		case <-exited:
+		case <-time.After(s.backendStopTimeout):
+			s.log.Error("tray: dev backend did not exit within timeout; proceeding (WAL is crash-safe)")
+		}
 	}
 }
 
