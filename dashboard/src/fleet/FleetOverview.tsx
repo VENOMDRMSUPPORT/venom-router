@@ -26,6 +26,7 @@ import ModelTestReport from "./ModelTestReport";
 import ProviderCard from "./ProviderCard";
 import ProviderRow from "./ProviderRow";
 import { distinctModelStats } from "./modelStatus";
+import { useRefreshBurst } from "./useRefreshBurst";
 import { providerDescription, providerDisplayName } from "./providerMeta";
 import type { FleetView } from "./FleetBreadcrumbChips";
 import "./fleet.css";
@@ -125,6 +126,13 @@ export default function FleetOverview(props: FleetOverviewProps) {
   const category = props.category ?? internalCategory;
 
   const reload = useCallback(() => setReloadToken((t) => t + 1), []);
+
+  // After a successful connect the backend keeps working asynchronously
+  // (discover models -> certify which chat models actually run, ~30s), so a
+  // single reload would only capture the pre-discovery "0 / 0" snapshot. This
+  // re-fetches on a short burst so the counts and the health dot fill in on
+  // their own — no manual refresh.
+  const startRefreshBurst = useRefreshBurst(reload);
 
   function handleCategoryChange(next: AuthCategory) {
     setInternalCategory(next);
@@ -420,6 +428,7 @@ export default function FleetOverview(props: FleetOverviewProps) {
         onConnected={() => {
           setConnectProvider(null);
           reload();
+          startRefreshBurst();
         }}
       />
 
