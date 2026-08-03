@@ -839,20 +839,26 @@ describe("FleetOverview — OAuth connect (image 10)", () => {
 });
 
 describe("FleetOverview — credential reveal", () => {
-  it("reveals the secret, then hide removes it from the DOM, and no secret ever reaches console", async () => {
+  it("reveals the secret (reverify-first), then hide removes it from the DOM, and no secret ever reaches console", async () => {
     const consoleSpies = (["log", "info", "warn", "error", "debug"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
     const canary = "CANARY-REVEALED-SECRET-9f2e";
 
     await renderFleet(
       {
         "POST /api/control/v1/accounts/acct-1/reveal": () => new Response(canary, { status: 200 }),
+        "POST /api/control/v1/auth/reverify": () => jsonResponse(200, { data: { reverify_fresh_until: "2026-07-24T00:05:00Z" } }),
       },
       { view: "active" },
     );
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
+    // Reveal-first: the eye opens the reverify prompt; only a successful
+    // reverify actually reveals the secret (no speculative reveal → no console 401).
     fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /reveal credential/i }));
+    const passwordInput = await screen.findByLabelText(/owner password/i);
+    fireEvent.change(passwordInput, { target: { value: "the-owner-password" } });
+    fireEvent.click(screen.getByRole("button", { name: /^verify$/i }));
 
     await screen.findByText(canary);
     expect(document.body.innerHTML).toContain(canary);
@@ -870,7 +876,7 @@ describe("FleetOverview — credential reveal", () => {
     }
   });
 
-  it("opens the reverification prompt when reveal comes back reverification_required, then retries reveal on success", async () => {
+  it("requires re-verification before revealing, and reveals exactly once on success", async () => {
     let revealAttempts = 0;
     const canary = "CANARY-AFTER-REVERIFY-77bb";
 
@@ -878,9 +884,6 @@ describe("FleetOverview — credential reveal", () => {
       {
         "POST /api/control/v1/accounts/acct-1/reveal": () => {
           revealAttempts += 1;
-          if (revealAttempts === 1) {
-            return jsonResponse(401, { error: { code: "reverification_required", message: "re-verification required", request_id: "r1", retryable: false } });
-          }
           return new Response(canary, { status: 200 });
         },
         "POST /api/control/v1/auth/reverify": () => jsonResponse(200, { data: { reverify_fresh_until: "2026-07-24T00:05:00Z" } }),
@@ -892,12 +895,16 @@ describe("FleetOverview — credential reveal", () => {
 
     fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /reveal credential/i }));
 
+    // The reveal endpoint must NOT be hit before a successful reverify.
+    expect(revealAttempts).toBe(0);
+
     const passwordInput = await screen.findByLabelText(/owner password/i);
     fireEvent.change(passwordInput, { target: { value: "the-owner-password" } });
     fireEvent.click(screen.getByRole("button", { name: /^verify$/i }));
 
     await screen.findByText(canary);
-    expect(revealAttempts).toBe(2);
+    // Reveal-first calls reveal once, after the challenge — never speculatively.
+    expect(revealAttempts).toBe(1);
   });
 
   it("surfaces a locked-out state in the reverify prompt and never reveals when reverify is rate-limited", async () => {
@@ -909,9 +916,6 @@ describe("FleetOverview — credential reveal", () => {
       {
         "POST /api/control/v1/accounts/acct-1/reveal": () => {
           revealAttempts += 1;
-          if (revealAttempts === 1) {
-            return jsonResponse(401, { error: { code: "reverification_required", message: "re-verification required", request_id: "r1", retryable: false } });
-          }
           return new Response(canary, { status: 200 });
         },
         "POST /api/control/v1/auth/reverify": () =>
@@ -928,7 +932,8 @@ describe("FleetOverview — credential reveal", () => {
     fireEvent.click(screen.getByRole("button", { name: /^verify$/i }));
 
     await screen.findByText(/too many failed attempts/i);
-    expect(revealAttempts).toBe(1);
+    // Reveal-first + locked-out reverify: the reveal endpoint is NEVER hit.
+    expect(revealAttempts).toBe(0);
     expect(screen.queryByText(canary)).toBeNull();
     expect(document.body.innerHTML).not.toContain(password);
     expect(document.body.innerHTML).not.toContain(canary);

@@ -89,12 +89,14 @@ function latestQuotaObservedAt(account: AccountProjection): number | null {
  * Report, the disable/enable power toggle, and disconnect.
  *
  * Credential reveal (security-critical): the masked control shows no
- * secret by default. onRevealRequest calls POST /accounts/{id}/reveal;
- * a reverification_required (401) opens the same ReverifyModal
- * auth/AuthGate's own sensitive actions use — on a successful reverify,
- * reveal is retried once. Both onHide AND losing focus clear the plaintext
- * from this component's state immediately; it is never logged, never
- * stored, and the DOM shows only the masked placeholder once hidden.
+ * secret by default. Reveal is reverify-FIRST — onRevealRequest opens the
+ * same ReverifyModal auth/AuthGate's own sensitive actions use, and only a
+ * successful reverify runs POST /accounts/{id}/reveal. (attemptReveal keeps
+ * its 401 handler as defense in depth, but the up-front challenge means the
+ * reveal call is not fired speculatively, so it never 401s into the console.)
+ * Both onHide AND losing focus clear the plaintext from this component's
+ * state immediately; it is never logged, never stored, and the DOM shows
+ * only the masked placeholder once hidden.
  */
 export default function AccountRow(props: AccountRowProps) {
   const { account, index, modelCount, csrfToken, onSessionExpired, onChanged, onOpenModelReport } = props;
@@ -143,7 +145,13 @@ export default function AccountRow(props: AccountRowProps) {
 
   function handleRevealRequest() {
     if (revealPending) return;
-    void attemptReveal();
+    // Reveal-first: revealing a secret ALWAYS challenges with a fresh
+    // re-verification, so we open the prompt up front rather than firing an
+    // optimistic reveal that would come back 401 (a red console entry) whenever
+    // the session is not already reverify-fresh. attemptReveal then runs from
+    // handleReverifySuccess.
+    setRevealError(null);
+    setReverifyOpen(true);
   }
 
   function handleHide() {
