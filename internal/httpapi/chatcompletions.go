@@ -42,6 +42,9 @@ func buildChatCompletionsHandler(db *storage.DB, kr *secrets.Keyring, reg *provi
 		string(providers.OllamaCloudID): providers.OllamaCloudBaseURL,
 		string(providers.AgnesAIID):     providers.AgnesAIBaseURL,
 		string(providers.NvidiaNIMID):   providers.NvidiaNIMBaseURL,
+		// gemini-cli is served by the native_api transport, which appends
+		// /models/{id}:generateContent to this /v1beta base.
+		string(providers.GeminiCLIID): providers.GeminiCLIBaseURL + "/v1beta",
 	}
 	credentialRepo := storage.NewAccountCredentialRepo(db)
 	engine := &EngineDeps{

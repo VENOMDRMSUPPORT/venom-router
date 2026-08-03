@@ -148,6 +148,9 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// nvidia-nim (P7-PROV-009) is an OpenAI-compatible API-key adapter, same
 	// two-step-probe validation and discardable-error rationale as agnes.
 	_ = registerNvidiaNIM(reg)
+	// gemini-cli (P7-PROV-007) uses Google's schema + the native_api transport
+	// (P7-EXEC-001); its listing authenticates directly (no two-step probe).
+	_ = registerGeminiCLI(reg)
 
 	// audit is the shared P2b-OBS-001 emitter every mutating control
 	// route below records exactly one audit_event through (log is nil
@@ -335,6 +338,9 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// fabricated capability.
 	probeHTTPClient := &http.Client{Timeout: execution.DefaultOpenAICompatibleTimeout}
 	openAICompatTransport := execution.NewOpenAICompatibleTransport(probeHTTPClient, 0)
+	// gemini-cli's offerings certify through the native_api transport
+	// (P7-EXEC-001), which speaks Google's generateContent schema.
+	nativeAPITransport := execution.NewNativeAPITransport(probeHTTPClient, 0)
 	probeTransports := map[string]execution.InferenceTransport{
 		string(providers.OpenCodeZenID): openAICompatTransport,
 		// ollama-cloud speaks OpenAI-compatible chat completions; its base
@@ -345,12 +351,17 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 		string(providers.AgnesAIID): openAICompatTransport,
 		// nvidia-nim is OpenAI-compatible; its base already carries /v1.
 		string(providers.NvidiaNIMID): openAICompatTransport,
+		// gemini-cli certifies through the native_api transport.
+		string(providers.GeminiCLIID): nativeAPITransport,
 	}
 	probeBaseURLs := map[string]string{
 		string(providers.OpenCodeZenID): providers.OpenCodeZenBaseURL + "/v1",
 		string(providers.OllamaCloudID): providers.OllamaCloudBaseURL,
 		string(providers.AgnesAIID):     providers.AgnesAIBaseURL,
 		string(providers.NvidiaNIMID):   providers.NvidiaNIMBaseURL,
+		// native_api appends /models/{id}:generateContent, so the base carries
+		// the /v1beta version segment.
+		string(providers.GeminiCLIID): providers.GeminiCLIBaseURL + "/v1beta",
 	}
 	certRepo := storage.NewCertificationRepo(db, nil)
 	probeRunRepo := storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown)
