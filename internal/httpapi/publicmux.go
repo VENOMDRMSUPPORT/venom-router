@@ -110,6 +110,7 @@ func publicMux(db *storage.DB, kr *secrets.Keyring, reg *providers.Registry, now
 			reg = providers.NewRegistry()
 			_ = registerOpenCodeZen(reg)
 			_ = registerOllamaCloud(reg)
+			_ = registerAgnesAI(reg)
 			_ = registerAntigravityIfConfigured(reg)
 		}
 		chat = buildChatCompletionsHandler(db, kr, reg)

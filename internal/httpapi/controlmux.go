@@ -141,6 +141,10 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// unconditionally over its real HTTP seams, same discardable-error
 	// rationale as opencode-zen.
 	_ = registerOllamaCloud(reg)
+	// agnes-ai (P7-PROV-008) is an OpenAI-compatible API-key adapter validated
+	// by the authentic two-step chat probe; registered unconditionally, same
+	// discardable-error rationale.
+	_ = registerAgnesAI(reg)
 
 	// audit is the shared P2b-OBS-001 emitter every mutating control
 	// route below records exactly one audit_event through (log is nil
@@ -334,10 +338,13 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 		// already carries the /v1 segment, so the transport's fixed
 		// "/chat/completions" suffix lands correctly.
 		string(providers.OllamaCloudID): openAICompatTransport,
+		// agnes-ai is OpenAI-compatible; its base already carries /v1.
+		string(providers.AgnesAIID): openAICompatTransport,
 	}
 	probeBaseURLs := map[string]string{
 		string(providers.OpenCodeZenID): providers.OpenCodeZenBaseURL + "/v1",
 		string(providers.OllamaCloudID): providers.OllamaCloudBaseURL,
+		string(providers.AgnesAIID):     providers.AgnesAIBaseURL,
 	}
 	certRepo := storage.NewCertificationRepo(db, nil)
 	probeRunRepo := storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown)
