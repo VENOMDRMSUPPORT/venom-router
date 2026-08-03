@@ -3,9 +3,10 @@
 package tray
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
 )
 
 // openControlWindow opens url as a chromeless app-window using an installed
@@ -23,17 +24,24 @@ func openControlWindow(url string) error {
 
 // resolveBrowserCandidates returns Edge then Chrome with their resolved exe
 // paths ("" when not installed), preferring the well-known install locations
-// and falling back to PATH.
+// and falling back to PATH. The install roots are read once, in
+// internal/platform, and passed in as a typed value — this package never
+// reads the environment itself.
 func resolveBrowserCandidates() []browserCandidate {
+	roots := platform.WindowsInstallRoots()
 	return []browserCandidate{
-		{Name: "edge", Path: firstExisting(edgePaths())},
-		{Name: "chrome", Path: firstExisting(chromePaths())},
+		{Name: "edge", Path: firstExisting(edgePaths(roots))},
+		{Name: "chrome", Path: firstExisting(chromePaths(roots))},
 	}
 }
 
-func edgePaths() []string {
+// edgePaths lists Edge's well-known locations under the given roots, most
+// specific first, then whatever PATH resolves. A root reported as ""
+// contributes no candidate: joining onto it would yield a relative path
+// that could match an unrelated file in the process's working directory.
+func edgePaths(roots platform.InstallRoots) []string {
 	var p []string
-	for _, base := range []string{os.Getenv("ProgramFiles(x86)"), os.Getenv("ProgramFiles")} {
+	for _, base := range []string{roots.ProgramFilesX86, roots.ProgramFiles} {
 		if base != "" {
 			p = append(p, filepath.Join(base, "Microsoft", "Edge", "Application", "msedge.exe"))
 		}
@@ -44,9 +52,12 @@ func edgePaths() []string {
 	return p
 }
 
-func chromePaths() []string {
+// chromePaths lists Chrome's well-known locations under the given roots
+// (including the per-user LOCALAPPDATA install), with the same ""-root rule
+// as edgePaths.
+func chromePaths(roots platform.InstallRoots) []string {
 	var p []string
-	for _, base := range []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)"), os.Getenv("LOCALAPPDATA")} {
+	for _, base := range []string{roots.ProgramFiles, roots.ProgramFilesX86, roots.LocalAppData} {
 		if base != "" {
 			p = append(p, filepath.Join(base, "Google", "Chrome", "Application", "chrome.exe"))
 		}

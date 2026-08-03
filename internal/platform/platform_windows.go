@@ -29,6 +29,42 @@ func DataDir() (string, error) {
 	return filepath.Join(base, "venom-router"), nil
 }
 
+// envProgramFiles/envProgramFilesX86/envLocalAppData are the Windows
+// install-root variables a caller needs to locate a third-party
+// executable (the tray's app-window launcher looks for an installed Edge
+// or Chrome under them). os.LookupEnv is called only within this package
+// (and internal/config); forbidigo enforces that no other package reads
+// environment variables directly — internal/tray receives the resolved
+// roots as a typed value instead of reading the environment itself.
+const (
+	envProgramFiles    = "ProgramFiles"
+	envProgramFilesX86 = "ProgramFiles(x86)"
+	envLocalAppData    = "LOCALAPPDATA"
+)
+
+// InstallRoots carries the resolved Windows install-root directories.
+// Each field is "" when its variable is unset OR set to an empty value:
+// callers join a relative path onto these roots, and joining onto "" would
+// produce a bogus relative path, so "unset" and "set but empty" are
+// deliberately collapsed into the single "no such root" answer.
+type InstallRoots struct {
+	ProgramFiles    string
+	ProgramFilesX86 string
+	LocalAppData    string
+}
+
+// WindowsInstallRoots resolves the three install-root variables in one
+// read. It never fails: a missing root is reported as "" and it is the
+// caller's job to skip it (unlike DataDir, no single root is required for
+// the router to run).
+func WindowsInstallRoots() InstallRoots {
+	return InstallRoots{
+		ProgramFiles:    os.Getenv(envProgramFiles),
+		ProgramFilesX86: os.Getenv(envProgramFilesX86),
+		LocalAppData:    os.Getenv(envLocalAppData),
+	}
+}
+
 // TryLockFile acquires an exclusive, non-blocking OS-level lock on f via
 // LockFileEx. The lock is scoped to this specific open handle: opening
 // the same path again (in this process or another) yields an independent

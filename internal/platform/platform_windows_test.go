@@ -65,6 +65,35 @@ func TestEnsureDataDir_Windows(t *testing.T) {
 	}
 }
 
+// TestWindowsInstallRoots pins that all three install roots are resolved in
+// one read, and that a root which is unset or set-but-empty comes back as ""
+// rather than as a value borrowed from another variable.
+func TestWindowsInstallRoots(t *testing.T) {
+	t.Run("all three roots resolved independently", func(t *testing.T) {
+		t.Setenv("ProgramFiles", `C:\PF`)
+		t.Setenv("ProgramFiles(x86)", `C:\PFx86`)
+		t.Setenv("LOCALAPPDATA", `C:\LAD`)
+
+		got := WindowsInstallRoots()
+		want := InstallRoots{ProgramFiles: `C:\PF`, ProgramFilesX86: `C:\PFx86`, LocalAppData: `C:\LAD`}
+		if got != want {
+			t.Fatalf("WindowsInstallRoots() = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("empty roots stay empty", func(t *testing.T) {
+		t.Setenv("ProgramFiles", `C:\PF`)
+		t.Setenv("ProgramFiles(x86)", "")
+		t.Setenv("LOCALAPPDATA", "")
+
+		got := WindowsInstallRoots()
+		want := InstallRoots{ProgramFiles: `C:\PF`}
+		if got != want {
+			t.Fatalf("WindowsInstallRoots() = %+v, want %+v", got, want)
+		}
+	})
+}
+
 func TestTryLockFile_ExclusiveAcrossHandles(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.lock")
