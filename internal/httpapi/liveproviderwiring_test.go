@@ -37,6 +37,9 @@ func liveRegistry(t *testing.T) *providers.Registry {
 	if err := registerClaudeCode(reg); err != nil {
 		t.Fatalf("register claude-code: %v", err)
 	}
+	if err := registerClinePass(reg); err != nil {
+		t.Fatalf("register clinepass: %v", err)
+	}
 	return reg
 }
 

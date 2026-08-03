@@ -155,6 +155,9 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// registers unconditionally; its route speaks the anthropic_messages wire
 	// schema over the native_oauth transport.
 	_ = registerClaudeCode(reg)
+	// clinepass (P7-PROV-004) is an OAuth extension-flow provider (public), its
+	// route speaks the openai_chat wire schema; funding is paid-locked.
+	_ = registerClinePass(reg)
 
 	// audit is the shared P2b-OBS-001 emitter every mutating control
 	// route below records exactly one audit_event through (log is nil

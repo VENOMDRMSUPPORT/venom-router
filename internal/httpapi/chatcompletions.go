@@ -69,6 +69,9 @@ func liveProviderBaseURLs() map[providers.ProviderID]string {
 		// claude-code (native_oauth, anthropic_messages): the anthropic codec
 		// appends /v1/messages, so the base is the bare API host.
 		providers.ClaudeCodeID: providers.ClaudeCodeAPIBase,
+		// clinepass (native_oauth, openai_chat): the openai_chat codec appends
+		// /chat/completions, so the base ends at the /api/v1 segment.
+		providers.ClinePassID: providers.ClinePassBaseURL + "/api/v1",
 	}
 }
 
