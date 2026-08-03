@@ -446,15 +446,15 @@ func TestFunding_ExpectedVersionMatch_Succeeds(t *testing.T) {
 // Soft-disconnect (DELETE)
 // ============================================================================
 
-// TestSoftDisconnect_RetiresCredentialAndDisconnectsNoHardDelete proves
-// DELETE soft-disconnects: connection_state = disconnected, every usable
-// credential retired, reauth_in_progress cleared, and the account ROW +
-// history retained (no hard delete). RED->restore evidence: temporarily
-// changing SoftDisconnect to a hard DELETE would make this test fail (the
-// account row count would drop to 0).
-func TestSoftDisconnect_RetiresCredentialAndDisconnectsNoHardDelete(t *testing.T) {
+// TestDisconnect_HardDeletesAccountAndCascades proves DELETE removes the
+// account entirely: the accounts row is gone and its credential is gone via
+// the ON DELETE CASCADE FK — so the provider returns to a pristine
+// available/awaiting-connection state (owner decision 2026-08-03, superseding
+// the prior soft-disconnect). Audit history (append-only, account-FK-free) is
+// retained separately and is not asserted here.
+func TestDisconnect_HardDeletesAccountAndCascades(t *testing.T) {
 	clock := fixedAccountTestClock()
-	const canary = "CANARY-SOFTDISC-KEY-7tR3nP9x"
+	const canary = "CANARY-DISC-KEY-7tR3nP9x"
 	h, db, accountID, credID := newTestAccountsHandlerV2(t, clock, canary)
 
 	req := newAccountsRequest(http.MethodDelete, "/api/control/v1/accounts/"+accountID, accountID, nil)
@@ -462,71 +462,51 @@ func TestSoftDisconnect_RetiresCredentialAndDisconnectsNoHardDelete(t *testing.T
 	h.ServeDisconnect(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("soft-disconnect status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+		t.Fatalf("disconnect status = %d, want 200; body = %q", rec.Code, rec.Body.String())
 	}
 
-	// Account row retained (NO hard delete).
+	// Account row is GONE (hard delete).
 	var accountCount int
 	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM accounts WHERE id = ?`, accountID).Scan(&accountCount); err != nil {
 		t.Fatalf("count accounts: %v", err)
 	}
-	if accountCount != 1 {
-		t.Fatalf("accounts rows after soft-disconnect = %d, want 1 (retained, never hard-deleted)", accountCount)
+	if accountCount != 0 {
+		t.Fatalf("accounts rows after disconnect = %d, want 0 (hard-deleted)", accountCount)
 	}
-	// connection_state = disconnected.
-	var connState string
-	if err := db.Conn().QueryRow(`SELECT connection_state FROM accounts WHERE id = ?`, accountID).Scan(&connState); err != nil {
-		t.Fatalf("read connection_state: %v", err)
-	}
-	if connState != string(domain.ConnectionDisconnected) {
-		t.Fatalf("connection_state = %q, want disconnected", connState)
-	}
-	// The active credential is now retired (retired_at stamped).
-	var credState string
-	var retiredAt *int64
-	if err := db.Conn().QueryRow(`SELECT state, retired_at FROM account_credentials WHERE id = ?`, credID).Scan(&credState, &retiredAt); err != nil {
-		t.Fatalf("read credential state: %v", err)
-	}
-	if credState != string(domain.CredentialRetired) {
-		t.Fatalf("credential state = %q, want retired", credState)
-	}
-	if retiredAt == nil {
-		t.Fatalf("retired_at = nil, want a timestamp")
-	}
-	// The credential row is retained (history preserved).
+	// The credential row is GONE too (FK cascade), not merely retired.
 	var credCount int
 	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM account_credentials WHERE id = ?`, credID).Scan(&credCount); err != nil {
 		t.Fatalf("count credentials: %v", err)
 	}
-	if credCount != 1 {
-		t.Fatalf("credential rows after soft-disconnect = %d, want 1 (retained)", credCount)
+	if credCount != 0 {
+		t.Fatalf("credential rows after disconnect = %d, want 0 (cascaded)", credCount)
 	}
 }
 
-// TestSoftDisconnect_DisconnectedCannotBeResume proves a disconnected
-// account cannot be resumed (disconnected -> connected is illegal); it can
-// only return via re-enrollment.
-func TestSoftDisconnect_DisconnectedCannotBeResume(t *testing.T) {
+// TestDisconnect_RemovedAccountCannotBeResumed proves that once an account is
+// disconnected (removed), it is simply gone — a resume finds no such account
+// (404). Returning requires a fresh enrollment, not a resume.
+func TestDisconnect_RemovedAccountCannotBeResumed(t *testing.T) {
 	clock := fixedAccountTestClock()
 	h, _, accountID, _ := newTestAccountsHandlerV2(t, clock, "irrelevant-key")
 
-	// Soft-disconnect first.
+	// Remove the account.
 	delReq := newAccountsRequest(http.MethodDelete, "/api/control/v1/accounts/"+accountID, accountID, nil)
 	delRec := httptest.NewRecorder()
 	h.ServeDisconnect(delRec, delReq)
 	if delRec.Code != http.StatusOK {
-		t.Fatalf("soft-disconnect status = %d, want 200", delRec.Code)
+		t.Fatalf("disconnect status = %d, want 200", delRec.Code)
 	}
 
-	// Attempt resume: must be rejected as an illegal transition.
+	// Attempt resume: the account no longer exists.
 	resumeReq := newAccountsRequest(http.MethodPost, "/api/control/v1/accounts/"+accountID+"/resume", accountID, nil)
 	resumeRec := httptest.NewRecorder()
 	h.ServeResume(resumeRec, resumeReq)
-	if resumeRec.Code != http.StatusConflict {
-		t.Fatalf("resume-after-disconnect status = %d, want 409; body = %q", resumeRec.Code, resumeRec.Body.String())
+	if resumeRec.Code != http.StatusNotFound {
+		t.Fatalf("resume-after-remove status = %d, want 404; body = %q", resumeRec.Code, resumeRec.Body.String())
 	}
-	if code := decodeErrorCode(t, resumeRec.Body.Bytes()); code != "invalid_state" {
-		t.Fatalf("error code = %q, want invalid_state", code)
+	if code := decodeErrorCode(t, resumeRec.Body.Bytes()); code != "not_found" {
+		t.Fatalf("error code = %q, want not_found", code)
 	}
 }
 

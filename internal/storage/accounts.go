@@ -276,6 +276,59 @@ func (r *AccountRepo) SoftDisconnect(ctx context.Context, accountID string, next
 	return updated, true, nil
 }
 
+// Delete removes an account and every trace that should not outlive it,
+// returning its provider to a pristine "available/awaiting-connection" state on
+// every surface. Deleting the accounts row fires the ON DELETE CASCADE FKs that
+// clean credentials, funding evidence, offerings, offering_operations,
+// certifications, quota windows/reservations/allocations, cooldowns, rebaseline
+// flags, discovery runs, and probe runs (+ costs). The FK-less orphan state that
+// no cascade reaches — account-scoped circuit breakers and route attempts — is
+// cleaned explicitly. Append-only history with no account FK (usage_records,
+// audit_events) is deliberately retained as compliance/billing record.
+//
+// defer_foreign_keys is enabled for the transaction so the single NO ACTION edge
+// inside the cascade (quota_reservation_allocations.window_id -> quota_windows)
+// is checked at COMMIT — by which point both sides are gone and the graph is
+// consistent — rather than transiently failing mid-cascade.
+//
+// deleted is false (with a nil error) when no account had that id.
+func (r *AccountRepo) Delete(ctx context.Context, accountID string) (bool, error) {
+	tx, err := r.db.Conn().BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("storage: begin delete-account tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once Commit has succeeded
+
+	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
+		return false, fmt.Errorf("storage: delete-account: defer fks: %w", err)
+	}
+
+	// FK-less orphans: no cascade reaches these, so clean them explicitly.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM route_attempts WHERE account_id = ?`, accountID); err != nil {
+		return false, fmt.Errorf("storage: delete-account: route_attempts: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM circuit_breakers WHERE scope = 'account' AND scope_id = ?`, accountID); err != nil {
+		return false, fmt.Errorf("storage: delete-account: circuit_breakers: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM accounts WHERE id = ?`, accountID)
+	if err != nil {
+		return false, fmt.Errorf("storage: delete-account: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("storage: delete-account: rows affected: %w", err)
+	}
+	if affected == 0 {
+		return false, nil // deferred rollback; nothing existed
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("storage: delete-account: commit: %w", err)
+	}
+	return true, nil
+}
+
 // scanner is the shared shape of *sql.Row's and *sql.Rows' Scan method,
 // so scanAccount (single row) and scanRowsAccount (one row of a result
 // set) share one column-binding implementation.

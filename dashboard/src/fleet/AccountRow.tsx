@@ -444,7 +444,7 @@ export default function AccountRow(props: AccountRowProps) {
       <DestructiveActionConfirmation
         open={disconnectOpen}
         title={`Disconnect ${displayName}?`}
-        consequence="Routing through this account stops immediately and its credentials are retired. The row and its sanitized history are retained — restoring it requires a new enrollment, not a resume."
+        consequence="This permanently removes the account and everything derived from it — its discovered models, quota, health, and credentials — and returns the provider to Available (awaiting connection). Audit history is retained. Reconnecting requires a new enrollment."
         confirmWord="disconnect"
         confirmLabel="Disconnect account"
         onConfirm={handleDisconnectConfirmed}

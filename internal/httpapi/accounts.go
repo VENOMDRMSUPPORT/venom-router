@@ -750,27 +750,31 @@ func (h *AccountsHandler) ServeDisconnect(w http.ResponseWriter, r *http.Request
 	}
 
 	now := h.now()
-	next, terr := account.TransitionConnection(domain.ConnectionDisconnected, now)
-	if terr != nil {
-		h.audit.Emit(ctx, AuditActionAccountDisconnect, AuditResultFailure, AuditResourceAccount, id, "invalid_state")
-		writeErrorDetails(w, http.StatusConflict, "invalid_state", "illegal connection_state transition", false, nil)
-		return
-	}
 
-	persisted, persistedOK, perr := h.accounts.SoftDisconnect(ctx, id, next, now)
-	if perr != nil {
+	// Disconnect REMOVES the account so its provider returns to a pristine
+	// available/awaiting-connection state on every surface (the accounts row's
+	// ON DELETE CASCADE cleans all its derived operational data; the audit log,
+	// which is append-only and account-FK-free, retains the history). The
+	// response body projects the account one last time BEFORE removal — a
+	// courtesy the dashboard ignores (it refetches) that keeps the response
+	// shape stable; its connection_state is stamped disconnected for honesty.
+	account.ConnectionState = domain.ConnectionDisconnected
+	projection := h.projectAccount(ctx, account, now, true)
+
+	deleted, derr := h.accounts.Delete(ctx, id)
+	if derr != nil {
 		h.audit.Emit(ctx, AuditActionAccountDisconnect, AuditResultFailure, AuditResourceAccount, id, "internal")
 		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
 		return
 	}
-	if !persistedOK {
+	if !deleted {
 		h.audit.Emit(ctx, AuditActionAccountDisconnect, AuditResultFailure, AuditResourceAccount, id, "not_found")
 		writeAuthError(w, http.StatusNotFound, "not_found", "account not found", false)
 		return
 	}
 
 	h.audit.Emit(ctx, AuditActionAccountDisconnect, AuditResultSuccess, AuditResourceAccount, id, "")
-	writeData(w, http.StatusOK, h.projectAccount(ctx, persisted, now, true))
+	writeData(w, http.StatusOK, projection)
 }
 
 // ServeHealth implements POST /accounts/{id}/health (02 §3 Axis 2).
