@@ -24,27 +24,60 @@ import (
 // than inheriting the request's.
 const usageWriteTimeout = 5 * time.Second
 
+// liveTransportImpls builds ONE implementation per transport TYPE (never one
+// per provider slug — 01 §4.5). Both the request path and the certification
+// probe path are composed from this single table, so a provider whose catalog
+// entry declares a transport kind can never resolve on one path and fail on the
+// other.
+func liveTransportImpls(client *http.Client) map[execution.TransportType]execution.InferenceTransport {
+	return map[execution.TransportType]execution.InferenceTransport{
+		execution.TransportTypeOpenAICompatible: execution.NewOpenAICompatibleTransport(client, 0),
+		execution.TransportTypeNativeOAuth:      execution.NewNativeOAuthTransport(client, 0),
+		execution.TransportTypeNativeAPI:        execution.NewNativeAPITransport(client, 0),
+	}
+}
+
+// liveProviderBaseURLs is THE table of fully-resolved base URLs the live
+// API-key providers' transports must be called with. Each value folds in the
+// version segment the provider's transport convention needs — the
+// openai_compatible transport appends "/chat/completions", and native_api
+// appends "/models/{id}:generateContent" — independent of whatever base_url the
+// providers table stores for that provider's other adapters.
+//
+// It is read by BOTH buildChatCompletionsHandler (the request path) and
+// ControlMux (the certification probe path). Before this was one table, each
+// path carried its own literal and nothing failed when they disagreed: a
+// provider could be deleted from the probe map and every test stayed green
+// while its offerings silently became uncertifiable (409 probe_unsupported).
+// TestLiveProviderWiring_EveryAPIKeyCatalogEntryIsWired pins the totality of
+// this table against the catalog itself.
+//
+// A provider absent from here is absent from both paths — fail closed, never a
+// guessed base URL. The OAuth built-ins (antigravity today) are deliberately
+// absent: their bases arrive with their own units.
+func liveProviderBaseURLs() map[providers.ProviderID]string {
+	return map[providers.ProviderID]string{
+		providers.OpenCodeZenID: providers.OpenCodeZenBaseURL + "/v1",
+		providers.OllamaCloudID: providers.OllamaCloudBaseURL,
+		providers.AgnesAIID:     providers.AgnesAIBaseURL,
+		providers.NvidiaNIMID:   providers.NvidiaNIMBaseURL,
+		providers.GeminiCLIID:   providers.GeminiCLIBaseURL + "/v1beta",
+	}
+}
+
 // buildChatCompletionsHandler composes the real request-path engine + the chat
 // handler for the shared control listener. It builds the request-path
-// dispatcher (openai_compatible + native_oauth transports), the failure
+// dispatcher (one transport per type, from liveTransportImpls), the failure
 // classifier, the candidate-snapshot builder over the real repos, and the usage
-// writer. baseURLFor resolves each live provider's base URL (only opencode-zen
-// is live in V1; others resolve to "" and fail closed at dispatch).
+// writer. baseURLFor resolves each live provider's base URL from
+// liveProviderBaseURLs; a provider absent from that table resolves to "" and
+// fails closed at dispatch.
 func buildChatCompletionsHandler(db *storage.DB, kr *secrets.Keyring, reg *providers.Registry) *ChatCompletionsHandler {
 	httpClient := &http.Client{Timeout: execution.DefaultOpenAICompatibleTimeout}
-	impls := map[execution.TransportType]execution.InferenceTransport{
-		execution.TransportTypeOpenAICompatible: execution.NewOpenAICompatibleTransport(httpClient, 0),
-		execution.TransportTypeNativeOAuth:      execution.NewNativeOAuthTransport(httpClient, 0),
-		execution.TransportTypeNativeAPI:        execution.NewNativeAPITransport(httpClient, 0),
-	}
-	baseURLs := map[string]string{
-		string(providers.OpenCodeZenID): providers.OpenCodeZenBaseURL + "/v1",
-		string(providers.OllamaCloudID): providers.OllamaCloudBaseURL,
-		string(providers.AgnesAIID):     providers.AgnesAIBaseURL,
-		string(providers.NvidiaNIMID):   providers.NvidiaNIMBaseURL,
-		// gemini-cli is served by the native_api transport, which appends
-		// /models/{id}:generateContent to this /v1beta base.
-		string(providers.GeminiCLIID): providers.GeminiCLIBaseURL + "/v1beta",
+	impls := liveTransportImpls(httpClient)
+	baseURLs := make(map[string]string, len(liveProviderBaseURLs()))
+	for id, base := range liveProviderBaseURLs() {
+		baseURLs[string(id)] = base
 	}
 	credentialRepo := storage.NewAccountCredentialRepo(db)
 	engine := &EngineDeps{

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // GeminiCLIID is the catalog slug this adapter registers under.
@@ -51,11 +52,17 @@ type GoogleModelsProbe func(ctx context.Context, baseURL, key, pageToken string)
 // string, 03 §3). No quota adapter (none proven).
 type GeminiCLIAdapter struct {
 	probe GoogleModelsProbe
+	now   func() time.Time
 }
 
 // NewGeminiCLIAdapter builds the adapter over the injected Google models probe.
-func NewGeminiCLIAdapter(probe GoogleModelsProbe) *GeminiCLIAdapter {
-	return &GeminiCLIAdapter{probe: probe}
+// now defaults to time.Now when nil (every real caller); it is injectable so the
+// health observation's CheckedAt stamp is testable without a real clock.
+func NewGeminiCLIAdapter(probe GoogleModelsProbe, now func() time.Time) *GeminiCLIAdapter {
+	if now == nil {
+		now = time.Now
+	}
+	return &GeminiCLIAdapter{probe: probe, now: now}
 }
 
 // ConnectAPIKey validates key by a single model-listing call (the listing
@@ -226,29 +233,19 @@ func (a *GeminiCLIAdapter) CheckOfferingHealth(ctx context.Context, creds Stored
 	return a.checkHealth(ctx, creds, "offering")
 }
 
+// checkHealth maps the authentic listing outcome onto the shared health
+// observation, stamped with the injected clock (observationFromValidation).
 func (a *GeminiCLIAdapter) checkHealth(ctx context.Context, creds StoredCredentials, scope string) (HealthObservation, error) {
-	switch a.classifyListing(ctx, creds.Value) {
-	case ValidationValid:
-		return HealthObservation{Status: "healthy", Scope: scope, CredentialValid: true, TransportReachable: true}, nil
-	case ValidationInvalid:
-		return HealthObservation{
-			Status: "expired", Scope: scope, CredentialValid: false, TransportReachable: true,
-			Failure: &HealthFailure{Class: "auth", Retryable: false, SafeMessage: "provider rejected the credential (401/403)"},
-		}, nil
-	default:
-		return HealthObservation{
-			Status: "unreachable", Scope: scope, CredentialValid: false, TransportReachable: false,
-			Failure: &HealthFailure{Class: "unavailable", Retryable: true, SafeMessage: "provider unavailable or rate limited"},
-		}, nil
-	}
+	status := a.classifyListing(ctx, creds.Value)
+	return observationFromValidation(status, scope, a.now().Unix()), nil
 }
 
 // RegisterGeminiCLI registers the gemini-cli APIKey + Health + Discovery
-// adapters into reg with the native_api transport kind. It does NOT wire itself
-// into any composition root — that is the caller's job (httpapi's
-// registerGeminiCLI).
-func RegisterGeminiCLI(reg *Registry, probe GoogleModelsProbe) error {
-	adapter := NewGeminiCLIAdapter(probe)
+// adapters into reg with the native_api transport kind. now may be nil (real
+// callers); tests inject a fake clock. It does NOT wire itself into any
+// composition root — that is the caller's job (httpapi's registerGeminiCLI).
+func RegisterGeminiCLI(reg *Registry, probe GoogleModelsProbe, now func() time.Time) error {
+	adapter := NewGeminiCLIAdapter(probe, now)
 	return reg.Register(Definition{
 		ID:        GeminiCLIID,
 		AuthMode:  AuthModeAPIKey,

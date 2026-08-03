@@ -28,7 +28,9 @@ func (f *fakeGoogleProbe) probe(_ context.Context, _ /*baseURL*/, _ /*key*/, pag
 	return f.status, []byte(body), nil
 }
 
-func newGeminiAdapter(p *fakeGoogleProbe) *GeminiCLIAdapter { return NewGeminiCLIAdapter(p.probe) }
+func newGeminiAdapter(p *fakeGoogleProbe) *GeminiCLIAdapter {
+	return NewGeminiCLIAdapter(p.probe, frozenClock())
+}
 
 // TestGeminiCLI_BaseURLMatchesCatalog proves the base URL const equals the
 // catalog entry.
@@ -48,7 +50,7 @@ func TestGeminiCLI_BaseURLMatchesCatalog(t *testing.T) {
 // native_api transport kind (paired with the httpapi wiring test).
 func TestGeminiCLI_TransportKindIsNativeAPI(t *testing.T) {
 	reg := NewRegistry()
-	if err := RegisterGeminiCLI(reg, (&fakeGoogleProbe{}).probe); err != nil {
+	if err := RegisterGeminiCLI(reg, (&fakeGoogleProbe{}).probe, nil); err != nil {
 		t.Fatalf("RegisterGeminiCLI() error = %v", err)
 	}
 	def, ok := reg.Definition(GeminiCLIID)
@@ -198,7 +200,7 @@ func TestGeminiCLI_Paging(t *testing.T) {
 func TestGeminiCLI_RunawayPagerHitsBound(t *testing.T) {
 	// Every page returns a nextPageToken, so the loop never terminates naturally.
 	p := &neverEndingGoogleProbe{}
-	_, err := NewGeminiCLIAdapter(p.probe).DiscoverModels(context.Background(), StoredCredentials{Value: "k"})
+	_, err := NewGeminiCLIAdapter(p.probe, frozenClock()).DiscoverModels(context.Background(), StoredCredentials{Value: "k"})
 	if !errors.Is(err, ErrGeminiPagingBudgetExceeded) {
 		t.Fatalf("error = %v, want ErrGeminiPagingBudgetExceeded", err)
 	}

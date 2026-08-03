@@ -25,11 +25,12 @@ const agnesModelsList = `{"data":[
   {"id":"ctxlen3-model","max_model_len":2048},
   {"id":"noctx-model"},
   {"id":"legacy-agnes-video-x"},
-  {"id":"kept-video","capabilities":["tools"]}
+  {"id":"kept-video","capabilities":["tools"]},
+  {"id":"unreadable-caps-video","capabilities":"tools,video"}
 ]}`
 
 func newAgnesAdapter(chat *fakeChatProbe, models *fakeModelsProbe) *AgnesAIAdapter {
-	return NewAgnesAIAdapter(chat.probe, models.probe)
+	return NewAgnesAIAdapter(chat.probe, models.probe, frozenClock())
 }
 
 // TestAgnesAI_BaseURLMatchesCatalog proves the base URL const equals the
@@ -127,6 +128,13 @@ func TestAgnesAI_Discovery(t *testing.T) {
 	// no video label, so the id-shape fallback must NOT fire.
 	if _, ok := byID["kept-video"]; !ok {
 		t.Fatal("kept-video declares capabilities (no video) and must be kept")
+	}
+	// A capabilities field we could not PARSE (here: a bare string, neither
+	// array nor object) is not authority that the row is non-video — it is the
+	// absence of usable information, so the id-shape fallback must still fire.
+	// Treating unreadable data as "confirmed fine" would be failing OPEN.
+	if _, ok := byID["unreadable-caps-video"]; ok {
+		t.Fatal("unreadable-caps-video: an unparseable capabilities field must not suppress the video id-shape drop")
 	}
 
 	chat := byID["chat-model"]

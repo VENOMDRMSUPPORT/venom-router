@@ -35,15 +35,23 @@ type NvidiaNIMAdapter struct {
 	chatProbe   ChatProbe
 	modelsProbe ModelsProbe
 	facts       *ModelsDevSource
+	now         func() time.Time
 }
 
 // NewNvidiaNIMAdapter builds the adapter over the injected chat/models probes
-// and the shared models.dev facts source (built from modelsDevProbe + now).
+// and the shared models.dev facts source (built from modelsDevProbe + now). now
+// defaults to time.Now when nil (every real caller); it is injectable so both
+// the models.dev cache TTL and the health observation's CheckedAt stamp are
+// testable without a real clock.
 func NewNvidiaNIMAdapter(chatProbe ChatProbe, modelsProbe ModelsProbe, modelsDevProbe ModelsDevProbe, now func() time.Time) *NvidiaNIMAdapter {
+	if now == nil {
+		now = time.Now
+	}
 	return &NvidiaNIMAdapter{
 		chatProbe:   chatProbe,
 		modelsProbe: modelsProbe,
 		facts:       NewModelsDevSource(modelsDevProbe, now),
+		now:         now,
 	}
 }
 
@@ -104,21 +112,11 @@ func (a *NvidiaNIMAdapter) CheckOfferingHealth(ctx context.Context, creds Stored
 	return a.checkHealth(ctx, creds, "offering")
 }
 
+// checkHealth maps the authentic validation outcome onto the shared health
+// observation, stamped with the injected clock (observationFromValidation).
 func (a *NvidiaNIMAdapter) checkHealth(ctx context.Context, creds StoredCredentials, scope string) (HealthObservation, error) {
-	switch ValidateAPIKey(ctx, a.chatProbe, NvidiaNIMBaseURL, creds.Value) {
-	case ValidationValid:
-		return HealthObservation{Status: "healthy", Scope: scope, CredentialValid: true, TransportReachable: true}, nil
-	case ValidationInvalid:
-		return HealthObservation{
-			Status: "expired", Scope: scope, CredentialValid: false, TransportReachable: true,
-			Failure: &HealthFailure{Class: "auth", Retryable: false, SafeMessage: "provider rejected the credential (401/403)"},
-		}, nil
-	default:
-		return HealthObservation{
-			Status: "unreachable", Scope: scope, CredentialValid: false, TransportReachable: false,
-			Failure: &HealthFailure{Class: "unavailable", Retryable: true, SafeMessage: "provider unavailable or rate limited"},
-		}, nil
-	}
+	status := ValidateAPIKey(ctx, a.chatProbe, NvidiaNIMBaseURL, creds.Value)
+	return observationFromValidation(status, scope, a.now().Unix()), nil
 }
 
 // RegisterNvidiaNIM registers the nvidia-nim APIKey + Health + Discovery

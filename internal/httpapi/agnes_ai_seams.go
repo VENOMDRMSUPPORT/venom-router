@@ -127,5 +127,5 @@ func agnesModelsProbeSeam(ctx context.Context, baseURL, key string) ([]byte, err
 // file's real HTTP seams. Always registered unconditionally; the returned
 // error is non-nil only if reg rejects the registration (a duplicate).
 func registerAgnesAI(reg *providers.Registry) error {
-	return providers.RegisterAgnesAI(reg, agnesChatProbeSeam, agnesModelsProbeSeam)
+	return providers.RegisterAgnesAI(reg, agnesChatProbeSeam, agnesModelsProbeSeam, nil)
 }

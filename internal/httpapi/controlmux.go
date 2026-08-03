@@ -336,32 +336,27 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// reports it unavailable and ServeProbe refuses 409 probe_unsupported
 	// before any job row is ever created — fail-closed, never a
 	// fabricated capability.
+	// Both maps are DERIVED from the two single-source tables the request path
+	// also composes from (liveTransportImpls + liveProviderBaseURLs in
+	// chatcompletions.go) and from each provider's catalog-declared transport
+	// KIND — never a second hand-written literal that could silently disagree
+	// with the request path. Resolution is by typed capability
+	// (Definition.Transport -> TransportType), never a slug switch.
 	probeHTTPClient := &http.Client{Timeout: execution.DefaultOpenAICompatibleTimeout}
-	openAICompatTransport := execution.NewOpenAICompatibleTransport(probeHTTPClient, 0)
-	// gemini-cli's offerings certify through the native_api transport
-	// (P7-EXEC-001), which speaks Google's generateContent schema.
-	nativeAPITransport := execution.NewNativeAPITransport(probeHTTPClient, 0)
-	probeTransports := map[string]execution.InferenceTransport{
-		string(providers.OpenCodeZenID): openAICompatTransport,
-		// ollama-cloud speaks OpenAI-compatible chat completions; its base
-		// already carries the /v1 segment, so the transport's fixed
-		// "/chat/completions" suffix lands correctly.
-		string(providers.OllamaCloudID): openAICompatTransport,
-		// agnes-ai is OpenAI-compatible; its base already carries /v1.
-		string(providers.AgnesAIID): openAICompatTransport,
-		// nvidia-nim is OpenAI-compatible; its base already carries /v1.
-		string(providers.NvidiaNIMID): openAICompatTransport,
-		// gemini-cli certifies through the native_api transport.
-		string(providers.GeminiCLIID): nativeAPITransport,
-	}
-	probeBaseURLs := map[string]string{
-		string(providers.OpenCodeZenID): providers.OpenCodeZenBaseURL + "/v1",
-		string(providers.OllamaCloudID): providers.OllamaCloudBaseURL,
-		string(providers.AgnesAIID):     providers.AgnesAIBaseURL,
-		string(providers.NvidiaNIMID):   providers.NvidiaNIMBaseURL,
-		// native_api appends /models/{id}:generateContent, so the base carries
-		// the /v1beta version segment.
-		string(providers.GeminiCLIID): providers.GeminiCLIBaseURL + "/v1beta",
+	probeImpls := liveTransportImpls(probeHTTPClient)
+	probeTransports := make(map[string]execution.InferenceTransport)
+	probeBaseURLs := make(map[string]string)
+	for id, base := range liveProviderBaseURLs() {
+		def, registered := reg.Definition(id)
+		if !registered {
+			continue // not registered in this composition: absent from both maps
+		}
+		impl, wired := probeImpls[execution.TransportType(def.Transport)]
+		if !wired {
+			continue // no implementation for its declared kind: absent, fail closed
+		}
+		probeTransports[string(id)] = impl
+		probeBaseURLs[string(id)] = base
 	}
 	certRepo := storage.NewCertificationRepo(db, nil)
 	probeRunRepo := storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown)

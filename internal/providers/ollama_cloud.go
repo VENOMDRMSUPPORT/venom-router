@@ -67,16 +67,23 @@ type OllamaCloudAdapter struct {
 	identityProbe OllamaIdentityProbe
 	modelsProbe   ModelsProbe
 	facts         *ModelsDevSource
+	now           func() time.Time
 }
 
 // NewOllamaCloudAdapter builds the adapter over the injected identity/models
 // probes and the shared models.dev facts source (built from modelsDevProbe +
-// now).
+// now). now defaults to time.Now when nil (every real caller); it is injectable
+// so both the models.dev cache TTL and the health observation's CheckedAt stamp
+// are testable without a real clock.
 func NewOllamaCloudAdapter(identityProbe OllamaIdentityProbe, modelsProbe ModelsProbe, modelsDevProbe ModelsDevProbe, now func() time.Time) *OllamaCloudAdapter {
+	if now == nil {
+		now = time.Now
+	}
 	return &OllamaCloudAdapter{
 		identityProbe: identityProbe,
 		modelsProbe:   modelsProbe,
 		facts:         NewModelsDevSource(modelsDevProbe, now),
+		now:           now,
 	}
 }
 
@@ -190,27 +197,32 @@ func (a *OllamaCloudAdapter) CheckOfferingHealth(ctx context.Context, creds Stor
 	return a.checkHealth(ctx, creds, "offering")
 }
 
+// checkHealth stamps CheckedAt from the injected clock on EVERY outcome. An
+// unstamped observation would carry CheckedAt == 0, i.e. a real-looking
+// 1970-01-01 timestamp for any consumer that reads it — the same 0-as-unknown
+// fabrication this project rejects everywhere else.
 func (a *OllamaCloudAdapter) checkHealth(ctx context.Context, creds StoredCredentials, scope string) (HealthObservation, error) {
+	checkedAt := a.now().Unix()
 	status, _, err := a.identityProbe(ctx, creds.Value)
 	if err != nil {
-		return ollamaUnreachable(scope), nil
+		return ollamaUnreachable(scope, checkedAt), nil
 	}
 	switch {
 	case status >= 200 && status < 300:
-		return HealthObservation{Status: "healthy", Scope: scope, CredentialValid: true, TransportReachable: true}, nil
+		return HealthObservation{Status: "healthy", Scope: scope, CredentialValid: true, TransportReachable: true, CheckedAt: checkedAt}, nil
 	case status == 401 || status == 403:
 		return HealthObservation{
-			Status: "expired", Scope: scope, CredentialValid: false, TransportReachable: true,
+			Status: "expired", Scope: scope, CredentialValid: false, TransportReachable: true, CheckedAt: checkedAt,
 			Failure: &HealthFailure{Class: "auth", Retryable: false, SafeMessage: "provider rejected the credential (401/403)"},
 		}, nil
 	default:
-		return ollamaUnreachable(scope), nil
+		return ollamaUnreachable(scope, checkedAt), nil
 	}
 }
 
-func ollamaUnreachable(scope string) HealthObservation {
+func ollamaUnreachable(scope string, checkedAt int64) HealthObservation {
 	return HealthObservation{
-		Status: "unreachable", Scope: scope, CredentialValid: false, TransportReachable: false,
+		Status: "unreachable", Scope: scope, CredentialValid: false, TransportReachable: false, CheckedAt: checkedAt,
 		Failure: &HealthFailure{Class: "unavailable", Retryable: true, SafeMessage: "provider unavailable or rate limited"},
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // AgnesAIID is the catalog slug this adapter registers under.
@@ -48,11 +49,17 @@ var agnesCapabilityVocab = map[string]string{
 type AgnesAIAdapter struct {
 	chatProbe   ChatProbe
 	modelsProbe ModelsProbe
+	now         func() time.Time
 }
 
 // NewAgnesAIAdapter builds the adapter over the injected chat/models probes.
-func NewAgnesAIAdapter(chatProbe ChatProbe, modelsProbe ModelsProbe) *AgnesAIAdapter {
-	return &AgnesAIAdapter{chatProbe: chatProbe, modelsProbe: modelsProbe}
+// now defaults to time.Now when nil (every real caller); it is injectable so the
+// health observation's CheckedAt stamp is testable without a real clock.
+func NewAgnesAIAdapter(chatProbe ChatProbe, modelsProbe ModelsProbe, now func() time.Time) *AgnesAIAdapter {
+	if now == nil {
+		now = time.Now
+	}
+	return &AgnesAIAdapter{chatProbe: chatProbe, modelsProbe: modelsProbe, now: now}
 }
 
 // ConnectAPIKey validates key via the authentic chat probe and, on success,
@@ -124,12 +131,12 @@ func (a *AgnesAIAdapter) DiscoverModels(ctx context.Context, creds StoredCredent
 
 // agnesIsVideo decides whether a row is a video model, which 03 §3 drops.
 // Preferred (explicit) route: the row's own capability field declares "video".
-// ONLY when the row carries no capability field at all does it fall back to the
-// id-shape rule the card mandates (`-video` suffix / `agnes-video`) — this is
-// the SINGLE id-shape rule in the adapter, and it exists solely because the
+// ONLY when the row carries no READABLE capability field does it fall back to
+// the id-shape rule the card mandates (`-video` suffix / `agnes-video`) — this
+// is the SINGLE id-shape rule in the adapter, and it exists solely because the
 // card orders the drop, not as a capability guess.
-func agnesIsVideo(id string, labels []string, capabilitiesPresent bool) bool {
-	if capabilitiesPresent {
+func agnesIsVideo(id string, labels []string, capabilitiesParsed bool) bool {
+	if capabilitiesParsed {
 		for _, l := range labels {
 			if strings.EqualFold(l, "video") {
 				return true
@@ -143,11 +150,16 @@ func agnesIsVideo(id string, labels []string, capabilitiesPresent bool) bool {
 
 // parseAgnesCapabilities accepts the capabilities field in EITHER shape: a
 // string array, or an object of booleans (only `true` entries count). It
-// returns the declared labels and whether the field was present at all (an
-// absent field means "no capability info", which changes how video is
-// detected). Order within an object is not defined, but only membership is
+// returns the declared labels and whether the field was successfully PARSED
+// (which is what decides whether the labels may be trusted as authoritative
+// about video). Order within an object is not defined, but only membership is
 // used downstream, so it does not matter.
-func parseAgnesCapabilities(raw json.RawMessage) (labels []string, present bool) {
+//
+// An absent field and a present-but-unreadable field both report parsed=false.
+// They are the same epistemic state — no usable capability information — and
+// treating an unreadable field as "authoritatively not video" would be failing
+// OPEN on data we could not read.
+func parseAgnesCapabilities(raw json.RawMessage) (labels []string, parsed bool) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, false
 	}
@@ -165,9 +177,7 @@ func parseAgnesCapabilities(raw json.RawMessage) (labels []string, present bool)
 		}
 		return out, true
 	}
-	// Present but an unrecognized shape: treat as present-with-no-labels so the
-	// id-shape video fallback does NOT fire (the row did carry a field).
-	return nil, true
+	return nil, false
 }
 
 // agnesCapabilities maps the declared labels onto our vocabulary. "chat" is
@@ -230,28 +240,19 @@ func (a *AgnesAIAdapter) CheckOfferingHealth(ctx context.Context, creds StoredCr
 	return a.checkHealth(ctx, creds, "offering")
 }
 
+// checkHealth maps the authentic validation outcome onto the shared health
+// observation, stamped with the injected clock (observationFromValidation).
 func (a *AgnesAIAdapter) checkHealth(ctx context.Context, creds StoredCredentials, scope string) (HealthObservation, error) {
-	switch ValidateAPIKey(ctx, a.chatProbe, AgnesAIBaseURL, creds.Value) {
-	case ValidationValid:
-		return HealthObservation{Status: "healthy", Scope: scope, CredentialValid: true, TransportReachable: true}, nil
-	case ValidationInvalid:
-		return HealthObservation{
-			Status: "expired", Scope: scope, CredentialValid: false, TransportReachable: true,
-			Failure: &HealthFailure{Class: "auth", Retryable: false, SafeMessage: "provider rejected the credential (401/403)"},
-		}, nil
-	default:
-		return HealthObservation{
-			Status: "unreachable", Scope: scope, CredentialValid: false, TransportReachable: false,
-			Failure: &HealthFailure{Class: "unavailable", Retryable: true, SafeMessage: "provider unavailable or rate limited"},
-		}, nil
-	}
+	status := ValidateAPIKey(ctx, a.chatProbe, AgnesAIBaseURL, creds.Value)
+	return observationFromValidation(status, scope, a.now().Unix()), nil
 }
 
 // RegisterAgnesAI registers the agnes-ai APIKey + Health + Discovery adapters
-// into reg. It does NOT wire itself into any composition root — that is the
-// caller's job (httpapi's registerAgnesAI).
-func RegisterAgnesAI(reg *Registry, chatProbe ChatProbe, modelsProbe ModelsProbe) error {
-	adapter := NewAgnesAIAdapter(chatProbe, modelsProbe)
+// into reg. now may be nil (real callers); tests inject a fake clock. It does
+// NOT wire itself into any composition root — that is the caller's job
+// (httpapi's registerAgnesAI).
+func RegisterAgnesAI(reg *Registry, chatProbe ChatProbe, modelsProbe ModelsProbe, now func() time.Time) error {
+	adapter := NewAgnesAIAdapter(chatProbe, modelsProbe, now)
 	return reg.Register(Definition{
 		ID:        AgnesAIID,
 		AuthMode:  AuthModeAPIKey,

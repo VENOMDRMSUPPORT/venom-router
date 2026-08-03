@@ -57,5 +57,5 @@ func googleModelsProbeSeam(ctx context.Context, baseURL, key, pageToken string) 
 // real Google models probe. Always registered unconditionally; the returned
 // error is non-nil only if reg rejects the registration (a duplicate).
 func registerGeminiCLI(reg *providers.Registry) error {
-	return providers.RegisterGeminiCLI(reg, googleModelsProbeSeam)
+	return providers.RegisterGeminiCLI(reg, googleModelsProbeSeam, nil)
 }
