@@ -35,6 +35,7 @@ func buildChatCompletionsHandler(db *storage.DB, kr *secrets.Keyring, reg *provi
 	impls := map[execution.TransportType]execution.InferenceTransport{
 		execution.TransportTypeOpenAICompatible: execution.NewOpenAICompatibleTransport(httpClient, 0),
 		execution.TransportTypeNativeOAuth:      execution.NewNativeOAuthTransport(httpClient, 0),
+		execution.TransportTypeNativeAPI:        execution.NewNativeAPITransport(httpClient, 0),
 	}
 	baseURLs := map[string]string{
 		string(providers.OpenCodeZenID): providers.OpenCodeZenBaseURL + "/v1",

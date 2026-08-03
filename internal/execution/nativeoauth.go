@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -33,137 +32,13 @@ func (e *nativeOAuthHTTPError) Error() string {
 	return fmt.Sprintf("execution: native-oauth transport: http %d", e.status)
 }
 
-// Gemini generateContent request/response wire types ----------------------
-
-type geminiPart struct {
-	Text         *string           `json:"text,omitempty"`
-	InlineData   *geminiInlineData `json:"inlineData,omitempty"`
-	FunctionCall *geminiFnCall     `json:"functionCall,omitempty"`
-}
-
-// geminiInlineData carries an inline (base64) image for a multimodal part
-// (P5-EXEC-004). Gemini's REST inlineData requires the bytes inline — a bare
-// image URL is NOT expressible here, so a URL-only image fails closed.
-type geminiInlineData struct {
-	MimeType string `json:"mimeType"`
-	Data     string `json:"data"`
-}
-
-type geminiFnCall struct {
-	Name string          `json:"name"`
-	Args json.RawMessage `json:"args,omitempty"`
-}
-
-// geminiFunctionDeclaration is one declared tool (P5-EXEC-004). Parameters is
-// embedded raw JSON — the client's schema is forwarded verbatim.
-type geminiFunctionDeclaration struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Parameters  json.RawMessage `json:"parameters,omitempty"`
-}
-
-type geminiTool struct {
-	FunctionDeclarations []geminiFunctionDeclaration `json:"functionDeclarations"`
-}
-
-type geminiContent struct {
-	Role  string       `json:"role"`
-	Parts []geminiPart `json:"parts"`
-}
-
-type geminiGenerationConfig struct {
-	MaxOutputTokens *int `json:"maxOutputTokens,omitempty"`
-}
-
-type geminiGenerateReq struct {
-	Contents         []geminiContent         `json:"contents"`
-	Tools            []geminiTool            `json:"tools,omitempty"`
-	GenerationConfig *geminiGenerationConfig `json:"generationConfig,omitempty"`
-}
-
-// buildGeminiRequest maps a normalized request onto Gemini's generateContent
-// shape, failing CLOSED (ErrRequestFeatureUnsupported) on anything it cannot
-// faithfully express — a URL-only image (inlineData needs the bytes), an
-// unknown content-part kind, or a tool_choice directive (Gemini's
-// functionCallingConfig has no faithful mapping for an arbitrary OpenAI
-// tool_choice string). A text-only request produces exactly the pre-P5-EXEC-004
-// shape. The error names the FEATURE only, never the tool description or URL.
-func buildGeminiRequest(req NormalizedRequest) (geminiGenerateReq, error) {
-	if req.ToolChoice != "" {
-		return geminiGenerateReq{}, fmt.Errorf("%w: tool_choice", ErrRequestFeatureUnsupported)
-	}
-	contents := make([]geminiContent, 0, len(req.Messages))
-	for _, m := range req.Messages {
-		parts, err := geminiPartsFor(m)
-		if err != nil {
-			return geminiGenerateReq{}, err
-		}
-		contents = append(contents, geminiContent{Role: geminiRoleFor(m.Role), Parts: parts})
-	}
-	out := geminiGenerateReq{Contents: contents}
-	if len(req.Tools) > 0 {
-		decls := make([]geminiFunctionDeclaration, 0, len(req.Tools))
-		for _, td := range req.Tools {
-			d := geminiFunctionDeclaration{Name: td.Name, Description: td.Description}
-			if td.ParametersJSON != "" {
-				d.Parameters = json.RawMessage(td.ParametersJSON)
-			}
-			decls = append(decls, d)
-		}
-		out.Tools = []geminiTool{{FunctionDeclarations: decls}}
-	}
-	if req.MaxTokens != nil {
-		out.GenerationConfig = &geminiGenerationConfig{MaxOutputTokens: req.MaxTokens}
-	}
-	return out, nil
-}
-
-// geminiPartsFor maps one message's content to Gemini parts. A message with no
-// Parts keeps the single-text-part shape used before P5-EXEC-004.
-func geminiPartsFor(m Message) ([]geminiPart, error) {
-	if len(m.Parts) == 0 {
-		text := m.Content
-		return []geminiPart{{Text: &text}}, nil
-	}
-	parts := make([]geminiPart, 0, len(m.Parts))
-	for _, p := range m.Parts {
-		switch p.Kind {
-		case ContentPartText:
-			text := p.Text
-			parts = append(parts, geminiPart{Text: &text})
-		case ContentPartImage:
-			if p.ImageBase64 == "" || p.MediaType == "" {
-				// A bare URL (or an image missing its media type) cannot be
-				// expressed as inlineData — fail closed rather than drop it.
-				return nil, fmt.Errorf("%w: image part requires inline base64 data and a media type", ErrRequestFeatureUnsupported)
-			}
-			parts = append(parts, geminiPart{InlineData: &geminiInlineData{MimeType: p.MediaType, Data: p.ImageBase64}})
-		default:
-			return nil, fmt.Errorf("%w: content part kind %q", ErrRequestFeatureUnsupported, p.Kind)
-		}
-	}
-	return parts, nil
-}
-
-type geminiCandidate struct {
-	Content      geminiContent `json:"content"`
-	FinishReason string        `json:"finishReason"`
-}
-
-type geminiGenerateResp struct {
-	Candidates []geminiCandidate `json:"candidates"`
-}
-
-type geminiErrDetail struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Status  string `json:"status"`
-	Scope   string `json:"scope"`
-}
-
-type geminiErrBody struct {
-	Error geminiErrDetail `json:"error"`
-}
+// The Gemini generateContent request/response wire types, the request
+// builder (buildGeminiRequest / geminiPartsFor / geminiRoleFor), the success
+// decoder (decodeGeminiSuccess), and the SSE runner (parseGeminiSSEData /
+// runGeminiSSE) live in geminiwire.go — shared verbatim with
+// NativeAPITransport (P7-EXEC-001). This transport differs from that sibling
+// in exactly one dimension: it authenticates with Authorization: Bearer,
+// where the native_api sibling uses x-goog-api-key.
 
 // NativeOAuthTransport is the InferenceTransport for the native_oauth
 // type (01 §4.3): Gemini-style generateContent/streamGenerateContent
@@ -202,14 +77,6 @@ func newNativeOAuthTransport(client *http.Client, timeout, firstByteTimeout, idl
 		idleGapTimeout:   idleGapTimeout,
 		inflights:        newInflightRegistry(),
 	}
-}
-
-// geminiRoleFor maps Venom's role vocabulary onto Gemini's.
-func geminiRoleFor(role string) string {
-	if role == "user" {
-		return "user"
-	}
-	return "model"
 }
 
 // Execute sends one non-streamed generateContent request.
@@ -260,33 +127,7 @@ func (t *NativeOAuthTransport) Execute(ctx context.Context, route ResolvedRoute,
 		}
 	}
 
-	var okBody geminiGenerateResp
-	if err := json.Unmarshal(rawBody, &okBody); err != nil {
-		return nil, fmt.Errorf("execution: native-oauth transport: decode response: %w", err)
-	}
-	if len(okBody.Candidates) == 0 {
-		return nil, errors.New("execution: native-oauth transport: no candidates in response")
-	}
-	candidate := okBody.Candidates[0]
-
-	var textContent string
-	var toolCalls []ToolCall
-	for _, part := range candidate.Content.Parts {
-		if part.Text != nil {
-			textContent += *part.Text
-		}
-		if part.FunctionCall != nil {
-			argsJSON := string(part.FunctionCall.Args)
-			toolCalls = append(toolCalls, ToolCall{Name: part.FunctionCall.Name, ArgumentsJSON: argsJSON})
-		}
-	}
-
-	return &NormalizedResponse{
-		Message:      Message{Role: candidate.Content.Role, Content: textContent},
-		ToolCalls:    toolCalls,
-		HTTPStatus:   resp.StatusCode,
-		FinishReason: candidate.FinishReason,
-	}, nil
+	return decodeGeminiSuccess(rawBody, resp.StatusCode)
 }
 
 // Stream sends a streaming request against the Gemini streamGenerateContent
@@ -342,129 +183,8 @@ func (t *NativeOAuthTransport) Stream(ctx context.Context, route ResolvedRoute, 
 	t.inflights.register(req.RequestID, cancel)
 
 	ch := make(chan Chunk, 8)
-	go t.runNativeOAuthSSE(streamCtx, cancel, resp, req.RequestID, ch)
+	go runGeminiSSE(streamCtx, cancel, resp, req.RequestID, ch, t.inflights, t.firstByteTimeout, t.idleGapTimeout)
 	return ch, nil
-}
-
-// parseGeminiSSEData decodes one "data: ..." SSE payload into a delta
-// string and a done flag. Branchy JSON + parts-walk logic is isolated
-// here so runNativeOAuthSSE stays within the gocyclo limit.
-func parseGeminiSSEData(data string) (delta string, done bool, err error) {
-	var sc geminiGenerateResp
-	if jsonErr := json.Unmarshal([]byte(data), &sc); jsonErr != nil {
-		return "", false, fmt.Errorf("execution: native-oauth transport: decode stream chunk: %w", jsonErr)
-	}
-	if len(sc.Candidates) == 0 {
-		return "", false, nil
-	}
-	candidate := sc.Candidates[0]
-	for _, part := range candidate.Content.Parts {
-		if part.Text != nil {
-			delta += *part.Text
-		}
-	}
-	done = candidate.FinishReason != "" && candidate.FinishReason != "FINISH_REASON_UNSPECIFIED"
-	return delta, done, nil
-}
-
-// runNativeOAuthSSE is the goroutine body for Stream. Extracting it into
-// a named method keeps (*NativeOAuthTransport).Stream's cyclomatic
-// complexity within the project's gocyclo limit.
-func (t *NativeOAuthTransport) runNativeOAuthSSE(
-	streamCtx context.Context,
-	cancel context.CancelFunc,
-	resp *http.Response,
-	requestID string,
-	ch chan<- Chunk,
-) {
-	defer func() {
-		t.inflights.unregister(requestID)
-		_ = resp.Body.Close()
-		cancel()
-		close(ch)
-	}()
-
-	lineCh := sseScanner(streamCtx, resp.Body)
-
-	firstByteTimer := time.NewTimer(t.firstByteTimeout)
-	defer firstByteTimer.Stop()
-	idleTimer := time.NewTimer(t.idleGapTimeout)
-	defer idleTimer.Stop()
-	firstByteSeen := false
-
-	for {
-		select {
-		case <-streamCtx.Done():
-			return
-
-		case <-firstByteTimer.C:
-			if !firstByteSeen {
-				select {
-				case ch <- Chunk{Err: ErrStreamFirstByteTimeout}:
-				case <-streamCtx.Done():
-				}
-				return
-			}
-
-		case <-idleTimer.C:
-			select {
-			case ch <- Chunk{Err: ErrStreamIdleGapTimeout}:
-			case <-streamCtx.Done():
-			}
-			return
-
-		case ev, ok := <-lineCh:
-			if !ok {
-				// Natural EOF — Gemini closes the connection when done.
-				select {
-				case ch <- Chunk{Done: true}:
-				case <-streamCtx.Done():
-				}
-				return
-			}
-			if ev.err != nil {
-				select {
-				case ch <- Chunk{Err: fmt.Errorf("%w: %v", ErrTransportNetwork, ev.err)}:
-				case <-streamCtx.Done():
-				}
-				return
-			}
-
-			if ev.line != "" {
-				if !firstByteSeen {
-					firstByteSeen = true
-					firstByteTimer.Stop()
-				}
-				resetTimer(idleTimer, t.idleGapTimeout)
-			}
-
-			if !strings.HasPrefix(ev.line, "data: ") {
-				continue
-			}
-			delta, done, parseErr := parseGeminiSSEData(strings.TrimPrefix(ev.line, "data: "))
-			if parseErr != nil {
-				select {
-				case ch <- Chunk{Err: parseErr}:
-				case <-streamCtx.Done():
-				}
-				return
-			}
-			if delta != "" {
-				select {
-				case ch <- Chunk{Delta: delta}:
-				case <-streamCtx.Done():
-					return
-				}
-			}
-			if done {
-				select {
-				case ch <- Chunk{Done: true}:
-				case <-streamCtx.Done():
-				}
-				return
-			}
-		}
-	}
 }
 
 // Cancel aborts an in-flight stream. Returns ErrRequestNotInflight when

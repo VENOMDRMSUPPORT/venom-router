@@ -362,6 +362,55 @@ func TestNativeOAuth_SupportedCapabilities_IncludesChat(t *testing.T) {
 	t.Fatalf("SupportedCapabilities = %v, want to include OperationChat", caps)
 }
 
+// TestNativeOAuth_SystemMessageGoesToSystemInstruction proves a system
+// message is routed into Gemini's top-level systemInstruction field and NOT
+// sent as a `contents` turn (where geminiRoleFor would label it "model",
+// making the model appear to have said the system prompt), and that a request
+// WITHOUT a system message emits no systemInstruction at all. The builder is
+// shared, so the same guarantee is asserted on the native_api side too.
+func TestNativeOAuth_SystemMessageGoesToSystemInstruction(t *testing.T) {
+	t.Run("system routed to systemInstruction, not contents", func(t *testing.T) {
+		var got geminiGenerateReq
+		srv := nativeOAuthSingleCandidateServer(t, &got)
+		transport := NewNativeOAuthTransport(&http.Client{}, 5*time.Second)
+
+		_, err := transport.Execute(context.Background(), newNativeOAuthTestRoute(srv.URL), NormalizedRequest{
+			Messages: []Message{
+				{Role: "system", Content: "be terse"},
+				{Role: "user", Content: "hi"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if len(got.Contents) != 1 {
+			t.Fatalf("contents length = %d, want 1 (only the user turn; system must not be a content turn)", len(got.Contents))
+		}
+		if got.Contents[0].Role != "user" {
+			t.Fatalf("contents[0].role = %q, want %q", got.Contents[0].Role, "user")
+		}
+		if got.SystemInstruction == nil || len(got.SystemInstruction.Parts) != 1 || got.SystemInstruction.Parts[0].Text == nil || *got.SystemInstruction.Parts[0].Text != "be terse" {
+			t.Fatalf("systemInstruction = %+v, want the system text 'be terse'", got.SystemInstruction)
+		}
+	})
+
+	t.Run("no system message omits systemInstruction", func(t *testing.T) {
+		var got geminiGenerateReq
+		srv := nativeOAuthSingleCandidateServer(t, &got)
+		transport := NewNativeOAuthTransport(&http.Client{}, 5*time.Second)
+
+		_, err := transport.Execute(context.Background(), newNativeOAuthTestRoute(srv.URL), NormalizedRequest{
+			Messages: []Message{{Role: "user", Content: "hi"}},
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if got.SystemInstruction != nil {
+			t.Fatalf("systemInstruction = %+v, want nil (no system message present)", got.SystemInstruction)
+		}
+	})
+}
+
 // --- P5-EXEC-004: tools + multimodal content ------------------------------
 
 // nativeOAuthCountingServer counts every request it receives (any path), so a
