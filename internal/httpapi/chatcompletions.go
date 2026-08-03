@@ -39,6 +39,7 @@ func buildChatCompletionsHandler(db *storage.DB, kr *secrets.Keyring, reg *provi
 	}
 	baseURLs := map[string]string{
 		string(providers.OpenCodeZenID): providers.OpenCodeZenBaseURL + "/v1",
+		string(providers.OllamaCloudID): providers.OllamaCloudBaseURL,
 	}
 	credentialRepo := storage.NewAccountCredentialRepo(db)
 	engine := &EngineDeps{

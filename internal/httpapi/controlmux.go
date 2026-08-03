@@ -136,6 +136,11 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// confidential-client env vars); see registerOpenCodeZen's doc
 	// comment for why its error is safely discardable here.
 	_ = registerOpenCodeZen(reg)
+	// ollama-cloud (P7-PROV-006) is an API-key adapter whose authentic
+	// validation is the native /api/me identity call; registered
+	// unconditionally over its real HTTP seams, same discardable-error
+	// rationale as opencode-zen.
+	_ = registerOllamaCloud(reg)
 
 	// audit is the shared P2b-OBS-001 emitter every mutating control
 	// route below records exactly one audit_event through (log is nil
@@ -325,9 +330,14 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	openAICompatTransport := execution.NewOpenAICompatibleTransport(probeHTTPClient, 0)
 	probeTransports := map[string]execution.InferenceTransport{
 		string(providers.OpenCodeZenID): openAICompatTransport,
+		// ollama-cloud speaks OpenAI-compatible chat completions; its base
+		// already carries the /v1 segment, so the transport's fixed
+		// "/chat/completions" suffix lands correctly.
+		string(providers.OllamaCloudID): openAICompatTransport,
 	}
 	probeBaseURLs := map[string]string{
 		string(providers.OpenCodeZenID): providers.OpenCodeZenBaseURL + "/v1",
+		string(providers.OllamaCloudID): providers.OllamaCloudBaseURL,
 	}
 	certRepo := storage.NewCertificationRepo(db, nil)
 	probeRunRepo := storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown)
