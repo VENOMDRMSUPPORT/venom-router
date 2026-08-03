@@ -55,13 +55,18 @@ func clinePassPostSeam(ctx context.Context, reqURL string, body []byte) (int, []
 
 // clinePassGetSeam is the real implementation of providers.ClinePassGetProbe: an
 // authenticated GET carrying Authorization: Bearer workos:<token> and the cline
-// headers, returning the raw status + body. accessToken is never logged.
+// headers, returning the raw status + body. accessToken is never logged. A
+// BLANK accessToken means no Authorization header is sent at all — the
+// recommended-models endpoint is public and must not receive a workos:-prefixed
+// header (legacy 2026-08-03 fetches it headerless).
 func clinePassGetSeam(ctx context.Context, reqURL, accessToken string) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return 0, nil, fmt.Errorf("httpapi: clinepass GET request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+clinePassWorkosPrefixed(accessToken))
+	if accessToken != "" {
+		req.Header.Set("Authorization", "Bearer "+clinePassWorkosPrefixed(accessToken))
+	}
 	clinePassApplyHeaders(req.Header)
 
 	resp, err := clinePassHTTPClient.Do(req)

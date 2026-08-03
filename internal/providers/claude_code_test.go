@@ -9,31 +9,34 @@ import (
 	"testing"
 )
 
-// fakeClaudeToken records the last form and returns a fixed body/err.
+// fakeClaudeToken records the last JSON body and returns a fixed body/err.
 type fakeClaudeToken struct {
 	body     string
 	err      error
-	lastForm url.Values
+	lastBody []byte
 }
 
-func (f *fakeClaudeToken) probe(_ context.Context, _ string, form url.Values) ([]byte, error) {
-	f.lastForm = form
+func (f *fakeClaudeToken) probe(_ context.Context, _ string, body []byte) ([]byte, error) {
+	f.lastBody = body
 	if f.err != nil {
 		return nil, f.err
 	}
 	return []byte(f.body), nil
 }
 
-// fakeClaudeGet returns a status/body keyed by a substring of the URL path.
+// fakeClaudeGet returns a status/body keyed by a substring of the URL path and
+// records the last anthropic-beta header it was called with.
 type fakeClaudeGet struct {
 	byPath map[string]struct {
 		status int
 		body   string
 	}
-	err error
+	err   error
+	betas []string
 }
 
-func (f *fakeClaudeGet) probe(_ context.Context, reqURL, _ string) (int, []byte, error) {
+func (f *fakeClaudeGet) probe(_ context.Context, reqURL, _, beta string) (int, []byte, error) {
+	f.betas = append(f.betas, beta)
 	if f.err != nil {
 		return 0, nil, f.err
 	}
@@ -52,7 +55,10 @@ func claudeGet(profileStatus int, profileBody string) *fakeClaudeGet {
 	}{"/api/oauth/profile": {profileStatus, profileBody}}}
 }
 
-const claudeProfileOK = `{"account":{"uuid":"acc-123","email":"a@b.com","plan":"Pro"}}`
+// claudeProfilePro is a realistic profile for a Pro account: the plan is
+// DERIVED from the organization type/flags — the payload has no literal
+// "plan" field (legacy 2026-08-03).
+const claudeProfilePro = `{"account":{"uuid":"acc-123","email":"a@b.com","display_name":"A","has_claude_pro":true},"organization":{"uuid":"org-1","organization_type":"claude_pro","rate_limit_tier":"pro"}}`
 const claudeTokenOK = `{"access_token":"at-1","refresh_token":"rt-1","expires_in":3600}`
 
 func TestClaudeCode_BaseURLMatchesCatalog(t *testing.T) {
@@ -70,7 +76,7 @@ func TestClaudeCode_BaseURLMatchesCatalog(t *testing.T) {
 // TestClaudeCode_RegistersNativeOAuthAnthropic is mutation row 8.
 func TestClaudeCode_RegistersNativeOAuthAnthropic(t *testing.T) {
 	reg := NewRegistry()
-	if err := RegisterClaudeCode(reg, (&fakeClaudeToken{}).probe, claudeGet(200, claudeProfileOK).probe); err != nil {
+	if err := RegisterClaudeCode(reg, (&fakeClaudeToken{}).probe, claudeGet(200, claudeProfilePro).probe); err != nil {
 		t.Fatalf("RegisterClaudeCode: %v", err)
 	}
 	def, _ := reg.Definition(ClaudeCodeID)
@@ -83,9 +89,10 @@ func TestClaudeCode_RegistersNativeOAuthAnthropic(t *testing.T) {
 }
 
 // TestClaudeCode_AuthorizeURL is mutation row 1: the authorize URL carries every
-// required parameter including code_challenge_method=S256.
+// required parameter including code_challenge_method=S256 and the legacy
+// `code=true` flag claude.ai's authorize endpoint expects.
 func TestClaudeCode_AuthorizeURL(t *testing.T) {
-	a := NewClaudeCodeAdapter((&fakeClaudeToken{}).probe, claudeGet(200, claudeProfileOK).probe)
+	a := NewClaudeCodeAdapter((&fakeClaudeToken{}).probe, claudeGet(200, claudeProfilePro).probe)
 	raw, err := a.BeginOAuth(context.Background(), "http://localhost/cb", "state-xyz", "challenge-abc")
 	if err != nil {
 		t.Fatalf("BeginOAuth: %v", err)
@@ -98,6 +105,7 @@ func TestClaudeCode_AuthorizeURL(t *testing.T) {
 	for k, want := range map[string]string{
 		"response_type": "code", "client_id": claudeCodeClientID, "redirect_uri": "http://localhost/cb",
 		"state": "state-xyz", "code_challenge": "challenge-abc", "scope": claudeCodeScopes,
+		"code": "true",
 	} {
 		if q.Get(k) != want {
 			t.Fatalf("authorize %s = %q, want %q", k, q.Get(k), want)
@@ -105,22 +113,39 @@ func TestClaudeCode_AuthorizeURL(t *testing.T) {
 	}
 }
 
-func TestClaudeCode_CompleteExchangesAndIdentity(t *testing.T) {
+// TestClaudeCode_CompleteExchangesJSONAndIdentity proves the token exchange
+// POSTs a JSON body (03 §3's "JSON token exchange" — not a form), carries the
+// verifier/client_id, and derives identity + paid funding from the profile's
+// organization fields.
+func TestClaudeCode_CompleteExchangesJSONAndIdentity(t *testing.T) {
 	tok := &fakeClaudeToken{body: claudeTokenOK}
-	a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfileOK).probe)
+	a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfilePro).probe)
 	id, creds, err := a.CompleteOAuth(context.Background(), "the-code", "the-verifier", "http://localhost/cb")
 	if err != nil {
 		t.Fatalf("CompleteOAuth: %v", err)
 	}
-	if tok.lastForm.Get("grant_type") != "authorization_code" || tok.lastForm.Get("code_verifier") != "the-verifier" {
-		t.Fatalf("token form = %v, want authorization_code grant + verifier", tok.lastForm)
+	if len(tok.lastBody) == 0 || !strings.Contains(string(tok.lastBody), "authorization_code") || !strings.Contains(string(tok.lastBody), "the-verifier") || !strings.Contains(string(tok.lastBody), claudeCodeClientID) {
+		t.Fatalf("token body = %q, want JSON with authorization_code grant + verifier + client_id", tok.lastBody)
 	}
-	if id.ExternalID != "acc-123" || id.Funding != string(FundingPaid) {
-		t.Fatalf("identity = %+v, want uuid acc-123 + paid", id)
+	if id.ExternalID != "acc-123" || id.Funding != string(FundingPaid) || id.Plan != "Pro Plan" {
+		t.Fatalf("identity = %+v, want uuid acc-123 + paid + Pro Plan (derived from org flags)", id)
 	}
 	var stored claudeCodeStoredToken
 	if err := json.Unmarshal([]byte(creds.Value), &stored); err != nil || stored.AccessToken != "at-1" || stored.RefreshToken != "rt-1" {
 		t.Fatalf("stored = %+v (err %v), want at-1/rt-1", stored, err)
+	}
+}
+
+// TestClaudeCode_CodeFragmentIsStripped proves the `#`-suffix quirk: a code
+// like "abc#fragment" exchanges as "abc" (legacy 2026-08-03).
+func TestClaudeCode_CodeFragmentIsStripped(t *testing.T) {
+	tok := &fakeClaudeToken{body: claudeTokenOK}
+	a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfilePro).probe)
+	if _, _, err := a.CompleteOAuth(context.Background(), "abc#frag", "v", "cb"); err != nil {
+		t.Fatalf("CompleteOAuth: %v", err)
+	}
+	if !strings.Contains(string(tok.lastBody), `"code":"abc"`) {
+		t.Fatalf("token body = %q, want the fragment-stripped code", tok.lastBody)
 	}
 }
 
@@ -144,7 +169,7 @@ func TestClaudeCode_RefreshRetention(t *testing.T) {
 
 	t.Run("none returned keeps old", func(t *testing.T) {
 		tok := &fakeClaudeToken{body: `{"access_token":"new-at","expires_in":3600}`}
-		a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfileOK).probe)
+		a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfilePro).probe)
 		out, err := a.RefreshCredentials(context.Background(), StoredCredentials{Value: string(old)})
 		if err != nil {
 			t.Fatalf("Refresh: %v", err)
@@ -158,7 +183,7 @@ func TestClaudeCode_RefreshRetention(t *testing.T) {
 
 	t.Run("new one replaces", func(t *testing.T) {
 		tok := &fakeClaudeToken{body: `{"access_token":"new-at","refresh_token":"new-rt","expires_in":3600}`}
-		a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfileOK).probe)
+		a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfilePro).probe)
 		out, err := a.RefreshCredentials(context.Background(), StoredCredentials{Value: string(old)})
 		if err != nil {
 			t.Fatalf("Refresh: %v", err)
@@ -172,15 +197,30 @@ func TestClaudeCode_RefreshRetention(t *testing.T) {
 
 	t.Run("failed refresh returns error, leaves stored untouched", func(t *testing.T) {
 		tok := &fakeClaudeToken{err: errors.New("network down")}
-		a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfileOK).probe)
+		a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfilePro).probe)
 		if _, err := a.RefreshCredentials(context.Background(), StoredCredentials{Value: string(old)}); err == nil {
 			t.Fatal("Refresh error = nil, want a typed failure")
 		}
 	})
 }
 
-// TestClaudeCode_FundingByPlan is mutation row 4: recognized plans map to
-// funding at 0.95; an unrecognized plan is no evidence ("" / 0).
+// TestClaudeCode_RefreshSendsClientID proves the refresh JSON body carries
+// client_id, exactly as the legacy refresh does.
+func TestClaudeCode_RefreshSendsClientID(t *testing.T) {
+	old, _ := json.Marshal(claudeCodeStoredToken{AccessToken: "old-at", RefreshToken: "old-rt", ExpiresAt: 1})
+	tok := &fakeClaudeToken{body: `{"access_token":"new-at","expires_in":3600}`}
+	a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfilePro).probe)
+	if _, err := a.RefreshCredentials(context.Background(), StoredCredentials{Value: string(old)}); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if !strings.Contains(string(tok.lastBody), claudeCodeClientID) || !strings.Contains(string(tok.lastBody), "refresh_token") {
+		t.Fatalf("refresh body = %q, want client_id + refresh_token", tok.lastBody)
+	}
+}
+
+// TestClaudeCode_FundingByPlan is mutation row 4: recognized plans (short and
+// legacy-derived labels) map to funding at 0.95; an unrecognized plan is no
+// evidence ("" / 0).
 func TestClaudeCode_FundingByPlan(t *testing.T) {
 	cases := map[string]struct {
 		funding string
@@ -188,12 +228,51 @@ func TestClaudeCode_FundingByPlan(t *testing.T) {
 	}{
 		"Free": {string(FundingFree), 0.95}, "Pro": {string(FundingPaid), 0.95},
 		"Max": {string(FundingPaid), 0.95}, "Team": {string(FundingPaid), 0.95},
-		"Enterprise": {string(FundingPaid), 0.95}, "Legendary": {"", 0}, "": {"", 0},
+		"Enterprise": {string(FundingPaid), 0.95},
+		// Legacy-derived labels must classify identically.
+		"Pro Plan": {string(FundingPaid), 0.95}, "Max Plan": {string(FundingPaid), 0.95},
+		"Max 5x": {string(FundingPaid), 0.95}, "Max 20x": {string(FundingPaid), 0.95},
+		"Team Plan": {string(FundingPaid), 0.95},
+		"Legendary": {"", 0}, "": {"", 0},
 	}
 	for plan, want := range cases {
 		f, c := claudeCodeFundingForPlan(plan)
 		if f != want.funding || c != want.conf {
 			t.Fatalf("plan %q -> (%q, %v), want (%q, %v)", plan, f, c, want.funding, want.conf)
+		}
+	}
+}
+
+// TestClaudeCode_PlanDerivation proves the plan is derived from the profile's
+// organization/flags exactly like the legacy formatPlan (2026-08-03).
+func TestClaudeCode_PlanDerivation(t *testing.T) {
+	prof := func(orgType, tier string, hasPro, hasMax bool) claudeCodeProfile {
+		var p claudeCodeProfile
+		p.Account.UUID = "u"
+		p.Organization.OrganizationType = orgType
+		p.Organization.RateLimitTier = tier
+		p.Account.HasClaudePro = hasPro
+		p.Account.HasClaudeMax = hasMax
+		return p
+	}
+	cases := []struct {
+		name string
+		p    claudeCodeProfile
+		want string
+	}{
+		{"claude_pro org", prof("claude_pro", "pro", false, false), "Pro Plan"},
+		{"has_claude_pro flag", prof("", "", true, false), "Pro Plan"},
+		{"team org", prof("claude_team", "", false, false), "Team Plan"},
+		{"enterprise org", prof("claude_enterprise", "", false, false), "Enterprise"},
+		{"max org", prof("claude_max", "", false, false), "Max Plan"},
+		{"max 20x tier", prof("claude_max", "20x", false, true), "Max 20x"},
+		{"max 5x tier", prof("claude_max", "5x", false, false), "Max 5x"},
+		{"bare uuid is free", prof("", "", false, false), "Free"},
+		{"no uuid no org", func() claudeCodeProfile { var p claudeCodeProfile; return p }(), ""},
+	}
+	for _, c := range cases {
+		if got := claudeCodePlanForProfile(c.p); got != c.want {
+			t.Fatalf("%s: plan = %q, want %q", c.name, got, c.want)
 		}
 	}
 }
@@ -275,13 +354,103 @@ func TestClaudeCode_Quota(t *testing.T) {
 	})
 }
 
+// TestClaudeCode_DiscoveryMapsDeclaredFacts proves /v1/models discovery reads
+// the declared capabilities + max_input_tokens and uses the EXTENDED beta
+// header (legacy CLAUDE_CODE_BETA), while profile/quota calls use the short
+// form — the exact per-call header split the reference makes.
+func TestClaudeCode_DiscoveryMapsDeclaredFacts(t *testing.T) {
+	list := `{"data":[
+		{"id":"claude-opus-4-1","display_name":"Opus 4.1","max_input_tokens":1000000,
+		 "capabilities":{"image_input":{"supported":true},"pdf_input":{"supported":true},"thinking":{"supported":true},"structured_outputs":{"supported":true},"code_execution":{"supported":true}}},
+		{"id":"claude-sonnet-4","display_name":"Sonnet 4"},
+		{"id":"legacy-model"}
+	]}`
+	get := &fakeClaudeGet{byPath: map[string]struct {
+		status int
+		body   string
+	}{"/v1/models": {200, list}}}
+	a := NewClaudeCodeAdapter((&fakeClaudeToken{}).probe, get.probe)
+	models, err := a.DiscoverModels(context.Background(), storedClaude("at"))
+	if err != nil {
+		t.Fatalf("DiscoverModels: %v", err)
+	}
+	if len(models) != 3 {
+		t.Fatalf("models = %d, want 3", len(models))
+	}
+	byID := map[string]DiscoveredModel{}
+	for _, m := range models {
+		byID[m.ProviderModelID] = m
+	}
+	opus := byID["claude-opus-4-1"]
+	if opus.ContextLength == nil || *opus.ContextLength != 1000000 || opus.MaxInputTokens == nil || *opus.MaxInputTokens != 1000000 {
+		t.Fatalf("opus context = %v/%v, want 1000000 from max_input_tokens", opus.ContextLength, opus.MaxInputTokens)
+	}
+	caps := map[string]bool{}
+	for _, c := range opus.Capabilities {
+		caps[c] = true
+	}
+	for _, want := range []string{"chat", "vision", "documents", "reasoning", "thinking", "agents", "structured_output", "tools"} {
+		if !caps[want] {
+			t.Fatalf("opus capabilities missing %q: %v", want, opus.Capabilities)
+		}
+	}
+	sonnet := byID["claude-sonnet-4"]
+	if sonnet.ContextLength != nil {
+		t.Fatalf("sonnet context = %v, want nil (not declared)", sonnet.ContextLength)
+	}
+	if len(sonnet.Capabilities) != 1 || sonnet.Capabilities[0] != "chat" {
+		t.Fatalf("sonnet capabilities = %v, want the bare chat base (no model-name inference)", sonnet.Capabilities)
+	}
+
+	// The /v1/models call must carry the EXTENDED beta (the legacy CLAUDE_CODE_
+	// BETA list) — the one call this test exercises. The profile/usage calls
+	// carry the short form; that split is pinned by TestClaudeCode_BetaSplit.
+	if len(get.betas) == 0 || get.betas[0] != claudeCodeModelsBeta {
+		t.Fatalf("betas seen = %v, want the extended list on /v1/models", get.betas)
+	}
+}
+
+// TestClaudeCode_BetaSplit pins the per-call beta split the reference makes
+// (legacy 2026-08-03): profile, usage, and health carry the SHORT beta
+// (oauth-2025-04-20) while /v1/models carries the extended list.
+func TestClaudeCode_BetaSplit(t *testing.T) {
+	usage := `{"five_hour":{"utilization":10,"resets_at":1700000000}}`
+	get := &fakeClaudeGet{byPath: map[string]struct {
+		status int
+		body   string
+	}{
+		"/api/oauth/profile": {200, claudeProfilePro},
+		"/api/oauth/usage":   {200, usage},
+	}}
+	a := NewClaudeCodeAdapter((&fakeClaudeToken{body: claudeTokenOK}).probe, get.probe)
+
+	if _, _, err := a.CompleteOAuth(context.Background(), "c", "v", "cb"); err != nil {
+		t.Fatalf("CompleteOAuth: %v", err)
+	}
+	if _, err := a.FetchQuota(context.Background(), storedClaude("at")); err != nil {
+		t.Fatalf("FetchQuota: %v", err)
+	}
+	if _, err := a.CheckAccountHealth(context.Background(), storedClaude("at")); err != nil {
+		t.Fatalf("CheckAccountHealth: %v", err)
+	}
+
+	if len(get.betas) != 3 {
+		t.Fatalf("betas seen = %v, want 3 short-form calls (profile/usage/health)", get.betas)
+	}
+	for _, b := range get.betas {
+		if b != claudeCodeAnthropicBeta {
+			t.Fatalf("beta = %q, want the short form %q on profile/usage/health", b, claudeCodeAnthropicBeta)
+		}
+	}
+}
+
 // TestClaudeCode_NoCredentialInIdentity is mutation row 7 (and a secret-safety
 // canary): a plain non-credential marker planted as the token must not appear
 // in the identity Evidence.
 func TestClaudeCode_NoCredentialInIdentity(t *testing.T) {
 	const marker = "PLAINMARKER-not-credential-shaped"
 	tok := &fakeClaudeToken{body: `{"access_token":"` + marker + `","refresh_token":"r","expires_in":1}`}
-	a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfileOK).probe)
+	a := NewClaudeCodeAdapter(tok.probe, claudeGet(200, claudeProfilePro).probe)
 	id, _, err := a.CompleteOAuth(context.Background(), "c", "v", "cb")
 	if err != nil {
 		t.Fatalf("CompleteOAuth: %v", err)

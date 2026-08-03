@@ -51,3 +51,23 @@ func TestClinePassGetSeam_WorkosPrefixIdempotent(t *testing.T) {
 		t.Fatalf("Authorization = %q, want no double prefix", auth)
 	}
 }
+
+// TestClinePassGetSeam_BlankTokenSendsNoAuth proves a blank access token sends
+// NO Authorization header: the recommended-models endpoint is public and must
+// not receive a workos:-prefixed header (legacy 2026-08-03 fetches it
+// headerless).
+func TestClinePassGetSeam_BlankTokenSendsNoAuth(t *testing.T) {
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	if _, _, err := clinePassGetSeam(context.Background(), srv.URL, ""); err != nil {
+		t.Fatalf("seam error = %v", err)
+	}
+	if auth != "" {
+		t.Fatalf("Authorization = %q, want none for the public models endpoint", auth)
+	}
+}

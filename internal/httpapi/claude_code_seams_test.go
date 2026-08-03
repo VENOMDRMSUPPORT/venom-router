@@ -2,9 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 )
@@ -12,7 +12,8 @@ import (
 // TestClaudeCodeGetSeam_RequiredHeaders proves the authenticated GET carries
 // the claude-code required headers (03 §3): missing any is a 429 outage. It
 // also proves the raw status + body are returned unfolded (the adapter, not the
-// seam, classifies).
+// seam, classifies) and that the per-call anthropic-beta value is passed
+// through untouched.
 func TestClaudeCodeGetSeam_RequiredHeaders(t *testing.T) {
 	var h http.Header
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -22,7 +23,7 @@ func TestClaudeCodeGetSeam_RequiredHeaders(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	status, body, err := claudeCodeGetSeam(context.Background(), srv.URL+"/api/oauth/profile", "at-secret")
+	status, body, err := claudeCodeGetSeam(context.Background(), srv.URL+"/api/oauth/profile", "at-secret", "oauth-2025-04-20")
 	if err != nil {
 		t.Fatalf("seam error = %v", err)
 	}
@@ -38,8 +39,8 @@ func TestClaudeCodeGetSeam_RequiredHeaders(t *testing.T) {
 	if h.Get("anthropic-version") == "" {
 		t.Error("anthropic-version header missing")
 	}
-	if !strings.Contains(h.Get("anthropic-beta"), "oauth-2025-04-20") {
-		t.Errorf("anthropic-beta = %q, want to contain oauth-2025-04-20", h.Get("anthropic-beta"))
+	if h.Get("anthropic-beta") != "oauth-2025-04-20" {
+		t.Errorf("anthropic-beta = %q, want the per-call value passed through", h.Get("anthropic-beta"))
 	}
 	if h.Get("X-App") != "cli" {
 		t.Errorf("X-App = %q, want cli", h.Get("X-App"))
@@ -49,27 +50,26 @@ func TestClaudeCodeGetSeam_RequiredHeaders(t *testing.T) {
 	}
 }
 
-// TestClaudeCodeTokenSeam_PostsForm proves the token seam POSTs the form body
-// as x-www-form-urlencoded.
-func TestClaudeCodeTokenSeam_PostsForm(t *testing.T) {
-	var gotCT, gotGrant string
+// TestClaudeCodeTokenSeam_PostsJSON proves the token seam POSTs the JSON body
+// (03 §3's "JSON token exchange" — the form-encoded variant was the drift the
+// legacy reference corrected).
+func TestClaudeCodeTokenSeam_PostsJSON(t *testing.T) {
+	var gotCT string
+	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotCT = r.Header.Get("Content-Type")
-		_ = r.ParseForm()
-		gotGrant = r.PostForm.Get("grant_type")
+		gotBody, _ = io.ReadAll(r.Body)
 		_, _ = w.Write([]byte(`{"access_token":"x"}`))
 	}))
 	t.Cleanup(srv.Close)
 
-	form := url.Values{}
-	form.Set("grant_type", "authorization_code")
-	if _, err := claudeCodeTokenSeam(context.Background(), srv.URL, form); err != nil {
+	if _, err := claudeCodeTokenSeam(context.Background(), srv.URL, []byte(`{"grant_type":"authorization_code"}`)); err != nil {
 		t.Fatalf("seam error = %v", err)
 	}
-	if gotCT != "application/x-www-form-urlencoded" {
-		t.Fatalf("Content-Type = %q, want form-urlencoded", gotCT)
+	if gotCT != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", gotCT)
 	}
-	if gotGrant != "authorization_code" {
-		t.Fatalf("grant_type = %q, want authorization_code", gotGrant)
+	if string(gotBody) != `{"grant_type":"authorization_code"}` {
+		t.Fatalf("body = %q, want the JSON body passed through", gotBody)
 	}
 }

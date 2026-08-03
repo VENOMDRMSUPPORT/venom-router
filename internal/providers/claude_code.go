@@ -42,6 +42,16 @@ const (
 	claudeCodeSevenDayKey = "seven_day"
 	claudeCodeFiveHourKey = "five_hour"
 	claudeCodeSevenDayPfx = "seven_day_"
+
+	// claudeCodeAnthropicBeta is the minimal beta header the profile, usage,
+	// and health calls need. The MODELS list additionally requires the extended
+	// header below — legacy 2026-08-03 sends the short form on profile/usage
+	// and the extended form on /v1/models and /v1/messages (the spec's "Must
+	// send Claude-Code identity/beta headers or the API returns 429").
+	claudeCodeAnthropicBeta = "oauth-2025-04-20"
+	// claudeCodeModelsBeta is the extended beta list the /v1/models call needs
+	// (legacy CLAUDE_CODE_BETA, 2026-08-03). It is a superset of the short form.
+	claudeCodeModelsBeta = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05"
 )
 
 // ErrMissingStableIdentity is returned when an OAuth identity response is a 2xx
@@ -50,17 +60,20 @@ const (
 // would silently merge two accounts).
 var ErrMissingStableIdentity = errors.New("providers: oauth identity response carried no stable external id")
 
-// ClaudeCodeTokenProbe performs the OAuth token-endpoint POST (form body); it
-// is used for both the authorization_code exchange and the refresh_token
-// grant. form must never be logged. Mirrors AntigravityTokenProbe.
-type ClaudeCodeTokenProbe func(ctx context.Context, tokenURL string, form url.Values) ([]byte, error)
+// ClaudeCodeTokenProbe performs the OAuth token-endpoint POST (JSON body, per
+// 03 §3's "JSON token exchange" and the legacy implementation); it is used for
+// both the authorization_code exchange and the refresh_token grant. body must
+// never be logged. Mirrors AntigravityTokenProbe's role but with the JSON wire
+// shape claude.ai's token endpoint actually speaks.
+type ClaudeCodeTokenProbe func(ctx context.Context, tokenURL string, body []byte) ([]byte, error)
 
 // ClaudeCodeGetProbe performs an authenticated GET, returning the raw status +
-// body so the adapter can classify (identity/health) and parse. The required
-// claude-code headers (anthropic-version/beta, X-App, claude-cli UA) are
-// applied by the concrete implementation in httpapi, never here. accessToken
-// must never be logged.
-type ClaudeCodeGetProbe func(ctx context.Context, url, accessToken string) (statusCode int, body []byte, err error)
+// body so the adapter can classify (identity/health) and parse. anthropicBeta
+// is the per-call beta header value (profile/usage use the short form; /v1/models
+// uses the extended form). The required claude-code headers (anthropic-version,
+// X-App, claude-cli UA) are applied by the concrete implementation in httpapi,
+// never here. accessToken must never be logged.
+type ClaudeCodeGetProbe func(ctx context.Context, url, accessToken, anthropicBeta string) (statusCode int, body []byte, err error)
 
 type claudeCodeTokenResponse struct {
 	AccessToken  string `json:"access_token"`
@@ -69,15 +82,52 @@ type claudeCodeTokenResponse struct {
 }
 
 // claudeCodeProfile is the subset of GET /api/oauth/profile this adapter reads
-// (03 §3: account.uuid is the stable external id). The plan field name is to be
-// confirmed on live re-verification; the funding mapping treats an
-// unrecognized/absent plan as no evidence.
+// (03 §3: account.uuid is the stable external id; the plan is DERIVED from the
+// organization type / rate-limit tier / pro-max flags, exactly as the legacy
+// implementation derives it — the payload has no literal "plan" field).
 type claudeCodeProfile struct {
 	Account struct {
-		UUID  string `json:"uuid"`
-		Email string `json:"email"`
-		Plan  string `json:"plan"`
+		UUID         string `json:"uuid"`
+		Email        string `json:"email"`
+		DisplayName  string `json:"display_name"`
+		HasClaudePro bool   `json:"has_claude_pro"`
+		HasClaudeMax bool   `json:"has_claude_max"`
 	} `json:"account"`
+	Organization struct {
+		UUID             string `json:"uuid"`
+		OrganizationType string `json:"organization_type"`
+		RateLimitTier    string `json:"rate_limit_tier"`
+	} `json:"organization"`
+}
+
+// claudeCodePlanForProfile derives the human plan label from the profile the
+// same way the legacy formatPlan does (2026-08-03): org type and pro/max flags
+// decide, and an account uuid with no recognized org reads as Free. An
+// unrecognized combination returns "" (no evidence), never a guess.
+func claudeCodePlanForProfile(p claudeCodeProfile) string {
+	orgType := p.Organization.OrganizationType
+	tier := p.Organization.RateLimitTier
+	switch {
+	case orgType == "claude_pro" || p.Account.HasClaudePro:
+		return "Pro Plan"
+	case orgType == "claude_team":
+		return "Team Plan"
+	case orgType == "claude_enterprise":
+		return "Enterprise"
+	case orgType == "claude_max" || p.Account.HasClaudeMax:
+		switch {
+		case strings.Contains(tier, "20x"):
+			return "Max 20x"
+		case strings.Contains(tier, "5x"):
+			return "Max 5x"
+		default:
+			return "Max Plan"
+		}
+	case p.Account.UUID != "":
+		return "Free"
+	default:
+		return ""
+	}
 }
 
 type claudeCodeStoredToken struct {
@@ -99,8 +149,20 @@ func NewClaudeCodeAdapter(tokenProbe ClaudeCodeTokenProbe, getProbe ClaudeCodeGe
 	return &ClaudeCodeAdapter{tokenProbe: tokenProbe, getProbe: getProbe}
 }
 
+// splitOAuthCode handles providers that return the code with a `#`-joined
+// suffix (claude.ai's authorize quirks, legacy 2026-08-03): the code is
+// everything before the first `#`.
+func splitOAuthCode(code string) string {
+	if i := strings.Index(code, "#"); i >= 0 {
+		return code[:i]
+	}
+	return code
+}
+
 // BeginOAuth builds the authorize URL (pure string construction). The verifier
-// is the framework's; code_challenge_method is always S256.
+// is the framework's; code_challenge_method is always S256; `code=true` is sent
+// exactly as the legacy implementation does (claude.ai's authorize endpoint
+// expects it to hand back an exchangeable code).
 func (a *ClaudeCodeAdapter) BeginOAuth(_ context.Context, redirectURI, state, pkceChallenge string) (string, error) {
 	q := url.Values{}
 	q.Set("client_id", claudeCodeClientID)
@@ -110,21 +172,28 @@ func (a *ClaudeCodeAdapter) BeginOAuth(_ context.Context, redirectURI, state, pk
 	q.Set("code_challenge_method", "S256")
 	q.Set("state", state)
 	q.Set("scope", claudeCodeScopes)
+	q.Set("code", "true")
 	return claudeCodeAuthorizeURL + "?" + q.Encode(), nil
 }
 
-// CompleteOAuth exchanges the code (public client — no secret), then fetches the
-// profile for the stable account uuid. A 2xx profile without a uuid is a typed
-// failure, never a fabricated identity.
+// CompleteOAuth exchanges the code over a JSON body (public client — no
+// secret), then fetches the profile for the stable account uuid. A 2xx profile
+// without a uuid is a typed failure, never a fabricated identity. The plan is
+// derived from the profile's org/flags (see claudeCodePlanForProfile); funding
+// follows it.
 func (a *ClaudeCodeAdapter) CompleteOAuth(ctx context.Context, code, pkceVerifier, redirectURI string) (IdentityResult, StoredCredentials, error) {
-	form := url.Values{}
-	form.Set("grant_type", "authorization_code")
-	form.Set("client_id", claudeCodeClientID)
-	form.Set("code", code)
-	form.Set("code_verifier", pkceVerifier)
-	form.Set("redirect_uri", redirectURI)
+	body, err := json.Marshal(map[string]string{
+		"grant_type":    "authorization_code",
+		"client_id":     claudeCodeClientID,
+		"code":          splitOAuthCode(code),
+		"code_verifier": pkceVerifier,
+		"redirect_uri":  redirectURI,
+	})
+	if err != nil {
+		return IdentityResult{}, StoredCredentials{}, fmt.Errorf("providers: claude-code: marshal token request: %w", err)
+	}
 
-	tok, err := a.exchangeToken(ctx, form)
+	tok, err := a.exchangeToken(ctx, body)
 	if err != nil {
 		return IdentityResult{}, StoredCredentials{}, err
 	}
@@ -137,16 +206,17 @@ func (a *ClaudeCodeAdapter) CompleteOAuth(ctx context.Context, code, pkceVerifie
 		return IdentityResult{}, StoredCredentials{}, ErrMissingStableIdentity
 	}
 
-	funding, confidence := claudeCodeFundingForPlan(profile.Account.Plan)
+	plan := claudeCodePlanForProfile(profile)
+	funding, confidence := claudeCodeFundingForPlan(plan)
 	identity := IdentityResult{
 		ExternalID: profile.Account.UUID,
 		Email:      profile.Account.Email,
-		Plan:       profile.Account.Plan,
+		Plan:       plan,
 		Funding:    funding,
 		Confidence: confidence,
 	}
-	if profile.Account.Plan != "" {
-		identity.Evidence = map[string]any{"plan": profile.Account.Plan}
+	if plan != "" {
+		identity.Evidence = map[string]any{"plan": plan}
 	}
 
 	stored, err := marshalClaudeCodeToken(tok.AccessToken, tok.RefreshToken, tok.ExpiresIn)
@@ -156,10 +226,11 @@ func (a *ClaudeCodeAdapter) CompleteOAuth(ctx context.Context, code, pkceVerifie
 	return identity, stored, nil
 }
 
-// RefreshCredentials re-mints the access token. A NEW refresh token replaces the
-// old one; if none is returned the existing one is KEPT (never blanked). A
-// failed refresh returns a typed error and leaves the stored credential
-// untouched (the caller keeps the old envelope).
+// RefreshCredentials re-mints the access token (JSON body carrying client_id,
+// exactly as the legacy refresh does). A NEW refresh token replaces the old
+// one; if none is returned the existing one is KEPT (never blanked). A failed
+// refresh returns a typed error and leaves the stored credential untouched
+// (the caller keeps the old envelope).
 func (a *ClaudeCodeAdapter) RefreshCredentials(ctx context.Context, creds StoredCredentials) (StoredCredentials, error) {
 	var stored claudeCodeStoredToken
 	if err := json.Unmarshal([]byte(creds.Value), &stored); err != nil {
@@ -169,12 +240,16 @@ func (a *ClaudeCodeAdapter) RefreshCredentials(ctx context.Context, creds Stored
 		return StoredCredentials{}, errors.New("providers: claude-code: refresh: no refresh token available")
 	}
 
-	form := url.Values{}
-	form.Set("grant_type", "refresh_token")
-	form.Set("client_id", claudeCodeClientID)
-	form.Set("refresh_token", stored.RefreshToken)
+	body, err := json.Marshal(map[string]string{
+		"grant_type":    "refresh_token",
+		"client_id":     claudeCodeClientID,
+		"refresh_token": stored.RefreshToken,
+	})
+	if err != nil {
+		return StoredCredentials{}, fmt.Errorf("providers: claude-code: refresh: marshal request: %w", err)
+	}
 
-	tok, err := a.exchangeToken(ctx, form)
+	tok, err := a.exchangeToken(ctx, body)
 	if err != nil {
 		return StoredCredentials{}, err
 	}
@@ -185,13 +260,13 @@ func (a *ClaudeCodeAdapter) RefreshCredentials(ctx context.Context, creds Stored
 	return marshalClaudeCodeToken(tok.AccessToken, newRefresh, tok.ExpiresIn)
 }
 
-func (a *ClaudeCodeAdapter) exchangeToken(ctx context.Context, form url.Values) (claudeCodeTokenResponse, error) {
-	body, err := a.tokenProbe(ctx, claudeCodeTokenURL, form)
+func (a *ClaudeCodeAdapter) exchangeToken(ctx context.Context, body []byte) (claudeCodeTokenResponse, error) {
+	respBody, err := a.tokenProbe(ctx, claudeCodeTokenURL, body)
 	if err != nil {
 		return claudeCodeTokenResponse{}, fmt.Errorf("providers: claude-code: token endpoint: %w", err)
 	}
 	var tok claudeCodeTokenResponse
-	if err := json.Unmarshal(body, &tok); err != nil {
+	if err := json.Unmarshal(respBody, &tok); err != nil {
 		return claudeCodeTokenResponse{}, fmt.Errorf("providers: claude-code: parse token response: %w", err)
 	}
 	if tok.AccessToken == "" {
@@ -213,7 +288,7 @@ func marshalClaudeCodeToken(access, refresh string, expiresIn int64) (StoredCred
 }
 
 func (a *ClaudeCodeAdapter) fetchProfile(ctx context.Context, accessToken string) (claudeCodeProfile, error) {
-	status, body, err := a.getProbe(ctx, ClaudeCodeAPIBase+claudeCodeProfilePath, accessToken)
+	status, body, err := a.getProbe(ctx, ClaudeCodeAPIBase+claudeCodeProfilePath, accessToken, claudeCodeAnthropicBeta)
 	if err != nil {
 		return claudeCodeProfile{}, fmt.Errorf("providers: claude-code: fetch profile: %w", err)
 	}
@@ -243,41 +318,102 @@ func (a *ClaudeCodeAdapter) FetchIdentity(ctx context.Context, creds StoredCrede
 	if profile.Account.UUID == "" {
 		return IdentityResult{}, ErrMissingStableIdentity
 	}
-	funding, confidence := claudeCodeFundingForPlan(profile.Account.Plan)
-	return IdentityResult{ExternalID: profile.Account.UUID, Email: profile.Account.Email, Plan: profile.Account.Plan, Funding: funding, Confidence: confidence}, nil
+	plan := claudeCodePlanForProfile(profile)
+	funding, confidence := claudeCodeFundingForPlan(plan)
+	identity := IdentityResult{ExternalID: profile.Account.UUID, Email: profile.Account.Email, Plan: plan, Funding: funding, Confidence: confidence}
+	if plan != "" {
+		identity.Evidence = map[string]any{"plan": plan}
+	}
+	return identity, nil
 }
 
-// claudeCodeFundingForPlan maps the reported plan onto funding + confidence.
-// Recognized paid tiers (Pro/Max/Team/Enterprise) and Free are real evidence
-// (0.95); anything else is NO evidence ("" / 0), so an unrecognized tier never
-// outranks a later correct classification. if/else, not a slug switch.
+// claudeCodeFundingForPlan maps a plan label onto funding + confidence. The
+// label may be the legacy-derived form ("Pro Plan", "Max 20x", "Team Plan",
+// "Enterprise", "Free") or the short form ("Pro", "Max", "Team"); any
+// recognized label is real evidence (0.95), anything else is NO evidence
+// ("" / 0), so an unrecognized tier never outranks a later correct
+// classification. if/else, not a slug switch.
 func claudeCodeFundingForPlan(plan string) (string, float64) {
-	p := strings.ToLower(strings.TrimSpace(plan))
-	if p == "free" {
+	normalized := strings.ToLower(strings.TrimSpace(plan))
+	normalized = strings.NewReplacer(" ", "_", "-", "_").Replace(normalized)
+	switch {
+	case strings.Contains(normalized, "free"):
 		return string(FundingFree), claudeCodeConfidence
-	}
-	if p == "pro" || p == "max" || p == "team" || p == "enterprise" {
+	case strings.Contains(normalized, "pro"),
+		strings.Contains(normalized, "max"),
+		strings.Contains(normalized, "team"),
+		strings.Contains(normalized, "enterprise"):
 		return string(FundingPaid), claudeCodeConfidence
+	default:
+		return "", 0
 	}
-	return "", 0
 }
 
+// claudeCodeModelList is the subset of GET /v1/models entries this adapter
+// reads: the declared capabilities object and the input-token limit (03 §3).
 type claudeCodeModelList struct {
-	Data []struct {
-		ID          string `json:"id"`
-		DisplayName string `json:"display_name"`
-	} `json:"data"`
+	Data []claudeCodeModelEntry `json:"data"`
 }
 
-// DiscoverModels reads GET /v1/models. Only explicit facts are reported:
-// capabilities are chat unless the response declares more (it declares none
-// today), and there are no limit fields to read, so limits stay nil.
+type claudeCodeModelEntry struct {
+	ID             string           `json:"id"`
+	DisplayName    string           `json:"display_name"`
+	MaxInputTokens *int             `json:"max_input_tokens"`
+	Capabilities   *claudeModelCaps `json:"capabilities"`
+}
+
+type claudeModelCaps struct {
+	ImageInput        *claudeCapFlag `json:"image_input"`
+	PDFInput          *claudeCapFlag `json:"pdf_input"`
+	Thinking          *claudeCapFlag `json:"thinking"`
+	StructuredOutputs *claudeCapFlag `json:"structured_outputs"`
+	CodeExecution     *claudeCapFlag `json:"code_execution"`
+}
+
+type claudeCapFlag struct {
+	Supported bool `json:"supported"`
+}
+
+// claudeCapabilities maps the provider's DECLARED capability flags onto the
+// operation vocabulary (04 §2). Only explicit fields are read; a missing
+// capabilities object yields just the base chat capability (the /v1/models
+// list is a chat-model list), never a model-name-derived guess — capability
+// names never come from the model id in this project (README §2.1).
+func claudeCapabilities(caps *claudeModelCaps) []string {
+	if caps == nil {
+		return []string{"chat"}
+	}
+	out := []string{"chat"}
+	if caps.ImageInput != nil && caps.ImageInput.Supported {
+		out = append(out, "vision")
+	}
+	if caps.PDFInput != nil && caps.PDFInput.Supported {
+		out = append(out, "documents")
+	}
+	if caps.Thinking != nil && caps.Thinking.Supported {
+		out = append(out, "reasoning", "thinking", "agents")
+	} else {
+		out = append(out, "reasoning")
+	}
+	if caps.StructuredOutputs != nil && caps.StructuredOutputs.Supported {
+		out = append(out, "structured_output")
+	}
+	if caps.CodeExecution != nil && caps.CodeExecution.Supported {
+		out = append(out, "tools")
+	}
+	return out
+}
+
+// DiscoverModels reads GET /v1/models with the extended beta header + X-App
+// (the seam applies the headers) and reports only explicit facts: id, display
+// name, declared capabilities, and the declared input-token limit. No limit
+// field is fabricated when absent.
 func (a *ClaudeCodeAdapter) DiscoverModels(ctx context.Context, creds StoredCredentials) ([]DiscoveredModel, error) {
 	token, err := claudeCodeAccessToken(creds)
 	if err != nil {
 		return nil, err
 	}
-	status, body, err := a.getProbe(ctx, ClaudeCodeAPIBase+claudeCodeModelsPath, token)
+	status, body, err := a.getProbe(ctx, ClaudeCodeAPIBase+claudeCodeModelsPath, token, claudeCodeModelsBeta)
 	if err != nil {
 		return nil, fmt.Errorf("providers: claude-code: discover models: %w", err)
 	}
@@ -297,7 +433,16 @@ func (a *ClaudeCodeAdapter) DiscoverModels(ctx context.Context, creds StoredCred
 		if display == "" {
 			display = m.ID
 		}
-		out = append(out, DiscoveredModel{ProviderModelID: m.ID, DisplayName: display, Capabilities: []string{"chat"}})
+		model := DiscoveredModel{
+			ProviderModelID: m.ID,
+			DisplayName:     display,
+			Capabilities:    claudeCapabilities(m.Capabilities),
+		}
+		if m.MaxInputTokens != nil && *m.MaxInputTokens > 0 {
+			model.ContextLength = m.MaxInputTokens
+			model.MaxInputTokens = m.MaxInputTokens
+		}
+		out = append(out, model)
 	}
 	return out, nil
 }
@@ -319,7 +464,7 @@ func (a *ClaudeCodeAdapter) FetchQuota(ctx context.Context, creds StoredCredenti
 	if err != nil {
 		return QuotaResult{}, err
 	}
-	status, body, err := a.getProbe(ctx, ClaudeCodeAPIBase+claudeCodeUsagePath, token)
+	status, body, err := a.getProbe(ctx, ClaudeCodeAPIBase+claudeCodeUsagePath, token, claudeCodeAnthropicBeta)
 	if err != nil {
 		return QuotaResult{}, fmt.Errorf("providers: claude-code: fetch quota: %w", err)
 	}
@@ -404,7 +549,7 @@ func (a *ClaudeCodeAdapter) checkHealth(ctx context.Context, creds StoredCredent
 	if err != nil {
 		return observationFromValidation(ValidationUnavailable, scope, time.Now().Unix()), nil
 	}
-	status, _, err := a.getProbe(ctx, ClaudeCodeAPIBase+claudeCodeProfilePath, token)
+	status, _, err := a.getProbe(ctx, ClaudeCodeAPIBase+claudeCodeProfilePath, token, claudeCodeAnthropicBeta)
 	if err != nil {
 		return observationFromValidation(ValidationUnavailable, scope, time.Now().Unix()), nil
 	}
