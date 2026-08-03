@@ -267,12 +267,12 @@ export default function FleetOverview(props: FleetOverviewProps) {
     : viewScoped;
   const emptyActiveView = view === "active" && category === "all" && query.length === 0;
 
-  /** Distinct models across ONE provider's accounts, or null while the
-   * offerings read is unknown. */
-  function providerModelCount(providerId: string): number | null {
+  /** Distinct-model stats (total discovered + verified-working) across ONE
+   * provider's accounts, or null while the offerings read is unknown. */
+  function providerModelStats(providerId: string): { total: number; working: number } | null {
     if (!offerings) return null;
     const ids = new Set((accountsByProvider.get(providerId) ?? []).map((a) => a.id));
-    return distinctModelStats(offerings.filter((o) => ids.has(o.account_id))).total;
+    return distinctModelStats(offerings.filter((o) => ids.has(o.account_id)));
   }
 
   function accountModelCount(accountId: string): number | null {
@@ -366,12 +366,15 @@ export default function FleetOverview(props: FleetOverviewProps) {
         </div>
       ) : view === "active" ? (
         <div className="vnd-fleet-rows">
-          {filteredProviders.map((provider) => (
+          {filteredProviders.map((provider) => {
+            const stats = providerModelStats(provider.id);
+            return (
             <ProviderRow
               key={provider.id}
               provider={provider}
               accounts={accountsByProvider.get(provider.id) ?? []}
-              uniqueModelCount={providerModelCount(provider.id)}
+              uniqueModelCount={stats ? stats.total : null}
+              workingModelCount={stats ? stats.working : null}
               accountModelCounts={accountModelCount}
               expanded={expanded.has(provider.id)}
               onToggleExpand={() => toggleExpanded(provider.id)}
@@ -381,7 +384,8 @@ export default function FleetOverview(props: FleetOverviewProps) {
               onSessionExpired={onSessionExpired}
               onChanged={reload}
             />
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="vn-provider-grid">

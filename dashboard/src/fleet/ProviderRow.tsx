@@ -23,6 +23,9 @@ export interface ProviderRowProps {
   /** Distinct provider_model_id count across this provider's accounts, or
    * null while the offerings read is loading/failed (rendered "—"). */
   uniqueModelCount: number | null;
+  /** Verified-working distinct model count (certification truth = supported),
+   * or null while unknown. Shown as "{working} working / {total} discovered". */
+  workingModelCount: number | null;
   /** Per-account distinct model counts keyed by account id (null = unknown). */
   accountModelCounts: (accountId: string) => number | null;
   expanded: boolean;
@@ -58,6 +61,7 @@ export default function ProviderRow(props: ProviderRowProps) {
     provider,
     accounts,
     uniqueModelCount,
+    workingModelCount,
     accountModelCounts,
     expanded,
     onToggleExpand,
@@ -119,7 +123,7 @@ export default function ProviderRow(props: ProviderRowProps) {
   }
 
   return (
-    <div className="vnd-provider-row">
+    <div className={`vnd-provider-row${expanded ? " vnd-provider-row--expanded" : ""}`}>
       <div className="vnd-provider-row-main">
         <IconButton
           icon={expanded ? "chevron-down" : "chevron-right"}
@@ -129,7 +133,7 @@ export default function ProviderRow(props: ProviderRowProps) {
           aria-expanded={expanded}
           onClick={onToggleExpand}
         />
-        <ProviderLogo slug={provider.id} name={name} size="sm" />
+        <ProviderLogo slug={provider.id} name={name} size="md" />
         <div className="vnd-provider-row-body">
           <div className="vnd-provider-row-title">
             <span className={`vnd-health-dot vnd-health-dot--${health.tone}`} title={health.title} />
@@ -151,10 +155,7 @@ export default function ProviderRow(props: ProviderRowProps) {
             ) : null}
           </div>
           <div className="vnd-provider-row-sub">
-            <span>
-              <span className="text-status-healthy-fg font-semibold">{uniqueModelCount == null ? "—" : uniqueModelCount}</span>{" "}
-              unique models
-            </span>
+            <span>{uniqueModelCount == null ? "—" : `${workingModelCount ?? 0} working / ${uniqueModelCount} discovered`}</span>
             <span aria-hidden="true">·</span>
             <span>
               <span className="text-status-healthy-fg font-semibold">{healthyCount}</span> / {accounts.length} account

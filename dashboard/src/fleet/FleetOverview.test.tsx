@@ -244,10 +244,12 @@ function expandProvider(name: string) {
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`expand ${name} accounts`, "i") }));
 }
 
-/** Scopes queries to one account row, identified by its (unique, non-secret)
- * external_id. */
-function accountRow(externalId: string): HTMLElement {
-  return screen.getByText(externalId).closest(".vnd-account") as HTMLElement;
+/** Scopes queries to one account row by its stable internal account id. The
+ * external_id is deliberately absent from the DOM entirely (it is neither
+ * shown nor used as a hook), so rows are targeted by the non-sensitive
+ * `data-account-id` the row carries. */
+function accountRow(accountId: string): HTMLElement {
+  return document.querySelector(`.vnd-account[data-account-id="${accountId}"]`) as HTMLElement;
 }
 
 /** Scopes queries to one stat card by its label. */
@@ -445,7 +447,7 @@ describe("FleetOverview — Active Providers rows", () => {
 
     screen.getByText("API KEY");
     screen.getByTitle("1/3 accounts healthy");
-    screen.getByText(/unique models/);
+    screen.getByText(/working \/ \d+ discovered/);
     screen.getByRole("button", { name: /sync all accounts/i });
     screen.getByRole("button", { name: /refresh models for every account/i });
     screen.getByRole("button", { name: /^add account$/i });
@@ -520,7 +522,7 @@ describe("FleetOverview — Active Providers rows", () => {
     screen.getByTitle("display_status: degraded");
     screen.getByTitle("display_status: stopped");
 
-    const row = accountRow("key_9c41e8b0f2");
+    const row = accountRow("acct-1");
     within(row).getByText("ipfox111@example.test");
     within(row).getByText("PRO");
 
@@ -557,14 +559,14 @@ describe("FleetOverview — Active Providers rows", () => {
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /sync: health · plan · usage/i }));
+    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /sync: health · plan · usage/i }));
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/health"))).toBe(true);
       expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/quota"))).toBe(true);
       expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/jobs/job-q"))).toBe(true);
     });
 
-    fireEvent.click(within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /fetch models from provider/i }));
+    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /fetch models from provider/i }));
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/discover"))).toBe(true);
       expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/jobs/job-d"))).toBe(true);
@@ -583,12 +585,12 @@ describe("FleetOverview — Active Providers rows", () => {
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /^disable account$/i }));
+    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /^disable account$/i }));
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/stop"))).toBe(true);
     });
 
-    fireEvent.click(within(accountRow("key_77aa02b9")).getByRole("button", { name: /^enable account$/i }));
+    fireEvent.click(within(accountRow("acct-3")).getByRole("button", { name: /^enable account$/i }));
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-3/resume"))).toBe(true);
     });
@@ -599,10 +601,10 @@ describe("FleetOverview — Active Providers rows", () => {
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    const row1Chip = within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /open model test report/i });
+    const row1Chip = within(accountRow("acct-1")).getByRole("button", { name: /open model test report/i });
     expect(row1Chip.textContent).toContain("2");
 
-    const row3Chip = within(accountRow("key_77aa02b9")).getByRole("button", { name: /open model test report/i });
+    const row3Chip = within(accountRow("acct-3")).getByRole("button", { name: /open model test report/i });
     expect((row3Chip as HTMLButtonElement).disabled).toBe(true);
     expect(row3Chip.getAttribute("title")).toBe("No models discovered yet");
 
@@ -669,8 +671,11 @@ describe("FleetOverview — API-key connect (image 9)", () => {
     expect(radios).toHaveLength(4);
     expect((within(dialog).getByRole("radio", { name: /inherit from provider/i }) as HTMLInputElement).checked).toBe(true);
 
-    // No label field — the connect body has no such field server-side.
-    expect(within(dialog).queryByLabelText(/label/i)).toBeNull();
+    // An OPTIONAL label field is present; leaving it empty is fine (the
+    // connect body simply omits the label).
+    const labelField = within(dialog).getByLabelText(/label/i) as HTMLInputElement;
+    expect(labelField).toBeTruthy();
+    expect(labelField.value).toBe("");
 
     // Save & encrypt is gated on a non-empty key.
     const save = within(dialog).getByRole("button", { name: /save & encrypt/i });
@@ -744,6 +749,29 @@ describe("FleetOverview — API-key connect (image 9)", () => {
     const [, init] = connectCall as [unknown, RequestInit];
     expect(JSON.parse(init.body as string).funding).toBe("paid");
   });
+
+  it("sends the optional label in the connect body when one is typed", async () => {
+    const fetchMock = await renderFleet({
+      "POST /api/control/v1/providers/agnes-ai/accounts": () =>
+        jsonResponse(201, {
+          data: { id: "acct-new", provider: "agnes-ai", external_id: "ext-new", connection_state: "connected", health_state: "healthy", funding: "free", display_status: "healthy" },
+        }),
+    });
+
+    const agnesCard = screen.getByText("Agnes AI").closest(".vn-provider-card") as HTMLElement;
+    fireEvent.click(within(agnesCard).getByRole("button", { name: /connect integration/i }));
+    const dialog = await screen.findByRole("dialog", { name: /^connect agnes ai$/i });
+
+    fireEvent.change(dialog.querySelector("textarea") as HTMLTextAreaElement, { target: { value: "sk-key" } });
+    fireEvent.change(within(dialog).getByLabelText(/label/i), { target: { value: "  Main key  " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /save & encrypt/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const connectCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/providers/agnes-ai/accounts"));
+    const [, init] = connectCall as [unknown, RequestInit];
+    // Trimmed, never the raw padded value.
+    expect(JSON.parse(init.body as string).label).toBe("Main key");
+  });
 });
 
 describe("FleetOverview — OAuth connect (image 10)", () => {
@@ -803,12 +831,12 @@ describe("FleetOverview — credential reveal", () => {
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /reveal credential/i }));
+    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /reveal credential/i }));
 
     await screen.findByText(canary);
     expect(document.body.innerHTML).toContain(canary);
 
-    fireEvent.click(within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /^hide credential$/i }));
+    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /^hide credential$/i }));
 
     await waitFor(() => expect(document.body.innerHTML).not.toContain(canary));
 
@@ -841,7 +869,7 @@ describe("FleetOverview — credential reveal", () => {
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /reveal credential/i }));
+    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /reveal credential/i }));
 
     const passwordInput = await screen.findByLabelText(/owner password/i);
     fireEvent.change(passwordInput, { target: { value: "the-owner-password" } });
@@ -873,7 +901,7 @@ describe("FleetOverview — credential reveal", () => {
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /reveal credential/i }));
+    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /reveal credential/i }));
     const passwordInput = await screen.findByLabelText(/owner password/i);
     fireEvent.change(passwordInput, { target: { value: password } });
     fireEvent.click(screen.getByRole("button", { name: /^verify$/i }));
@@ -899,7 +927,7 @@ describe("FleetOverview — sync tolerates quota_unsupported", () => {
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /sync: health · plan · usage/i }));
+    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /sync: health · plan · usage/i }));
 
     await screen.findByText(/quota sync skipped — this provider has no quota capability/i);
     // The health refresh ran and the page refetched — the sync SUCCEEDED.
@@ -924,7 +952,7 @@ describe("FleetOverview — sync tolerates quota_unsupported", () => {
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /sync: health · plan · usage/i }));
+    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /sync: health · plan · usage/i }));
 
     await screen.findByText(/credential_unavailable/);
     expect(screen.queryByText(/quota sync skipped/i)).toBeNull();
@@ -950,26 +978,28 @@ describe("FleetOverview — account row polish (fingerprint identities, deduped 
       { view: "active" },
     );
     expandProvider("OpenCode Zen");
-    const headline = await screen.findByTitle(HEX64);
+    const headline = await screen.findByText("#account 01");
     return headline.closest(".vnd-account") as HTMLElement;
   }
 
-  it("truncates a fingerprint external id to a short mono headline with the full value in the title", async () => {
+  it("never renders the opaque fingerprint external id — headline falls back to the numbered default", async () => {
     const row = await renderZenRow();
 
-    const headline = within(row).getByTitle(HEX64);
-    expect(headline.textContent).toBe(`${HEX64.slice(0, 12)}…`);
-    // The raw 64-char hex never renders as TEXT anywhere.
+    // No label and no email: the headline is the numbered default, and the
+    // raw 64-char hex never renders as text OR in any title attribute.
+    within(row).getByText("#account 01");
     expect(document.body.textContent).not.toContain(HEX64);
+    expect(row.querySelector(`[title*="${HEX64}"]`)).toBeNull();
   });
 
   it("suppresses the plan badge when it merely repeats the funding classification", async () => {
     const row = await renderZenRow();
 
     // One badge, not two: the synthetic "Free" plan echoes funding "free",
-    // so only the FundingBadge (the real classification) renders.
+    // so only the FundingBadge renders — and for a free account it reads
+    // "Free / ∞" (unlimited), not a bare "Free".
     expect(within(row).queryByText("FREE")).toBeNull();
-    within(row).getByText("Free");
+    within(row).getByText("Free / ∞");
   });
 
   it("renders no lone dash placeholders for empty quota windows or certification data", async () => {
@@ -977,9 +1007,10 @@ describe("FleetOverview — account row polish (fingerprint identities, deduped 
 
     expect(within(row).queryAllByText("—")).toHaveLength(0);
     expect(within(row).queryByTitle(/no quota windows tracked/i)).toBeNull();
-    // Free accounts: "Free · Checked: …" in the meta line + "∞ Unlimited" in the body.
+    // Free account: "Free · Checked: …" in the meta line; the unlimited
+    // nature lives in the "Free / ∞" funding badge, not a separate label.
     expect(within(row).getByText(/^Free · Checked: .+/)).toBeTruthy();
-    within(row).getByText("∞ Unlimited");
+    expect(within(row).queryByText("∞ Unlimited")).toBeNull();
   });
 
   it("gives Fetch models and the model-report chip DISTINCT icons", async () => {
@@ -993,8 +1024,8 @@ describe("FleetOverview — account row polish (fingerprint identities, deduped 
   });
 });
 
-describe("FleetOverview — funding override", () => {
-  it("sends expected_version and surfaces funding_locked", async () => {
+describe("FleetOverview — funding override (via the Edit account dialog)", () => {
+  it("sends expected_version and surfaces funding_locked when the funding is changed", async () => {
     const fetchMock = await renderFleet(
       {
         "PUT /api/control/v1/accounts/acct-1/funding": () =>
@@ -1005,17 +1036,50 @@ describe("FleetOverview — funding override", () => {
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /override funding/i }));
-    await screen.findByRole("dialog", { name: /override funding classification/i });
+    // Funding is now edited inside the combined "Edit account" dialog.
+    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /edit account/i }));
+    const dialog = await screen.findByRole("dialog", { name: /edit account/i });
 
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    // The funding write fires ONLY when the value actually changes — move
+    // it off the account's current "free" so the PUT is triggered.
+    fireEvent.change(within(dialog).getByRole("combobox"), { target: { value: "paid" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
 
     await screen.findByText(/funding_locked/i);
 
     const putCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/accounts/acct-1/funding"));
     expect(putCall).toBeTruthy();
     const [, init] = putCall as [unknown, RequestInit];
-    expect(JSON.parse(init.body as string).expected_version).toBe("v1");
+    const body = JSON.parse(init.body as string);
+    expect(body.expected_version).toBe("v1");
+    expect(body.funding).toBe("paid");
+  });
+
+  it("PATCHes the label (and skips the funding write) when only the label changes", async () => {
+    const fetchMock = await renderFleet(
+      {
+        "PATCH /api/control/v1/accounts/acct-1": () => jsonResponse(200, { data: ACCOUNT_HEALTHY }),
+      },
+      { view: "active" },
+    );
+    expandProvider("OpenCode Zen");
+    await screen.findByTitle("display_status: healthy");
+
+    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /edit account/i }));
+    const dialog = await screen.findByRole("dialog", { name: /edit account/i });
+
+    fireEvent.change(within(dialog).getByLabelText(/label/i), { target: { value: "Primary" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(
+        ([input, init]) => String(input).endsWith("/accounts/acct-1") && (init as RequestInit)?.method === "PATCH",
+      );
+      expect(patchCall).toBeTruthy();
+      expect(JSON.parse((patchCall![1] as RequestInit).body as string).label).toBe("Primary");
+    });
+    // Funding was untouched, so no funding write fired.
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/funding"))).toBe(false);
   });
 });
 
@@ -1030,9 +1094,11 @@ describe("FleetOverview — disconnect", () => {
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("key_9c41e8b0f2")).getByRole("button", { name: /disconnect account/i }));
+    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /disconnect account/i }));
 
-    const dialog = await screen.findByRole("dialog", { name: /disconnect key_9c41e8b0f2/i });
+    // The confirmation now titles the account by its display name (email
+    // here), never the opaque external_id.
+    const dialog = await screen.findByRole("dialog", { name: /disconnect ipfox111@example.test/i });
     const confirmButton = within(dialog).getByRole("button", { name: /disconnect account/i });
     expect((confirmButton as HTMLButtonElement).disabled).toBe(true);
 
