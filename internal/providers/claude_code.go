@@ -31,7 +31,11 @@ const (
 
 	claudeCodeProfilePath = "/api/oauth/profile"
 	claudeCodeModelsPath  = "/v1/models"
-	claudeCodeUsagePath   = "/api/oauth/usage" // endpoint to confirm on live re-verification
+	// claudeCodeUsagePath is NOT a guess: the archived reference implementation
+	// calls exactly https://api.anthropic.com/api/oauth/usage (governor-verified
+	// 2026-08-03). What still needs live confirmation is the PAYLOAD's plan
+	// field name, not this path.
+	claudeCodeUsagePath   = "/api/oauth/usage"
 	claudeCodeConfidence  = 0.95
 	claudeCode5hSeconds   = 18000
 	claudeCode7dSeconds   = 604800

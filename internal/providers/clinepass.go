@@ -144,6 +144,15 @@ func (a *ClinePassAdapter) CompleteOAuth(ctx context.Context, code, _ /*pkceVeri
 	if err != nil {
 		return IdentityResult{}, StoredCredentials{}, err
 	}
+	// Funding here is REPORTED, not authoritative: clinepass's catalog entry is
+	// FundingModeFixed{Fixed: paid, Locked: true}, and
+	// application.firstFundingEvidence consults IdentityResult.Funding ONLY for
+	// FundingModeProviderEvidence providers. So the stamped evidence — and the
+	// 409 funding_locked an owner override earns (domain.ErrFundingLocked) — come
+	// from the catalog, not from this field. It is set to the same value on
+	// purpose (a disagreement would be a lie in the audit trail), but changing it
+	// alone changes NO behaviour: the lock lives in catalog.go + the frozen
+	// funding domain, which is where the test pins it.
 	return IdentityResult{
 		ExternalID: identity.ClineUserID,
 		Email:      identity.Email,

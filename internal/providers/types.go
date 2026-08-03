@@ -21,7 +21,20 @@ type IdentityResult struct {
 	ExternalID string // immutable provider ID when available
 	Email      string
 	Plan       string
-	Funding    string // free | paid | unknown (provider_evidence only)
+	// Funding is the provider's own connect-time classification, and is read
+	// ONLY for FundingModeProviderEvidence providers. Exactly "free" or "paid"
+	// classifies; EVERY other value — including "" and "unknown" — is treated
+	// as no classification by the one consumer
+	// (application.firstFundingEvidence), which maps it to domain.FundingUnknown.
+	//
+	// Both spellings are in use ON PURPOSE and must not be unified: "" means the
+	// provider reported nothing to classify from (the evidence_required
+	// adapters — agnes-ai, nvidia-nim, gemini-cli, claude-code and clinepass on
+	// an unrecognized plan), while "unknown" means the adapter looked at a real
+	// signal and could not classify it (antigravity's unrecognized tier). They
+	// are behaviourally identical downstream; the distinction is the audit trail
+	// of WHY there is no evidence.
+	Funding string
 	// Confidence is the adapter's own confidence in Funding (meaningful
 	// only alongside a non-empty Funding, i.e. FundingModeProviderEvidence
 	// callers, P2b-PROV-007): e.g. antigravity reports 0.95 for a

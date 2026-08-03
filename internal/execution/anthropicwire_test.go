@@ -84,8 +84,18 @@ func TestAnthropic_RequestMapping(t *testing.T) {
 		if len(body.Messages) != 1 || body.Messages[0].Role != "user" {
 			t.Fatalf("messages = %+v, want only the user turn (system must NOT be a message)", body.Messages)
 		}
-		if body.MaxTokens != DefaultAnthropicMaxTokens {
-			t.Fatalf("max_tokens = %d, want the default %d (Anthropic requires it)", body.MaxTokens, DefaultAnthropicMaxTokens)
+		// Asserted against a LITERAL, deliberately, not against
+		// DefaultAnthropicMaxTokens: comparing the payload to the very constant
+		// that produced it is a tautology that survives ANY value — including 0,
+		// which Anthropic rejects (max_tokens must be >= 1), so a bad default
+		// would break every request that carries no explicit max_tokens while
+		// this test stayed green. Governor-verified: mutating the constant to 0
+		// left the original assertion passing.
+		if body.MaxTokens < 1 {
+			t.Fatalf("max_tokens = %d, want >= 1 — Anthropic rejects 0 and requires the field", body.MaxTokens)
+		}
+		if body.MaxTokens != 4096 {
+			t.Fatalf("max_tokens = %d, want the documented default 4096", body.MaxTokens)
 		}
 		if body.Model != "claude-x" {
 			t.Fatalf("model = %q, want claude-x", body.Model)

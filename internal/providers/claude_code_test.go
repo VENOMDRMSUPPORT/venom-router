@@ -234,6 +234,31 @@ func TestClaudeCode_Quota(t *testing.T) {
 		t.Fatalf("missing seven_day_<model> window: %+v", perModel)
 	}
 
+	t.Run("a window with no utilization keeps Used nil, never 0", func(t *testing.T) {
+		// 0 would read as "0% consumed", i.e. FULL headroom, from a provider that
+		// reported no number at all — the 0-as-unknown fail-OPEN 05 §4 forbids
+		// (unknown must never read as confidently available). Governor-verified:
+		// defaulting Used to 0 left the rest of this suite green.
+		g := &fakeClaudeGet{byPath: map[string]struct {
+			status int
+			body   string
+		}{"/api/oauth/usage": {200, `{"five_hour":{"resets_at":1700000000}}`}}}
+		a := NewClaudeCodeAdapter((&fakeClaudeToken{}).probe, g.probe)
+		res, err := a.FetchQuota(context.Background(), storedClaude("at"))
+		if err != nil {
+			t.Fatalf("FetchQuota: %v", err)
+		}
+		if len(res.Windows) != 1 {
+			t.Fatalf("windows = %+v, want the one declared window", res.Windows)
+		}
+		if res.Windows[0].Used != nil {
+			t.Fatalf("Used = %v, want nil — the provider reported no utilization", *res.Windows[0].Used)
+		}
+		if res.Windows[0].ResetAt == nil || *res.Windows[0].ResetAt != 1700000000 {
+			t.Fatalf("ResetAt = %v, want the declared reset (the window itself IS evidence)", res.Windows[0].ResetAt)
+		}
+	})
+
 	t.Run("unrecognizable payload yields empty", func(t *testing.T) {
 		g := &fakeClaudeGet{byPath: map[string]struct {
 			status int

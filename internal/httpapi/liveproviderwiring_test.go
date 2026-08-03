@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/execution"
@@ -192,6 +193,68 @@ func TestLiveProviderWiring_BaseURLsCarryTheVersionSegmentEachTransportNeeds(t *
 			}
 		default:
 			t.Errorf("provider %q declares transport %q, which this table has no version convention for — decide it explicitly", id, def.Transport)
+		}
+	}
+}
+
+// TestLiveProviderWiring_ProductionNativeOAuthEntryStampsTheSchema drives the
+// PRODUCTION table's native_oauth transport end-to-end and is the only test that
+// can fail when that entry stops being wrapped in the schema-stamping decorator.
+//
+// It exists because the decorator's own unit test constructs the decorator
+// directly, so removing the wrapper from liveTransportImpls left the ENTIRE
+// httpapi suite green — while in production every claude-code and clinepass call
+// would have failed closed with "unsupported wire schema", because the real
+// route builders leave ResolvedRoute.WireSchema empty and the registry is the
+// only source of it. That is the same test-owned-fixture hole that shipped one
+// batch earlier, one level up: the earlier fix proved the ENTRY EXISTS, this one
+// proves the entry is the DECORATED one.
+//
+// The route deliberately carries an EMPTY WireSchema, exactly as a real route
+// arrives, so the endpoint the server observes is proof the schema was resolved
+// from the registry mid-dispatch.
+func TestLiveProviderWiring_ProductionNativeOAuthEntryStampsTheSchema(t *testing.T) {
+	reg := liveRegistry(t)
+
+	cases := []struct {
+		provider     providers.ProviderID
+		wantEndpoint string // the endpoint only that provider's declared codec produces
+	}{
+		{providers.ClaudeCodeID, "/v1/messages"},
+		{providers.ClinePassID, "/chat/completions"},
+	}
+
+	for _, c := range cases {
+		var gotPath string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			// A minimal body each codec can decode; the assertion is the PATH.
+			_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}],"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+		}))
+		defer srv.Close()
+
+		transport, ok := liveTransportImpls(srv.Client(), reg)[execution.TransportTypeNativeOAuth]
+		if !ok {
+			t.Fatal("the production table has no native_oauth transport")
+		}
+
+		_, err := transport.Execute(t.Context(), execution.ResolvedRoute{
+			Provider:   execution.ProviderID(c.provider),
+			AccountID:  "acct-1",
+			ModelID:    "some-model",
+			BaseURL:    srv.URL,
+			Credential: execution.StoredCredentials{Value: "token-for-wiring-test"},
+			// WireSchema deliberately EMPTY — the registry must supply it.
+		}, execution.NormalizedRequest{
+			Operation: execution.OperationChat,
+			Messages:  []execution.Message{{Role: "user", Content: "hi"}},
+		})
+		if err != nil {
+			t.Fatalf("%s: Execute() error = %v — the production native_oauth entry did not stamp the registry's wire schema", c.provider, err)
+		}
+		if gotPath != c.wantEndpoint {
+			t.Errorf("%s: request path = %q, want %q (the endpoint its declared codec produces)", c.provider, gotPath, c.wantEndpoint)
 		}
 	}
 }
