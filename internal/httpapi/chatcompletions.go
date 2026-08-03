@@ -57,8 +57,8 @@ func liveTransportImpls(client *http.Client, reg *providers.Registry) map[execut
 // this table against the catalog itself.
 //
 // A provider absent from here is absent from both paths — fail closed, never a
-// guessed base URL. The OAuth built-ins (antigravity today) are deliberately
-// absent: their bases arrive with their own units.
+// guessed base URL. OAuth built-ins appear once their adapter ships (claude-code
+// now); antigravity remains absent until it is env-configured and registered.
 func liveProviderBaseURLs() map[providers.ProviderID]string {
 	return map[providers.ProviderID]string{
 		providers.OpenCodeZenID: providers.OpenCodeZenBaseURL + "/v1",
@@ -66,6 +66,9 @@ func liveProviderBaseURLs() map[providers.ProviderID]string {
 		providers.AgnesAIID:     providers.AgnesAIBaseURL,
 		providers.NvidiaNIMID:   providers.NvidiaNIMBaseURL,
 		providers.GeminiCLIID:   providers.GeminiCLIBaseURL + "/v1beta",
+		// claude-code (native_oauth, anthropic_messages): the anthropic codec
+		// appends /v1/messages, so the base is the bare API host.
+		providers.ClaudeCodeID: providers.ClaudeCodeAPIBase,
 	}
 }
 

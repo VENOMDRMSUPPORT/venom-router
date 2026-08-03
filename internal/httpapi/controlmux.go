@@ -151,6 +151,10 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// gemini-cli (P7-PROV-007) uses Google's schema + the native_api transport
 	// (P7-EXEC-001); its listing authenticates directly (no two-step probe).
 	_ = registerGeminiCLI(reg)
+	// claude-code (P7-PROV-001) is a PUBLIC OAuth client (no secret), so it
+	// registers unconditionally; its route speaks the anthropic_messages wire
+	// schema over the native_oauth transport.
+	_ = registerClaudeCode(reg)
 
 	// audit is the shared P2b-OBS-001 emitter every mutating control
 	// route below records exactly one audit_event through (log is nil
