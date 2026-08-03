@@ -63,6 +63,40 @@ func TestAccountRepo_Delete_UnknownAccountReportsNotDeleted(t *testing.T) {
 	}
 }
 
+// TestAccountRepo_PurgeDisconnected_RemovesLegacySoftDisconnectedAccounts proves
+// the startup purge enforces the "no disconnected account ever lingers"
+// invariant: every disconnected account (left behind by the old soft-disconnect)
+// is hard-deleted with its data, while connected/stopped accounts are untouched.
+func TestAccountRepo_PurgeDisconnected_RemovesLegacySoftDisconnectedAccounts(t *testing.T) {
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-1")
+	insertAccount(t, db, "gone-1", "prov-1")
+	insertAccount(t, db, "gone-2", "prov-1")
+	insertAccount(t, db, "live-1", "prov-1")
+	mustExec(t, db, `UPDATE accounts SET connection_state = 'disconnected' WHERE id IN ('gone-1','gone-2')`)
+	mustExec(t, db, `UPDATE accounts SET connection_state = 'connected' WHERE id = 'live-1'`)
+	// A disconnected account's lingering offering must go with it.
+	insertModelFull(t, db, "model-1", "ck-1", "M1", nil, nil, nil)
+	insertOfferingFull(t, db, "gone-1", "prov-1", "big-pickle", "model-1", nil, nil, nil, nil, nil, 0, 0)
+
+	n, err := NewAccountRepo(db).PurgeDisconnected(context.Background())
+	if err != nil {
+		t.Fatalf("PurgeDisconnected() error = %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("PurgeDisconnected() = %d, want 2", n)
+	}
+	if c := countWhere(t, db, "accounts", "connection_state = 'disconnected'"); c != 0 {
+		t.Fatalf("%d disconnected accounts remain, want 0", c)
+	}
+	if c := countWhere(t, db, "accounts", "id = 'live-1'"); c != 1 {
+		t.Fatal("the connected account was wrongly purged")
+	}
+	if c := countWhere(t, db, "account_model_offerings", "account_id = 'gone-1'"); c != 0 {
+		t.Fatalf("a purged account's offerings remain: %d", c)
+	}
+}
+
 func mustExec(t *testing.T, db *DB, query string, args ...any) {
 	t.Helper()
 	if _, err := db.Conn().Exec(query, args...); err != nil {

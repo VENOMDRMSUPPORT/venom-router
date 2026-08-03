@@ -329,6 +329,49 @@ func (r *AccountRepo) Delete(ctx context.Context, accountID string) (bool, error
 	return true, nil
 }
 
+// PurgeDisconnected hard-deletes every account still in the `disconnected`
+// state — the legacy residue from before disconnect became a hard delete (the
+// old soft-disconnect left the row + its data behind). It enforces the
+// invariant that a disconnected account never lingers, and therefore never
+// leaves remnants on any surface. Intended to run once at startup; it is
+// idempotent (no disconnected accounts -> zero work). Returns the count purged.
+//
+// The id set is fully read and the cursor CLOSED before any Delete runs: the
+// pool is pinned to one connection, so a Delete's transaction cannot open while
+// a SELECT cursor is still streaming on that same connection.
+func (r *AccountRepo) PurgeDisconnected(ctx context.Context) (int, error) {
+	rows, err := r.db.Conn().QueryContext(ctx, `SELECT id FROM accounts WHERE connection_state = 'disconnected'`)
+	if err != nil {
+		return 0, fmt.Errorf("storage: list disconnected accounts: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("storage: scan disconnected account id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("storage: list disconnected accounts: %w", err)
+	}
+	_ = rows.Close()
+
+	purged := 0
+	for _, id := range ids {
+		deleted, err := r.Delete(ctx, id)
+		if err != nil {
+			return purged, fmt.Errorf("storage: purge disconnected account %q: %w", id, err)
+		}
+		if deleted {
+			purged++
+		}
+	}
+	return purged, nil
+}
+
 // scanner is the shared shape of *sql.Row's and *sql.Rows' Scan method,
 // so scanAccount (single row) and scanRowsAccount (one row of a result
 // set) share one column-binding implementation.

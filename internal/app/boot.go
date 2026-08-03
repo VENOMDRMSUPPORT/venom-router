@@ -457,6 +457,16 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 	// closed startup-order stages parseStages/TestBoot_StartupOrderEnforced
 	// assert on, since it is a background concern, not a boot
 	// precondition.
+	// Enforce the "no disconnected account lingers" invariant on startup:
+	// hard-delete any account left in the disconnected state by the old
+	// soft-disconnect, so a removed provider's remnants never surface on any
+	// page. Idempotent — zero work once no disconnected accounts remain.
+	if purged, perr := storage.NewAccountRepo(db).PurgeDisconnected(context.Background()); perr != nil {
+		logger.Error("startup purge of disconnected accounts failed", observability.Err(perr))
+	} else if purged > 0 {
+		logger.Info("purged legacy disconnected accounts at startup", observability.String("count", fmt.Sprintf("%d", purged)))
+	}
+
 	quotaWorkers, probeWorkers, err := httpapi.BuildSchedulerWorkers(db, "scheduler", time.Now, nil)
 	if err != nil {
 		_ = httpServer.Close()
