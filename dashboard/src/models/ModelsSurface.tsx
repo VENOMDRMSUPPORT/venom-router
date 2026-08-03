@@ -86,6 +86,22 @@ function groupNeedsReview(g: ModelGroup): boolean {
   return g.offerings.some(offeringNeedsReview);
 }
 
+/** The context to show on the collapsed group header: the largest EFFECTIVE
+ * context across this model's offerings, plus that offering's provenance. Each
+ * offering's effective_context_tokens already falls back to the provider-
+ * declared ceiling (04 §3), so this surfaces a real, provider-declared context
+ * instead of the canonical native_context_tokens — which stays null until the
+ * context probe runs and would otherwise read as "ctx unknown" even when the
+ * provider did declare one. Null only when NO offering has any known context. */
+function groupContext(g: ModelGroup): { tokens: number | null; provenance?: string } {
+  let best: EffectiveOffering | null = null;
+  for (const o of g.offerings) {
+    if (o.effective_context_tokens == null) continue;
+    if (best == null || o.effective_context_tokens > (best.effective_context_tokens ?? 0)) best = o;
+  }
+  return best ? { tokens: best.effective_context_tokens, provenance: best.context_provenance || undefined } : { tokens: null };
+}
+
 /** The in-flight/finished outcome of an async trigger. `note` carries the
  * honesty caveat a bare status cannot (see benchmarkNote). */
 interface JobOutcome {
@@ -454,6 +470,7 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
         visibleGroups.map((g) => {
           const isOpen = expanded[g.model_id] ?? false;
           const firstOffering = g.offerings[0];
+          const ctx = groupContext(g);
           return (
             <Card key={g.model_id} data-testid={`model-group-${g.model_id}`}>
               <div className="flex flex-col gap-3">
@@ -502,8 +519,12 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
 
                 <div className="flex flex-wrap items-center gap-4">
                   <span className="flex items-center gap-2">
-                    <span className="vn-caption">Native context</span>
-                    <ContextWindowDisplay tokens={g.native_context_tokens} />
+                    <span className="vn-caption">Context</span>
+                    <ContextWindowDisplay
+                      tokens={ctx.tokens}
+                      verified={ctx.provenance === "probe" || ctx.provenance === "owner_override"}
+                      source={ctx.provenance}
+                    />
                   </span>
                   <span className="flex items-center gap-2">
                     <span className="vn-caption">Canonical rating</span>
