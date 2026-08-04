@@ -74,6 +74,76 @@ func TestAccountCredentialRepo_ListForAccount_ReturnsAllStates(t *testing.T) {
 	}
 }
 
+func TestAccountCredentialRepo_RotateCiphertext_ReplacesEnvelopeInPlace(t *testing.T) {
+	db := migratedEnrollmentDB(t)
+	insertProvider(t, db, "prov1")
+	insertAccount(t, db, "acct1", "prov1")
+	repo := NewAccountCredentialRepo(db)
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	cred := domain.Credential{ID: "cred1", AccountID: "acct1", Kind: domain.CredentialKindOAuth2, State: domain.CredentialActive, Fingerprint: "fp-old"}
+	if err := repo.Create(context.Background(), "prov1", cred, secrets.Envelope{KeyID: "k1", Nonce: []byte("n1"), Ciphertext: []byte("c1")}, created); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	rotatedAt := created.Add(45 * time.Minute)
+	newExpiry := rotatedAt.Add(time.Hour).UTC().Truncate(time.Second)
+	ok, err := repo.RotateCiphertext(context.Background(), "cred1", "fp-new",
+		secrets.Envelope{KeyID: "k2", Nonce: []byte("n2"), Ciphertext: []byte("c2")}, &newExpiry, rotatedAt)
+	if err != nil || !ok {
+		t.Fatalf("RotateCiphertext: ok=%v err=%v", ok, err)
+	}
+
+	got, providerID, env, ok, err := repo.GetCredential(context.Background(), "cred1")
+	if err != nil || !ok {
+		t.Fatalf("GetCredential after rotate: ok=%v err=%v", ok, err)
+	}
+	if providerID != "prov1" || got.AccountID != "acct1" || got.State != domain.CredentialActive || got.Kind != domain.CredentialKindOAuth2 {
+		t.Fatalf("rotate must not change identity/state, got %+v provider=%q", got, providerID)
+	}
+	if got.Fingerprint != "fp-new" {
+		t.Fatalf("Fingerprint = %q, want fp-new", got.Fingerprint)
+	}
+	if env.KeyID != "k2" || string(env.Nonce) != "n2" || string(env.Ciphertext) != "c2" {
+		t.Fatalf("envelope after rotate = %+v, want the new sealed bytes", env)
+	}
+	if got.ExpiresAt == nil || !got.ExpiresAt.Equal(newExpiry) {
+		t.Fatalf("ExpiresAt = %v, want %v", got.ExpiresAt, newExpiry)
+	}
+}
+
+func TestAccountCredentialRepo_RotateCiphertext_RefusesNonActiveAndUnknown(t *testing.T) {
+	db := migratedEnrollmentDB(t)
+	insertProvider(t, db, "prov1")
+	insertAccount(t, db, "acct1", "prov1")
+	repo := NewAccountCredentialRepo(db)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	staged := domain.Credential{ID: "cred-staged", AccountID: "acct1", Kind: domain.CredentialKindOAuth2, State: domain.CredentialStaged, Fingerprint: "fp-s"}
+	if err := repo.Create(context.Background(), "prov1", staged, secrets.Envelope{KeyID: "k", Nonce: []byte("n"), Ciphertext: []byte("c")}, now); err != nil {
+		t.Fatalf("Create(staged): %v", err)
+	}
+
+	for name, id := range map[string]string{"staged row": "cred-staged", "unknown id": "nope"} {
+		ok, err := repo.RotateCiphertext(context.Background(), id, "fp-x", secrets.Envelope{KeyID: "k", Nonce: []byte("n"), Ciphertext: []byte("c")}, nil, now)
+		if err != nil {
+			t.Fatalf("%s: RotateCiphertext error = %v", name, err)
+		}
+		if ok {
+			t.Fatalf("%s: RotateCiphertext ok = true, want false", name)
+		}
+	}
+
+	// The staged row's envelope must be untouched by the refused rotate.
+	_, _, env, ok, err := repo.GetCredential(context.Background(), "cred-staged")
+	if err != nil || !ok {
+		t.Fatalf("GetCredential(staged): ok=%v err=%v", ok, err)
+	}
+	if env.KeyID != "k" || string(env.Ciphertext) != "c" {
+		t.Fatalf("staged envelope changed by refused rotate: %+v", env)
+	}
+}
+
 func TestAccountCredentialRepo_FingerprintExists(t *testing.T) {
 	db := migratedEnrollmentDB(t)
 	insertProvider(t, db, "prov1")

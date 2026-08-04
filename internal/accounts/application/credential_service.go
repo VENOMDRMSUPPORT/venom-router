@@ -129,6 +129,58 @@ func (s *CredentialService) Store(ctx context.Context, p StoreCredentialParams) 
 	return cred, nil
 }
 
+// ErrCredentialNotRotatable is returned by Rotate when the credential
+// exists but is not in the active state (staged rows belong to an
+// in-flight reauth swap; retired rows are history) — rotation applies
+// exclusively to the account's live credential.
+var ErrCredentialNotRotatable = errors.New("application: only an active credential can be rotated")
+
+// Rotate replaces credentialID's sealed plaintext in place with
+// newPlaintext (a refreshed OAuth token envelope), re-encrypting under
+// the SAME RecordIdentity the credential was first sealed with — the row
+// id, account binding, and kind are unchanged, so the AAD stays valid.
+// The plaintext is stored VERBATIM (no whitespace normalization): OAuth
+// credential values are adapter-marshaled JSON, and normalizing could
+// corrupt string fields — mirroring how the OAuth enrollment path seals
+// storedCreds.Value verbatim. expiresAt (nullable) is persisted alongside
+// for observability. Never returns or logs the plaintext.
+func (s *CredentialService) Rotate(ctx context.Context, credentialID, newPlaintext string, expiresAt *time.Time) error {
+	cred, providerID, _, ok, err := s.repo.GetCredential(ctx, credentialID)
+	if err != nil {
+		return fmt.Errorf("application: get credential for rotate: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("%w: %q", ErrCredentialNotFound, credentialID)
+	}
+	if cred.State != domain.CredentialActive {
+		return fmt.Errorf("%w: %q is %s", ErrCredentialNotRotatable, credentialID, cred.State)
+	}
+
+	identity := secrets.RecordIdentity{
+		Purpose:  credentialAADPurpose,
+		Provider: providerID,
+		Account:  cred.AccountID,
+		Record:   cred.ID,
+		Kind:     string(cred.Kind),
+	}
+	env, err := secrets.Encrypt(s.kr, identity, []byte(newPlaintext))
+	if err != nil {
+		return fmt.Errorf("application: encrypt rotated credential: %w", err)
+	}
+
+	rotated, err := s.repo.RotateCiphertext(ctx, credentialID, fingerprintCredentialKey(newPlaintext), env, expiresAt, s.now())
+	if err != nil {
+		return fmt.Errorf("application: persist rotated credential: %w", err)
+	}
+	if !rotated {
+		// The row changed state between the read and the guarded UPDATE
+		// (e.g. a concurrent disconnect retired it) — surface it as the
+		// same typed error the pre-check uses.
+		return fmt.Errorf("%w: %q", ErrCredentialNotRotatable, credentialID)
+	}
+	return nil
+}
+
 // Use loads credentialID, decrypts it under the same RecordIdentity it
 // was sealed with, and hands the plaintext to fn — the ONLY scope the
 // plaintext ever exists in memory. The buffer is zeroed immediately

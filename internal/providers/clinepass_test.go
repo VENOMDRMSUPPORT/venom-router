@@ -77,6 +77,73 @@ func clineIdentityGet(status int, body string) *fakeClineGet {
 	}{"/api/v1/users/me": {status, body}})
 }
 
+// TestClinePass_HealthDetectsSubscription pins the automatic ClinePass
+// subscription detection (owner requirement 2026-08-04): a token-valid
+// account WITHOUT Pass usage-limit windows is degraded with an actionable
+// reason; a subscribed account is healthy; and a non-definitive limits
+// answer (5xx / unparseable) may NEVER degrade a token-valid account.
+func TestClinePass_HealthDetectsSubscription(t *testing.T) {
+	stored, _ := marshalClinePassToken("at", "rt", 99, nil)
+	limitsOK := `{"success":true,"data":{"limits":[{"type":"five_hour","percentUsed":0,"resetsAt":"2026-08-04T17:00:00Z"}]}}`
+
+	cases := []struct {
+		name         string
+		limitsStatus int
+		limitsBody   string
+		wantStatus   string
+		wantMessage  string
+	}{
+		{"subscribed (limits present)", 200, limitsOK, "healthy", ""},
+		{"signed in but NOT subscribed (empty limits)", 200, `{"success":true,"data":{"limits":[]}}`, "degraded", clinePassNoSubscriptionMessage},
+		{"signed in but NOT subscribed (no plan resource)", 404, `{}`, "degraded", clinePassNoSubscriptionMessage},
+		{"limits endpoint down is NOT evidence", 500, `{}`, "healthy", ""},
+		{"unparseable limits body is NOT evidence", 200, `not-json`, "healthy", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			get := clineGet(map[string]struct {
+				status int
+				body   string
+			}{
+				"/api/v1/users/me":                   {200, clineIdentityOK},
+				"/api/v1/users/me/plan/usage-limits": {tc.limitsStatus, tc.limitsBody},
+			})
+			a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe)
+
+			obs, err := a.CheckAccountHealth(context.Background(), stored)
+			if err != nil {
+				t.Fatalf("CheckAccountHealth: %v", err)
+			}
+			if obs.Status != tc.wantStatus {
+				t.Fatalf("Status = %q, want %q", obs.Status, tc.wantStatus)
+			}
+			if tc.wantMessage == "" {
+				if obs.Status == "healthy" && obs.Failure != nil {
+					t.Fatalf("healthy observation carries a Failure: %+v", obs.Failure)
+				}
+			} else {
+				if obs.Failure == nil || obs.Failure.SafeMessage != tc.wantMessage {
+					t.Fatalf("Failure = %+v, want SafeMessage %q", obs.Failure, tc.wantMessage)
+				}
+			}
+		})
+	}
+}
+
+// TestClinePass_HealthRejectedTokenStaysExpired: subscription detection must
+// never run (or soften the verdict) when the credential itself is rejected.
+func TestClinePass_HealthRejectedTokenStaysExpired(t *testing.T) {
+	stored, _ := marshalClinePassToken("at", "rt", 99, nil)
+	a := NewClinePassAdapter((&fakeClinePost{}).probe, clineIdentityGet(401, `{}`).probe)
+	obs, err := a.CheckAccountHealth(context.Background(), stored)
+	if err != nil {
+		t.Fatalf("CheckAccountHealth: %v", err)
+	}
+	if obs.Status != "expired" {
+		t.Fatalf("Status = %q, want expired", obs.Status)
+	}
+}
+
 // clineTokenOK is the REAL token response shape: {success, data:{accessToken,
 // refreshToken, expiresAt, userInfo}} — the earlier top-level camelCase shape
 // was drift (legacy 2026-08-03).
@@ -283,36 +350,72 @@ func TestClinePass_RefreshBodyCamelCase(t *testing.T) {
 	}
 }
 
-// TestClinePass_DiscoveryGroupMerge proves /recommended-models is the three
-// GROUP shape (not a `models` array) and merges with clinePass > recommended >
-// free priority (legacy 2026-08-03). The models endpoint is PUBLIC: the seam
-// receives a blank token, so no Authorization header is sent.
-func TestClinePass_DiscoveryGroupMerge(t *testing.T) {
+func TestClinePass_RefreshClassifiesProviderBodyBeforeExpiringAccount(t *testing.T) {
+	old, _ := json.Marshal(clinePassStoredToken{AccessToken: "old-at", RefreshToken: "old-rt"})
+
+	t.Run("ambiguous 401 is transient", func(t *testing.T) {
+		post := &fakeClinePost{status: 401, body: `{"error":{"message":"gateway policy rejected request"}}`}
+		a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe)
+		_, err := a.RefreshCredentials(context.Background(), StoredCredentials{Value: string(old)})
+		if !errors.Is(err, ErrProviderUnavailable) {
+			t.Fatalf("error = %v, want ErrProviderUnavailable", err)
+		}
+		if errors.Is(err, ErrInvalidCredential) {
+			t.Fatalf("ambiguous status was classified as a dead refresh token")
+		}
+	})
+
+	for _, marker := range []string{"invalid_grant", "refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated"} {
+		t.Run(marker+" is definitive", func(t *testing.T) {
+			post := &fakeClinePost{status: 401, body: `{"error":{"message":"` + marker + `"}}`}
+			a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe)
+			_, err := a.RefreshCredentials(context.Background(), StoredCredentials{Value: string(old)})
+			if !errors.Is(err, ErrInvalidCredential) {
+				t.Fatalf("error = %v, want ErrInvalidCredential", err)
+			}
+		})
+	}
+}
+
+// TestClinePass_DiscoveryIsPassOnly proves the OAuth integration imports only
+// the paid ClinePass group. recommended/free belong to the future API-key
+// integration and must never enter this provider's catalog.
+func TestClinePass_DiscoveryIsPassOnly(t *testing.T) {
 	get := clineGet(map[string]struct {
 		status int
 		body   string
-	}{"/recommended-models": {200, `{
+	}{
+		"/api/v1/users/me/plan/usage-limits": {200, `{"success":true,"data":{"limits":[{"type":"five_hour","percentUsed":1}]}}`},
+		"/recommended-models": {200, `{
 		"clinePass":[{"id":"cline/opus","name":"Opus"}],
 		"recommended":[{"id":"cline/opus","name":"Opus (dup)"},{"id":"cline/sonnet","name":"Sonnet"}],
-		"free":[{"id":"cline/free","name":"Free"}]}`}})
+		"free":[{"id":"cline/free","name":"Free"}]}`},
+	})
 	a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe)
 	models, err := a.DiscoverModels(context.Background(), storedCline("at"))
 	if err != nil {
 		t.Fatalf("DiscoverModels: %v", err)
 	}
-	if len(models) != 3 {
-		t.Fatalf("models = %d, want 3 unique", len(models))
+	if len(models) != 1 {
+		t.Fatalf("models = %+v, want only the one clinePass model", models)
 	}
-	byID := map[string]DiscoveredModel{}
-	for _, m := range models {
-		byID[m.ProviderModelID] = m
+	if models[0].ProviderModelID != "cline/opus" || models[0].DisplayName != "Opus" {
+		t.Fatalf("model = %+v, want clinePass group identity", models[0])
 	}
-	// The duplicate id must keep the higher-priority clinePass name.
-	if byID["cline/opus"].DisplayName != "Opus" {
-		t.Fatalf("cline/opus display = %q, want the clinePass-group name", byID["cline/opus"].DisplayName)
-	}
-	if byID["cline/sonnet"].ProviderModelID == "" || byID["cline/free"].ProviderModelID == "" {
-		t.Fatalf("missing merged models: %+v", models)
+}
+
+func TestClinePass_DiscoveryRejectsAccountWithoutPass(t *testing.T) {
+	get := clineGet(map[string]struct {
+		status int
+		body   string
+	}{
+		"/api/v1/users/me/plan/usage-limits": {200, `{"success":true,"data":{"limits":[]}}`},
+		"/recommended-models":                {200, `{"clinePass":[{"id":"must-not-load"}]}`},
+	})
+	a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe)
+	_, err := a.DiscoverModels(context.Background(), storedCline("at"))
+	if !errors.Is(err, ErrSubscriptionRequired) {
+		t.Fatalf("error = %v, want ErrSubscriptionRequired", err)
 	}
 }
 

@@ -9,7 +9,29 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/domain"
 )
+
+func TestUsabilityAccountEligible_RequiresConnectedAndHealthy(t *testing.T) {
+	cases := []struct {
+		name string
+		a    domain.Account
+		want bool
+	}{
+		{"connected healthy", domain.Account{ConnectionState: domain.ConnectionConnected, HealthState: domain.HealthHealthy}, true},
+		{"connected degraded", domain.Account{ConnectionState: domain.ConnectionConnected, HealthState: domain.HealthDegraded}, false},
+		{"connected expired", domain.Account{ConnectionState: domain.ConnectionConnected, HealthState: domain.HealthExpired}, false},
+		{"stopped healthy", domain.Account{ConnectionState: domain.ConnectionStopped, HealthState: domain.HealthHealthy}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := usabilityAccountEligible(tc.a); got != tc.want {
+				t.Fatalf("eligible = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestUsabilityTick_VerifiesEveryAccount(t *testing.T) {
 	var verified []string
@@ -20,8 +42,8 @@ func TestUsabilityTick_VerifiesEveryAccount(t *testing.T) {
 				{AccountID: "acct-2", CredentialID: "cred-2"},
 			}, nil
 		},
-		verify: func(_ context.Context, accountID, _ string) (usabilityRunSummary, error) {
-			verified = append(verified, accountID)
+		verify: func(_ context.Context, target accountToVerify) (usabilityRunSummary, error) {
+			verified = append(verified, target.AccountID)
 			return usabilityRunSummary{}, nil
 		},
 	}
@@ -44,9 +66,9 @@ func TestUsabilityTick_OneAccountFailureDoesNotAbortTheSweep(t *testing.T) {
 				{AccountID: "acct-3", CredentialID: "cred-3"},
 			}, nil
 		},
-		verify: func(_ context.Context, accountID, _ string) (usabilityRunSummary, error) {
-			verified = append(verified, accountID)
-			if accountID == "acct-2" {
+		verify: func(_ context.Context, target accountToVerify) (usabilityRunSummary, error) {
+			verified = append(verified, target.AccountID)
+			if target.AccountID == "acct-2" {
 				return usabilityRunSummary{}, errors.New("credential decrypt failed")
 			}
 			return usabilityRunSummary{}, nil
@@ -65,7 +87,7 @@ func TestUsabilityTick_ListerErrorSurfaces(t *testing.T) {
 	wantErr := errors.New("account list failed")
 	tick := &usabilityTick{
 		list:   func(context.Context) ([]accountToVerify, error) { return nil, wantErr },
-		verify: func(context.Context, string, string) (usabilityRunSummary, error) { return usabilityRunSummary{}, nil },
+		verify: func(context.Context, accountToVerify) (usabilityRunSummary, error) { return usabilityRunSummary{}, nil },
 	}
 	if err := tick.Run(context.Background()); !errors.Is(err, wantErr) {
 		t.Fatalf("Run() error = %v, want the lister error", err)

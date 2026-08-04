@@ -162,6 +162,23 @@ func (r *AccountRepo) UpdateHealthState(ctx context.Context, accountID string, n
 	)
 }
 
+// UpdateHealthStateWithError records a health transition and its current
+// error while leaving last_health_check_at untouched. Token refresh is not a
+// health probe, so it must not make the dashboard's Checked timestamp look
+// newer than the last real provider observation.
+func (r *AccountRepo) UpdateHealthStateWithError(ctx context.Context, accountID string, next domain.Account, lastHealthError string, now time.Time) (domain.Account, bool, error) {
+	var errVal any
+	if lastHealthError != "" {
+		errVal = lastHealthError
+	}
+	return r.updateAccountState(ctx, accountID,
+		`health_state = ?, last_health_error = ?, updated_at = ?`,
+		[]any{string(next.HealthState), errVal, now.Unix()},
+		next,
+		"update health state with error",
+	)
+}
+
 // UpdateHealthObservation durably sets accountID's health_state AND the
 // live-probe evidence columns: last_health_check_at = checkedAt and
 // last_health_error = lastHealthError ("" writes NULL — a healthy probe

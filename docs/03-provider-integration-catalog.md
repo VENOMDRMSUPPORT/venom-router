@@ -125,19 +125,25 @@ auth error as invalid; 429/5xx = provider-unavailable (retryable), **not** inval
    lookup, not session binding. Adapter builds the authorize URL.
 2. **Browser** — navigate the owner to the authorize URL (`_self`).
 3. **Callback** — the redirect target depends on the provider's registered client:
-   - **Hosted-code providers** (claude-code): the client's ONLY registered redirect_uri is
-     Anthropic's hosted page (`https://platform.claude.com/oauth/code/callback`); the browser
-     NEVER returns to Venom. The owner copies the code the page displays (format
-     `<auth_code>#<fragment>`, where the fragment echoes the `state`) and pastes it into the
-     dashboard, which submits it to `POST /api/control/v1/oauth/complete` (owner-session +
-     CSRF gated; transaction resolved by id).
+   - **Hosted-code providers** (claude-code): Anthropic's public client ONLY
+     accepts `https://platform.claude.com/oauth/code/callback` (any local
+     `/callback` is rejected with "Redirect URI is not supported by client").
+     The browser lands on that hosted page which displays
+     `<auth_code>#<fragment>`; the owner pastes it into the dashboard, which
+     submits it to `POST /api/control/v1/oauth/complete` (owner-session +
+     CSRF gated; transaction resolved by id). This is the same constraint as
+     Claude Code CLI / shunt-proxy — local automatic redirect is impossible
+     for this client id.
    - **Redirect-back providers** (clinepass, antigravity): `GET /callback?code&state` on the main
-     bind — the registered `{origin}/callback` shape. The provider is resolved from the
+     bind — the registered `{origin}/callback` shape. Providers that omit
+     `state` (clinepass) get a relay page that postMessages the code to the
+     opener; the dashboard finishes via `POST /oauth/complete` with the
+     transaction_id from Begin. The provider is resolved from the
      transaction's stored slug (or from the legacy provider-specific path
      `GET /api/control/v1/oauth/{provider}/callback`), never from an unvalidated client value.
    - **Fixed-redirect providers** (codex, xAI): the fixed-port listener (see [01 §6](01-architecture.md#6-http-surfaces)).
    The callback **never depends on a session cookie** — it uses the state hash (or the
-   unguessable transaction id for state-omitting providers) to locate the transaction, executes
+   unguessable transaction id for opener-driven complete) to locate the transaction, executes
    the exchange, and stores the result for the originating caller to retrieve via polling
    `GET /api/control/v1/oauth/{transaction_id}/status`.
 4. **Complete (one transaction)** — look up the pending tx by `sha256(state)`; constant-time
@@ -359,12 +365,20 @@ valid while the old one is expired or invalidated.
   (`grant_type=authorization_code`, `client_type=extension`, `provider=clinepass`).
 - Identity: token `userInfo` (`subject`, `email`, `clineUserId`) + `GET /api/v1/users/me`.
   **Stable external ID = `clineUserId` / `userInfo.subject`.**
-- Discovery: `GET /api/v1/ai/cline/recommended-models` (groups: clinePass / recommended / free).
-- Refresh: `POST /api/v1/auth/refresh` (`{refreshToken, grantType:"refresh_token"}`).
+- Eligibility: `GET /api/v1/users/me/plan/usage-limits` must prove an **active ClinePass
+  subscription**. A valid login without that entitlement is retained for diagnosis but is not
+  routable and cannot discover models.
+- Discovery: `GET /api/v1/ai/cline/recommended-models`, importing **only the `clinePass` group**.
+  The `recommended` and `free` groups belong to the future, separate `cline` API-key provider;
+  they must never leak into this OAuth integration.
+- Refresh: `POST /api/v1/auth/refresh` (`{refreshToken, grantType:"refresh_token"}`). Only an
+  explicit invalid/expired/revoked refresh-token marker makes the account expired; an ambiguous
+  gateway `401/403` remains transient. A definitively dead token requires targeted reauthentication.
 - **Auth header quirk: token prefixed `workos:`; extra headers `HTTP-Referer:
   https://cline.bot`, `X-Title: Cline`, `X-CLIENT-TYPE: venom-router`.**
 - Quota: `/api/v1/users/{id}/balance`, `/usages`, `/api/v1/users/me/plan/usage-limits`.
-- Funding: **paid**, and **locked** (USD balance/credits) — override rejected.
+- Funding: provider policy is **paid** and **locked** (USD balance/credits) — override rejected.
+  This classification never substitutes for the active-subscription eligibility check above.
 
 #### `xai` — xAI (Grok) — **proven** (Grok Build OAuth)
 - OAuth2 + PKCE (S256). Model base `https://api.x.ai/v1`.
@@ -400,7 +414,7 @@ funding set per account. This is how anything OpenAI-shaped gets added with no c
 | claude-code | Built-in | OAuth2 (PKCE) | `account.uuid` | `/v1/models` (+beta hdrs) | 5h/7d usage | provider evidence |
 | codex | Built-in | OAuth2 (fixed redirect) | `chatgpt_account_id` | `/wham/usage` | wham/usage + headers | provider evidence |
 | github-copilot | Built-in | OAuth2 (two-token) | `user.id` | `models.github.ai/catalog` | copilot_internal (best-effort) | provider evidence |
-| clinepass | Built-in | OAuth (workos: prefix) | `clineUserId` | `/recommended-models` | balance/usages/limits | **paid (locked)** |
+| clinepass | Built-in | OAuth (workos: prefix) | `clineUserId` | `/recommended-models` (`clinePass` only) | balance/usages/limits | **paid (locked)** |
 | xai | Built-in | OAuth2 (PKCE, Grok Build) | JWT `sub` | `/v1/language-models` | billing/credits | provider evidence |
 | *(custom)* | Custom | OpenAI-Compatible | fingerprint | `{base}/v1/models` | — | per account |
 

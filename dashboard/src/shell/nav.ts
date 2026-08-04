@@ -48,9 +48,9 @@ export const NAV: NavItem[] = [
   {
     group: "Operate",
     key: "models",
-    label: "Models",
+    label: "Live Models",
     icon: "box",
-    description: "Canonical model intelligence from connected provider accounts.",
+    description: "Models currently available through healthy connected provider accounts.",
   },
   {
     group: "Operate",
@@ -118,7 +118,11 @@ export const NAV_SECTIONS = NAV_GROUPS.map((group) => ({
   key: group.toLowerCase(),
   label: group,
   icon: NAV_GROUP_ICONS[group],
-  items: NAV.filter((item) => item.group === group).map(({ key, label, icon }) => ({ key, label, icon })),
+  items: NAV.filter((item) => item.group === group).map(({ key, label, icon }) => ({
+    key,
+    label,
+    icon,
+  })),
 }));
 
 export function navItemByKey(key: string): NavItem | undefined {

@@ -185,7 +185,9 @@ describe("AppShell — navigation", () => {
     expect(primary.getByRole("link", { name: /providers/i }).getAttribute("aria-current")).toBe(
       "page",
     );
-    expect(primary.getByRole("link", { name: /overview/i }).getAttribute("aria-current")).toBeNull();
+    expect(
+      primary.getByRole("link", { name: /overview/i }).getAttribute("aria-current"),
+    ).toBeNull();
   });
 });
 
@@ -262,7 +264,10 @@ describe("AppShell — responsive section deck", () => {
     for (const item of NAV) {
       fireEvent.click(primary.getByRole("link", { name: new RegExp(`^${item.label}$`, "i") }));
       // The shared planned-surface treatment is the tell that a key has no surface.
-      expect(screen.queryByText("Planned surface"), `${item.key} is still a placeholder`).toBeNull();
+      expect(
+        screen.queryByText("Planned surface"),
+        `${item.key} is still a placeholder`,
+      ).toBeNull();
     }
   });
 
@@ -290,14 +295,19 @@ describe("AppShell — URL routing (each page its own link, refresh stays put)",
   it("writes the page's own path to the URL bar when navigating", async () => {
     vi.stubGlobal("fetch", baseHandlers());
     render(
-      <AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />,
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
     );
     const primary = within(await screen.findByRole("navigation", { name: /primary/i }));
 
     fireEvent.click(primary.getByRole("link", { name: /^providers$/i }));
     expect(window.location.pathname).toBe("/providers");
 
-    fireEvent.click(primary.getByRole("link", { name: /^models$/i }));
+    fireEvent.click(primary.getByRole("link", { name: /^live models$/i }));
     expect(window.location.pathname).toBe("/models");
   });
 
@@ -306,29 +316,47 @@ describe("AppShell — URL routing (each page its own link, refresh stays put)",
     // Simulate the browser reloading the app while on /models.
     window.history.replaceState(null, "", "/models");
     render(
-      <AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />,
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
     );
     const primary = within(await screen.findByRole("navigation", { name: /primary/i }));
-    expect(primary.getByRole("link", { name: /^models$/i }).getAttribute("aria-current")).toBe("page");
+    expect(primary.getByRole("link", { name: /^live models$/i }).getAttribute("aria-current")).toBe(
+      "page",
+    );
     // And NOT the default page.
-    expect(primary.getByRole("link", { name: /^overview$/i }).getAttribute("aria-current")).toBeNull();
+    expect(
+      primary.getByRole("link", { name: /^overview$/i }).getAttribute("aria-current"),
+    ).toBeNull();
   });
 
   it("follows browser back/forward (popstate) to whatever page the URL now names", async () => {
     vi.stubGlobal("fetch", baseHandlers());
     render(
-      <AppShell session={SESSION} csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onLoggedOut={vi.fn()} />,
+      <AppShell
+        session={SESSION}
+        csrfToken={CSRF_TOKEN}
+        onSessionExpired={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
     );
     const primary = within(await screen.findByRole("navigation", { name: /primary/i }));
     fireEvent.click(primary.getByRole("link", { name: /^providers$/i }));
-    expect(primary.getByRole("link", { name: /^providers$/i }).getAttribute("aria-current")).toBe("page");
+    expect(primary.getByRole("link", { name: /^providers$/i }).getAttribute("aria-current")).toBe(
+      "page",
+    );
 
     // The browser Back button restores the previous URL then fires popstate.
     window.history.replaceState(null, "", "/");
     window.dispatchEvent(new PopStateEvent("popstate"));
 
     await waitFor(() =>
-      expect(primary.getByRole("link", { name: /^overview$/i }).getAttribute("aria-current")).toBe("page"),
+      expect(primary.getByRole("link", { name: /^overview$/i }).getAttribute("aria-current")).toBe(
+        "page",
+      ),
     );
   });
 });
@@ -371,10 +399,10 @@ describe("AppShell — surface mounting", () => {
     );
     await screen.findByRole("link", { name: /overview/i });
 
-    fireEvent.click(screen.getByRole("link", { name: /^models$/i }));
+    fireEvent.click(screen.getByRole("link", { name: /^live models$/i }));
 
     // The Models surface's own empty state, not the shell placeholder.
-    await screen.findByText(/no models discovered/i);
+    await screen.findByText("No live models");
     expect(screen.queryByText(/coming in a later phase/i)).toBeNull();
   });
 
@@ -782,8 +810,36 @@ describe("AppShell — global breadcrumb", () => {
           jsonResponse(200, {
             data: {
               providers: [
-                { id: "opencode-zen", display_name: "OpenCode Zen", description: "API-key.", auth_mode: "api_key", funding: { mode: "owner_policy", locked: false, non_expiring: false, fixed: null }, capabilities: [], configured: true, missing_env: [] },
-                { id: "agnes-ai", display_name: "Agnes AI", description: "API-key.", auth_mode: "api_key", funding: { mode: "owner_policy", locked: false, non_expiring: false, fixed: null }, capabilities: [], configured: true, missing_env: [] },
+                {
+                  id: "opencode-zen",
+                  display_name: "OpenCode Zen",
+                  description: "API-key.",
+                  auth_mode: "api_key",
+                  funding: {
+                    mode: "owner_policy",
+                    locked: false,
+                    non_expiring: false,
+                    fixed: null,
+                  },
+                  capabilities: [],
+                  configured: true,
+                  missing_env: [],
+                },
+                {
+                  id: "agnes-ai",
+                  display_name: "Agnes AI",
+                  description: "API-key.",
+                  auth_mode: "api_key",
+                  funding: {
+                    mode: "owner_policy",
+                    locked: false,
+                    non_expiring: false,
+                    fixed: null,
+                  },
+                  capabilities: [],
+                  configured: true,
+                  missing_env: [],
+                },
               ],
             },
           }),
@@ -791,7 +847,27 @@ describe("AppShell — global breadcrumb", () => {
           jsonResponse(200, {
             data: {
               accounts: [
-                { id: "acct-1", provider: "opencode-zen", external_id: "ext-1", auth_type: "api_key", connection_state: "connected", health_state: "healthy", reauth_in_progress: false, identity: { email: undefined, plan: "Free" }, funding: { funding: "free", source: "owner_policy", locked: false, version: "v1" }, display_status: "healthy", eligibility: { eligible: true }, quota: [], created_at: "2026-07-01T00:00:00Z", updated_at: "2026-07-01T00:00:00Z" },
+                {
+                  id: "acct-1",
+                  provider: "opencode-zen",
+                  external_id: "ext-1",
+                  auth_type: "api_key",
+                  connection_state: "connected",
+                  health_state: "healthy",
+                  reauth_in_progress: false,
+                  identity: { email: undefined, plan: "Free" },
+                  funding: {
+                    funding: "free",
+                    source: "owner_policy",
+                    locked: false,
+                    version: "v1",
+                  },
+                  display_status: "healthy",
+                  eligibility: { eligible: true },
+                  quota: [],
+                  created_at: "2026-07-01T00:00:00Z",
+                  updated_at: "2026-07-01T00:00:00Z",
+                },
               ],
             },
           }),
@@ -814,8 +890,12 @@ describe("AppShell — global breadcrumb", () => {
     await screen.findByText("OpenCode Zen");
     expect(screen.queryByText("Agnes AI")).toBeNull();
 
-    expect(screen.getByRole("button", { name: /active providers/i }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: /all integrations/i }).getAttribute("aria-pressed")).toBe("false");
+    expect(
+      screen.getByRole("button", { name: /active providers/i }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen.getByRole("button", { name: /all integrations/i }).getAttribute("aria-pressed"),
+    ).toBe("false");
 
     // Click "All Integrations" — the full catalog returns.
     fireEvent.click(screen.getByRole("button", { name: /all integrations/i }));
@@ -855,12 +935,12 @@ describe("AppShell — global breadcrumb", () => {
     );
     await screen.findByRole("link", { name: /overview/i });
 
-    fireEvent.click(screen.getByRole("link", { name: /^models$/i }));
+    fireEvent.click(screen.getByRole("link", { name: /^live models$/i }));
 
     const crumbs = screen.getByRole("navigation", { name: /breadcrumb/i });
     within(crumbs).getByText("Dashboard");
     within(crumbs).getByText("Operate");
-    expect(crumbs.querySelector('[aria-current="page"]')?.textContent).toBe("Models");
+    expect(crumbs.querySelector('[aria-current="page"]')?.textContent).toBe("Live Models");
   });
 
   it("mirrors the providers auth filter in the breadcrumb's third segment", async () => {
@@ -880,11 +960,14 @@ describe("AppShell — global breadcrumb", () => {
 
     // The documented trail: Dashboard / Providers / <filter> Providers.
     const currentCrumb = () =>
-      screen.getByRole("navigation", { name: /breadcrumb/i }).querySelector('[aria-current="page"]')?.textContent;
+      screen.getByRole("navigation", { name: /breadcrumb/i }).querySelector('[aria-current="page"]')
+        ?.textContent;
     within(screen.getByRole("navigation", { name: /breadcrumb/i })).getByText("Providers");
     expect(currentCrumb()).toBe("All Providers");
 
-    const tabs = await screen.findByRole("group", { name: /filter providers by authentication type/i });
+    const tabs = await screen.findByRole("group", {
+      name: /filter providers by authentication type/i,
+    });
     fireEvent.click(within(tabs).getByRole("button", { name: "OAuth" }));
     expect(currentCrumb()).toBe("OAuth Providers");
 

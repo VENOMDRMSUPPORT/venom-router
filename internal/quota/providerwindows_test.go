@@ -121,6 +121,50 @@ func TestWindowsFromProviderResult_PreservesUnknowns(t *testing.T) {
 	}
 }
 
+// TestWindowsFromProviderResult_PercentUnitSemantics proves the percent
+// unit's definitional completion: a percent window reporting one side gets
+// Total=100 and the 100−x complement (clinepass/claude-code report
+// percentUsed; a remaining-only reporter works symmetrically) — while a
+// percent window with NEITHER side stays fully unknown, so "no utilization
+// data" can never read as full headroom (05 §4 fail-closed).
+func TestWindowsFromProviderResult_PercentUnitSemantics(t *testing.T) {
+	used := 37.0
+	remaining := 25.0
+	res := providers.QuotaResult{Windows: []providers.QuotaWindow{
+		{Unit: "percent", WindowType: "rolling_5h", Used: &used},
+		{Unit: "percent", WindowType: "rolling_7d", Remaining: &remaining},
+		{Unit: "percent", WindowType: "rolling_30d"}, // neither side reported
+	}}
+	specs, err := WindowsFromProviderResult(res, time.Unix(5000, 0))
+	if err != nil {
+		t.Fatalf("WindowsFromProviderResult: %v", err)
+	}
+	if len(specs) != 3 {
+		t.Fatalf("len(specs) = %d, want 3", len(specs))
+	}
+
+	usedSide := specs[0]
+	if usedSide.Total == nil || *usedSide.Total != 100 {
+		t.Fatalf("used-side Total = %v, want 100 (percent scale)", usedSide.Total)
+	}
+	if usedSide.Remaining == nil || *usedSide.Remaining != 63 {
+		t.Fatalf("used-side Remaining = %v, want 63 (100-37)", usedSide.Remaining)
+	}
+
+	remSide := specs[1]
+	if remSide.Total == nil || *remSide.Total != 100 {
+		t.Fatalf("remaining-side Total = %v, want 100", remSide.Total)
+	}
+	if remSide.Used == nil || *remSide.Used != 75 {
+		t.Fatalf("remaining-side Used = %v, want 75 (100-25)", remSide.Used)
+	}
+
+	unknown := specs[2]
+	if unknown.Used != nil || unknown.Remaining != nil || unknown.Total != nil {
+		t.Fatalf("no-data percent window = %+v, want Used/Remaining/Total all nil (never fabricated)", unknown)
+	}
+}
+
 // TestCooldownTrigger_Validate is table-driven over the fail-closed
 // cases plus the one valid trigger.
 func TestCooldownTrigger_Validate(t *testing.T) {

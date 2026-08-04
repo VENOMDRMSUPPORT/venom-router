@@ -290,6 +290,60 @@ func TestCatalogRepo_ListOfferings_CursorPagination(t *testing.T) {
 	}
 }
 
+// TestCatalogRepo_ListOfferings_LiveOnlyFiltersOperationallyDeadRows catches a
+// catalog read presenting rows that the router cannot use. The unfiltered read
+// remains available to storage internals, while LiveOnly applies the exact
+// owner-console contract: available offering + connected healthy account + no
+// reauthentication in progress.
+func TestCatalogRepo_ListOfferings_LiveOnlyFiltersOperationallyDeadRows(t *testing.T) {
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-live-only")
+	insertModelFull(t, db, "model-live-only", "ck-live-only", "Live Only", nil, nil, nil)
+
+	states := []struct {
+		accountID       string
+		connection      string
+		health          string
+		reauth          int
+		availability    string
+		shouldBeVisible bool
+	}{
+		{"acct-live", "connected", "healthy", 0, "available", true},
+		{"acct-degraded", "connected", "degraded", 0, "available", false},
+		{"acct-expired", "connected", "expired", 0, "available", false},
+		{"acct-stopped", "stopped", "healthy", 0, "available", false},
+		{"acct-reauth", "connected", "healthy", 1, "available", false},
+		{"acct-withdrawn", "connected", "healthy", 0, "withdrawn", false},
+	}
+	for _, state := range states {
+		insertAccount(t, db, state.accountID, "prov-live-only")
+		mustExec(t, db, `UPDATE accounts SET connection_state = ?, health_state = ?, reauth_in_progress = ? WHERE id = ?`, state.connection, state.health, state.reauth, state.accountID)
+		providerModelID := state.accountID + "-model"
+		insertOfferingFull(t, db, state.accountID, "prov-live-only", providerModelID, "model-live-only", nil, nil, nil, nil, nil, 0, 0)
+		mustExec(t, db, `UPDATE account_model_offerings SET availability = ? WHERE account_id = ?`, state.availability, state.accountID)
+	}
+
+	repo := NewCatalogRepo(db)
+	raw, _, err := repo.ListOfferings(context.Background(), CatalogListParams{Limit: 20})
+	if err != nil {
+		t.Fatalf("raw ListOfferings: %v", err)
+	}
+	if len(raw) != len(states) {
+		t.Fatalf("raw rows = %d, want %d so the fixture proves filtering rather than missing data", len(raw), len(states))
+	}
+
+	live, next, err := repo.ListOfferings(context.Background(), CatalogListParams{LiveOnly: true, Limit: 20})
+	if err != nil {
+		t.Fatalf("live ListOfferings: %v", err)
+	}
+	if next != "" {
+		t.Fatalf("next = %q, want empty", next)
+	}
+	if len(live) != 1 || live[0].AccountID != "acct-live" {
+		t.Fatalf("live rows = %+v, want only acct-live", live)
+	}
+}
+
 // TestCatalogRepo_GetOperationCertification_UnknownIDNotFound proves an
 // unknown offering_operation id resolves to ok=false, never an error.
 func TestCatalogRepo_GetOperationCertification_UnknownIDNotFound(t *testing.T) {

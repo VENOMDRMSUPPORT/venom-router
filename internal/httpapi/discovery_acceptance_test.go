@@ -404,9 +404,20 @@ func TestP3aGate_ModelsReflectsCatalogAndCertification(t *testing.T) {
 	const acct = "acct-p3a-cat"
 
 	// Two offerings sharing one canonical model: A (available, certified
-	// chat) and C (withdrawn, discovered chat) — proves grouping AND that
-	// a withdrawn offering still appears (04 §5: catalog visible, never
-	// filtered).
+	// chat) and C (withdrawn, discovered chat) — proves grouping AND the
+	// deliberate split between the two read surfaces:
+	//
+	//   /offerings — the per-account CATALOG view. Nothing is filtered: a
+	//     withdrawn offering still appears, because its sub-resources
+	//     (/offerings/{id}/probe, /certification) are HOW an offering earns
+	//     its way back to live, and filtering here would deadlock that.
+	//   /models    — the LIVE surface behind the Live Models page. It shows
+	//     only offerings that can serve a request right now, so the
+	//     withdrawn C is absent from the group.
+	//
+	// The owner set this contract explicitly (Live Models "is not a
+	// historical archive"); it supersedes this gate's original assertion
+	// that a withdrawn offering must appear on BOTH surfaces.
 	modelsSeedOffering(t, db, offeringSeed{
 		AccountID: acct, ProviderID: "prov-p3a-cat", ProviderModelID: "model-a", ModelID: "model-shared",
 		ModelDisplayName: "Shared Model",
@@ -484,16 +495,25 @@ func TestP3aGate_ModelsReflectsCatalogAndCertification(t *testing.T) {
 	if sharedGroup == nil {
 		t.Fatalf("no model-shared group in %+v", modelsEnv.Data)
 	}
-	if len(sharedGroup.Offerings) != 2 {
-		t.Fatalf("model-shared group offerings = %d, want 2", len(sharedGroup.Offerings))
+	// The LIVE surface carries only the servable offering. C is withdrawn,
+	// so it is absent here — while still present on /offerings above (that
+	// is what `c` decoded from). One catalog, two intentional projections.
+	if len(sharedGroup.Offerings) != 1 {
+		t.Fatalf("model-shared group offerings = %d, want 1 (live only; withdrawn model-c excluded)", len(sharedGroup.Offerings))
+	}
+	for _, o := range sharedGroup.Offerings {
+		if o.ProviderModelID == "model-c" {
+			t.Fatalf("/models exposed withdrawn offering model-c: %+v", o)
+		}
 	}
 	groupedA := p3aFindOffering(t, sharedGroup.Offerings, "model-a")
-	groupedC := p3aFindOffering(t, sharedGroup.Offerings, "model-c")
+	// Same underlying row on both surfaces: the live projection must not
+	// silently reshape the offering it does expose.
 	if !jsonEqual(t, p3aStableOffering(groupedA), p3aStableOffering(a)) {
 		t.Fatalf("grouped model-a differs from /offerings' model-a:\ngrouped = %+v\noffering = %+v", groupedA, a)
 	}
-	if !jsonEqual(t, p3aStableOffering(groupedC), p3aStableOffering(c)) {
-		t.Fatalf("grouped model-c differs from /offerings' model-c:\ngrouped = %+v\noffering = %+v", groupedC, c)
+	if c.ProviderModelID != "model-c" {
+		t.Fatalf("/offerings must still carry the withdrawn model-c (catalog view); got %+v", c)
 	}
 
 	// GET /offerings/{id}/certification for A's chat op shares the SAME

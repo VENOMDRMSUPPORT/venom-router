@@ -248,3 +248,31 @@ func (h *QuotaHandler) runQuotaRefresh(ctx context.Context, jobID, accountID, cr
 	// provider payload, window count, or content of any kind.
 	_ = h.jobs.MarkTerminal(context.Background(), jobID, storage.JobCompleted, h.now(), accountID, nil, storage.DefaultJobRetention)
 }
+
+// TriggerBackgroundQuota fires a best-effort quota refresh for accountID after
+// OAuth connect (legacy sync-on-connect). Setup failures are swallowed so the
+// connect path is never disturbed — mirrors DiscoveryHandler.TriggerBackgroundDiscovery.
+func (h *QuotaHandler) TriggerBackgroundQuota(ctx context.Context, accountID string) {
+	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), quotaSyncTimeout)
+	go func() {
+		defer cancel()
+
+		account, ok, err := h.accounts.GetByID(runCtx, accountID)
+		if err != nil || !ok {
+			return
+		}
+		adapter, ok := h.reg.QuotaAdapter(providers.ProviderID(account.ProviderID))
+		if !ok {
+			return
+		}
+		credentialID, ok := activeCredentialIDFor(runCtx, h.credentials, account.ID)
+		if !ok {
+			return
+		}
+		jobID := h.newID()
+		if err := h.jobs.Create(runCtx, jobID, string(storage.JobKindQuotaSync), h.now()); err != nil {
+			return
+		}
+		h.runQuotaRefresh(runCtx, jobID, account.ID, credentialID, adapter)
+	}()
+}

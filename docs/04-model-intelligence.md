@@ -197,6 +197,11 @@ The rest of the system (the `/models` endpoint, routing, tier status, diagnostic
 shared "effective offering" projection** so the dashboard and the router can never disagree. No
 consumer re-derives context, capabilities, quality, or eligibility on its own.
 
+The shared projection fixes how each offering is **rendered**, not which offerings are **listed**:
+`GET /offerings` is the unfiltered catalog view and `GET /models` is the live-only surface (a
+withdrawn offering, or one owned by an unhealthy account, appears on the first and not the second).
+See [09 §3.7b](09-control-api.md#37b-get-models-vs-get-offerings--one-projection-two-membership-scopes).
+
 ---
 
 ## 4. Evidence precedence

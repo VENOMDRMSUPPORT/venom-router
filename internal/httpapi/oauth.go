@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -33,7 +34,16 @@ type OAuthHandler struct {
 	cache       *oauthResultCache
 	reauth      *reauthBindingCache
 	audit       *auditEmitter
+	discovery   discoveryTrigger
+	quota       quotaTrigger
 	now         func() time.Time
+}
+
+// quotaTrigger fires a best-effort background quota refresh for a newly
+// connected OAuth account (legacy sync-on-connect). *QuotaHandler implements
+// it; a nil trigger disables auto-quota.
+type quotaTrigger interface {
+	TriggerBackgroundQuota(ctx context.Context, accountID string)
 }
 
 // NewOAuthHandler builds the handler. allowedHost is the same
@@ -49,6 +59,22 @@ func NewOAuthHandler(service *application.OAuthEnrollmentService, reg *providers
 	return &OAuthHandler{
 		service: service, reg: reg, tx: tx, accounts: accounts, allowedHost: allowedHost,
 		cache: newOAuthResultCache(), reauth: newReauthBindingCache(), audit: audit, now: time.Now,
+	}
+}
+
+// SetDiscoveryTrigger wires auto model-discovery after a successful OAuth
+// connect (mirrors EnrollmentHandler.SetDiscoveryTrigger).
+func (h *OAuthHandler) SetDiscoveryTrigger(t discoveryTrigger) { h.discovery = t }
+
+// SetQuotaTrigger wires auto quota refresh after a successful OAuth connect.
+func (h *OAuthHandler) SetQuotaTrigger(t quotaTrigger) { h.quota = t }
+
+func (h *OAuthHandler) triggerPostConnectSync(ctx context.Context, accountID string) {
+	if h.discovery != nil {
+		h.discovery.TriggerBackgroundDiscovery(ctx, accountID)
+	}
+	if h.quota != nil {
+		h.quota.TriggerBackgroundQuota(ctx, accountID)
 	}
 }
 
@@ -94,16 +120,10 @@ func (h *OAuthHandler) ServeBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	omitState := false
-	if om, ok := adapter.(providers.OmitStateFromCallback); ok && om.OmitStateFromCallback() {
-		omitState = true
-	}
-
 	result, err := h.service.Begin(r.Context(), application.BeginOAuthParams{
-		ProviderID:            id,
-		Adapter:               adapter,
-		RedirectURI:           h.callbackURL(),
-		OmitStateFromCallback: omitState,
+		ProviderID:  id,
+		Adapter:     adapter,
+		RedirectURI: h.callbackURL(),
 	})
 	if err != nil {
 		h.audit.Emit(r.Context(), AuditActionOAuthBegin, AuditResultFailure, AuditResourceProvider, id, "internal_error")
@@ -147,15 +167,26 @@ func (h *OAuthHandler) ServeCallback(w http.ResponseWriter, r *http.Request) {
 	// names no row fails closed exactly like an unknown provider on the
 	// legacy provider-specific path — no oracle, no guessed provider.
 	//
-	// For providers that omit `state` (providers.OmitStateFromCallback,
-	// e.g. clinepass), the `state` query parameter carries the unguessable
-	// TRANSACTION id instead (Begin built the redirect_uri as
-	// callback?state=<txid>, and the provider preserves query params it
-	// does not consume while appending `code`). The provider is then
-	// resolved by transaction id, and Complete consumes by transaction id.
+	// For providers that omit `state` (e.g. clinepass), the callback still
+	// carries `code`. We cannot safely complete server-side without a
+	// binding, so we render a relay page: the dashboard opener (which holds
+	// the unguessable transaction_id from Begin) finishes via
+	// POST /oauth/complete — the proven legacy pattern.
 	providerID := r.PathValue("provider")
 	stateIsTransactionID := false
 	if providerID == "" {
+		// ClinePass omits state entirely: relay to the opener so it can
+		// complete with the transaction_id from Begin. If state IS present
+		// but unknown, fail closed — never treat a forged state as a relay.
+		if state == "" {
+			if code != "" {
+				renderOAuthRelayPage(w)
+				return
+			}
+			h.audit.Emit(r.Context(), AuditActionOAuthComplete, AuditResultFailure, AuditResourceProvider, "", "not_found")
+			renderOAuthCallbackPage(w, false)
+			return
+		}
 		if pid, ok, err := h.tx.ProviderIDByTransactionID(r.Context(), state); err == nil && ok {
 			providerID = pid
 			stateIsTransactionID = true
@@ -169,7 +200,6 @@ func (h *OAuthHandler) ServeCallback(w http.ResponseWriter, r *http.Request) {
 			providerID = pid
 		}
 	}
-
 	adapter, ok := h.reg.OAuthAdapter(providers.ProviderID(providerID))
 	if !ok {
 		h.audit.Emit(r.Context(), AuditActionOAuthComplete, AuditResultFailure, AuditResourceProvider, providerID, "not_found")
@@ -196,6 +226,7 @@ func (h *OAuthHandler) ServeCallback(w http.ResponseWriter, r *http.Request) {
 		reauthAccountID = binding.accountID
 	}
 
+	fundingFixed, fundingLocked := catalogFundingFixedFor(providerID)
 	completeParams := application.CompleteOAuthParams{
 		ProviderID:      providerID,
 		Adapter:         adapter,
@@ -203,15 +234,14 @@ func (h *OAuthHandler) ServeCallback(w http.ResponseWriter, r *http.Request) {
 		Code:            code,
 		RedirectURI:     h.callbackURL(),
 		FundingMode:     catalogFundingModeFor(providerID),
+		FundingFixed:    fundingFixed,
+		FundingLocked:   fundingLocked,
 		ReauthAccountID: reauthAccountID,
 	}
 	if stateIsTransactionID {
-		// The state query parameter IS the transaction id; the redirect_uri
-		// must match the one Begin built (callback?state=<txid>), and the
-		// service consumes the row by transaction id.
+		// Legacy recovery path: state query carried a transaction id.
 		completeParams.RawState = ""
 		completeParams.TransactionID = state
-		completeParams.RedirectURI = h.callbackURL() + "?state=" + state
 	}
 	txID, account, err := h.service.Complete(r.Context(), completeParams)
 	if err != nil {
@@ -225,6 +255,7 @@ func (h *OAuthHandler) ServeCallback(w http.ResponseWriter, r *http.Request) {
 
 	h.cache.storeCompleted(txID, account.ID)
 	h.audit.Emit(r.Context(), AuditActionOAuthComplete, AuditResultSuccess, AuditResourceAccount, account.ID, "")
+	h.triggerPostConnectSync(r.Context(), account.ID)
 	renderOAuthCallbackPage(w, true)
 }
 
@@ -292,14 +323,12 @@ type completeCodeJSON struct {
 
 // ServeCompleteCode implements POST /api/control/v1/oauth/complete —
 // owner-session + CSRF gated like every mutating control route. It is the
-// paste-completion leg for providers whose client NEVER redirects back to
-// Venom (providers.RequiresManualCode — claude-code is the proven case): the
-// owner authorizes on the provider's HOSTED page, copies the displayed code,
-// and the dashboard submits it here. The transaction is resolved by id, the
-// provider from the transaction row, and the code is exchanged exactly as the
-// browser callback would — replay-safe (consume-before-exchange), code never
-// persisted, terminal outcome cached for the status endpoint. The response
-// mirrors the status payload so the UI can react without a second call.
+// opener-driven completion leg used when the provider omits `state` from the
+// callback (clinepass) or when the dashboard already holds the transaction id
+// from Begin (legacy pattern). The transaction is resolved by id, the provider
+// from the transaction row, and the code is exchanged exactly as the browser
+// callback would — replay-safe (consume-before-exchange), code never
+// persisted, terminal outcome cached for the status endpoint.
 func (h *OAuthHandler) ServeCompleteCode(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeAuthError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", false)
@@ -345,6 +374,7 @@ func (h *OAuthHandler) ServeCompleteCode(w http.ResponseWriter, r *http.Request)
 		reauthAccountID = binding.accountID
 	}
 
+	fundingFixed, fundingLocked := catalogFundingFixedFor(providerID)
 	txID, account, err := h.service.Complete(r.Context(), application.CompleteOAuthParams{
 		ProviderID:      providerID,
 		Adapter:         adapter,
@@ -352,6 +382,8 @@ func (h *OAuthHandler) ServeCompleteCode(w http.ResponseWriter, r *http.Request)
 		Code:            req.Code,
 		RedirectURI:     h.callbackURL(),
 		FundingMode:     catalogFundingModeFor(providerID),
+		FundingFixed:    fundingFixed,
+		FundingLocked:   fundingLocked,
 		ReauthAccountID: reauthAccountID,
 	})
 	if err != nil {
@@ -365,6 +397,7 @@ func (h *OAuthHandler) ServeCompleteCode(w http.ResponseWriter, r *http.Request)
 
 	h.cache.storeCompleted(txID, account.ID)
 	h.audit.Emit(r.Context(), AuditActionOAuthComplete, AuditResultSuccess, AuditResourceAccount, account.ID, "")
+	h.triggerPostConnectSync(r.Context(), account.ID)
 	writeData(w, http.StatusOK, statusJSON{Status: "completed", AccountID: account.ID})
 }
 
@@ -422,16 +455,10 @@ func (h *OAuthHandler) ServeReauthBegin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	omitState := false
-	if om, ok := adapter.(providers.OmitStateFromCallback); ok && om.OmitStateFromCallback() {
-		omitState = true
-	}
-
 	result, err := h.service.Begin(r.Context(), application.BeginOAuthParams{
-		ProviderID:            acct.ProviderID,
-		Adapter:               adapter,
-		RedirectURI:           h.callbackURL(),
-		OmitStateFromCallback: omitState,
+		ProviderID:  acct.ProviderID,
+		Adapter:     adapter,
+		RedirectURI: h.callbackURL(),
 	})
 	if err != nil {
 		h.audit.Emit(r.Context(), AuditActionReauthBegin, AuditResultFailure, AuditResourceAccount, id, "internal_error")
@@ -515,6 +542,39 @@ func renderOAuthCallbackPage(w http.ResponseWriter, ok bool) {
 	_, _ = w.Write([]byte("<!doctype html><html><body>Connection failed. You may close this window and try again.</body></html>"))
 }
 
+// renderOAuthRelayPage is the legacy-style callback page for providers that
+// omit `state` (or whose state cannot be resolved): it relays code/state to
+// the opener via postMessage + localStorage so the dashboard can finish via
+// POST /oauth/complete with the transaction_id it already holds. The auth
+// code appears only in the URL the provider already redirected to — never in
+// a Venom API log line from this handler.
+func renderOAuthRelayPage(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`<!doctype html><html><body>
+<p>Sign-in complete. Returning to Venom…</p>
+<script>
+(function () {
+  var p = new URLSearchParams(location.search);
+  var data = {
+    code: p.get("code"),
+    state: p.get("state"),
+    error: p.get("error"),
+    error_description: p.get("error_description")
+  };
+  var msg = { type: "venom_oauth_callback", data: data };
+  if (window.opener) {
+    try { window.opener.postMessage(msg, "*"); } catch (e) {}
+  }
+  try {
+    localStorage.setItem("venom_oauth_callback", JSON.stringify(Object.assign({}, data, { timestamp: Date.now() })));
+  } catch (e) {}
+  setTimeout(function () { try { window.close(); } catch (e) {} }, 400);
+})();
+</script>
+</body></html>`))
+}
+
 // catalogFundingModeFor translates providerID's catalog FundingPolicy.Mode
 // (internal/providers's own enum, since providers must not import
 // accounts/domain) into the accounts/domain.FundingMode
@@ -523,6 +583,27 @@ func renderOAuthCallbackPage(w http.ResponseWriter, ok bool) {
 // than assuming) defaults to evidence_required — the same "cannot
 // classify" default the catalog itself uses for its own unclassifiable
 // entries.
+// catalogFundingFixedFor returns the catalog's declared FIXED funding value
+// and lock flag for id — meaningful only when catalogFundingModeFor(id) is
+// FundingModeFixed (e.g. clinepass: paid + locked). Unknown ids and
+// non-fixed modes report unknown/unlocked, which StampFirstEvidence then
+// treats honestly.
+func catalogFundingFixedFor(id string) (domain.Funding, bool) {
+	for _, e := range oauthCatalogEntries() {
+		if string(e.ID) != id {
+			continue
+		}
+		switch e.Funding.Fixed {
+		case providers.FundingFree:
+			return domain.FundingFree, e.Funding.Locked
+		case providers.FundingPaid:
+			return domain.FundingPaid, e.Funding.Locked
+		}
+		return domain.FundingUnknown, e.Funding.Locked
+	}
+	return domain.FundingUnknown, false
+}
+
 func catalogFundingModeFor(id string) domain.FundingMode {
 	for _, e := range oauthCatalogEntries() {
 		if string(e.ID) != id {

@@ -7,7 +7,6 @@ import (
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/execution"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
-	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
@@ -115,49 +114,14 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 		return networkGateJSON(allowedHost, auth.ownerSessionGate(handler))
 	}
 
-	// The provider registry (P2b-PROV-001) is empty this phase — no
-	// adapter registers until PROV-005/PROV-007 — so DerivedCapabilities
-	// correctly reports zero capabilities for every catalog entry. It is
-	// constructed here, at this composition point, rather than plumbed
-	// through ControlMux's signature, to keep this unit's boot ripple to
-	// zero call-site changes. It is shared with the OAuth handler below
-	// (P2b-PROV-006) rather than each building its own — one registry
-	// per process, exactly like every other composition-root singleton.
-	reg := providers.NewRegistry()
-	// antigravity (P2b-PROV-007) is the first live OAuth adapter this
-	// registry can hold — registered only when its confidential-client
-	// env vars are both configured; see registerAntigravityIfConfigured's
-	// doc comment for why its error is safely discardable here.
-	_ = registerAntigravityIfConfigured(reg)
-	// opencode-zen (P2b-PROV-005/CAPI-003) is the first live API-key
-	// adapter registered into this shared registry, over the real HTTP
-	// seams built in opencode_zen_seams.go — always registered
-	// unconditionally (unlike antigravity, opencode-zen needs no
-	// confidential-client env vars); see registerOpenCodeZen's doc
-	// comment for why its error is safely discardable here.
-	_ = registerOpenCodeZen(reg)
-	// ollama-cloud (P7-PROV-006) is an API-key adapter whose authentic
-	// validation is the native /api/me identity call; registered
-	// unconditionally over its real HTTP seams, same discardable-error
-	// rationale as opencode-zen.
-	_ = registerOllamaCloud(reg)
-	// agnes-ai (P7-PROV-008) is an OpenAI-compatible API-key adapter validated
-	// by the authentic two-step chat probe; registered unconditionally, same
-	// discardable-error rationale.
-	_ = registerAgnesAI(reg)
-	// nvidia-nim (P7-PROV-009) is an OpenAI-compatible API-key adapter, same
-	// two-step-probe validation and discardable-error rationale as agnes.
-	_ = registerNvidiaNIM(reg)
-	// gemini-cli (P7-PROV-007) uses Google's schema + the native_api transport
-	// (P7-EXEC-001); its listing authenticates directly (no two-step probe).
-	_ = registerGeminiCLI(reg)
-	// claude-code (P7-PROV-001) is a PUBLIC OAuth client (no secret), so it
-	// registers unconditionally; its route speaks the anthropic_messages wire
-	// schema over the native_oauth transport.
-	_ = registerClaudeCode(reg)
-	// clinepass (P7-PROV-004) is an OAuth extension-flow provider (public), its
-	// route speaks the openai_chat wire schema; funding is paid-locked.
-	_ = registerClinePass(reg)
+	// The provider registry (P2b-PROV-001) is constructed here, at this
+	// composition point, rather than plumbed through ControlMux's
+	// signature, to keep boot ripple to zero call-site changes. It is
+	// shared with the OAuth handler below (P2b-PROV-006) rather than each
+	// building its own — one registry per request path, built from the
+	// SAME registration list the background ticks use
+	// (newProviderRegistry, provider_registry.go).
+	reg := newProviderRegistry()
 
 	// audit is the shared P2b-OBS-001 emitter every mutating control
 	// route below records exactly one audit_event through (log is nil
@@ -336,6 +300,7 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// background discovery through this same handler (wired here because the
 	// DiscoveryHandler is constructed after the EnrollmentHandler above).
 	enrollmentHandler.SetDiscoveryTrigger(discoveryHandler)
+	oauthHandler.SetDiscoveryTrigger(discoveryHandler)
 
 	// Probe (P3c-DB-EXTRA/CAPI-001, 09 §3.8): POST /offerings/{id}/probe,
 	// async 202 + the canonical shared job surface, exactly like
@@ -424,6 +389,7 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	reconciliationRepo := storage.NewReconciliationRepo(db, nil, quota.DefaultReconciliationPolicy(), quotaLifecycleRepo, nil)
 	quotaHandler := NewQuotaHandler(accountRepo, credentialRepo, jobRepo, reconciliationRepo, reg, credentialService, audit, idem, newOAuthTransactionID, nil)
 	mux.Handle("/api/control/v1/accounts/{id}/quota", gated(quotaHandler.ServeQuotaRefresh))
+	oauthHandler.SetQuotaTrigger(quotaHandler)
 
 	// Reconciliation diagnostics (P3b-CAPI-002, 09 §2 / 05 §4 "Manual
 	// recovery"): GET /diagnostics/reconciliation (read model) and POST

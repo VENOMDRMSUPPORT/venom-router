@@ -1241,6 +1241,22 @@ export async function oauthBegin(providerId: string, csrfToken: string): Promise
   return resp.data;
 }
 
+/** POST /accounts/{id}/reauth/begin — starts a transaction bound to one
+ * existing OAuth account, so the callback cannot replace the wrong identity. */
+export async function oauthReauthBegin(
+  accountId: string,
+  csrfToken: string,
+): Promise<OAuthBeginResult> {
+  const resp = await request<{ data: OAuthBeginResult }>(
+    `/accounts/${encodeURIComponent(accountId)}/reauth/begin`,
+    {
+      method: "POST",
+      headers: { [CSRF_HEADER]: csrfToken },
+    },
+  );
+  return resp.data;
+}
+
 export interface OAuthStatusResult {
   status: "pending" | "completed" | "failed" | "expired";
   account_id?: string;

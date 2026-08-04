@@ -22,6 +22,12 @@ export interface ProviderMeta {
   description: string;
   /** Card call-to-action override (e.g. codex's "Login with ChatGPT"). */
   cta?: string;
+  /** How this provider's balance/credits quota window is denominated —
+   * presentation only. "usd" renders "$4.83"; absent renders the value
+   * with the server's own unit word. clinepass's balance is micro-USD
+   * converted to dollars server-side (verified against cline's own
+   * dashboard — docs/evidence/clinepass-legacy-wire-reference.md §5). */
+  balanceCurrency?: "usd";
 }
 
 export const PROVIDER_META: Record<string, ProviderMeta> = {
@@ -44,14 +50,16 @@ export const PROVIDER_META: Record<string, ProviderMeta> = {
     siteUrl: "https://chatgpt.com/codex",
     siteLabel: "https://chatgpt.com/codex",
     cardBadge: "CHATGPT OAUTH",
-    description: "OpenAI Codex OAuth provider for GPT-5.x coding models via the ChatGPT backend API.",
+    description:
+      "OpenAI Codex OAuth provider for GPT-5.x coding models via the ChatGPT backend API.",
     cta: "Login with ChatGPT",
   },
   clinepass: {
     siteUrl: "https://cline.bot",
     siteLabel: "https://cline.bot",
     cardBadge: "OAUTH 2 · PKCE",
-    description: "ClinePass OAuth provider for Cline extension accounts.",
+    description: "ClinePass OAuth for accounts with an active paid subscription.",
+    balanceCurrency: "usd",
   },
   "github-copilot": {
     siteUrl: "https://github.com/features/copilot",

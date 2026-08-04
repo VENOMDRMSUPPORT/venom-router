@@ -44,7 +44,8 @@ type ProviderWindowSpec struct {
 // the typed error rather than coercing it. WindowKey "" (the documented
 // "provider supplied none" case) still yields a deterministic synthetic
 // key via NormalizeWindowKey. Used/Remaining/Total/ResetAt are carried
-// through as-is — nil stays nil, unknown is never coerced to 0.
+// through as-is — nil stays nil, unknown is never coerced to 0 — with ONE
+// unit-semantic completion: see completePercentWindow.
 func WindowsFromProviderResult(res providers.QuotaResult, observedAt time.Time) ([]ProviderWindowSpec, error) {
 	specs := make([]ProviderWindowSpec, 0, len(res.Windows))
 	for _, w := range res.Windows {
@@ -56,7 +57,7 @@ func WindowsFromProviderResult(res providers.QuotaResult, observedAt time.Time) 
 		if err != nil {
 			return nil, err
 		}
-		specs = append(specs, ProviderWindowSpec{
+		spec := ProviderWindowSpec{
 			Source:          SourceProviderEvidence,
 			Unit:            unit,
 			WindowType:      w.WindowType,
@@ -69,7 +70,43 @@ func WindowsFromProviderResult(res providers.QuotaResult, observedAt time.Time) 
 			Confidence:      w.Confidence,
 			Freshness:       FreshnessFresh,
 			ObservedAt:      observedAt,
-		})
+		}
+		completePercentWindow(&spec)
+		specs = append(specs, spec)
 	}
 	return specs, nil
+}
+
+// completePercentWindow fills the DEFINITIONAL complement of a percent
+// window: the percent unit's scale is 0–100 by its own meaning, so when a
+// provider reports one side (clinepass/claude-code report percentUsed;
+// others may report remaining) the total is 100 and the other side is
+// 100−x. This is unit semantics, not fabrication — a percent window with
+// NEITHER side reported stays fully unknown (nil never becomes a number),
+// which keeps the "no utilization ⇒ no headroom claim" invariant intact.
+func completePercentWindow(spec *ProviderWindowSpec) {
+	if spec.Unit != UnitPercent {
+		return
+	}
+	if spec.Used == nil && spec.Remaining == nil {
+		return
+	}
+	if spec.Total == nil {
+		total := 100.0
+		spec.Total = &total
+	}
+	if spec.Remaining == nil {
+		remaining := 100 - *spec.Used
+		if remaining < 0 {
+			remaining = 0
+		}
+		spec.Remaining = &remaining
+	}
+	if spec.Used == nil {
+		used := 100 - *spec.Remaining
+		if used < 0 {
+			used = 0
+		}
+		spec.Used = &used
+	}
 }

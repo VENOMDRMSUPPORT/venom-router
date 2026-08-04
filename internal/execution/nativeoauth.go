@@ -386,6 +386,19 @@ func (openAIChatCodec) decodeSuccess(rawBody []byte, status int) (*NormalizedRes
 		return nil, fmt.Errorf("execution: openai-chat transport: decode response: %w", err)
 	}
 	if len(body.Choices) == 0 {
+		// clinepass wraps the NON-STREAM completion in its standard
+		// {success, data} envelope (data.choices[0].message — legacy wire
+		// reference, docs/evidence/clinepass-legacy-wire-reference.md §7);
+		// only the SSE stream is bare. Unwrap before failing.
+		var enveloped struct {
+			Success bool                        `json:"success"`
+			Data    *chatCompletionResponseBody `json:"data"`
+		}
+		if err := json.Unmarshal(rawBody, &enveloped); err == nil && enveloped.Data != nil {
+			body = *enveloped.Data
+		}
+	}
+	if len(body.Choices) == 0 {
 		return nil, errors.New("execution: openai-chat transport: no choices in response")
 	}
 	choice := body.Choices[0]
@@ -404,6 +417,17 @@ func (openAIChatCodec) decodeSuccess(rawBody []byte, status int) (*NormalizedRes
 func (openAIChatCodec) newHTTPError(status int, rawBody []byte, headers http.Header) *nativeOAuthHTTPError {
 	var e chatCompletionErrorBody
 	_ = json.Unmarshal(rawBody, &e)
+	if e.Error.Message == "" {
+		// clinepass envelope errors carry a plain string: {success:false,
+		// error:"..."} (legacy ClineEnvelope). Read it so the failure
+		// classifier sees the provider's wording, not an empty message.
+		var enveloped struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(rawBody, &enveloped); err == nil && enveloped.Error != "" {
+			e.Error.Message = enveloped.Error
+		}
+	}
 	return &nativeOAuthHTTPError{status: status, code: e.Error.Code, message: e.Error.Message, scope: e.Error.Scope, headers: headers.Clone()}
 }
 

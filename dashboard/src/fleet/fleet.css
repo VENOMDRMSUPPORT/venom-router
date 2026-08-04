@@ -131,6 +131,27 @@
   border-bottom: none;
 }
 
+/* Account-level attention is carried by a narrow semantic rail. Avoid a
+   full-row status fill: the row remains readable in both themes while the
+   warning/critical distinction stays obvious. */
+.vnd-account--subscription-required {
+  position: relative;
+  border-bottom-color: var(--status-warning-border);
+  box-shadow: inset 2px 0 0 var(--status-warning-fg);
+}
+
+.vnd-account--subscription-required .vnd-account-index {
+  background: var(--status-warning-bg);
+  border-color: var(--status-warning-border);
+  color: var(--status-warning-fg);
+}
+
+.vnd-account--expired {
+  position: relative;
+  border-bottom-color: var(--status-critical-border);
+  box-shadow: inset 2px 0 0 var(--status-critical-fg);
+}
+
 .vnd-account-index {
   display: inline-flex;
   align-items: center;
@@ -301,6 +322,13 @@
     transparent 4px,
     transparent 8px
   );
+}
+
+.vnd-quota-balance {
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  flex: none;
 }
 
 .vnd-quota-pct {
@@ -510,6 +538,23 @@
 
 @media (max-width: 900px) {
   .vnd-report-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .vnd-account { flex-wrap: wrap; }
-  .vnd-account-right { align-items: flex-start; }
+  .vnd-account {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .vnd-account-body {
+    flex-basis: calc(100% - 44px);
+  }
+  .vnd-account-right {
+    width: 100%;
+    padding-left: 40px;
+    align-items: flex-start;
+  }
+  .vnd-account-actions {
+    flex-wrap: wrap;
+  }
+  .vnd-account-meta {
+    white-space: normal;
+    flex-wrap: wrap;
+  }
 }

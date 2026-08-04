@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Badge, Button, Card, EmptyState, ErrorState, IconButton, Spinner } from "@venom/design-system/primitives";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  IconButton,
+  Spinner,
+} from "@venom/design-system/primitives";
 import {
   CapabilityTruthBadge,
   CertificationStateBadge,
@@ -111,7 +119,9 @@ function groupContext(g: ModelGroup): { tokens: number | null; provenance?: stri
     if (o.effective_context_tokens == null) continue;
     if (best == null || o.effective_context_tokens > (best.effective_context_tokens ?? 0)) best = o;
   }
-  return best ? { tokens: best.effective_context_tokens, provenance: best.context_provenance || undefined } : { tokens: null };
+  return best
+    ? { tokens: best.effective_context_tokens, provenance: best.context_provenance || undefined }
+    : { tokens: null };
 }
 
 /** The in-flight/finished outcome of an async trigger. `note` carries the
@@ -149,7 +159,11 @@ function CapabilityCell(props: { offeringKey: string; capability: OfferingCapabi
         )}
       </span>
       {inconsistent ? (
-        <Badge tone="warning" icon="triangle-alert" title="The API's routable flag disagrees with the certification state and capability truth it reported alongside it">
+        <Badge
+          tone="warning"
+          icon="triangle-alert"
+          title="The API's routable flag disagrees with the certification state and capability truth it reported alongside it"
+        >
           Inconsistent API answer
         </Badge>
       ) : null}
@@ -171,14 +185,20 @@ function OfferingRow(props: {
     <Card data-testid={`offering-${key}`}>
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <ModelIdentity name={o.display_name || o.provider_model_id} providerModelId={o.provider_model_id} />
+          <ModelIdentity
+            name={o.display_name || o.provider_model_id}
+            providerModelId={o.provider_model_id}
+          />
           <span className="vn-caption">
             {o.provider_id} · {o.account_id}
           </span>
         </div>
 
         <div className="flex flex-wrap items-center gap-4">
-          <span data-testid={`offering-availability-${key}`} className="flex flex-wrap items-center gap-2">
+          <span
+            data-testid={`offering-availability-${key}`}
+            className="flex flex-wrap items-center gap-2"
+          >
             {catalogOnly ? (
               // 04 §5: media-only models get a TERMINAL catalog_only state —
               // "visible, never entering the tiers, NOT counted as a failure".
@@ -206,7 +226,9 @@ function OfferingRow(props: {
                 never 0 and never a blank cell. */}
             <ContextWindowDisplay
               tokens={o.effective_context_tokens}
-              verified={o.context_provenance === "probe" || o.context_provenance === "owner_override"}
+              verified={
+                o.context_provenance === "probe" || o.context_provenance === "owner_override"
+              }
               source={o.context_provenance || undefined}
             />
           </span>
@@ -230,7 +252,9 @@ function OfferingRow(props: {
 
         <div className="flex flex-col gap-2">
           {o.capabilities.length === 0 ? (
-            <span className="vn-caption">No capability has been observed for this offering yet.</span>
+            <span className="vn-caption">
+              No capability has been observed for this offering yet.
+            </span>
           ) : (
             o.capabilities.map((c) => {
               // POST /offerings/{id}/probe is keyed by the OFFERING-OPERATION id,
@@ -245,7 +269,10 @@ function OfferingRow(props: {
               // the reason stated.
               const probeID = c.offering_operation_id;
               return (
-                <div key={c.operation} className="flex flex-wrap items-center justify-between gap-2">
+                <div
+                  key={c.operation}
+                  className="flex flex-wrap items-center justify-between gap-2"
+                >
                   <CapabilityCell offeringKey={key} capability={c} />
                   <Button
                     size="sm"
@@ -366,44 +393,56 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
 
   const handleDiscover = useCallback(
     (accountId: string) =>
-      runTrigger("Discovery", () => startDiscovery(accountId, csrfToken), (status) => ({
-        label: `Discovery job ${status}`,
-        note:
-          status === "completed"
-            ? "The catalog below has been reloaded from the server."
-            : "Discovery runs in the background — this is the job's status, not a result.",
-        tone: status === "failed" ? "critical" : status === "completed" ? "healthy" : "info",
-      })),
+      runTrigger(
+        "Discovery",
+        () => startDiscovery(accountId, csrfToken),
+        (status) => ({
+          label: `Discovery job ${status}`,
+          note:
+            status === "completed"
+              ? "The catalog below has been reloaded from the server."
+              : "Discovery runs in the background — this is the job's status, not a result.",
+          tone: status === "failed" ? "critical" : status === "completed" ? "healthy" : "info",
+        }),
+      ),
     [csrfToken, runTrigger],
   );
 
   const handleProbe = useCallback(
     (offeringOperationID: string) =>
-      runTrigger("Probe", () => startProbe(offeringOperationID, csrfToken), (status) => ({
-        label: `Probe job ${status}`,
-        note: "A probe measures capability truth; an infrastructure failure never flips it.",
-        tone: status === "failed" ? "critical" : status === "completed" ? "healthy" : "info",
-      })),
+      runTrigger(
+        "Probe",
+        () => startProbe(offeringOperationID, csrfToken),
+        (status) => ({
+          label: `Probe job ${status}`,
+          note: "A probe measures capability truth; an infrastructure failure never flips it.",
+          tone: status === "failed" ? "critical" : status === "completed" ? "healthy" : "info",
+        }),
+      ),
     [csrfToken, runTrigger],
   );
 
   const handleBenchmark = useCallback(
     (modelId: string) =>
-      runTrigger("Benchmark", () => startBenchmark(modelId, csrfToken), (status) => ({
-        label: `Benchmark job ${status}`,
-        // THE honesty requirement of this card. A benchmark can reach
-        // `completed` having written NO rating: the canonical-quality seam
-        // (QualityIndex) is nil in production, so the leaderboard always
-        // misses and the handler deliberately completes the job without
-        // fabricating a score. "Completed" therefore says nothing about
-        // whether a rating changed, and this note says so rather than letting
-        // the operator infer the flattering reading.
-        note:
-          status === "completed"
-            ? "Completed with no rating — no canonical quality source is wired yet, so a benchmark cannot produce one. Any rating shown above is unchanged."
-            : "Benchmarks run in the background — this is the job's status, not a rating.",
-        tone: status === "failed" ? "critical" : "info",
-      })),
+      runTrigger(
+        "Benchmark",
+        () => startBenchmark(modelId, csrfToken),
+        (status) => ({
+          label: `Benchmark job ${status}`,
+          // THE honesty requirement of this card. A benchmark can reach
+          // `completed` having written NO rating: the canonical-quality seam
+          // (QualityIndex) is nil in production, so the leaderboard always
+          // misses and the handler deliberately completes the job without
+          // fabricating a score. "Completed" therefore says nothing about
+          // whether a rating changed, and this note says so rather than letting
+          // the operator infer the flattering reading.
+          note:
+            status === "completed"
+              ? "Completed with no rating — no canonical quality source is wired yet, so a benchmark cannot produce one. Any rating shown above is unchanged."
+              : "Benchmarks run in the background — this is the job's status, not a rating.",
+          tone: status === "failed" ? "critical" : "info",
+        }),
+      ),
     [csrfToken, runTrigger],
   );
 
@@ -427,7 +466,7 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
         {banner}
         <ErrorState
           code={loadError.code}
-          title="Could not load the model catalog"
+          title="Could not load live models"
           description={loadError.message}
           onRetry={() => setReloadToken((t) => t + 1)}
         />
@@ -436,7 +475,7 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
   }
 
   if (visibleGroups === null) {
-    return <Spinner label="Loading the model catalog…" />;
+    return <Spinner label="Loading live models…" />;
   }
 
   return (
@@ -452,7 +491,12 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
               </Badge>
               {outcome.note ? <span className="vn-caption">{outcome.note}</span> : null}
             </div>
-            <IconButton icon="x" label="Dismiss job status" variant="ghost" onClick={() => setOutcome(null)} />
+            <IconButton
+              icon="x"
+              label="Dismiss job status"
+              variant="ghost"
+              onClick={() => setOutcome(null)}
+            />
           </div>
         </Card>
       ) : null}
@@ -471,11 +515,11 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
       {visibleGroups.length === 0 ? (
         <EmptyState
           icon="box"
-          title={backlogOnly ? "No models need review" : "No models discovered"}
+          title={backlogOnly ? "No live models need review" : "No live models"}
           description={
             backlogOnly
-              ? "Every discovered offering-operation is certified and supported."
-              : "Connect a provider account and run discovery — models appear here once an account's catalog has been observed."
+              ? "Every live offering-operation is certified and supported."
+              : "Models appear automatically when a healthy connected provider account is available."
           }
         />
       ) : (
@@ -553,7 +597,10 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
                 </div>
 
                 {isOpen ? (
-                  <div className="flex flex-col gap-3" data-testid={`model-offerings-${g.model_id}`}>
+                  <div
+                    className="flex flex-col gap-3"
+                    data-testid={`model-offerings-${g.model_id}`}
+                  >
                     {g.offerings.length === 0 ? (
                       <span className="vn-caption">
                         This model has no offering on any connected account.

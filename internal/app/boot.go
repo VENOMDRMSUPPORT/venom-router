@@ -491,8 +491,42 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		release()
 		return nil, fmt.Errorf("app: build usability tick: %w", err)
 	}
+	// The OAuth token-refresh sweep (the legacy proactive refresh worker's
+	// counterpart): keeps every connected OAuth account's access token alive
+	// by refreshing it ahead of expiry and persisting the rotated token, so
+	// quota/health/chat never run on a token that silently died. Its own
+	// composition root, like BuildSchedulerWorkers/BuildUsabilityTick.
+	tokenRefreshRun, err := httpapi.BuildTokenRefreshTick(db, kr, time.Now)
+	if err != nil {
+		_ = httpServer.Close()
+		if dataHTTP != nil {
+			_ = dataHTTP.Close()
+		}
+		closeDB()
+		release()
+		return nil, fmt.Errorf("app: build token refresh tick: %w", err)
+	}
+	// The periodic health + quota sweep (the legacy 5-minute health-check /
+	// 15-minute quota workers' counterpart): keeps every connected account's
+	// health status and provider quota evidence fresh without the owner
+	// pressing refresh. Own composition root, like the token-refresh tick.
+	maintenanceRun, err := httpapi.BuildAccountMaintenanceTick(db, kr, time.Now)
+	if err != nil {
+		_ = httpServer.Close()
+		if dataHTTP != nil {
+			_ = dataHTTP.Close()
+		}
+		closeDB()
+		release()
+		return nil, fmt.Errorf("app: build account maintenance tick: %w", err)
+	}
 	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
 	scheduler := NewScheduler(cfg.SchedulerInterval, logger,
+		// token_refresh runs FIRST in each round so every later tick (health
+		// probes, quota fetches, usability probes) works on a just-refreshed
+		// credential.
+		SchedulerTick{Name: "token_refresh", Run: tokenRefreshRun},
+		SchedulerTick{Name: "account_maintenance", Run: maintenanceRun},
 		SchedulerTick{Name: "quota_reconcile", Run: func(ctx context.Context) error { _, err := quotaWorkers.ReconcileTick(ctx); return err }},
 		SchedulerTick{Name: "quota_janitor", Run: func(ctx context.Context) error { _, err := quotaWorkers.JanitorTick(ctx); return err }},
 		SchedulerTick{Name: "probe_drain", Run: func(ctx context.Context) error { _, err := probeWorkers.DrainTick(ctx); return err }},

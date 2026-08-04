@@ -101,6 +101,35 @@ func (r *AccountCredentialRepo) Create(ctx context.Context, providerID string, c
 	return nil
 }
 
+// RotateCiphertext replaces credential id's sealed material IN PLACE — new
+// envelope, new fingerprint, new (nullable) expiry, stamped updated_at — for
+// the token-refresh path (a rotated OAuth access token is the SAME logical
+// credential, so the row id, account binding, kind, and state are untouched;
+// re-encryption under the same RecordIdentity therefore stays valid). Only an
+// ACTIVE row may rotate: a staged row belongs to an in-flight reauth swap and
+// a retired row is history — rotating either would corrupt those flows, so
+// both report ok=false, same as an unknown id. Never sees plaintext.
+func (r *AccountCredentialRepo) RotateCiphertext(ctx context.Context, credentialID, fingerprint string, env secrets.Envelope, expiresAt *time.Time, now time.Time) (bool, error) {
+	var expiresEpoch any
+	if expiresAt != nil {
+		expiresEpoch = expiresAt.Unix()
+	}
+	res, err := r.db.Conn().ExecContext(ctx,
+		`UPDATE account_credentials
+		 SET fingerprint_sha256 = ?, key_id = ?, nonce = ?, ciphertext = ?, expires_at = ?, updated_at = ?
+		 WHERE id = ? AND state = 'active'`,
+		fingerprint, env.KeyID, env.Nonce, env.Ciphertext, expiresEpoch, now.Unix(), credentialID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("storage: rotate credential %q: %w", credentialID, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("storage: rotate credential %q: rows affected: %w", credentialID, err)
+	}
+	return affected == 1, nil
+}
+
 // GetCredential reads a credential back by id, including the providerID
 // it belongs to and the envelope needed to decrypt it. ok is false if
 // no such row exists.

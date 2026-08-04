@@ -27,6 +27,7 @@ import ProviderCard from "./ProviderCard";
 import ProviderRow from "./ProviderRow";
 import { distinctModelStats } from "./modelStatus";
 import { useRefreshBurst } from "./useRefreshBurst";
+import { usePollingRefresh } from "./usePollingRefresh";
 import { providerDescription, providerDisplayName } from "./providerMeta";
 import type { FleetView } from "./FleetBreadcrumbChips";
 import "./fleet.css";
@@ -134,6 +135,12 @@ export default function FleetOverview(props: FleetOverviewProps) {
   // their own — no manual refresh.
   const startRefreshBurst = useRefreshBurst(reload);
 
+  // The steady live heartbeat: the backend's own loops keep certifying
+  // models, probing health and syncing quota in the background, so the page
+  // re-fetches every few seconds (paused while the tab is hidden) — working
+  // counts, health dots, quota bars and balances update on their own.
+  usePollingRefresh(reload);
+
   function handleCategoryChange(next: AuthCategory) {
     setInternalCategory(next);
     onCategoryChange?.(next);
@@ -196,7 +203,9 @@ export default function FleetOverview(props: FleetOverviewProps) {
     // the same rule the Active view uses. Counting raw accounts here made the
     // "Active Providers" chip show a stale 1 while the view correctly showed
     // none (a disconnected account still lingered under the old soft-disconnect).
-    const withLiveAccounts = new Set(accounts.filter((a) => a.connection_state !== "disconnected").map((a) => a.provider));
+    const withLiveAccounts = new Set(
+      accounts.filter((a) => a.connection_state !== "disconnected").map((a) => a.provider),
+    );
     onCounts({
       active: providers.filter((p) => withLiveAccounts.has(p.id)).length,
       total: providers.length,
@@ -266,14 +275,22 @@ export default function FleetOverview(props: FleetOverviewProps) {
   const scopedAccountIds = new Set(scopedAccounts.map((a) => a.id));
   const scopedProviderCountForAccounts = new Set(scopedAccounts.map((a) => a.provider)).size;
   const healthyCount = scopedAccounts.filter((a) => a.display_status === "healthy").length;
-  const scopedOfferings = offerings ? offerings.filter((o) => scopedAccountIds.has(o.account_id)) : null;
-  const modelStats = scopedOfferings ? distinctModelStats(scopedOfferings) : null;
+  const scopedOfferings = offerings
+    ? offerings.filter((o) => scopedAccountIds.has(o.account_id))
+    : null;
+  const scopedHealthyAccountIds = new Set(
+    scopedAccounts.filter((a) => a.display_status === "healthy").map((a) => a.id),
+  );
+  const modelStats = scopedOfferings
+    ? distinctModelStats(scopedOfferings.filter((o) => scopedHealthyAccountIds.has(o.account_id)))
+    : null;
 
   // --- View scoping + search ------------------------------------------------
 
-  const viewScoped = view === "active"
-    ? categoryProviders.filter((p) => connectedProviders.has(p.id))
-    : categoryProviders;
+  const viewScoped =
+    view === "active"
+      ? categoryProviders.filter((p) => connectedProviders.has(p.id))
+      : categoryProviders;
   const query = search.trim().toLowerCase();
   const filteredProviders = query
     ? viewScoped.filter(
@@ -291,16 +308,30 @@ export default function FleetOverview(props: FleetOverviewProps) {
    * provider's accounts, or null while the offerings read is unknown. */
   function providerModelStats(providerId: string): { total: number; working: number } | null {
     if (!offerings) return null;
-    const ids = new Set((accountsByProvider.get(providerId) ?? []).map((a) => a.id));
-    return distinctModelStats(offerings.filter((o) => ids.has(o.account_id)));
+    const providerAccounts = accountsByProvider.get(providerId) ?? [];
+    const ids = new Set(providerAccounts.map((a) => a.id));
+    const healthyIds = new Set(
+      providerAccounts.filter((a) => a.display_status === "healthy").map((a) => a.id),
+    );
+    return distinctModelStats(
+      offerings.filter((o) => ids.has(o.account_id) && healthyIds.has(o.account_id)),
+    );
   }
 
+  /** Distinct live models for ONE account, or null while either read is
+   * unknown. Both reads must be present: without the accounts read there is
+   * no health to judge, and reporting 0 then would claim "no models" for an
+   * account that simply has not loaded yet. */
   function accountModelCount(accountId: string): number | null {
-    if (!offeringsByAccount) return null;
+    if (!offeringsByAccount || !accounts) return null;
+    const account = accounts.find((candidate) => candidate.id === accountId);
+    if (!account || account.display_status !== "healthy") return 0;
     return distinctModelStats(offeringsByAccount.get(accountId) ?? []).total;
   }
 
-  const reportAccount = reportAccountId ? accounts.find((a) => a.id === reportAccountId) ?? null : null;
+  const reportAccount = reportAccountId
+    ? (accounts.find((a) => a.id === reportAccountId) ?? null)
+    : null;
   const reportProvider = reportAccount ? providersById.get(reportAccount.provider) : undefined;
 
   return (
@@ -339,7 +370,13 @@ export default function FleetOverview(props: FleetOverviewProps) {
           value={modelStats ? modelStats.total : "—"}
           tone={modelStats ? undefined : "unknown"}
           icon="box"
-          meta={modelStats ? `${modelStats.working} working · unique` : offeringsError ? "offerings unavailable" : "loading…"}
+          meta={
+            modelStats
+              ? `${modelStats.working} working · unique`
+              : offeringsError
+                ? "offerings unavailable"
+                : "loading…"
+          }
         />
       </div>
 
@@ -374,14 +411,18 @@ export default function FleetOverview(props: FleetOverviewProps) {
           <EmptyState
             icon={emptyActiveView ? "circle-check" : "search"}
             title={emptyActiveView ? "No active providers" : "No integrations found"}
-            description={emptyActiveView
-              ? "No provider accounts are connected yet. Choose All Integrations to browse the catalog."
-              : "Try adjusting your search terms or category filters."}
-            action={emptyActiveView ? undefined : (
-              <Button variant="secondary" size="sm" onClick={() => setSearch("")}>
-                Clear Search
-              </Button>
-            )}
+            description={
+              emptyActiveView
+                ? "No provider accounts are connected yet. Choose All Integrations to browse the catalog."
+                : "Try adjusting your search terms or category filters."
+            }
+            action={
+              emptyActiveView ? undefined : (
+                <Button variant="secondary" size="sm" onClick={() => setSearch("")}>
+                  Clear Search
+                </Button>
+              )
+            }
           />
         </div>
       ) : view === "active" ? (
@@ -389,21 +430,21 @@ export default function FleetOverview(props: FleetOverviewProps) {
           {filteredProviders.map((provider) => {
             const stats = providerModelStats(provider.id);
             return (
-            <ProviderRow
-              key={provider.id}
-              provider={provider}
-              accounts={accountsByProvider.get(provider.id) ?? []}
-              uniqueModelCount={stats ? stats.total : null}
-              workingModelCount={stats ? stats.working : null}
-              accountModelCounts={accountModelCount}
-              expanded={expanded.has(provider.id)}
-              onToggleExpand={() => toggleExpanded(provider.id)}
-              onAddAccount={() => setConnectProvider(provider)}
-              onOpenModelReport={(account) => setReportAccountId(account.id)}
-              csrfToken={csrfToken}
-              onSessionExpired={onSessionExpired}
-              onChanged={reload}
-            />
+              <ProviderRow
+                key={provider.id}
+                provider={provider}
+                accounts={accountsByProvider.get(provider.id) ?? []}
+                uniqueModelCount={stats ? stats.total : null}
+                workingModelCount={stats ? stats.working : null}
+                accountModelCounts={accountModelCount}
+                expanded={expanded.has(provider.id)}
+                onToggleExpand={() => toggleExpanded(provider.id)}
+                onAddAccount={() => setConnectProvider(provider)}
+                onOpenModelReport={(account) => setReportAccountId(account.id)}
+                csrfToken={csrfToken}
+                onSessionExpired={onSessionExpired}
+                onChanged={reload}
+              />
             );
           })}
         </div>
@@ -436,7 +477,9 @@ export default function FleetOverview(props: FleetOverviewProps) {
         <ModelTestReport
           open
           account={reportAccount}
-          providerName={reportProvider ? providerDisplayName(reportProvider) : reportAccount.provider}
+          providerName={
+            reportProvider ? providerDisplayName(reportProvider) : reportAccount.provider
+          }
           offerings={offeringsByAccount?.get(reportAccount.id) ?? []}
           csrfToken={csrfToken}
           onSessionExpired={onSessionExpired}

@@ -122,6 +122,13 @@ type CompleteOAuthParams struct {
 	// consulted only when OwnerFunding is nil — mirrors
 	// ConnectAPIKeyAccountParams.FundingMode.
 	FundingMode domain.FundingMode
+	// FundingFixed is the catalog's declared fixed classification and
+	// FundingLocked its lock flag — consulted only when FundingMode is
+	// FundingModeFixed (02 §2: the catalog's fixed value IS the evidence
+	// for that mode; stamping anything else would misclassify a
+	// paid-locked provider like clinepass as unknown/overridable).
+	FundingFixed  domain.Funding
+	FundingLocked bool
 	// OwnerFunding, when non-nil, overrides the provider's own funding
 	// classification, exactly as ConnectAPIKeyAccountParams.OwnerFunding
 	// does for the API-key flow.
@@ -227,22 +234,14 @@ func (s *OAuthEnrollmentService) Begin(ctx context.Context, p BeginOAuthParams) 
 		return BeginOAuthResult{}, fmt.Errorf("application: oauth: persist transaction: %w", err)
 	}
 
-	// A provider that omits `state` from its redirect (clinepass, per
-	// providers.OmitStateFromCallback / legacy 2026-08-03) cannot bind the
-	// callback to this transaction via the state nonce. The transaction id
-	// IS echoed back — we carry it in the `state` query parameter of the
-	// redirect_uri we hand the adapter, and the provider's redirect
-	// preserves the callback URL's own query parameters while appending
-	// `code`. The transaction id is the same unguessable capability token
-	// the status endpoint already relies on, so the binding is as strong as
-	// the state nonce without depending on the provider to echo it.
-	// Complete reconstructs this identical redirect_uri (base + "?state=" +
-	// transactionID) and consumes the row by transaction id.
-	authorizeRedirect := p.RedirectURI
-	if p.OmitStateFromCallback {
-		authorizeRedirect = p.RedirectURI + "?state=" + transactionID
-	}
-	authorizeURL, err := p.Adapter.BeginOAuth(ctx, authorizeRedirect, state, challenge)
+	// A provider that omits `state` from its redirect (clinepass) cannot bind
+	// the callback via the state nonce. The dashboard completes via
+	// POST /oauth/complete with the transaction id it already holds from
+	// Begin (legacy venom-router-legacy pattern: opener knows flow_id, callback
+	// only relays the code). The authorize redirect_uri stays the plain
+	// `{origin}/callback` — embedding `?state=<txid>` broke token exchange /
+	// redirect preservation on the live Cline authorize endpoint.
+	authorizeURL, err := p.Adapter.BeginOAuth(ctx, p.RedirectURI, state, challenge)
 	if err != nil {
 		return BeginOAuthResult{}, fmt.Errorf("application: oauth: adapter BeginOAuth: %w", err)
 	}
@@ -451,6 +450,7 @@ func (s *OAuthEnrollmentService) firstFundingEvidence(p CompleteOAuthParams, ide
 	}
 
 	value := domain.FundingUnknown
+	locked := false
 	confidence := 1.0
 	if p.FundingMode == domain.FundingModeProviderEvidence {
 		if identity.Funding == string(domain.FundingFree) {
@@ -462,8 +462,17 @@ func (s *OAuthEnrollmentService) firstFundingEvidence(p CompleteOAuthParams, ide
 		}
 		confidence = identity.Confidence
 	}
+	if p.FundingMode == domain.FundingModeFixed {
+		// The catalog's fixed classification is the evidence for this mode
+		// (02 §2): value and lock come from the catalog verbatim, never a
+		// hard-coded unknown. An unset FundingFixed stays unknown honestly.
+		if p.FundingFixed != "" {
+			value = p.FundingFixed
+		}
+		locked = p.FundingLocked
+	}
 
-	stamped, err := domain.StampFirstEvidence(p.FundingMode, accountID, value, false, confidence, now)
+	stamped, err := domain.StampFirstEvidence(p.FundingMode, accountID, value, locked, confidence, now)
 	if err != nil {
 		return domain.FundingEvidence{}, err
 	}

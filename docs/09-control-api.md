@@ -82,7 +82,7 @@ plane. The public inference API (`/v1/*`) is out of scope for this doc (it is Op
 | Discovery | `POST /accounts/{id}/discover` | Run account-scoped model discovery (async). |
 | Health | `POST /accounts/{id}/health` / `POST /providers/{id}/sync` | Refresh health (+ discovery/quota) for an account / all provider accounts. |
 | Quota | `POST /accounts/{id}/quota` | Refresh quota snapshot. |
-| Models | `GET /models` / `GET /offerings` | Effective-offering read model (shared projection). |
+| Models | `GET /models` / `GET /offerings` | Effective-offering read model (shared projection, **two membership scopes** — see below). |
 | Probes | `POST /offerings/{id}/probe` | Run capability/context probes (async, quota-protected). |
 | Certification | `GET /offerings/{id}/certification` | Certification state + capability truth + review reason. |
 | Benchmark | `POST /models/{id}/benchmark` | Run/record a canonical quality rating (async, owner-enabled). |
@@ -167,6 +167,24 @@ plane. The public inference API (`/v1/*`) is out of scope for this doc (it is Op
   of [04 §1](04-model-intelligence.md);
   an explicit empty list withdraws offerings; a malformed/truncated response keeps last-known-good.
   Free accounts get the routing-critical free-safety filter ([04 §2b](04-model-intelligence.md#2b-free-safety-resolution-vs-metadata-enrichment-two-separate-pipelines)).
+
+### 3.7b `GET /models` vs `GET /offerings` — one projection, two membership scopes
+Both render the **same** effective-offering projection (identical field derivation — no consumer
+re-derives context, capabilities, cost, or certification). They differ **only** in which rows are
+members:
+- **`GET /offerings` — the per-account CATALOG view. Nothing is filtered**, including `withdrawn`
+  offerings and offerings of an unhealthy account. This is required, not cosmetic: the
+  sub-resources `POST /offerings/{id}/probe` (§3.8) and `GET /offerings/{id}/certification` are
+  **how** an offering earns its way (back) to live, so filtering the parent list would deadlock
+  certification — a model could never become live because the probe that proves it is unreachable.
+- **`GET /models` — the LIVE surface** behind the dashboard's Live Models page. It returns only
+  offerings that can serve a request **right now**: the owning account is `connected` +
+  `healthy` and not mid-reauth, and the offering's availability is `available`. The Live Models
+  page **is not a historical archive**; a dead offering is absent here even before the
+  maintenance purge removes it from storage, so the API fails closed immediately.
+
+All owner-visible "live" counters (Providers aggregate, Live Models) resolve against this **same**
+`/models` definition — never a per-surface re-derivation.
 
 ### 3.8 `POST /offerings/{id}/probe` — capability/context probes (async, quota-protected)
 - **Request:** `{ operations?: ["context_window","tools","structured_output","vision"], force?: bool }`.

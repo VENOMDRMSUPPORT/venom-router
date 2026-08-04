@@ -62,8 +62,11 @@ type CatalogOfferingRow struct {
 
 // CatalogListParams is ListOfferings' input. AccountID = "" lists every
 // account's offerings; a non-empty value restricts to that one account.
+// LiveOnly applies the operational owner-console contract: the offering is
+// available and its account is connected, healthy and not reauthenticating.
 type CatalogListParams struct {
 	AccountID string
+	LiveOnly  bool
 	Limit     int
 	Cursor    string
 }
@@ -108,6 +111,16 @@ func (r *CatalogRepo) ListOfferings(ctx context.Context, params CatalogListParam
 	if params.AccountID != "" {
 		conds = append(conds, "amo.account_id = ?")
 		args = append(args, params.AccountID)
+	}
+	if params.LiveOnly {
+		conds = append(conds, `amo.availability = 'available'
+			AND EXISTS (
+				SELECT 1 FROM accounts a
+				WHERE a.id = amo.account_id
+				  AND a.connection_state = 'connected'
+				  AND a.health_state = 'healthy'
+				  AND a.reauth_in_progress = 0
+			)`)
 	}
 	if params.Cursor != "" {
 		cursorAccountID, cursorProviderModelID, ok := decodeCatalogCursor(params.Cursor)

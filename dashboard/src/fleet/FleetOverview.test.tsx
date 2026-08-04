@@ -82,7 +82,14 @@ const PROVIDER_CUSTOM = {
   missing_env: [],
 };
 
-const ALL_PROVIDERS = [PROVIDER_OCZ, PROVIDER_ANTIGRAVITY, PROVIDER_CLAUDE_CODE, PROVIDER_AGNES, PROVIDER_CODEX, PROVIDER_CUSTOM];
+const ALL_PROVIDERS = [
+  PROVIDER_OCZ,
+  PROVIDER_ANTIGRAVITY,
+  PROVIDER_CLAUDE_CODE,
+  PROVIDER_AGNES,
+  PROVIDER_CODEX,
+  PROVIDER_CUSTOM,
+];
 
 const KNOWN_QUOTA_WINDOW = {
   source: "provider_evidence",
@@ -180,7 +187,13 @@ function offering(overrides: Record<string, unknown>) {
     capabilities: [],
     quality_score: 0,
     quality_known: false,
-    cost: { is_free: null, conflict: false, confidence: 0, exact_identity_match: false, stale: false },
+    cost: {
+      is_free: null,
+      conflict: false,
+      confidence: 0,
+      exact_identity_match: false,
+      stale: false,
+    },
     classification: "general",
     tiers: {},
     ...overrides,
@@ -196,7 +209,12 @@ const OFFERINGS = [
     provider_model_id: "zen/model-a",
     display_name: "Model A",
     capabilities: [
-      offeringCapability({ truth: "supported", state: "certified", routable: true, offering_operation_id: "op-a" }),
+      offeringCapability({
+        truth: "supported",
+        state: "certified",
+        routable: true,
+        offering_operation_id: "op-a",
+      }),
       offeringCapability({ operation: "tools" }),
     ],
   }),
@@ -221,9 +239,12 @@ afterEach(() => {
 
 function baseHandlers(overrides: Record<string, () => Response> = {}) {
   return createFetchMock({
-    "GET /api/control/v1/providers": () => jsonResponse(200, { data: { providers: ALL_PROVIDERS } }),
+    "GET /api/control/v1/providers": () =>
+      jsonResponse(200, { data: { providers: ALL_PROVIDERS } }),
     "GET /api/control/v1/accounts?limit=200": () =>
-      jsonResponse(200, { data: { accounts: [ACCOUNT_HEALTHY, ACCOUNT_DEGRADED, ACCOUNT_STOPPED] } }),
+      jsonResponse(200, {
+        data: { accounts: [ACCOUNT_HEALTHY, ACCOUNT_DEGRADED, ACCOUNT_STOPPED] },
+      }),
     "GET /api/control/v1/offerings?limit=200": () => jsonResponse(200, { data: OFFERINGS }),
     ...overrides,
   });
@@ -276,7 +297,9 @@ describe("FleetOverview — All Integrations catalog (default view)", () => {
     within(oczCard).getByText(/OpenAI-compatible free gateway from OpenCode/);
 
     // Unknown slug (custom) falls back to the server's own copy.
-    const customCard = screen.getByText("Custom (OpenAI-compatible)").closest(".vn-provider-card") as HTMLElement;
+    const customCard = screen
+      .getByText("Custom (OpenAI-compatible)")
+      .closest(".vn-provider-card") as HTMLElement;
     within(customCard).getByText("Generic OpenAI-compatible endpoint; configured per account.");
     within(customCard).getByText("OPENAI COMPATIBLE");
   });
@@ -287,7 +310,9 @@ describe("FleetOverview — All Integrations catalog (default view)", () => {
     const logo = screen.getByRole("img", { name: "OpenCode Zen" });
     expect(logo.tagName).toBe("IMG");
     expect(logo.getAttribute("src")).toBe("/providers/opencode-zen.png");
-    expect(screen.getByRole("img", { name: "Claude Code" }).getAttribute("src")).toBe("/providers/claude-code.png");
+    expect(screen.getByRole("img", { name: "Claude Code" }).getAttribute("src")).toBe(
+      "/providers/claude-code.png",
+    );
 
     const agnes = screen.getByRole("img", { name: "Agnes AI" });
     expect(agnes.tagName).toBe("IMG");
@@ -314,12 +339,18 @@ describe("FleetOverview — All Integrations catalog (default view)", () => {
     const connectButton = within(agnesCard).getByRole("button", { name: /connect integration/i });
     expect((connectButton as HTMLButtonElement).disabled).toBe(false);
 
-    const antigravityCard = screen.getByText("Antigravity").closest(".vn-provider-card") as HTMLElement;
+    const antigravityCard = screen
+      .getByText("Antigravity")
+      .closest(".vn-provider-card") as HTMLElement;
     const setupButton = within(antigravityCard).getByRole("button", { name: /^setup required$/i });
     expect((setupButton as HTMLButtonElement).disabled).toBe(true);
 
-    const customCard = screen.getByText("Custom (OpenAI-compatible)").closest(".vn-provider-card") as HTMLElement;
-    const unavailableButton = within(customCard).getByRole("button", { name: /integration unavailable/i });
+    const customCard = screen
+      .getByText("Custom (OpenAI-compatible)")
+      .closest(".vn-provider-card") as HTMLElement;
+    const unavailableButton = within(customCard).getByRole("button", {
+      name: /integration unavailable/i,
+    });
     expect((unavailableButton as HTMLButtonElement).disabled).toBe(true);
 
     // No account disclosure in the catalog view — accounts are managed
@@ -351,14 +382,16 @@ describe("FleetOverview — All Integrations catalog (default view)", () => {
     await renderFleet();
 
     const tabs = screen.getByRole("group", { name: /filter providers/i });
-    expect(within(tabs).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "All",
-      "OAuth",
-      "API Key",
-    ]);
+    expect(
+      within(tabs)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["All", "OAuth", "API Key"]);
 
     // All is the selected default — the tab an owner can always return to.
-    expect(within(tabs).getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(tabs).getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
     screen.getByText("OpenCode Zen");
     screen.getByText("Antigravity");
     screen.getByText("Custom (OpenAI-compatible)");
@@ -407,10 +440,13 @@ describe("FleetOverview — contextual stat cards", () => {
   });
 
   it("switches PROVIDERS to connected-integrations in the active view and shows the all-healthy badge only when earned", async () => {
-    vi.stubGlobal("fetch", baseHandlers({
-      "GET /api/control/v1/accounts?limit=200": () =>
-        jsonResponse(200, { data: { accounts: [ACCOUNT_HEALTHY] } }),
-    }));
+    vi.stubGlobal(
+      "fetch",
+      baseHandlers({
+        "GET /api/control/v1/accounts?limit=200": () =>
+          jsonResponse(200, { data: { accounts: [ACCOUNT_HEALTHY] } }),
+      }),
+    );
     render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
     await screen.findByText("OpenCode Zen");
 
@@ -423,7 +459,9 @@ describe("FleetOverview — contextual stat cards", () => {
   it("renders MODELS as an honest dash — never 0 — while offerings are unavailable, and surfaces the failure once", async () => {
     await renderFleet({
       "GET /api/control/v1/offerings?limit=200": () =>
-        jsonResponse(500, { error: { code: "internal", message: "boom", request_id: "r9", retryable: true } }),
+        jsonResponse(500, {
+          error: { code: "internal", message: "boom", request_id: "r9", retryable: true },
+        }),
     });
 
     const models = statCard("Models");
@@ -447,7 +485,7 @@ describe("FleetOverview — Active Providers rows", () => {
 
     screen.getByText("API KEY");
     screen.getByTitle("1/3 accounts healthy");
-    screen.getByText(/working \/ \d+ discovered/);
+    screen.getByText(/working \/ \d+ live/);
     screen.getByRole("button", { name: /sync all accounts/i });
     screen.getByRole("button", { name: /refresh models for every account/i });
     screen.getByRole("button", { name: /^add account$/i });
@@ -487,12 +525,16 @@ describe("FleetOverview — Active Providers rows", () => {
     fireEvent.click(screen.getByRole("button", { name: /sync all accounts/i }));
 
     await waitFor(() => {
-      const syncCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/providers/opencode-zen/sync"));
+      const syncCall = fetchMock.mock.calls.find(([input]) =>
+        String(input).endsWith("/providers/opencode-zen/sync"),
+      );
       expect(syncCall).toBeTruthy();
     });
     // The refetch happened: providers were listed at least twice.
     await waitFor(() => {
-      const providerReads = fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/providers"));
+      const providerReads = fetchMock.mock.calls.filter(([input]) =>
+        String(input).endsWith("/providers"),
+      );
       expect(providerReads.length).toBeGreaterThanOrEqual(2);
     });
   });
@@ -523,7 +565,9 @@ describe("FleetOverview — Active Providers rows", () => {
 
     await waitFor(() => expect(discovered).toEqual(["acct-1", "acct-2", "acct-3"]));
     await waitFor(() => {
-      const jobReads = fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/jobs/job-1"));
+      const jobReads = fetchMock.mock.calls.filter(([input]) =>
+        String(input).endsWith("/jobs/job-1"),
+      );
       expect(jobReads.length).toBeGreaterThanOrEqual(3);
     });
   });
@@ -551,25 +595,29 @@ describe("FleetOverview — Active Providers rows", () => {
     within(row).getByText("GEM");
     within(row).getByText("12%");
     expect(within(row).getByText(/Resets in/).textContent).toMatch(/Resets in 2 hr \d+ min/);
-    // …the unknown window renders the state word over a hatched bar,
-    // never a fabricated 0%.
-    within(row).getByText("OPT");
-    within(row).getByText("unknown");
+    // Non-live provider evidence is omitted entirely, never presented as a
+    // historical meter on the operational account surface.
+    expect(within(row).queryByText("OPT")).toBeNull();
+    expect(within(row).queryByText("unknown")).toBeNull();
     expect(within(row).queryByText("0%")).toBeNull();
 
-    // Meta line: real relative instants (never "—" when both are known).
-    expect(within(row).getByText(/Quota: .* · Checked: .*/).textContent).toMatch(
-      /Quota: .+ ago · Checked: .+ ago/,
+    // Meta line names both independent live observations explicitly.
+    expect(within(row).getByText(/Usage updated .* · Health checked .*/).textContent).toMatch(
+      /Usage updated .+ ago · Health checked .+ ago/,
     );
   });
 
   it("wires the account sync action to health + quota (job polled), and fetch-models to discovery", async () => {
     const fetchMock = await renderFleet(
       {
-        "POST /api/control/v1/accounts/acct-1/health": () => jsonResponse(200, { data: ACCOUNT_HEALTHY }),
+        "POST /api/control/v1/accounts/acct-1/health": () =>
+          jsonResponse(200, { data: ACCOUNT_HEALTHY }),
         "POST /api/control/v1/accounts/acct-1/quota": () =>
-          jsonResponse(202, { data: { job_id: "job-q", status_url: "/api/control/v1/jobs/job-q" } }),
-        "POST /api/control/v1/accounts/acct-1/discover": () => jsonResponse(202, { data: { job_id: "job-d" } }),
+          jsonResponse(202, {
+            data: { job_id: "job-q", status_url: "/api/control/v1/jobs/job-q" },
+          }),
+        "POST /api/control/v1/accounts/acct-1/discover": () =>
+          jsonResponse(202, { data: { job_id: "job-d" } }),
         "GET /api/control/v1/jobs/job-q": () =>
           jsonResponse(200, { data: { job_id: "job-q", kind: "quota_sync", status: "completed" } }),
         "GET /api/control/v1/jobs/job-d": () =>
@@ -580,17 +628,31 @@ describe("FleetOverview — Active Providers rows", () => {
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /sync: health · plan · usage/i }));
+    fireEvent.click(
+      within(accountRow("acct-1")).getByRole("button", { name: /sync: health · plan · usage/i }),
+    );
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/health"))).toBe(true);
-      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/quota"))).toBe(true);
-      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/jobs/job-q"))).toBe(true);
+      expect(
+        fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/health")),
+      ).toBe(true);
+      expect(
+        fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/quota")),
+      ).toBe(true);
+      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/jobs/job-q"))).toBe(
+        true,
+      );
     });
 
-    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /fetch models from provider/i }));
+    fireEvent.click(
+      within(accountRow("acct-1")).getByRole("button", { name: /fetch models from provider/i }),
+    );
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/discover"))).toBe(true);
-      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/jobs/job-d"))).toBe(true);
+      expect(
+        fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/discover")),
+      ).toBe(true);
+      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/jobs/job-d"))).toBe(
+        true,
+      );
     });
   });
 
@@ -598,22 +660,33 @@ describe("FleetOverview — Active Providers rows", () => {
     const fetchMock = await renderFleet(
       {
         "POST /api/control/v1/accounts/acct-1/stop": () =>
-          jsonResponse(200, { data: account({ id: "acct-1", connection_state: "stopped", display_status: "stopped" }) }),
-        "POST /api/control/v1/accounts/acct-3/resume": () => jsonResponse(200, { data: account({ id: "acct-3" }) }),
+          jsonResponse(200, {
+            data: account({ id: "acct-1", connection_state: "stopped", display_status: "stopped" }),
+          }),
+        "POST /api/control/v1/accounts/acct-3/resume": () =>
+          jsonResponse(200, { data: account({ id: "acct-3" }) }),
       },
       { view: "active" },
     );
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /^disable account$/i }));
+    fireEvent.click(
+      within(accountRow("acct-1")).getByRole("button", { name: /^disable account$/i }),
+    );
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/stop"))).toBe(true);
+      expect(
+        fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/stop")),
+      ).toBe(true);
     });
 
-    fireEvent.click(within(accountRow("acct-3")).getByRole("button", { name: /^enable account$/i }));
+    fireEvent.click(
+      within(accountRow("acct-3")).getByRole("button", { name: /^enable account$/i }),
+    );
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-3/resume"))).toBe(true);
+      expect(
+        fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-3/resume")),
+      ).toBe(true);
     });
   });
 
@@ -622,21 +695,29 @@ describe("FleetOverview — Active Providers rows", () => {
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    const row1Chip = within(accountRow("acct-1")).getByRole("button", { name: /open model test report/i });
+    const row1Chip = within(accountRow("acct-1")).getByRole("button", {
+      name: /open model test report/i,
+    });
     expect(row1Chip.textContent).toContain("2");
 
-    const row3Chip = within(accountRow("acct-3")).getByRole("button", { name: /open model test report/i });
+    const row3Chip = within(accountRow("acct-3")).getByRole("button", {
+      name: /open model test report/i,
+    });
     expect((row3Chip as HTMLButtonElement).disabled).toBe(true);
-    expect(row3Chip.getAttribute("title")).toBe("No models discovered yet");
+    expect(row3Chip.getAttribute("title")).toBe("No live models");
 
     fireEvent.click(row1Chip);
     await screen.findByRole("dialog", { name: /model test report: opencode zen/i });
   });
 
   it("explains an empty Active view without offering a no-op search reset", async () => {
-    vi.stubGlobal("fetch", baseHandlers({
-      "GET /api/control/v1/accounts?limit=200": () => jsonResponse(200, { data: { accounts: [] } }),
-    }));
+    vi.stubGlobal(
+      "fetch",
+      baseHandlers({
+        "GET /api/control/v1/accounts?limit=200": () =>
+          jsonResponse(200, { data: { accounts: [] } }),
+      }),
+    );
     render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
 
     await screen.findByText("No active providers");
@@ -690,7 +771,10 @@ describe("FleetOverview — API-key connect (image 9)", () => {
     // The four billing cards, inherit selected by default.
     const radios = within(dialog).getAllByRole("radio");
     expect(radios).toHaveLength(4);
-    expect((within(dialog).getByRole("radio", { name: /inherit from provider/i }) as HTMLInputElement).checked).toBe(true);
+    expect(
+      (within(dialog).getByRole("radio", { name: /inherit from provider/i }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
 
     // An OPTIONAL label field is present; leaving it empty is fine (the
     // connect body simply omits the label).
@@ -706,12 +790,22 @@ describe("FleetOverview — API-key connect (image 9)", () => {
   });
 
   it("maps the billing selection to the funding body — inherit OMITS the field — and never leaks the key", async () => {
-    const consoleSpies = (["log", "info", "warn", "error", "debug"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    const consoleSpies = (["log", "info", "warn", "error", "debug"] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(() => {}),
+    );
 
     const fetchMock = await renderFleet({
       "POST /api/control/v1/providers/agnes-ai/accounts": () =>
         jsonResponse(201, {
-          data: { id: "acct-new", provider: "agnes-ai", external_id: "ext-new", connection_state: "connected", health_state: "healthy", funding: "free", display_status: "healthy" },
+          data: {
+            id: "acct-new",
+            provider: "agnes-ai",
+            external_id: "ext-new",
+            connection_state: "connected",
+            health_state: "healthy",
+            funding: "free",
+            display_status: "healthy",
+          },
         }),
     });
 
@@ -729,7 +823,9 @@ describe("FleetOverview — API-key connect (image 9)", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    const connectCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/providers/agnes-ai/accounts"));
+    const connectCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith("/providers/agnes-ai/accounts"),
+    );
     expect(connectCall).toBeTruthy();
     const [, init] = connectCall as [unknown, RequestInit & { headers: Record<string, string> }];
     expect(init.headers["Idempotency-Key"]).toBeTruthy();
@@ -753,7 +849,15 @@ describe("FleetOverview — API-key connect (image 9)", () => {
     const fetchMock = await renderFleet({
       "POST /api/control/v1/providers/agnes-ai/accounts": () =>
         jsonResponse(201, {
-          data: { id: "acct-new", provider: "agnes-ai", external_id: "ext-new", connection_state: "connected", health_state: "healthy", funding: "paid", display_status: "healthy" },
+          data: {
+            id: "acct-new",
+            provider: "agnes-ai",
+            external_id: "ext-new",
+            connection_state: "connected",
+            health_state: "healthy",
+            funding: "paid",
+            display_status: "healthy",
+          },
         }),
     });
 
@@ -761,12 +865,16 @@ describe("FleetOverview — API-key connect (image 9)", () => {
     fireEvent.click(within(agnesCard).getByRole("button", { name: /connect integration/i }));
     const dialog = await screen.findByRole("dialog", { name: /^connect agnes ai$/i });
 
-    fireEvent.change(dialog.querySelector("textarea") as HTMLTextAreaElement, { target: { value: "sk-key" } });
+    fireEvent.change(dialog.querySelector("textarea") as HTMLTextAreaElement, {
+      target: { value: "sk-key" },
+    });
     fireEvent.click(within(dialog).getByRole("radio", { name: /paid/i }));
     fireEvent.click(within(dialog).getByRole("button", { name: /save & encrypt/i }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    const connectCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/providers/agnes-ai/accounts"));
+    const connectCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith("/providers/agnes-ai/accounts"),
+    );
     const [, init] = connectCall as [unknown, RequestInit];
     expect(JSON.parse(init.body as string).funding).toBe("paid");
   });
@@ -775,7 +883,15 @@ describe("FleetOverview — API-key connect (image 9)", () => {
     const fetchMock = await renderFleet({
       "POST /api/control/v1/providers/agnes-ai/accounts": () =>
         jsonResponse(201, {
-          data: { id: "acct-new", provider: "agnes-ai", external_id: "ext-new", connection_state: "connected", health_state: "healthy", funding: "free", display_status: "healthy" },
+          data: {
+            id: "acct-new",
+            provider: "agnes-ai",
+            external_id: "ext-new",
+            connection_state: "connected",
+            health_state: "healthy",
+            funding: "free",
+            display_status: "healthy",
+          },
         }),
     });
 
@@ -783,12 +899,18 @@ describe("FleetOverview — API-key connect (image 9)", () => {
     fireEvent.click(within(agnesCard).getByRole("button", { name: /connect integration/i }));
     const dialog = await screen.findByRole("dialog", { name: /^connect agnes ai$/i });
 
-    fireEvent.change(dialog.querySelector("textarea") as HTMLTextAreaElement, { target: { value: "sk-key" } });
-    fireEvent.change(within(dialog).getByLabelText(/label/i), { target: { value: "  Main key  " } });
+    fireEvent.change(dialog.querySelector("textarea") as HTMLTextAreaElement, {
+      target: { value: "sk-key" },
+    });
+    fireEvent.change(within(dialog).getByLabelText(/label/i), {
+      target: { value: "  Main key  " },
+    });
     fireEvent.click(within(dialog).getByRole("button", { name: /save & encrypt/i }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    const connectCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/providers/agnes-ai/accounts"));
+    const connectCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith("/providers/agnes-ai/accounts"),
+    );
     const [, init] = connectCall as [unknown, RequestInit];
     // Trimmed, never the raw padded value.
     expect(JSON.parse(init.body as string).label).toBe("Main key");
@@ -796,57 +918,69 @@ describe("FleetOverview — API-key connect (image 9)", () => {
 });
 
 describe("FleetOverview — OAuth connect (image 10)", () => {
-  it(
-    "begins OAuth, opens the authorize URL as a popup, offers re-open, and polls to completed",
-    async () => {
-      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+  it("begins OAuth, opens the authorize URL as a popup, offers re-open, and polls to completed", async () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
-      const fetchMock = await renderFleet({
-        "POST /api/control/v1/providers/claude-code/oauth/begin": () =>
-          jsonResponse(202, {
-            data: {
-              transaction_id: "tx-1",
-              authorize_url: "https://provider.example/authorize",
-              expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
-            },
-          }),
-        "GET /api/control/v1/oauth/tx-1/status": () => jsonResponse(200, { data: { status: "completed", account_id: "acct-new" } }),
-      });
+    const fetchMock = await renderFleet({
+      "POST /api/control/v1/providers/claude-code/oauth/begin": () =>
+        jsonResponse(202, {
+          data: {
+            transaction_id: "tx-1",
+            authorize_url: "https://provider.example/authorize",
+            expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+          },
+        }),
+      "GET /api/control/v1/oauth/tx-1/status": () =>
+        jsonResponse(200, { data: { status: "completed", account_id: "acct-new" } }),
+    });
 
-      const claudeCodeCard = screen.getByText("Claude Code").closest(".vn-provider-card") as HTMLElement;
-      fireEvent.click(within(claudeCodeCard).getByRole("button", { name: /connect integration/i }));
+    const claudeCodeCard = screen
+      .getByText("Claude Code")
+      .closest(".vn-provider-card") as HTMLElement;
+    fireEvent.click(within(claudeCodeCard).getByRole("button", { name: /connect integration/i }));
 
-      const dialog = await screen.findByRole("dialog", { name: /^connect claude code$/i });
-      within(dialog).getByText(/sign in via the popup window/i);
-      fireEvent.click(within(dialog).getByRole("button", { name: /continue with claude code/i }));
+    const dialog = await screen.findByRole("dialog", { name: /^connect claude code$/i });
+    within(dialog).getByText(/sign in via the popup window/i);
+    fireEvent.click(within(dialog).getByRole("button", { name: /continue with claude code/i }));
 
-      await screen.findByText(/waiting for authorization in popup…/i);
-      expect(openSpy).toHaveBeenCalledWith("https://provider.example/authorize", "venom-oauth", "popup,width=560,height=720");
+    await screen.findByText(/waiting for authorization in popup…/i);
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://provider.example/authorize",
+      "venom-oauth",
+      "popup,width=560,height=720",
+    );
 
-      // Re-open re-opens the SAME authorize URL (also the popup-blocked
-      // recovery path — window.open returned null above).
-      fireEvent.click(screen.getByRole("button", { name: /re-open sign-in window/i }));
-      expect(openSpy).toHaveBeenCalledTimes(2);
-      expect(openSpy.mock.calls[1]).toEqual(["https://provider.example/authorize", "venom-oauth", "popup,width=560,height=720"]);
+    // Re-open re-opens the SAME authorize URL (also the popup-blocked
+    // recovery path — window.open returned null above).
+    fireEvent.click(screen.getByRole("button", { name: /re-open sign-in window/i }));
+    expect(openSpy).toHaveBeenCalledTimes(2);
+    expect(openSpy.mock.calls[1]).toEqual([
+      "https://provider.example/authorize",
+      "venom-oauth",
+      "popup,width=560,height=720",
+    ]);
 
-      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), { timeout: 5000 });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), { timeout: 5000 });
 
-      const beginCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/claude-code/oauth/begin"));
-      expect(beginCall).toBeTruthy();
-    },
-    8000,
-  );
+    const beginCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith("/claude-code/oauth/begin"),
+    );
+    expect(beginCall).toBeTruthy();
+  }, 8000);
 });
 
 describe("FleetOverview — credential reveal", () => {
   it("reveals the secret (reverify-first), then hide removes it from the DOM, and no secret ever reaches console", async () => {
-    const consoleSpies = (["log", "info", "warn", "error", "debug"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    const consoleSpies = (["log", "info", "warn", "error", "debug"] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(() => {}),
+    );
     const canary = "CANARY-REVEALED-SECRET-9f2e";
 
     await renderFleet(
       {
         "POST /api/control/v1/accounts/acct-1/reveal": () => new Response(canary, { status: 200 }),
-        "POST /api/control/v1/auth/reverify": () => jsonResponse(200, { data: { reverify_fresh_until: "2026-07-24T00:05:00Z" } }),
+        "POST /api/control/v1/auth/reverify": () =>
+          jsonResponse(200, { data: { reverify_fresh_until: "2026-07-24T00:05:00Z" } }),
       },
       { view: "active" },
     );
@@ -855,7 +989,9 @@ describe("FleetOverview — credential reveal", () => {
 
     // Reveal-first: the eye opens the reverify prompt; only a successful
     // reverify actually reveals the secret (no speculative reveal → no console 401).
-    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /reveal credential/i }));
+    fireEvent.click(
+      within(accountRow("acct-1")).getByRole("button", { name: /reveal credential/i }),
+    );
     const passwordInput = await screen.findByLabelText(/owner password/i);
     fireEvent.change(passwordInput, { target: { value: "the-owner-password" } });
     fireEvent.click(screen.getByRole("button", { name: /^verify$/i }));
@@ -863,7 +999,9 @@ describe("FleetOverview — credential reveal", () => {
     await screen.findByText(canary);
     expect(document.body.innerHTML).toContain(canary);
 
-    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /^hide credential$/i }));
+    fireEvent.click(
+      within(accountRow("acct-1")).getByRole("button", { name: /^hide credential$/i }),
+    );
 
     await waitFor(() => expect(document.body.innerHTML).not.toContain(canary));
 
@@ -886,14 +1024,17 @@ describe("FleetOverview — credential reveal", () => {
           revealAttempts += 1;
           return new Response(canary, { status: 200 });
         },
-        "POST /api/control/v1/auth/reverify": () => jsonResponse(200, { data: { reverify_fresh_until: "2026-07-24T00:05:00Z" } }),
+        "POST /api/control/v1/auth/reverify": () =>
+          jsonResponse(200, { data: { reverify_fresh_until: "2026-07-24T00:05:00Z" } }),
       },
       { view: "active" },
     );
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /reveal credential/i }));
+    fireEvent.click(
+      within(accountRow("acct-1")).getByRole("button", { name: /reveal credential/i }),
+    );
 
     // The reveal endpoint must NOT be hit before a successful reverify.
     expect(revealAttempts).toBe(0);
@@ -919,14 +1060,24 @@ describe("FleetOverview — credential reveal", () => {
           return new Response(canary, { status: 200 });
         },
         "POST /api/control/v1/auth/reverify": () =>
-          jsonResponse(429, { error: { code: "locked_out", message: "too many failed attempts, try again later", request_id: "r2", retryable: true, retry_after: 30 } }),
+          jsonResponse(429, {
+            error: {
+              code: "locked_out",
+              message: "too many failed attempts, try again later",
+              request_id: "r2",
+              retryable: true,
+              retry_after: 30,
+            },
+          }),
       },
       { view: "active" },
     );
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /reveal credential/i }));
+    fireEvent.click(
+      within(accountRow("acct-1")).getByRole("button", { name: /reveal credential/i }),
+    );
     const passwordInput = await screen.findByLabelText(/owner password/i);
     fireEvent.change(passwordInput, { target: { value: password } });
     fireEvent.click(screen.getByRole("button", { name: /^verify$/i }));
@@ -944,22 +1095,36 @@ describe("FleetOverview — sync tolerates quota_unsupported", () => {
   it("treats a 409 quota_unsupported as benign: muted caption, refetch, NO error banner", async () => {
     const fetchMock = await renderFleet(
       {
-        "POST /api/control/v1/accounts/acct-1/health": () => jsonResponse(200, { data: ACCOUNT_HEALTHY }),
+        "POST /api/control/v1/accounts/acct-1/health": () =>
+          jsonResponse(200, { data: ACCOUNT_HEALTHY }),
         "POST /api/control/v1/accounts/acct-1/quota": () =>
-          jsonResponse(409, { error: { code: "quota_unsupported", message: "this provider has no quota capability", request_id: "r5", retryable: false } }),
+          jsonResponse(409, {
+            error: {
+              code: "quota_unsupported",
+              message: "this provider has no quota capability",
+              request_id: "r5",
+              retryable: false,
+            },
+          }),
       },
       { view: "active" },
     );
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /sync: health · plan · usage/i }));
+    fireEvent.click(
+      within(accountRow("acct-1")).getByRole("button", { name: /sync: health · plan · usage/i }),
+    );
 
     await screen.findByText(/quota sync skipped — this provider has no quota capability/i);
     // The health refresh ran and the page refetched — the sync SUCCEEDED.
-    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/health"))).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/health")),
+    ).toBe(true);
     await waitFor(() => {
-      const providerReads = fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/providers"));
+      const providerReads = fetchMock.mock.calls.filter(([input]) =>
+        String(input).endsWith("/providers"),
+      );
       expect(providerReads.length).toBeGreaterThanOrEqual(2);
     });
     // No error banner anywhere: the typed code never renders as a failure.
@@ -969,16 +1134,26 @@ describe("FleetOverview — sync tolerates quota_unsupported", () => {
   it("still surfaces every OTHER quota failure verbatim", async () => {
     await renderFleet(
       {
-        "POST /api/control/v1/accounts/acct-1/health": () => jsonResponse(200, { data: ACCOUNT_HEALTHY }),
+        "POST /api/control/v1/accounts/acct-1/health": () =>
+          jsonResponse(200, { data: ACCOUNT_HEALTHY }),
         "POST /api/control/v1/accounts/acct-1/quota": () =>
-          jsonResponse(409, { error: { code: "credential_unavailable", message: "account has no active credential", request_id: "r6", retryable: false } }),
+          jsonResponse(409, {
+            error: {
+              code: "credential_unavailable",
+              message: "account has no active credential",
+              request_id: "r6",
+              retryable: false,
+            },
+          }),
       },
       { view: "active" },
     );
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /sync: health · plan · usage/i }));
+    fireEvent.click(
+      within(accountRow("acct-1")).getByRole("button", { name: /sync: health · plan · usage/i }),
+    );
 
     await screen.findByText(/credential_unavailable/);
     expect(screen.queryByText(/quota sync skipped/i)).toBeNull();
@@ -998,7 +1173,8 @@ describe("FleetOverview — account row polish (fingerprint identities, deduped 
   async function renderZenRow() {
     await renderFleet(
       {
-        "GET /api/control/v1/accounts?limit=200": () => jsonResponse(200, { data: { accounts: [ACCOUNT_ZEN] } }),
+        "GET /api/control/v1/accounts?limit=200": () =>
+          jsonResponse(200, { data: { accounts: [ACCOUNT_ZEN] } }),
         "GET /api/control/v1/offerings?limit=200": () => jsonResponse(200, { data: [] }),
       },
       { view: "active" },
@@ -1033,9 +1209,9 @@ describe("FleetOverview — account row polish (fingerprint identities, deduped 
 
     expect(within(row).queryAllByText("—")).toHaveLength(0);
     expect(within(row).queryByTitle(/no quota windows tracked/i)).toBeNull();
-    // Free account: "Free · Checked: …" in the meta line; the unlimited
+    // Free account: health freshness in the meta line; the unlimited
     // nature lives in the "Free / ∞" funding badge, not a separate label.
-    expect(within(row).getByText(/^Free · Checked: .+/)).toBeTruthy();
+    expect(within(row).getByText(/^Free · Health checked .+/)).toBeTruthy();
     expect(within(row).queryByText("∞ Unlimited")).toBeNull();
   });
 
@@ -1050,12 +1226,174 @@ describe("FleetOverview — account row polish (fingerprint identities, deduped 
   });
 });
 
+describe("FleetOverview — ClinePass OAuth subscription contract", () => {
+  const PROVIDER_CLINEPASS = {
+    id: "clinepass",
+    display_name: "ClinePass",
+    description: "Paid ClinePass OAuth accounts.",
+    auth_mode: "oauth2" as const,
+    funding: { mode: "fixed", locked: true, non_expiring: false, fixed: "paid" },
+    capabilities: [],
+    configured: true,
+    missing_env: [],
+  };
+  const subscribed = account({
+    id: "cline-subscribed",
+    provider: "clinepass",
+    auth_type: "oauth2",
+    identity: { email: "subscribed@example.test", plan: "ClinePass" },
+    funding: { funding: "unknown", source: "owner_override", locked: false, version: "old" },
+    display_status: "healthy",
+    health_state: "healthy",
+    quota: [
+      {
+        ...KNOWN_QUOTA_WINDOW,
+        unit: "credits",
+        window_type: "balance",
+        window_key: "balance",
+        used: null,
+        remaining: 0.17,
+        total: null,
+        limit_value: null,
+        reset_at: null,
+      },
+    ],
+  });
+  const unsubscribed = account({
+    id: "cline-unsubscribed",
+    provider: "clinepass",
+    auth_type: "oauth2",
+    identity: { email: "unsubscribed@example.test", plan: "ClinePass" },
+    funding: { funding: "paid", source: "provider_policy", locked: true, version: "new" },
+    display_status: "degraded",
+    health_state: "degraded",
+    eligibility: { eligible: false, reason: "health_not_healthy" },
+    quota: [
+      {
+        ...KNOWN_QUOTA_WINDOW,
+        unit: "credits",
+        window_type: "balance",
+        window_key: "balance",
+        used: null,
+        remaining: 0.5,
+        total: null,
+        limit_value: null,
+        reset_at: null,
+        freshness: "stale",
+      },
+    ],
+    last_health_error:
+      "no active ClinePass subscription on this account — sign in with a subscribed account or remove it",
+  });
+  const clineOfferings = [
+    offering({
+      account_id: "cline-subscribed",
+      provider_id: "clinepass",
+      provider_model_id: "cline/model-live",
+      capabilities: [
+        offeringCapability({ truth: "supported", state: "certified", routable: true }),
+      ],
+    }),
+    offering({
+      account_id: "cline-unsubscribed",
+      provider_id: "clinepass",
+      provider_model_id: "cline/model-stale",
+      capabilities: [
+        offeringCapability({ truth: "supported", state: "certified", routable: true }),
+      ],
+    }),
+  ];
+
+  async function renderClinePassRows() {
+    const fetchMock = createFetchMock({
+      "GET /api/control/v1/providers": () =>
+        jsonResponse(200, { data: { providers: [PROVIDER_CLINEPASS] } }),
+      "GET /api/control/v1/accounts?limit=200": () =>
+        jsonResponse(200, { data: { accounts: [subscribed, unsubscribed] } }),
+      "GET /api/control/v1/offerings?limit=200": () => jsonResponse(200, { data: clineOfferings }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
+    await screen.findByText("ClinePass");
+    expandProvider("ClinePass");
+  }
+
+  it("shows subscription truth without stale usage or a misleading retryability badge", async () => {
+    await renderClinePassRows();
+
+    const liveRow = accountRow("cline-subscribed");
+    within(liveRow).getByText("Pass active");
+    within(liveRow).getByText("$0.17");
+    expect(within(liveRow).queryByText("CLINEPASS")).toBeNull();
+    expect(within(liveRow).queryByText("Paid")).toBeNull();
+    expect(within(liveRow).queryByText("Unknown")).toBeNull();
+
+    const rejectedRow = accountRow("cline-unsubscribed");
+    expect(rejectedRow.classList.contains("vnd-account--subscription-required")).toBe(true);
+    within(rejectedRow).getByText("Subscription required");
+    expect(within(rejectedRow).queryByText("$0.50")).toBeNull();
+    expect(within(rejectedRow).queryByText(/not retryable/i)).toBeNull();
+    expect(within(rejectedRow).getByText(/Subscription checked .* · Usage unavailable/)).toBeTruthy();
+    expect(within(rejectedRow).queryByText("CLINEPASS")).toBeNull();
+    expect(within(rejectedRow).queryByText("Paid")).toBeNull();
+  });
+
+  it("uses warning aggregate health and excludes stale account models from the live total", async () => {
+    await renderClinePassRows();
+
+    expect(
+      document.querySelector('.vnd-health-dot--warning[title="1/2 accounts healthy"]'),
+    ).toBeTruthy();
+    screen.getByText("1 working / 1 live");
+  });
+
+  it("offers targeted OAuth reauthentication when a subscribed session is definitively expired", async () => {
+    const expired = account({
+      ...subscribed,
+      display_status: "expired",
+      health_state: "expired",
+      eligibility: { eligible: false, reason: "credential_expired" },
+      last_health_error: "OAuth session expired or was revoked — sign in again",
+    });
+    vi.stubGlobal(
+      "fetch",
+      createFetchMock({
+        "GET /api/control/v1/providers": () =>
+          jsonResponse(200, { data: { providers: [PROVIDER_CLINEPASS] } }),
+        "GET /api/control/v1/accounts?limit=200": () =>
+          jsonResponse(200, { data: { accounts: [expired] } }),
+        "GET /api/control/v1/offerings?limit=200": () =>
+          jsonResponse(200, { data: clineOfferings.slice(0, 1) }),
+      }),
+    );
+    render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
+    await screen.findByText("ClinePass");
+    expandProvider("ClinePass");
+
+    within(accountRow("cline-subscribed")).getByRole("button", {
+      name: "Reauthenticate account",
+    });
+    const expiredRow = accountRow("cline-subscribed");
+    within(expiredRow).getByText("Sign-in required");
+    expect(within(expiredRow).queryByText("$0.17")).toBeNull();
+    expect(within(expiredRow).queryByText(/not retryable/i)).toBeNull();
+    within(expiredRow).getByText("Live updates paused · Sign in again");
+  });
+});
+
 describe("FleetOverview — funding override (via the Edit account dialog)", () => {
   it("sends expected_version and surfaces funding_locked when the funding is changed", async () => {
     const fetchMock = await renderFleet(
       {
         "PUT /api/control/v1/accounts/acct-1/funding": () =>
-          jsonResponse(409, { error: { code: "funding_locked", message: "current funding is locked and cannot be overridden", request_id: "r2", retryable: false } }),
+          jsonResponse(409, {
+            error: {
+              code: "funding_locked",
+              message: "current funding is locked and cannot be overridden",
+              request_id: "r2",
+              retryable: false,
+            },
+          }),
       },
       { view: "active" },
     );
@@ -1073,7 +1411,9 @@ describe("FleetOverview — funding override (via the Edit account dialog)", () 
 
     await screen.findByText(/funding_locked/i);
 
-    const putCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/accounts/acct-1/funding"));
+    const putCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith("/accounts/acct-1/funding"),
+    );
     expect(putCall).toBeTruthy();
     const [, init] = putCall as [unknown, RequestInit];
     const body = JSON.parse(init.body as string);
@@ -1099,13 +1439,16 @@ describe("FleetOverview — funding override (via the Edit account dialog)", () 
 
     await waitFor(() => {
       const patchCall = fetchMock.mock.calls.find(
-        ([input, init]) => String(input).endsWith("/accounts/acct-1") && (init as RequestInit)?.method === "PATCH",
+        ([input, init]) =>
+          String(input).endsWith("/accounts/acct-1") && (init as RequestInit)?.method === "PATCH",
       );
       expect(patchCall).toBeTruthy();
       expect(JSON.parse((patchCall![1] as RequestInit).body as string).label).toBe("Primary");
     });
     // Funding was untouched, so no funding write fired.
-    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/funding"))).toBe(false);
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/funding")),
+    ).toBe(false);
   });
 });
 
@@ -1113,14 +1456,23 @@ describe("FleetOverview — disconnect", () => {
   it("requires the destructive confirmation before calling DELETE /accounts/{id}", async () => {
     const fetchMock = await renderFleet(
       {
-        "DELETE /api/control/v1/accounts/acct-1": () => jsonResponse(200, { data: account({ id: "acct-1", connection_state: "disconnected", display_status: "disconnected" }) }),
+        "DELETE /api/control/v1/accounts/acct-1": () =>
+          jsonResponse(200, {
+            data: account({
+              id: "acct-1",
+              connection_state: "disconnected",
+              display_status: "disconnected",
+            }),
+          }),
       },
       { view: "active" },
     );
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
 
-    fireEvent.click(within(accountRow("acct-1")).getByRole("button", { name: /disconnect account/i }));
+    fireEvent.click(
+      within(accountRow("acct-1")).getByRole("button", { name: /disconnect account/i }),
+    );
 
     // The confirmation now titles the account by its display name (email
     // here), never the opaque external_id.
@@ -1135,7 +1487,9 @@ describe("FleetOverview — disconnect", () => {
     fireEvent.click(confirmButton);
 
     await waitFor(() => {
-      const deleteCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "DELETE");
+      const deleteCall = fetchMock.mock.calls.find(
+        ([, init]) => (init as RequestInit | undefined)?.method === "DELETE",
+      );
       expect(deleteCall).toBeTruthy();
     });
   });

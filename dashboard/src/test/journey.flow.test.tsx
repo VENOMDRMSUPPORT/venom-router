@@ -89,8 +89,8 @@ describe("journey — sign in, then move through the shell", () => {
     await assertNoAxeViolations(container);
     assertNoSecretsRendered(container, SHELL_SECRETS);
 
-    // Step 3 — Models, reached by navigation rather than by remounting.
-    await gotoNav("Models");
+    // Step 3 — Live Models, reached by navigation rather than by remounting.
+    await gotoNav("Live Models");
     await assertNoAxeViolations(container);
     assertNoSecretsRendered(container, SHELL_SECRETS);
 
@@ -106,7 +106,7 @@ describe("journey — sign in, then move through the shell", () => {
   it.each([
     "Overview",
     "Providers",
-    "Models",
+    "Live Models",
     "Playground",
     "Usage & Analytics",
     "Quota & Limits",

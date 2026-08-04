@@ -35,6 +35,13 @@ type CredentialRepo interface {
 	// providerID it belongs to and the envelope needed to decrypt it.
 	// ok is false if no such row exists.
 	GetCredential(ctx context.Context, id string) (cred domain.Credential, providerID string, env secrets.Envelope, ok bool, err error)
+
+	// RotateCiphertext replaces credential id's sealed material in
+	// place (new envelope, fingerprint, and nullable expiry) for the
+	// token-refresh path. Only an ACTIVE row may rotate; a staged,
+	// retired, or unknown id reports ok=false with nothing changed.
+	// Never receives plaintext.
+	RotateCiphertext(ctx context.Context, credentialID, fingerprint string, env secrets.Envelope, expiresAt *time.Time, now time.Time) (ok bool, err error)
 }
 
 // AccountRepo is the account port: the read-side lookups connect-time
@@ -72,6 +79,11 @@ type AccountRepo interface {
 	// UpdateConnectionState's "persist a domain decision verbatim"
 	// contract. ok is false if no account row matches accountID.
 	UpdateHealthState(ctx context.Context, accountID string, next domain.Account, now time.Time) (domain.Account, bool, error)
+
+	// UpdateHealthStateWithError persists a health transition together with
+	// its current typed/operator-facing error without claiming that a fresh
+	// health probe ran. An empty error clears obsolete evidence.
+	UpdateHealthStateWithError(ctx context.Context, accountID string, next domain.Account, lastHealthError string, now time.Time) (domain.Account, bool, error)
 
 	// SoftDisconnect performs 02 §3's soft-disconnect in ONE storage-side
 	// transaction: it sets connection_state = next.ConnectionState

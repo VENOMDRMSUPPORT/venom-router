@@ -165,7 +165,7 @@ func BuiltinCatalog() []CatalogEntry {
 		{
 			ID:          "clinepass",
 			DisplayName: "ClinePass",
-			Description: "OAuth extension flow; funding is a locked, non-expiring paid balance.",
+			Description: "OAuth extension flow for accounts with an active ClinePass subscription; paid-only and locked.",
 			AuthMode:    CatalogAuthOAuth,
 			BaseURL:     "https://api.cline.bot",
 			Funding:     FundingPolicy{Mode: FundingModeFixed, Fixed: FundingPaid, Locked: true},

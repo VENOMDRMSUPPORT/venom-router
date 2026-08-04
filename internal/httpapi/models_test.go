@@ -73,7 +73,8 @@ func modelsSeedOffering(t *testing.T, db *storage.DB, s offeringSeed) {
 		t.Fatalf("seed provider: %v", err)
 	}
 	if _, err := db.Conn().Exec(
-		`INSERT OR IGNORE INTO accounts (id, provider_id, external_id, auth_type, created_at, updated_at) VALUES (?, ?, ?, 'api_key', 0, 0)`,
+		`INSERT OR IGNORE INTO accounts (id, provider_id, external_id, auth_type, connection_state, health_state, created_at, updated_at)
+		 VALUES (?, ?, ?, 'api_key', 'connected', 'healthy', 0, 0)`,
 		s.AccountID, s.ProviderID, s.AccountID,
 	); err != nil {
 		t.Fatalf("seed account: %v", err)
@@ -124,6 +125,45 @@ func modelsRequest(method, path string) *http.Request {
 	req.RemoteAddr = "127.0.0.1:54321"
 	req.Host = testAllowedHost
 	return req
+}
+
+// TestModelsHandler_ServesOnlyHealthyConnectedOfferings catches the public
+// read-model exposing catalog rows whose accounts cannot currently serve a
+// request. Storage may still contain those rows until the maintenance purge;
+// the Live Models API must fail closed immediately.
+func TestModelsHandler_ServesOnlyHealthyConnectedOfferings(t *testing.T) {
+	h, db := newTestModelsHandler(t, fixedModelsClock)
+	modelsSeedOffering(t, db, offeringSeed{
+		AccountID: "acct-model-live", ProviderID: "prov-model-live",
+		ProviderModelID: "pm-live", ModelID: "canonical-live", ModelDisplayName: "Live Model",
+	})
+	modelsSeedOffering(t, db, offeringSeed{
+		AccountID: "acct-model-expired", ProviderID: "prov-model-dead",
+		ProviderModelID: "pm-dead", ModelID: "canonical-dead", ModelDisplayName: "Dead Model",
+	})
+	if _, err := db.Conn().Exec(`UPDATE accounts SET connection_state = 'connected', health_state = 'healthy' WHERE id = 'acct-model-live'`); err != nil {
+		t.Fatalf("mark live account: %v", err)
+	}
+	if _, err := db.Conn().Exec(`UPDATE accounts SET connection_state = 'connected', health_state = 'expired' WHERE id = 'acct-model-expired'`); err != nil {
+		t.Fatalf("mark expired account: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeModels(rec, modelsRequest(http.MethodGet, "/api/control/v1/models"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data []struct {
+			ModelID string `json:"model_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data) != 1 || env.Data[0].ModelID != "canonical-live" {
+		t.Fatalf("models = %+v, want only canonical-live", env.Data)
+	}
 }
 
 // --- TestModels_UnknownContextSerializesNull ---

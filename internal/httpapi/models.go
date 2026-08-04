@@ -260,6 +260,13 @@ func (h *ModelsHandler) ServeOfferings(w http.ResponseWriter, r *http.Request) {
 	page := parsePageParams(r, defaultPageLimit, maxPageLimit)
 	accountID := r.URL.Query().Get("account_id")
 
+	// /offerings is the per-account CATALOG view, not the live surface: its
+	// sub-resources (/offerings/{id}/probe, /offerings/{id}/certification)
+	// must be able to reach an offering that is not live yet — that probe is
+	// HOW an offering becomes live, so filtering here would deadlock
+	// certification, and it breaks the P3a gate contract ("nothing filtered
+	// out"). The live definition is applied by ServeModels, which is what
+	// backs the Live Models surface.
 	rows, nextCursor, err := h.catalog.ListOfferings(ctx, storage.CatalogListParams{
 		AccountID: accountID,
 		Limit:     page.Limit,
@@ -310,6 +317,7 @@ func (h *ModelsHandler) ServeModels(w http.ResponseWriter, r *http.Request) {
 
 	rows, nextCursor, err := h.catalog.ListOfferings(ctx, storage.CatalogListParams{
 		AccountID: accountID,
+		LiveOnly:  true,
 		Limit:     page.Limit,
 		Cursor:    page.Cursor,
 	})

@@ -6,6 +6,12 @@ import {
   type QuotaWindowState,
 } from "@venom/design-system/domain";
 import type { QuotaWindow } from "../api/controlClient";
+import {
+  compactWindowLabel,
+  formatBalanceValue,
+  isBalanceWindow,
+  windowSortSeconds,
+} from "./quotaWindows";
 import { formatDuration } from "./relativeTime";
 
 export interface QuotaSummaryProps {
@@ -99,26 +105,49 @@ function compactTone(pct: number): "healthy" | "warning" | "critical" {
 
 /**
  * One evidence window as a compact line: mono window label, a thin meter,
- * the percentage, and the reset countdown. The same truthfulness contract
- * as the full card: a window whose used/total is unknown renders its
- * server state word ("unknown", "stale", …) over a hatched bar — NEVER a
- * fabricated 0%.
+ * the percentage, and the reset countdown — the legacy reference's
+ * 5H/7D/30D fill-bar rows. Balance windows render their remaining amount
+ * as a value instead of a meter (no total to fill against). The same
+ * truthfulness contract as the full card: a window whose used/total is
+ * unknown renders its server state word ("unknown", "stale", …) over a
+ * hatched bar — NEVER a fabricated 0%.
  */
-function CompactQuotaLine(props: { window: QuotaWindow; nowMs: number }) {
+function CompactQuotaLine(props: { window: QuotaWindow; nowMs: number; balanceCurrency?: "usd" }) {
   const w = props.window;
-  const label = (w.window_key || w.unit).toUpperCase();
-  const known = w.used != null && w.total != null && w.total > 0;
+  const label = compactWindowLabel(w);
 
-  if (!known) {
+  if (isBalanceWindow(w)) {
     return (
-      <div className="vnd-quota-line" title={`state: ${w.state} · freshness: ${w.freshness} — used/total not reported; never rendered as a number`}>
+      <div
+        className="vnd-quota-line"
+        title={`${w.remaining} ${w.unit} remaining · state: ${w.state} · freshness: ${w.freshness}`}
+      >
+        <span className="vnd-quota-label">{label}</span>
+        <span className="vnd-quota-balance">{formatBalanceValue(w, props.balanceCurrency)}</span>
+        <span className={`vnd-quota-pct vnd-quota-pct--${w.state === "available" ? "healthy" : "unknown"}`}>
+          {w.state}
+        </span>
+      </div>
+    );
+  }
+
+  const known = w.used != null && w.total != null && w.total > 0;
+  const current = known && w.state === "available" && w.freshness === "fresh";
+
+  if (!current) {
+    const honestState = w.state === "stale" || w.freshness === "stale" ? "stale" : w.state;
+    return (
+      <div
+        className="vnd-quota-line"
+        title={`state: ${w.state} · freshness: ${w.freshness} — used/total not reported; never rendered as a number`}
+      >
         <span className="vnd-quota-label">{label}</span>
         <span
           className="vnd-meter vnd-meter--unknown"
           role="img"
-          aria-label={`${label} quota: ${w.state}`}
+          aria-label={`${label} quota: ${honestState}`}
         />
-        <span className="vnd-quota-pct vnd-quota-pct--unknown">{w.state}</span>
+        <span className="vnd-quota-pct vnd-quota-pct--unknown">{honestState}</span>
       </div>
     );
   }
@@ -146,7 +175,9 @@ function CompactQuotaLine(props: { window: QuotaWindow; nowMs: number }) {
       </span>
       <span className={`vnd-quota-pct vnd-quota-pct--${tone}`}>{pct}%</span>
       {w.reset_at != null ? (
-        <span className="vnd-quota-reset">Resets in {formatDuration(w.reset_at * 1000 - props.nowMs)}</span>
+        <span className="vnd-quota-reset">
+          Resets in {formatDuration(w.reset_at * 1000 - props.nowMs)}
+        </span>
       ) : null}
     </div>
   );
@@ -156,6 +187,9 @@ export interface QuotaSummaryCompactProps {
   windows: QuotaWindow[];
   /** Injected clock for deterministic tests; defaults to Date.now(). */
   nowMs?: number;
+  /** Presentation hint: how this provider denominates its balance window
+   * (providerMeta.balanceCurrency). */
+  balanceCurrency?: "usd";
 }
 
 /**
@@ -168,21 +202,33 @@ export interface QuotaSummaryCompactProps {
  * account's unlimited nature is conveyed by its "Free / ∞" funding badge.
  */
 export function QuotaSummaryCompact(props: QuotaSummaryCompactProps) {
-  const { windows, nowMs = Date.now() } = props;
+  const { windows, nowMs = Date.now(), balanceCurrency } = props;
 
   if (windows.length === 0) {
     return null;
   }
 
-  const evidenceWindows = windows.filter((w) => w.source !== "local_safety");
+  // Balance windows are rendered by the account row's own balance chip
+  // (next to the identity, like the legacy reference's header balance) —
+  // the compact meter list carries the TIME-BOXED windows, shortest first.
+  const evidenceWindows = windows
+    .filter((w) => w.source !== "local_safety" && !isBalanceWindow(w))
+    .sort((a, b) => windowSortSeconds(a) - windowSortSeconds(b));
   const localSafetyWindows = windows.filter((w) => w.source === "local_safety");
   const concurrencyWindow = localSafetyWindows.find((w) => w.window_type === "concurrency");
-  const consumptionWindow = localSafetyWindows.find((w) => w.window_type === "estimated_consumption");
+  const consumptionWindow = localSafetyWindows.find(
+    (w) => w.window_type === "estimated_consumption",
+  );
 
   return (
     <div className="vnd-quota-lines">
       {evidenceWindows.map((w) => (
-        <CompactQuotaLine key={`${w.source}:${w.unit}:${w.window_type}:${w.window_key}`} window={w} nowMs={nowMs} />
+        <CompactQuotaLine
+          key={`${w.source}:${w.unit}:${w.window_type}:${w.window_key}`}
+          window={w}
+          nowMs={nowMs}
+          balanceCurrency={balanceCurrency}
+        />
       ))}
       {localSafetyWindows.length > 0 ? (
         <LocalSafetyBudgetIndicator

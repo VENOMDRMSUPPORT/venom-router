@@ -1,11 +1,21 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { Alert, Button, Dialog, FormField, Input, RadioGroup, Spinner, Textarea } from "@venom/design-system/primitives";
+import {
+  Alert,
+  Button,
+  Dialog,
+  FormField,
+  Input,
+  RadioGroup,
+  Spinner,
+  Textarea,
+} from "@venom/design-system/primitives";
 import { Icon } from "@venom/design-system/icons";
 import { TypedErrorDisplay } from "@venom/design-system/domain";
 import {
   connectApiKeyAccount,
   isSessionExpired,
   oauthBegin,
+  oauthCompleteCode,
   pollOAuthStatus,
   toApiError,
   AuthApiError,
@@ -26,7 +36,11 @@ export interface ConnectDialogProps {
  * field is OMITTED from the connect body so the catalog's own policy
  * decides — never sent as a value. */
 const BILLING_OPTIONS = [
-  { value: "", label: "Inherit from provider", description: "Use the provider's default billing classification" },
+  {
+    value: "",
+    label: "Inherit from provider",
+    description: "Use the provider's default billing classification",
+  },
   { value: "free", label: "Free", description: "Account uses free-tier quotas only" },
   { value: "paid", label: "Paid", description: "Account has paid subscription or credits" },
   { value: "unknown", label: "Unknown", description: "Billing status is unclear or mixed" },
@@ -74,6 +88,12 @@ export default function ConnectDialog(props: ConnectDialogProps) {
   // window" can re-open the same one; cleared with the rest of the state.
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
   const [popupBlocked, setPopupBlocked] = useState(false);
+  // Manual-code providers (capability "manual_code"; claude-code): the
+  // provider NEVER redirects back — the owner copies a code from the hosted
+  // page and pastes it here. transactionId is the live transaction to complete.
+  const [oauthTransactionId, setOauthTransactionId] = useState<string | null>(null);
+  const [manualCode, setManualCode] = useState("");
+  const [completing, setCompleting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function stopPolling() {
@@ -95,6 +115,9 @@ export default function ConnectDialog(props: ConnectDialogProps) {
     setOauthError(null);
     setAuthorizeUrl(null);
     setPopupBlocked(false);
+    setOauthTransactionId(null);
+    setManualCode("");
+    setCompleting(false);
     stopPolling();
   }
 
@@ -149,6 +172,18 @@ export default function ConnectDialog(props: ConnectDialogProps) {
     try {
       const begin = await oauthBegin(provider.id, csrfToken);
       setAuthorizeUrl(begin.authorize_url);
+      setOauthTransactionId(begin.transaction_id);
+
+      // Claude Code (manual_code): Anthropic only allows their hosted
+      // callback page — it displays a code to paste. Open that page and
+      // wait for the owner to paste; no status poll can succeed.
+      if (provider.capabilities.includes("manual_code")) {
+        window.open(begin.authorize_url, "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      // ClinePass and other redirect-back providers: popup + poll, with a
+      // postMessage relay fallback when the provider omits `state`.
       openPopup(begin.authorize_url);
 
       const expiresAtMs = new Date(begin.expires_at).getTime();
@@ -168,7 +203,14 @@ export default function ConnectDialog(props: ConnectDialogProps) {
             } else if (status.status === "failed") {
               stopPolling();
               setOauthPhase("failed");
-              setOauthError(new AuthApiError(0, { code: status.error ?? "failed", message: "The OAuth connection failed.", request_id: "", retryable: true }));
+              setOauthError(
+                new AuthApiError(0, {
+                  code: status.error ?? "failed",
+                  message: "The OAuth connection failed.",
+                  request_id: "",
+                  retryable: true,
+                }),
+              );
             } else if (status.status === "expired") {
               stopPolling();
               setOauthPhase("expired");
@@ -194,9 +236,87 @@ export default function ConnectDialog(props: ConnectDialogProps) {
     }
   }
 
+  /** Completes OAuth when the callback page relays a code (ClinePass omits
+   * state) or when the owner pastes a hosted Claude Code. */
+  async function completeWithCode(transactionId: string, code: string) {
+    setCompleting(true);
+    setOauthError(null);
+    try {
+      const status = await oauthCompleteCode(transactionId, code, csrfToken);
+      if (status.status === "completed") {
+        stopPolling();
+        reset();
+        onConnected();
+        return;
+      }
+      setOauthPhase("failed");
+      setOauthError(
+        new AuthApiError(0, {
+          code: status.error ?? "failed",
+          message: "The OAuth connection failed.",
+          request_id: "",
+          retryable: true,
+        }),
+      );
+    } catch (err) {
+      if (isSessionExpired(err)) {
+        onSessionExpired();
+        return;
+      }
+      setOauthPhase("failed");
+      setOauthError(toApiError(err));
+    } finally {
+      setCompleting(false);
+    }
+  }
+
+  async function handleManualCodeSubmit() {
+    if (!oauthTransactionId || manualCode.trim().length === 0) return;
+    await completeWithCode(oauthTransactionId, manualCode.trim());
+  }
+
+  // Legacy-style relay: /callback posts venom_oauth_callback when the
+  // provider omitted state (ClinePass). Completes via transaction_id.
+  useEffect(() => {
+    if (oauthPhase !== "pending" || !oauthTransactionId) return;
+    if (provider?.capabilities.includes("manual_code")) return;
+
+    const txId = oauthTransactionId;
+    let finishing = false;
+
+    function onMessage(ev: MessageEvent) {
+      const payload = ev.data as { type?: string; data?: { code?: string | null; error?: string | null } } | null;
+      if (!payload || payload.type !== "venom_oauth_callback" || finishing) return;
+      const code = payload.data?.code;
+      if (!code) {
+        if (payload.data?.error) {
+          stopPolling();
+          setOauthPhase("failed");
+          setOauthError(
+            new AuthApiError(0, {
+              code: "oauth_denied",
+              message: "The OAuth connection failed.",
+              request_id: "",
+              retryable: true,
+            }),
+          );
+        }
+        return;
+      }
+      finishing = true;
+      void completeWithCode(txId, code);
+    }
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+    // completeWithCode closes over csrfToken/onConnected; phase+txid gate is enough.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional pending-tx listener
+  }, [oauthPhase, oauthTransactionId, provider, csrfToken]);
+
   if (!provider) return null;
 
   const isOAuth = provider.auth_mode === "oauth2";
+  const isManualCode = isOAuth && provider.capabilities.includes("manual_code");
   const name = providerDisplayName(provider);
 
   return (
@@ -205,9 +325,11 @@ export default function ConnectDialog(props: ConnectDialogProps) {
       onClose={handleClose}
       title={`Connect ${name}`}
       description={
-        isOAuth
-          ? "Sign in via the popup window. We complete the connection automatically when the provider redirects back."
-          : "Paste your API key. It is encrypted with AES-256-GCM before storage and never shown again."
+        isManualCode
+          ? "Open the sign-in page, authorize, then paste the code it displays back here. We complete the connection after you paste it."
+          : isOAuth
+            ? "Sign in via the popup window. We complete the connection automatically when the provider redirects back."
+            : "Paste your API key. It is encrypted with AES-256-GCM before storage and never shown again."
       }
       footer={
         isOAuth ? (
@@ -219,7 +341,12 @@ export default function ConnectDialog(props: ConnectDialogProps) {
             <Button variant="ghost" onClick={handleClose}>
               Cancel
             </Button>
-            <Button variant="primary" loading={submitting} disabled={apiKey.length === 0} onClick={() => void handleApiKeySubmit()}>
+            <Button
+              variant="primary"
+              loading={submitting}
+              disabled={apiKey.length === 0}
+              onClick={() => void handleApiKeySubmit()}
+            >
               Save &amp; encrypt
             </Button>
           </>
@@ -234,20 +361,61 @@ export default function ConnectDialog(props: ConnectDialogProps) {
             </Button>
           ) : null}
           {oauthPhase === "pending" ? (
-            <div className="flex flex-col items-center gap-3 py-4">
-              <Spinner size="lg" label="Waiting for the provider" />
-              <span className="vn-caption">Waiting for authorization in popup…</span>
-              {popupBlocked ? (
-                <Alert tone="warning" title="The popup may have been blocked">
-                  Use "Re-open sign-in window" to try again.
-                </Alert>
-              ) : null}
-              {authorizeUrl ? (
-                <Button variant="secondary" size="sm" onClick={() => openPopup(authorizeUrl)}>
-                  Re-open sign-in window
+            isManualCode && oauthTransactionId ? (
+              <div className="flex flex-col gap-3">
+                <p className="vn-caption">
+                  Sign in and authorize. The provider then shows a code — paste it below (it may
+                  look like <span className="vn-input--mono">code#fragment</span>; paste it whole).
+                </p>
+                {authorizeUrl ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon="external-link"
+                    onClick={() => window.open(authorizeUrl, "_blank", "noopener,noreferrer")}
+                  >
+                    Open sign-in page
+                  </Button>
+                ) : null}
+                <FormField label="Authorization code" required>
+                  <Textarea
+                    className="vn-input--mono"
+                    rows={3}
+                    placeholder="Paste the code here…"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={manualCode}
+                    disabled={completing}
+                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
+                      setManualCode(e.target.value)
+                    }
+                  />
+                </FormField>
+                <Button
+                  variant="primary"
+                  loading={completing}
+                  disabled={manualCode.trim().length === 0}
+                  onClick={() => void handleManualCodeSubmit()}
+                >
+                  Complete connection
                 </Button>
-              ) : null}
-            </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-3 py-4">
+                <Spinner size="lg" label="Waiting for the provider" />
+                <span className="vn-caption">Waiting for authorization in popup…</span>
+                {popupBlocked ? (
+                  <Alert tone="warning" title="The popup may have been blocked">
+                    Use "Re-open sign-in window" to try again.
+                  </Alert>
+                ) : null}
+                {authorizeUrl ? (
+                  <Button variant="secondary" size="sm" onClick={() => openPopup(authorizeUrl)}>
+                    Re-open sign-in window
+                  </Button>
+                ) : null}
+              </div>
+            )
           ) : null}
           {oauthPhase === "failed" ? (
             <TypedErrorDisplay
@@ -291,7 +459,10 @@ export default function ConnectDialog(props: ConnectDialogProps) {
               onChange={setFunding}
             />
           </div>
-          <FormField label="Label" description="Optional. Shown instead of the auto-generated account number.">
+          <FormField
+            label="Label"
+            description="Optional. Shown instead of the auto-generated account number."
+          >
             <Input
               placeholder="#account 01"
               maxLength={100}
@@ -304,7 +475,14 @@ export default function ConnectDialog(props: ConnectDialogProps) {
             <Icon name="shield-check" size={13} />
             Stored encrypted. A health check runs immediately after connect.
           </p>
-          {error ? <TypedErrorDisplay code={error.code} message={error.message} retryable={error.retryable} tone="critical" /> : null}
+          {error ? (
+            <TypedErrorDisplay
+              code={error.code}
+              message={error.message}
+              retryable={error.retryable}
+              tone="critical"
+            />
+          ) : null}
         </div>
       )}
     </Dialog>

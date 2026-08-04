@@ -3,6 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { assertNoAxeViolations } from "../test/axe";
 import type { QuotaWindow } from "../api/controlClient";
 import QuotaSummary, { QuotaSummaryCompact } from "./QuotaSummary";
+import { compactWindowLabel, formatBalanceValue } from "./quotaWindows";
 
 afterEach(() => {
   cleanup();
@@ -135,7 +136,14 @@ describe("QuotaSummaryCompact — empty state", () => {
         nowMs={Date.parse("2026-07-27T01:00:00Z")}
         windows={[
           window_({ window_key: "gem" }),
-          window_({ window_key: "opt", used: null, remaining: null, total: null, state: "unknown", freshness: "unknown" }),
+          window_({
+            window_key: "opt",
+            used: null,
+            remaining: null,
+            total: null,
+            state: "unknown",
+            freshness: "unknown",
+          }),
         ]}
       />,
     );
@@ -145,6 +153,98 @@ describe("QuotaSummaryCompact — empty state", () => {
     screen.getByText("OPT");
     screen.getByText("unknown");
     expect(container.querySelectorAll('[role="meter"]').length).toBe(1);
+  });
+
+  it("renders stale numeric evidence as stale, never as a live 0%", () => {
+    const { container } = render(
+      <QuotaSummaryCompact
+        windows={[
+          window_({
+            unit: "percent",
+            window_type: "rolling_5h",
+            window_key: "rolling:18000s",
+            used: 0,
+            remaining: 100,
+            total: 100,
+            state: "stale",
+            freshness: "stale",
+          }),
+        ]}
+      />,
+    );
+
+    screen.getByText("stale");
+    expect(screen.queryByText("0%")).toBeNull();
+    expect(container.querySelector('[role="meter"]')).toBeNull();
+    expect(container.querySelector('[role="img"]')).toBeTruthy();
+  });
+});
+
+describe("QuotaSummaryCompact — legacy-style rolling windows + balance", () => {
+  it("labels rolling windows 5H/7D/30D from the window type and orders shortest first", () => {
+    render(
+      <QuotaSummaryCompact
+        nowMs={Date.parse("2026-08-04T01:00:00Z")}
+        windows={[
+          window_({ unit: "percent", window_type: "rolling_30d", window_key: "rolling:2592000s", used: 5, remaining: 95, total: 100 }),
+          window_({ unit: "percent", window_type: "rolling_5h", window_key: "rolling:18000s", used: 32, remaining: 68, total: 100 }),
+          window_({ unit: "percent", window_type: "rolling_7d", window_key: "rolling:604800s", used: 12, remaining: 88, total: 100 }),
+        ]}
+      />,
+    );
+
+    const labels = Array.from(document.querySelectorAll(".vnd-quota-label")).map(
+      (el) => el.textContent,
+    );
+    expect(labels).toEqual(["5H", "7D", "30D"]);
+    screen.getByText("32%");
+    screen.getByText("12%");
+    screen.getByText("5%");
+  });
+
+  it("derives an H/D label from a rolling:<n>s key when the type is unrecognized", () => {
+    expect(
+      compactWindowLabel(window_({ window_type: "rolling", window_key: "rolling:18000s" })),
+    ).toBe("5H");
+    expect(
+      compactWindowLabel(window_({ window_type: "rolling", window_key: "rolling:2592000s" })),
+    ).toBe("30D");
+    expect(compactWindowLabel(window_({ window_type: "rolling", window_key: "gem" }))).toBe("GEM");
+  });
+
+  it("excludes the balance window from the compact meter list — the account row's balance chip owns it", () => {
+    const { container } = render(
+      <QuotaSummaryCompact
+        windows={[
+          window_({
+            unit: "credits",
+            window_type: "balance",
+            window_key: "local:credits",
+            used: null,
+            total: null,
+            remaining: 4.83,
+          }),
+          window_({ unit: "percent", window_type: "rolling_5h", window_key: "rolling:18000s", used: 32, remaining: 68, total: 100 }),
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText("BALANCE")).toBeNull();
+    expect(container.querySelectorAll(".vnd-quota-line").length).toBe(1);
+    screen.getByText("5H");
+  });
+
+  it("formats a usd-denominated balance as dollars and others with the unit word", () => {
+    const balance = window_({
+      unit: "credits",
+      window_type: "balance",
+      used: null,
+      total: null,
+      remaining: 4.83,
+    });
+    expect(formatBalanceValue(balance, "usd")).toBe("$4.83");
+    expect(formatBalanceValue(balance)).toBe("4.83 credits");
+    expect(formatBalanceValue({ ...balance, remaining: 5 })).toBe("5 credits");
   });
 });
 

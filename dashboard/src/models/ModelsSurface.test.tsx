@@ -59,7 +59,11 @@ function group(overrides: Partial<ModelGroup> = {}): ModelGroup {
 
 /** The census payload the review banner reads. Defaults to an all-clear so
  * model-catalog tests are not coupled to the banner's own behaviour. */
-function censusBody(byReason: { reason: string; count: number }[] = [{ reason: "capability_not_certified", count: 0 }]) {
+function censusBody(
+  byReason: { reason: string; count: number }[] = [
+    { reason: "capability_not_certified", count: 0 },
+  ],
+) {
   return {
     data: {
       scanned: 1,
@@ -80,7 +84,10 @@ function censusBody(byReason: { reason: string; count: number }[] = [{ reason: "
   };
 }
 
-function mockModels(groups: ModelGroup[], extra: Record<string, () => Response> = {}): ReturnType<typeof createFetchMock> {
+function mockModels(
+  groups: ModelGroup[],
+  extra: Record<string, () => Response> = {},
+): ReturnType<typeof createFetchMock> {
   const mock = createFetchMock({
     [MODELS_URL]: () => jsonResponse(200, { data: groups }),
     [CENSUS_URL]: () => jsonResponse(200, censusBody()),
@@ -172,7 +179,14 @@ describe("ModelsSurface — the certification conjunction", () => {
   });
 
   it("renders every certification state distinctly", async () => {
-    const states = ["discovered", "observed", "probing", "certified", "suspended", "expired"] as const;
+    const states = [
+      "discovered",
+      "observed",
+      "probing",
+      "certified",
+      "suspended",
+      "expired",
+    ] as const;
     mockModels([
       group({
         model_id: "model-states",
@@ -217,7 +231,9 @@ describe("ModelsSurface — the certification conjunction", () => {
 
     const chip = screen.getByTestId("capability-routable-contra-1-chat");
     expect(chip.textContent ?? "").toMatch(/not routable/i);
-    expect(screen.getByTestId("capability-contra-1-chat").textContent ?? "").toMatch(/inconsistent/i);
+    expect(screen.getByTestId("capability-contra-1-chat").textContent ?? "").toMatch(
+      /inconsistent/i,
+    );
   });
 });
 
@@ -267,7 +283,14 @@ describe("ModelsSurface — unknowns are never fabricated", () => {
             provider_model_id: "media-1",
             availability: "catalog_only",
             classification: "media_only",
-            capabilities: [capability({ operation: "image", state: "certified", truth: "supported", routable: true })],
+            capabilities: [
+              capability({
+                operation: "image",
+                state: "certified",
+                truth: "supported",
+                routable: true,
+              }),
+            ],
             tiers: {},
           }),
         ],
@@ -294,7 +317,9 @@ describe("ModelsSurface — triggers", () => {
   it("sends the CSRF token when triggering discovery", async () => {
     const mock = mockModels([group()], {
       "POST /api/control/v1/accounts/acct-1/discover": () =>
-        jsonResponse(202, { data: { job_id: "job-disc", status_url: "/api/control/v1/jobs/job-disc" } }),
+        jsonResponse(202, {
+          data: { job_id: "job-disc", status_url: "/api/control/v1/jobs/job-disc" },
+        }),
       "GET /api/control/v1/jobs/job-disc": () =>
         jsonResponse(200, { data: { job_id: "job-disc", kind: "discovery", status: "running" } }),
     });
@@ -334,7 +359,9 @@ describe("ModelsSurface — triggers", () => {
       ],
       {
         "POST /api/control/v1/offerings/real-op-id-42/probe": () =>
-          jsonResponse(202, { data: { job_id: "job-probe", status_url: "/api/control/v1/jobs/job-probe" } }),
+          jsonResponse(202, {
+            data: { job_id: "job-probe", status_url: "/api/control/v1/jobs/job-probe" },
+          }),
         "GET /api/control/v1/jobs/job-probe": () =>
           jsonResponse(200, { data: { job_id: "job-probe", kind: "probe", status: "running" } }),
       },
@@ -349,13 +376,15 @@ describe("ModelsSurface — triggers", () => {
     await waitFor(() => {
       const call = mock.mock.calls.find(
         ([input, init]) =>
-          String(input) === "/api/control/v1/offerings/real-op-id-42/probe" && init?.method === "POST",
+          String(input) === "/api/control/v1/offerings/real-op-id-42/probe" &&
+          init?.method === "POST",
       );
       expect(call).toBeTruthy();
     });
     const call = mock.mock.calls.find(
       ([input, init]) =>
-        String(input) === "/api/control/v1/offerings/real-op-id-42/probe" && init?.method === "POST",
+        String(input) === "/api/control/v1/offerings/real-op-id-42/probe" &&
+        init?.method === "POST",
     ) as [unknown, RequestInit & { headers: Record<string, string> }];
     expect(call[1].headers["X-CSRF-Token"]).toBe(CSRF_TOKEN);
   });
@@ -391,7 +420,9 @@ describe("ModelsSurface — triggers", () => {
   it("reports an accepted trigger as a job in flight, never as instant success", async () => {
     mockModels([group()], {
       "POST /api/control/v1/accounts/acct-1/discover": () =>
-        jsonResponse(202, { data: { job_id: "job-disc", status_url: "/api/control/v1/jobs/job-disc" } }),
+        jsonResponse(202, {
+          data: { job_id: "job-disc", status_url: "/api/control/v1/jobs/job-disc" },
+        }),
       "GET /api/control/v1/jobs/job-disc": () =>
         jsonResponse(200, { data: { job_id: "job-disc", kind: "discovery", status: "running" } }),
     });
@@ -408,14 +439,24 @@ describe("ModelsSurface — triggers", () => {
   it("never claims a rating was updated when a benchmark completes without one", async () => {
     // QualityIndex is nil in production, so this is the NORMAL outcome today,
     // not an edge case: the job completes and no rating is written.
-    mockModels([
-      group({ quality_rating: null, offerings: [offering({ quality_known: false, quality_score: 0 })] }),
-    ], {
-      "POST /api/control/v1/models/model-zen-chat/benchmark": () =>
-        jsonResponse(202, { data: { job_id: "job-bench", status_url: "/api/control/v1/jobs/job-bench" } }),
-      "GET /api/control/v1/jobs/job-bench": () =>
-        jsonResponse(200, { data: { job_id: "job-bench", kind: "benchmark", status: "completed" } }),
-    });
+    mockModels(
+      [
+        group({
+          quality_rating: null,
+          offerings: [offering({ quality_known: false, quality_score: 0 })],
+        }),
+      ],
+      {
+        "POST /api/control/v1/models/model-zen-chat/benchmark": () =>
+          jsonResponse(202, {
+            data: { job_id: "job-bench", status_url: "/api/control/v1/jobs/job-bench" },
+          }),
+        "GET /api/control/v1/jobs/job-bench": () =>
+          jsonResponse(200, {
+            data: { job_id: "job-bench", kind: "benchmark", status: "completed" },
+          }),
+      },
+    );
     renderSurface();
 
     fireEvent.click(await screen.findByRole("button", { name: /benchmark/i }));
@@ -463,7 +504,9 @@ describe("ModelsSurface — pagination honesty", () => {
           meta: { next_cursor: "c2" },
         }),
       "GET /api/control/v1/models?cursor=c2&limit=200": () =>
-        jsonResponse(200, { data: [group({ model_id: "page-2", display_name: "Page Two Model" })] }),
+        jsonResponse(200, {
+          data: [group({ model_id: "page-2", display_name: "Page Two Model" })],
+        }),
       [CENSUS_URL]: () => jsonResponse(200, censusBody()),
     });
     vi.stubGlobal("fetch", mock);
@@ -476,15 +519,20 @@ describe("ModelsSurface — pagination honesty", () => {
 
 describe("ModelsSurface — loading, empty, error", () => {
   it("renders a loading state before the catalog arrives", () => {
-    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
     renderSurface();
     expect(screen.getByRole("status").getAttribute("aria-label") ?? "").toMatch(/loading/i);
   });
 
-  it("renders an empty state when the catalog is empty", async () => {
+  it("renders a truthful live-model empty state when no healthy account exposes models", async () => {
     mockModels([]);
     const { container } = renderSurface();
-    await waitFor(() => expect(container.textContent ?? "").toMatch(/no models/i));
+    await screen.findByText("No live models");
+    expect(container.textContent ?? "").toMatch(/healthy connected provider account/i);
+    expect(container.textContent ?? "").not.toMatch(/no models discovered/i);
   });
 
   it("renders an error state instead of an empty catalog when the API fails", async () => {
@@ -493,7 +541,12 @@ describe("ModelsSurface — loading, empty, error", () => {
       createFetchMock({
         [MODELS_URL]: () =>
           jsonResponse(500, {
-            error: { code: "internal", message: "internal error", request_id: "r1", retryable: true },
+            error: {
+              code: "internal",
+              message: "internal error",
+              request_id: "r1",
+              retryable: true,
+            },
           }),
         [CENSUS_URL]: () => jsonResponse(200, censusBody()),
       }),
@@ -501,8 +554,8 @@ describe("ModelsSurface — loading, empty, error", () => {
     const { container } = renderSurface();
 
     await waitFor(() => expect(container.textContent ?? "").toMatch(/could not load/i));
-    // An error must never read as "you have no models".
-    expect(container.textContent ?? "").not.toMatch(/no models/i);
+    // An error must never read as "you have no live models".
+    expect(container.textContent ?? "").not.toMatch(/no live models/i);
   });
 
   it("propagates a session expiry", async () => {
@@ -512,7 +565,12 @@ describe("ModelsSurface — loading, empty, error", () => {
       createFetchMock({
         [MODELS_URL]: () =>
           jsonResponse(401, {
-            error: { code: "session_expired", message: "session expired", request_id: "r2", retryable: false },
+            error: {
+              code: "session_expired",
+              message: "session expired",
+              request_id: "r2",
+              retryable: false,
+            },
           }),
         [CENSUS_URL]: () => jsonResponse(200, censusBody()),
       }),
@@ -559,33 +617,36 @@ describe("ModelsSurface — secrets and accessibility", () => {
   it("has no axe violations when empty", async () => {
     mockModels([]);
     const { container } = renderSurface();
-    await waitFor(() => expect(container.textContent ?? "").toMatch(/no models/i));
+    await screen.findByText("No live models");
     await assertNoAxeViolations(container);
   });
 });
 
 describe("ModelsSurface — review-queue banner integration (P6-UI-012)", () => {
   it("renders the banner and filters the catalog to the backlog when asked", async () => {
-    mockModels([
-      group({
-        model_id: "model-clean",
-        display_name: "Clean Model",
-        offerings: [offering({ provider_model_id: "clean-1", capabilities: [capability()] })],
-      }),
-      group({
-        model_id: "model-backlog",
-        display_name: "Backlog Model",
-        offerings: [
-          offering({
-            provider_model_id: "backlog-1",
-            capabilities: [capability({ state: "observed", truth: "unknown", routable: false })],
-          }),
-        ],
-      }),
-    ], {
-      [CENSUS_URL]: () =>
-        jsonResponse(200, censusBody([{ reason: "capability_not_certified", count: 1 }])),
-    });
+    mockModels(
+      [
+        group({
+          model_id: "model-clean",
+          display_name: "Clean Model",
+          offerings: [offering({ provider_model_id: "clean-1", capabilities: [capability()] })],
+        }),
+        group({
+          model_id: "model-backlog",
+          display_name: "Backlog Model",
+          offerings: [
+            offering({
+              provider_model_id: "backlog-1",
+              capabilities: [capability({ state: "observed", truth: "unknown", routable: false })],
+            }),
+          ],
+        }),
+      ],
+      {
+        [CENSUS_URL]: () =>
+          jsonResponse(200, censusBody([{ reason: "capability_not_certified", count: 1 }])),
+      },
+    );
     renderSurface();
 
     // Both groups before filtering.
@@ -611,8 +672,18 @@ describe("ModelsSurface — review-queue banner integration (P6-UI-012)", () => 
           offering({
             provider_model_id: "cert-1",
             capabilities: [
-              capability({ operation: "chat", state: "certified", truth: "supported", routable: false }),
-              capability({ operation: "tools", state: "certified", truth: "supported", routable: false }),
+              capability({
+                operation: "chat",
+                state: "certified",
+                truth: "supported",
+                routable: false,
+              }),
+              capability({
+                operation: "tools",
+                state: "certified",
+                truth: "supported",
+                routable: false,
+              }),
             ],
           }),
         ],

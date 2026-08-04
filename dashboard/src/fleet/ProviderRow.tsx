@@ -24,7 +24,7 @@ export interface ProviderRowProps {
    * null while the offerings read is loading/failed (rendered "—"). */
   uniqueModelCount: number | null;
   /** Verified-working distinct model count (certification truth = supported),
-   * or null while unknown. Shown as "{working} working / {total} discovered". */
+   * or null while unknown. Shown as "{working} working / {total} live". */
   workingModelCount: number | null;
   /** Per-account distinct model counts keyed by account id (null = unknown). */
   accountModelCounts: (accountId: string) => number | null;
@@ -155,7 +155,7 @@ export default function ProviderRow(props: ProviderRowProps) {
             ) : null}
           </div>
           <div className="vnd-provider-row-sub">
-            <span>{uniqueModelCount == null ? "—" : `${workingModelCount ?? 0} working / ${uniqueModelCount} discovered`}</span>
+            <span>{uniqueModelCount == null ? "—" : `${workingModelCount ?? 0} working / ${uniqueModelCount} live`}</span>
             <span aria-hidden="true">·</span>
             <span>
               <span className="text-status-healthy-fg font-semibold">{healthyCount}</span> / {accounts.length} account
