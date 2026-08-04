@@ -16,21 +16,16 @@ import { expect, test } from "@playwright/test";
 import { gotoNav, gotoShell, installControlStub } from "./stub";
 import { REQUEST_ID } from "./fixtures";
 import { pathForRoute } from "../../src/shell/route";
+import { NAV } from "../../src/shell/nav";
 
-/** Every primary-nav destination, by its visible label. */
-const SURFACES = [
-  "Overview",
-  "Providers",
-  "Models",
-  "Routing",
-  "Playground",
-  "Usage & Analytics",
-  "Quota & Limits",
-  "Token Health",
-  "Diagnostics",
-  "API Keys",
-  "Settings",
-];
+/** Every primary-nav destination, by its visible label — DERIVED from the
+ * nav registry, never restated. A hardcoded copy of these labels silently
+ * stopped covering a surface the moment one was renamed ("Models" →
+ * "Live Models"): the label no longer matched any link, so the test failed
+ * on a 60s locator timeout instead of on an accessibility violation. Reading
+ * NAV also keeps this suite TOTAL — a newly added destination gets an a11y
+ * test automatically rather than being silently uncovered. */
+const SURFACES = NAV.map((item) => item.label);
 
 /**
  * Runs axe over the whole page and asserts two separate things:
