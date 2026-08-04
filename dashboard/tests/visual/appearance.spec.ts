@@ -12,7 +12,13 @@
 
 import { expect, test } from "@playwright/test";
 import { FULL_SETTINGS, data } from "../e2e/fixtures";
-import { gotoNav, gotoShell, installControlStub, waitForVisualsSettled } from "../e2e/stub";
+import {
+  gotoNav,
+  gotoShell,
+  installControlStub,
+  selectAuthTab,
+  waitForVisualsSettled,
+} from "../e2e/stub";
 import { appearanceMatrix } from "./matrix";
 
 /** The surfaces worth a pixel baseline: the landing surface (shell chrome,
@@ -51,6 +57,18 @@ for (const cell of appearanceMatrix()) {
       test(`${surface} matches its baseline`, async ({ page }) => {
         await gotoShell(page);
         await gotoNav(page, surface);
+
+        // The Providers page opens on the OAuth tab, and this fixture's only
+        // connected account is key-authenticated — so without this step the
+        // baseline photographs an EMPTY state and silently stops covering the
+        // account/provider rows, which are the densest thing on the surface
+        // (status rails, quota bars, badges, meters) and the whole reason
+        // Providers is in SURFACES. Caught while reviewing a regenerated
+        // baseline: the empty tab would have become the permanent reference.
+        if (surface === "Providers") {
+          await selectAuthTab(page, "API Key Providers");
+          await expect(page.getByText("OpenCode Zen")).toBeVisible();
+        }
 
         // Assert the appearance actually APPLIED before capturing. Without
         // this the suite would happily photograph the default theme four
