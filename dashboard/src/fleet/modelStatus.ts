@@ -56,11 +56,6 @@ export function distinctModelStats(offerings: readonly EffectiveOffering[]): Dis
   return { total: seen.size, working: working.size };
 }
 
-/** Distinct provider_model_id count for one account's offerings. */
-export function distinctModelCount(offerings: readonly EffectiveOffering[]): number {
-  return distinctModelStats(offerings).total;
-}
-
 /** The four operations the probe endpoint accepts — an exact mirror of the
  * server's `probeableOperations` (internal/httpapi/probe.go): anything else
  * is rejected 422 before a probe ever runs. chat and streaming are

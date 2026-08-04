@@ -793,13 +793,6 @@ func clinePassTokenAndUserInfo(creds StoredCredentials) (string, *clinePassUserI
 	return stored.AccessToken, stored.UserInfo, nil
 }
 
-// clinePassAccessToken is retained for the seam boundary contract (health uses
-// clinePassTokenAndUserInfo; some callers need just the token).
-func clinePassAccessToken(creds StoredCredentials) (string, error) {
-	token, _, err := clinePassTokenAndUserInfo(creds)
-	return token, err
-}
-
 // RegisterClinePass registers the clinepass OAuth + Identity + Discovery +
 // Quota + Health adapters into reg with the native_oauth transport and the
 // openai_chat wire schema.

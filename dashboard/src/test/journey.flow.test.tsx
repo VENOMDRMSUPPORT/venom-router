@@ -65,6 +65,13 @@ async function expandProviderCard(providerName: string): Promise<void> {
   fireEvent.click(toggle);
 }
 
+/** Selects one of the Providers page's two auth tabs. The page opens on
+ * "OAuth Providers", and this journey's seeded account is on a
+ * key-authenticated provider, so an owner really does click here first. */
+async function selectAuthTab(label: "OAuth Providers" | "API Key Providers"): Promise<void> {
+  fireEvent.click(await screen.findByRole("button", { name: label }));
+}
+
 describe("journey — sign in, then move through the shell", () => {
   it("stays accessible and secret-free at every step from login to the operate surfaces", async () => {
     const { view } = await loginToShell();
@@ -81,6 +88,7 @@ describe("journey — sign in, then move through the shell", () => {
     // The account rows live inside the provider card and only render once it
     // is expanded, so the expansion is part of the journey, not a shortcut.
     await gotoNav("Providers");
+    await selectAuthTab("API Key Providers");
     await expandProviderCard("OpenCode Zen");
     // AccountRow now identifies an account by its label / identity email /
     // numbered default — never the opaque external_id. The seeded account
@@ -250,6 +258,7 @@ describe("journey — nothing bleeds across surfaces", () => {
     // yet the opaque external_id appears nowhere on it — not as text, and not
     // in any attribute (the row's test hook is the internal account id).
     await gotoNav("Providers");
+    await selectAuthTab("API Key Providers");
     await expandProviderCard("OpenCode Zen");
     await screen.findByText("owner@example.test");
     assertNoSecretsRendered(container, [{ label: "account external id", value: SENTINELS.accountExternalID }]);

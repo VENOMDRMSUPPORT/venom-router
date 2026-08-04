@@ -43,25 +43,6 @@ func safeMessageFor(fc FailureClass) string {
 	return "the provider rejected the request"
 }
 
-// retryableFor returns the spec-mandated retryability for each
-// FailureClass on the ordinary routing path (not the probe path).
-func retryableFor(fc FailureClass) bool {
-	// auth and server/rate/network are retryable; quota/invalid/not-found are not
-	if fc == FailureClassAuth {
-		return true
-	}
-	if fc == FailureClassServer {
-		return true
-	}
-	if fc == FailureClassNetwork {
-		return true
-	}
-	if fc == FailureClassRateLimit {
-		return true // retryable only after cooldown
-	}
-	return false
-}
-
 // sanitizedEvidence builds TypedFailure.Evidence (01 §4.2): identifiers
 // and enumerations ONLY — the HTTP status, the provider's error CODE
 // (an enum, never free text), and which rung produced the scope. Raw

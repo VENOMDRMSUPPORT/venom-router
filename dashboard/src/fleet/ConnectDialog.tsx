@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useOAuthRelayCompletion } from "./useOAuthRelay";
 import {
   Alert,
   Button,
@@ -277,41 +278,28 @@ export default function ConnectDialog(props: ConnectDialogProps) {
 
   // Legacy-style relay: /callback posts venom_oauth_callback when the
   // provider omitted state (ClinePass). Completes via transaction_id.
-  useEffect(() => {
-    if (oauthPhase !== "pending" || !oauthTransactionId) return;
-    if (provider?.capabilities.includes("manual_code")) return;
-
-    const txId = oauthTransactionId;
-    let finishing = false;
-
-    function onMessage(ev: MessageEvent) {
-      const payload = ev.data as { type?: string; data?: { code?: string | null; error?: string | null } } | null;
-      if (!payload || payload.type !== "venom_oauth_callback" || finishing) return;
-      const code = payload.data?.code;
-      if (!code) {
-        if (payload.data?.error) {
-          stopPolling();
-          setOauthPhase("failed");
-          setOauthError(
-            new AuthApiError(0, {
-              code: "oauth_denied",
-              message: "The OAuth connection failed.",
-              request_id: "",
-              retryable: true,
-            }),
-          );
-        }
-        return;
-      }
-      finishing = true;
-      void completeWithCode(txId, code);
-    }
-
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-    // completeWithCode closes over csrfToken/onConnected; phase+txid gate is enough.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional pending-tx listener
-  }, [oauthPhase, oauthTransactionId, provider, csrfToken]);
+  // The same state-less completion leg AccountRow's reauth uses — one hook, so
+  // a provider that omits `state` cannot work in one flow and silently fail in
+  // the other (which is exactly what happened before useOAuthRelay existed).
+  // The manual-code providers opt out: there the owner pastes the code, no
+  // redirect ever relays one.
+  useOAuthRelayCompletion({
+    transactionId: oauthPhase === "pending" ? oauthTransactionId : null,
+    enabled: !provider?.capabilities.includes("manual_code"),
+    onCode: (transactionId, code) => void completeWithCode(transactionId, code),
+    onDenied: () => {
+      stopPolling();
+      setOauthPhase("failed");
+      setOauthError(
+        new AuthApiError(0, {
+          code: "oauth_denied",
+          message: "The OAuth connection failed.",
+          request_id: "",
+          retryable: true,
+        }),
+      );
+    },
+  });
 
   if (!provider) return null;
 

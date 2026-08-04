@@ -10,7 +10,7 @@
 // the two would make a browser test fail for reasons that have nothing to do
 // with the browser.
 
-import type { Page, Route } from "@playwright/test";
+import { expect, type Page, type Route } from "@playwright/test";
 import { CONTROL_ROUTES, FROZEN_NOW_MS, matchRoute } from "./fixtures";
 
 /** Requests the stub refused to answer. A spec asserts this is empty, so an
@@ -164,4 +164,17 @@ export async function gotoNav(page: Page, label: string | RegExp): Promise<void>
   const link = nav.getByRole("link", { name: label, exact: typeof label === "string" });
   await link.click();
   await link.and(page.locator("[aria-current='page']")).waitFor();
+}
+
+/** Selects one of the Providers page's two auth tabs and waits for it to take
+ * effect. The page opens on "OAuth Providers", so a flow that works with a
+ * key-authenticated provider has to click across first — exactly as an owner
+ * does. */
+export async function selectAuthTab(
+  page: Page,
+  label: "OAuth Providers" | "API Key Providers",
+): Promise<void> {
+  const tab = page.getByRole("button", { name: label, exact: true });
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-pressed", "true");
 }

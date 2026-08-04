@@ -30,6 +30,7 @@ import {
   type OfferingCapability,
 } from "../api/controlClient";
 import ReviewQueueBanner from "./ReviewQueueBanner";
+import ProviderLogo from "../fleet/ProviderLogo";
 
 export interface ModelsSurfaceProps {
   csrfToken: string;
@@ -185,10 +186,13 @@ function OfferingRow(props: {
     <Card data-testid={`offering-${key}`}>
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <ModelIdentity
-            name={o.display_name || o.provider_model_id}
-            providerModelId={o.provider_model_id}
-          />
+          <div className="vnd-model-name-group">
+            <ProviderLogo slug={o.provider_id} name={o.provider_id} size="md" />
+            <ModelIdentity
+              name={o.display_name || o.provider_model_id}
+              providerModelId={o.provider_model_id}
+            />
+          </div>
           <span className="vn-caption">
             {o.provider_id} · {o.account_id}
           </span>

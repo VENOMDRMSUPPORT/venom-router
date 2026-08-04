@@ -49,12 +49,6 @@ func (fakeHealthAdapter) CheckOfferingHealth(ctx context.Context, creds StoredCr
 	return HealthObservation{}, nil
 }
 
-type fakeQuotaAdapter struct{}
-
-func (fakeQuotaAdapter) FetchQuota(ctx context.Context, creds StoredCredentials) (QuotaResult, error) {
-	return QuotaResult{}, nil
-}
-
 func TestRegistry_DispatchByCapability(t *testing.T) {
 	reg := NewRegistry()
 

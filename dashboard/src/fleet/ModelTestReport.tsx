@@ -12,6 +12,30 @@ import {
 } from "../api/controlClient";
 import { pollJobToTerminal, runWithConcurrency } from "./jobs";
 import { deriveModelStatus, isOfferingEnabled, probeTarget, type ModelStatus } from "./modelStatus";
+import ProviderLogo from "./ProviderLogo";
+
+/** Per-capability badge styling. The hues are a CATEGORICAL palette declared
+ * once in fleet.css (`--vnd-cap-*`) — raw color literals are forbidden here
+ * because they cannot follow a theme, and the fallback below already reads its
+ * colors through var() the same way. Same values, same pixels. */
+const CAPABILITY_STYLE: Record<string, { border: string; bg: string; color: string; icon: string }> = {
+  chat: { border: "var(--vnd-cap-chat)", bg: "var(--vnd-cap-chat-bg)", color: "var(--vnd-cap-chat)", icon: "message-square" }, // Orange
+  coding: { border: "var(--vnd-cap-coding)", bg: "var(--vnd-cap-coding-bg)", color: "var(--vnd-cap-coding)", icon: "code" }, // Purple
+  reasoning: { border: "var(--vnd-cap-reasoning)", bg: "var(--vnd-cap-reasoning-bg)", color: "var(--vnd-cap-reasoning)", icon: "brain" }, // Yellow/Gold
+  structured_output: { border: "var(--vnd-cap-structured)", bg: "var(--vnd-cap-structured-bg)", color: "var(--vnd-cap-structured)", icon: "braces" }, // Teal
+  tools: { border: "var(--vnd-cap-tools)", bg: "var(--vnd-cap-tools-bg)", color: "var(--vnd-cap-tools)", icon: "wrench" }, // Cyan
+  vision: { border: "var(--vnd-cap-vision)", bg: "var(--vnd-cap-vision-bg)", color: "var(--vnd-cap-vision)", icon: "eye" }, // Blue
+  streaming: { border: "var(--vnd-cap-streaming)", bg: "var(--vnd-cap-streaming-bg)", color: "var(--vnd-cap-streaming)", icon: "radio" }, // Pink
+};
+
+function getCapabilityStyle(operation: string) {
+  return CAPABILITY_STYLE[operation] || {
+    border: "var(--border-default)",
+    bg: "var(--surface-sunken)",
+    color: "var(--text-secondary)",
+    icon: "box"
+  };
+}
 
 export interface ModelTestReportProps {
   open: boolean;
@@ -256,16 +280,42 @@ export default function ModelTestReport(props: ModelTestReportProps) {
               return (
                 <div key={offering.provider_model_id} className="vnd-report-row" data-testid={`report-row-${offering.provider_model_id}`}>
                   <div className="vnd-report-row-body">
-                    <span className="vnd-account-email">{offering.display_name || offering.provider_model_id}</span>
-                    <span className="vn-caption vn-mono-xs">{offering.provider_model_id}</span>
+                    <div className="vnd-model-name-group">
+                      <ProviderLogo slug={account.provider} name={providerName} size="md" />
+                      <div className="vnd-model-names">
+                        <span className="vnd-account-email">{offering.display_name || offering.provider_model_id}</span>
+                        <span className="vn-caption vn-mono-xs">{offering.provider_model_id}</span>
+                      </div>
+                    </div>
                     {offering.capabilities.length > 0 ? (
                       <span className="vnd-report-chips">
-                        {shown.map((c) => (
-                          <Badge key={c.operation} tone="inactive" mono outline title={`truth: ${c.truth} · state: ${c.state}`}>
-                            {c.operation}
-                          </Badge>
-                        ))}
-                        {overflow > 0 ? <Badge tone="inactive" mono>{`+${overflow}`}</Badge> : null}
+                        {shown.map((c) => {
+                          const style = getCapabilityStyle(c.operation);
+                          return (
+                            <span
+                              key={c.operation}
+                              className="vnd-capability-icon-box"
+                              role="img"
+                              aria-label={c.operation}
+                              style={{
+                                "--cap-border-color": style.border,
+                                "--cap-bg-color": style.bg,
+                              } as React.CSSProperties}
+                              title={`${c.operation.toUpperCase()}\nTruth: ${c.truth}\nState: ${c.state}`}
+                            >
+                              <span
+                                className={`vn-icon vn-icon--${style.icon}`}
+                                style={{ width: 14, height: 14, color: style.color }}
+                                aria-hidden
+                              />
+                            </span>
+                          );
+                        })}
+                        {overflow > 0 ? (
+                          <span className="vnd-capability-overflow-box">
+                            +{overflow}
+                          </span>
+                        ) : null}
                       </span>
                     ) : (
                       <span className="vn-caption">No capability observed for this model yet.</span>

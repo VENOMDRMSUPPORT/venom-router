@@ -14,13 +14,15 @@ import { expect, test } from "@playwright/test";
 import { ACCOUNT_ID, KEY_PREFIX_FIXTURE, REQUEST_ID } from "./fixtures";
 import { RAW_VENOM_KEY_PATTERN, SENTINELS } from "../../src/test/noSecrets";
 import { pathForRoute } from "../../src/shell/route";
-import { gotoNav, gotoShell, installControlStub } from "./stub";
+import { gotoNav, gotoShell, installControlStub, selectAuthTab } from "./stub";
 
 test.describe("critical flows", () => {
   test("view fleet — the owner sees a connected account and its quota", async ({ page }) => {
     const report = await installControlStub(page);
     await gotoShell(page);
     await gotoNav(page, "Providers");
+    // The seeded provider is key-authenticated; the page opens on OAuth.
+    await selectAuthTab(page, "API Key Providers");
 
     await expect(page.getByText("OpenCode Zen")).toBeVisible();
 
@@ -37,6 +39,7 @@ test.describe("critical flows", () => {
     await installControlStub(page);
     await gotoShell(page);
     await gotoNav(page, "Providers");
+    await selectAuthTab(page, "API Key Providers");
 
     const posted: string[] = [];
     page.on("request", (r) => {

@@ -22,15 +22,6 @@ func proPolicy(t *testing.T) TierPolicy {
 	return ps[TierPro]
 }
 
-func maxPolicy(t *testing.T) TierPolicy {
-	t.Helper()
-	ps, err := Policies()
-	if err != nil {
-		t.Fatalf("Policies: %v", err)
-	}
-	return ps[TierMax]
-}
-
 // oneGroupFrom builds a single RouteGroup from one representative candidate
 // with the supplied BestQuotaHeadroom.
 func oneGroupFrom(rep CandidateOffering, bestQuota *float64) RouteGroup {

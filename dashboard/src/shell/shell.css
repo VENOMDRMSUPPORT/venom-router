@@ -8,6 +8,36 @@
  * prefix (see fleet.css) so they can never collide with the frozen
  * package's `vn-` namespace. */
 
+/* ==========================================================================
+   GLOBAL INPUT FOCUS OUTLINE OVERRIDES
+   Uses the design system's default strong border (#border-strong) for focused
+   elements and removes all browser/Tailwind outlines and double borders.
+   ========================================================================== */
+.vn-input:focus,
+.vn-input:focus-visible,
+.vn-input:focus-within,
+input:focus,
+input:focus-visible {
+  outline: none !important;
+  outline-width: 0 !important;
+  outline-offset: 0 !important;
+  border-color: var(--border-strong) !important;
+  box-shadow: none !important;
+}
+
+:root,
+[data-theme],
+body,
+* {
+  --input-border-focus: var(--border-strong) !important;
+  --tw-ring-color: transparent !important;
+  --tw-ring-offset-width: 0px !important;
+  --focus-ring: transparent !important;
+  --focus-ring-offset: 0px !important;
+  --focus-ring-width: 0px !important;
+}
+
+
 /* The brand tile's live status dot: a soft healthy-tone glow around the
  * pulsing dot. */
 .vnd-brand-pulse {

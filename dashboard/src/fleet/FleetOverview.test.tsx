@@ -250,13 +250,31 @@ function baseHandlers(overrides: Record<string, () => Response> = {}) {
   });
 }
 
-async function renderFleet(
+/** Renders the page on whatever tab it opens on, touching nothing. Use this
+ * when the DEFAULT tab is the thing under test; every other test wants
+ * `renderFleet`. */
+async function renderFleetUntouched(
   overrides: Record<string, () => Response> = {},
   props: Partial<ComponentProps<typeof FleetOverview>> = {},
 ) {
   const fetchMock = baseHandlers(overrides);
   vi.stubGlobal("fetch", fetchMock);
   render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} {...props} />);
+  await screen.findByRole("button", { name: "OAuth Providers" });
+  return fetchMock;
+}
+
+/** Renders the page and switches to the API Key Providers tab, because every
+ * account in this fixture sits on a key-authenticated provider and the page
+ * now opens on OAuth. The switch is a real CLICK rather than a controlled
+ * `category` prop on purpose: a controlled category with no parent to update
+ * it would make every later tab click in a test silently inert. */
+async function renderFleet(
+  overrides: Record<string, () => Response> = {},
+  props: Partial<ComponentProps<typeof FleetOverview>> = {},
+) {
+  const fetchMock = await renderFleetUntouched(overrides, props);
+  fireEvent.click(screen.getByRole("button", { name: "API Key Providers" }));
   await screen.findByText("OpenCode Zen");
   return fetchMock;
 }
@@ -278,14 +296,37 @@ function statCard(label: string): HTMLElement {
   return screen.getByText(label, { selector: ".vn-stat-label" }).closest(".vn-stat") as HTMLElement;
 }
 
+/** Clicks one of the two auth tabs. Catalog assertions have to stand on the
+ * tab that actually contains the provider under test now that the tabs
+ * partition the catalog. */
+function switchToTab(label: "OAuth Providers" | "API Key Providers") {
+  fireEvent.click(screen.getByRole("button", { name: label }));
+}
+
+/** Every provider name currently rendered in the catalog CARD GRID. Used to
+ * assert the auth tabs PARTITION the catalog (union covers it, intersection
+ * is empty) rather than hardcoding which slug lands in which tab. */
+function gridProviderNames(): string[] {
+  return Array.from(document.querySelectorAll(".vn-provider-card-title h3")).map((h) =>
+    (h.textContent ?? "").trim(),
+  );
+}
+
+/** Derived from the fixture, never restated: a provider added to
+ * ALL_PROVIDERS must keep the partition assertion honest. */
+const CATALOG_PROVIDER_COUNT = ALL_PROVIDERS.length;
+
 describe("FleetOverview — All Integrations catalog (default view)", () => {
   it("renders one card per catalog entry with per-slug marketing meta and badges", async () => {
-    await renderFleet();
+    // Spans BOTH tabs: codex is OAuth, the other two are key-authenticated.
+    await renderFleetUntouched();
 
     // The codex slug renders its marketing display name, CTA, and badge.
     screen.getByText("OpenAI Codex / ChatGPT");
     screen.getByRole("button", { name: /login with chatgpt/i });
     screen.getByText("CHATGPT OAUTH");
+
+    switchToTab("API Key Providers");
 
     // Connected providers show the pill + linked count; site domain lines
     // come from the meta map.
@@ -305,14 +346,17 @@ describe("FleetOverview — All Integrations catalog (default view)", () => {
   });
 
   it("renders official provider logos, including Agnes", async () => {
-    await renderFleet();
+    await renderFleetUntouched();
+
+    expect(screen.getByRole("img", { name: "Claude Code" }).getAttribute("src")).toBe(
+      "/providers/claude-code.png",
+    );
+
+    switchToTab("API Key Providers");
 
     const logo = screen.getByRole("img", { name: "OpenCode Zen" });
     expect(logo.tagName).toBe("IMG");
     expect(logo.getAttribute("src")).toBe("/providers/opencode-zen.png");
-    expect(screen.getByRole("img", { name: "Claude Code" }).getAttribute("src")).toBe(
-      "/providers/claude-code.png",
-    );
 
     const agnes = screen.getByRole("img", { name: "Agnes AI" });
     expect(agnes.tagName).toBe("IMG");
@@ -320,7 +364,8 @@ describe("FleetOverview — All Integrations catalog (default view)", () => {
   });
 
   it("shows the setup-required note naming only the missing env var NAMES, never values", async () => {
-    await renderFleet();
+    // Antigravity (the provider with missing env) is an OAuth entry.
+    await renderFleetUntouched();
 
     const note = screen.getByRole("note");
     expect(note.textContent).toMatch(/^Setup required\. Provide: /);
@@ -329,7 +374,17 @@ describe("FleetOverview — All Integrations catalog (default view)", () => {
   });
 
   it("renders the per-state actions: Connected (disabled), Connect Integration, Setup required, Integration unavailable", async () => {
-    await renderFleet();
+    // Setup-required lives on the OAuth tab; the other three states are all
+    // key-authenticated entries.
+    await renderFleetUntouched();
+
+    const antigravityCard = screen
+      .getByText("Antigravity")
+      .closest(".vn-provider-card") as HTMLElement;
+    const setupButton = within(antigravityCard).getByRole("button", { name: /^setup required$/i });
+    expect((setupButton as HTMLButtonElement).disabled).toBe(true);
+
+    switchToTab("API Key Providers");
 
     const oczCard = screen.getByText("OpenCode Zen").closest(".vn-provider-card") as HTMLElement;
     const connectedButton = within(oczCard).getByRole("button", { name: /^connected$/i });
@@ -338,12 +393,6 @@ describe("FleetOverview — All Integrations catalog (default view)", () => {
     const agnesCard = screen.getByText("Agnes AI").closest(".vn-provider-card") as HTMLElement;
     const connectButton = within(agnesCard).getByRole("button", { name: /connect integration/i });
     expect((connectButton as HTMLButtonElement).disabled).toBe(false);
-
-    const antigravityCard = screen
-      .getByText("Antigravity")
-      .closest(".vn-provider-card") as HTMLElement;
-    const setupButton = within(antigravityCard).getByRole("button", { name: /^setup required$/i });
-    expect((setupButton as HTMLButtonElement).disabled).toBe(true);
 
     const customCard = screen
       .getByText("Custom (OpenAI-compatible)")
@@ -359,84 +408,160 @@ describe("FleetOverview — All Integrations catalog (default view)", () => {
   });
 
   it("filters the integration grid live by search, with a clearable no-match state", async () => {
-    await renderFleet();
+    await renderFleetUntouched();
 
     const searchbox = screen.getByRole("searchbox", { name: /search integrations/i });
     const searchControl = searchbox.closest(".vn-search") as HTMLElement;
+    // Deliberately asserted against providers on the SAME tab: an absent
+    // provider from the OTHER tab would be hidden by the tab filter, so it
+    // would prove nothing about the search.
     fireEvent.change(searchbox, { target: { value: "claude" } });
     screen.getByText("Claude Code");
-    expect(screen.queryByText("OpenCode Zen")).toBeNull();
-    expect(screen.queryByText("Agnes AI")).toBeNull();
+    // Codex, not Antigravity: the search also matches the marketing
+    // DESCRIPTION, and Antigravity's mentions Claude — so it is a legitimate
+    // hit here and would make a useless negative.
+    expect(screen.queryByText("OpenAI Codex / ChatGPT")).toBeNull();
 
     fireEvent.click(within(searchControl).getByRole("button", { name: /clear search/i }));
-    screen.getByText("OpenCode Zen");
+    screen.getByText("OpenAI Codex / ChatGPT");
     screen.getByText("Claude Code");
 
     fireEvent.change(searchbox, { target: { value: "no-such-integration" } });
     screen.getByText(/no integrations found/i);
     fireEvent.click(within(searchControl).getByRole("button", { name: /clear search/i }));
-    screen.getByText("OpenCode Zen");
+    screen.getByText("Claude Code");
   });
 
-  it("scopes the grid with exactly the All / OAuth / API Key tabs; custom stays under All only", async () => {
-    await renderFleet();
+  it("offers exactly two tabs that PARTITION the catalog, defaults to OAuth, and leaves no provider unreachable", async () => {
+    await renderFleetUntouched();
 
     const tabs = screen.getByRole("group", { name: /filter providers/i });
     expect(
       within(tabs)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["All", "OAuth", "API Key"]);
+    ).toEqual(["OAuth Providers", "API Key Providers"]);
 
-    // All is the selected default — the tab an owner can always return to.
-    expect(within(tabs).getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe(
-      "true",
-    );
-    screen.getByText("OpenCode Zen");
-    screen.getByText("Antigravity");
-    screen.getByText("Custom (OpenAI-compatible)");
-
-    fireEvent.click(within(tabs).getByRole("button", { name: "OAuth" }));
+    // OAuth is the default tab — where the owner's real fleet lives.
+    expect(
+      within(tabs).getByRole("button", { name: "OAuth Providers" }).getAttribute("aria-pressed"),
+    ).toBe("true");
     screen.getByText("Antigravity");
     screen.getByText("Claude Code");
     screen.getByText("OpenAI Codex / ChatGPT");
     expect(screen.queryByText("OpenCode Zen")).toBeNull();
     expect(screen.queryByText("Custom (OpenAI-compatible)")).toBeNull();
 
-    fireEvent.click(within(tabs).getByRole("button", { name: "API Key" }));
+    // The key-authenticated tab is the COMPLEMENT of OAuth, not an
+    // `auth_mode === "api_key"` equality test — so `custom_openai`, which
+    // used to be visible ONLY under the removed "All" tab, lands here
+    // instead of falling through both tabs and disappearing.
+    fireEvent.click(within(tabs).getByRole("button", { name: "API Key Providers" }));
     screen.getByText("OpenCode Zen");
     screen.getByText("Agnes AI");
-    expect(screen.queryByText("Antigravity")).toBeNull();
-    expect(screen.queryByText("Custom (OpenAI-compatible)")).toBeNull();
-
-    fireEvent.click(within(tabs).getByRole("button", { name: "All" }));
     screen.getByText("Custom (OpenAI-compatible)");
+    expect(screen.queryByText("Antigravity")).toBeNull();
+
+    // Totality, stated as a count so a NEW auth_mode cannot go unnoticed:
+    // the two tabs together must account for every catalog entry.
+    const apiKeyNames = gridProviderNames();
+    fireEvent.click(within(tabs).getByRole("button", { name: "OAuth Providers" }));
+    const oauthNames = gridProviderNames();
+    expect(new Set([...oauthNames, ...apiKeyNames]).size).toBe(CATALOG_PROVIDER_COUNT);
+    expect(oauthNames.filter((name) => apiKeyNames.includes(name))).toEqual([]);
+  });
+
+  it("returns to Active Providers after a connect, so the new account is actually visible", async () => {
+    // Connecting happens from the catalog GRID, which renders integrations
+    // and never accounts — so staying there hides the very thing that was
+    // just created. The page must hand the owner back to the row list.
+    const onViewChange = vi.fn();
+    await renderFleetUntouched(
+      {
+        "POST /api/control/v1/providers/agnes-ai/accounts": () =>
+          jsonResponse(201, { data: { account: { id: "acct-new" } } }),
+      },
+      { view: "all", onViewChange },
+    );
+
+    switchToTab("API Key Providers");
+    const agnesCard = screen.getByText("Agnes AI").closest(".vn-provider-card") as HTMLElement;
+    fireEvent.click(within(agnesCard).getByRole("button", { name: /connect integration/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /api key/i }), {
+      target: { value: "sk-journey-key" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /save & encrypt/i }));
+
+    // The view switch is the assertion: without it the owner is left staring
+    // at the catalog wondering whether the connect worked.
+    await waitFor(() => expect(onViewChange).toHaveBeenCalledWith("active"));
   });
 });
 
 describe("FleetOverview — contextual stat cards", () => {
   it("recomputes all four cards from the current view + auth filter scope", async () => {
-    await renderFleet();
+    await renderFleetUntouched();
 
-    // All Integrations / All: catalog count, every account, distinct models.
-    expect(statCard("Providers").textContent).toContain("6");
-    expect(statCard("Providers").textContent).toContain("all integrations");
-    expect(statCard("Accounts").textContent).toContain("3");
-    expect(statCard("Accounts").textContent).toContain("across 1 provider");
-    expect(statCard("Healthy").textContent).toContain("1/3");
-    expect(statCard("Models").textContent).toContain("2");
-    expect(statCard("Models").textContent).toContain("1 working · unique");
-
-    // OAuth filter: no OAuth provider has accounts.
-    const tabs = screen.getByRole("group", { name: /filter providers/i });
-    fireEvent.click(within(tabs).getByRole("button", { name: "OAuth" }));
+    // All Integrations / OAuth Providers (the default tab): the three OAuth
+    // catalog entries, and no accounts — the fixture's accounts are all on
+    // key-authenticated providers.
     expect(statCard("Providers").textContent).toContain("3");
+    expect(statCard("Providers").textContent).toContain("all integrations");
     expect(statCard("Accounts").textContent).toContain("0");
     expect(statCard("Healthy").textContent).toContain("0/0");
 
-    fireEvent.click(within(tabs).getByRole("button", { name: "API Key" }));
-    expect(statCard("Providers").textContent).toContain("2");
-    expect(statCard("Accounts").textContent).toContain("3");
+    // API Key Providers: the other three entries (including the
+    // custom_openai one), carrying every account the fixture has. Three
+    // accounts exist but only TWO are counted — ACCOUNT_STOPPED is disabled,
+    // and a disabled account reads as if it were not there (see the
+    // disabled-account counting test below).
+    const tabs = screen.getByRole("group", { name: /filter providers/i });
+    fireEvent.click(within(tabs).getByRole("button", { name: "API Key Providers" }));
+    expect(statCard("Providers").textContent).toContain("3");
+    expect(statCard("Accounts").textContent).toContain("2");
+    expect(statCard("Accounts").textContent).toContain("across 1 provider");
+    expect(statCard("Healthy").textContent).toContain("1/2");
+    expect(statCard("Models").textContent).toContain("2");
+    expect(statCard("Models").textContent).toContain("1 working · unique");
+
+    fireEvent.click(within(tabs).getByRole("button", { name: "OAuth Providers" }));
+    expect(statCard("Accounts").textContent).toContain("0");
+  });
+
+  it("counts a DISABLED account as if it were not there, in every counter, while keeping its row", async () => {
+    // An account the owner turned off is not part of the fleet: it cannot
+    // serve a request, so counting it drags "healthy" down forever and reports
+    // work "requiring action" that the owner has already decided about. It
+    // must still RENDER though — otherwise there is nothing left to click to
+    // turn it back on — so this is a counting scope, not a filter on the list.
+    vi.stubGlobal(
+      "fetch",
+      baseHandlers({
+        "GET /api/control/v1/accounts?limit=200": () =>
+          jsonResponse(200, { data: { accounts: [ACCOUNT_HEALTHY, ACCOUNT_STOPPED] } }),
+      }),
+    );
+    render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
+    await screen.findByRole("button", { name: "API Key Providers" });
+    switchToTab("API Key Providers");
+    await screen.findByText("OpenCode Zen");
+
+    // Two accounts exist; ONE counts.
+    expect(statCard("Accounts").textContent).toContain("1");
+    expect(statCard("Healthy").textContent).toContain("1/1");
+    within(statCard("Healthy")).getByText("all healthy");
+
+    // The provider header agrees — nothing "requires action".
+    expandProvider("OpenCode Zen");
+    await screen.findByTitle("display_status: healthy");
+    expect(screen.getByText(/require action/).textContent).toMatch(/^0 require action$/);
+
+    // ...and the disabled row is still on screen, with its own way back.
+    const stoppedRow = accountRow("acct-3");
+    expect(stoppedRow).not.toBeNull();
+    within(stoppedRow).getByText(/turned off/i);
   });
 
   it("switches PROVIDERS to connected-integrations in the active view and shows the all-healthy badge only when earned", async () => {
@@ -448,6 +573,9 @@ describe("FleetOverview — contextual stat cards", () => {
       }),
     );
     render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
+    // The connected provider is key-authenticated, so step onto that tab.
+    await screen.findByRole("button", { name: "API Key Providers" });
+    switchToTab("API Key Providers");
     await screen.findByText("OpenCode Zen");
 
     expect(statCard("Providers").textContent).toContain("1");
@@ -484,8 +612,11 @@ describe("FleetOverview — Active Providers rows", () => {
     expect(screen.queryByText("Antigravity")).toBeNull();
 
     screen.getByText("API KEY");
-    screen.getByTitle("1/3 accounts healthy");
-    screen.getByText(/working \/ \d+ live/);
+    // 1/2, not 1/3: the aggregate is scoped to the COUNTED accounts, so the
+    // owner's disabled account cannot hold the provider at "warning" forever.
+    screen.getByTitle("1/2 accounts healthy");
+    screen.getByText(/\d+ models/);
+    screen.getByText(/\d+ accounts/);
     screen.getByRole("button", { name: /sync all accounts/i });
     screen.getByRole("button", { name: /refresh models for every account/i });
     screen.getByRole("button", { name: /^add account$/i });
@@ -509,7 +640,11 @@ describe("FleetOverview — Active Providers rows", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
 
-    await screen.findByText(/No provider accounts are connected/i);
+    // The empty copy names the CURRENT tab, so it must not claim the whole
+    // fleet is empty (see the tab-scoped empty-state test below).
+    await screen.findByText(/No OAuth Providers are connected/i);
+    switchToTab("API Key Providers");
+    await screen.findByText(/No API Key Providers are connected/i);
     expect(screen.queryByText("OpenCode Zen")).toBeNull();
   });
 
@@ -720,7 +855,14 @@ describe("FleetOverview — Active Providers rows", () => {
     );
     render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
 
-    await screen.findByText("No active providers");
+    // Scoped to the tab, not the whole fleet: with two tabs there is always
+    // a category filter in effect, so an unscoped "No active providers"
+    // would be a claim the page cannot support.
+    await screen.findByText("No active OAuth Providers");
+    expect(screen.queryByRole("button", { name: /clear search/i })).toBeNull();
+
+    switchToTab("API Key Providers");
+    await screen.findByText("No active API Key Providers");
     expect(screen.queryByRole("button", { name: /clear search/i })).toBeNull();
   });
 
@@ -729,7 +871,9 @@ describe("FleetOverview — Active Providers rows", () => {
     const onCounts = vi.fn();
     render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} onCounts={onCounts} />);
 
-    await screen.findByText("OpenCode Zen");
+    // The breadcrumb chips count the WHOLE fleet, not the current tab — so
+    // they are unaffected by which tab is open.
+    await screen.findByText("Antigravity");
     await waitFor(() => expect(onCounts).toHaveBeenCalledWith({ active: 1, total: 6 }));
   });
 
@@ -740,6 +884,8 @@ describe("FleetOverview — Active Providers rows", () => {
       <FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />,
     );
 
+    await screen.findByRole("button", { name: "API Key Providers" });
+    switchToTab("API Key Providers");
     await screen.findByText("OpenCode Zen");
     expandProvider("OpenCode Zen");
     await screen.findByTitle("display_status: healthy");
@@ -921,7 +1067,8 @@ describe("FleetOverview — OAuth connect (image 10)", () => {
   it("begins OAuth, opens the authorize URL as a popup, offers re-open, and polls to completed", async () => {
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
-    const fetchMock = await renderFleet({
+    // claude-code is an OAuth provider, so this stays on the default tab.
+    const fetchMock = await renderFleetUntouched({
       "POST /api/control/v1/providers/claude-code/oauth/begin": () =>
         jsonResponse(202, {
           data: {
@@ -1333,7 +1480,7 @@ describe("FleetOverview — ClinePass OAuth subscription contract", () => {
     within(rejectedRow).getByText("Subscription required");
     expect(within(rejectedRow).queryByText("$0.50")).toBeNull();
     expect(within(rejectedRow).queryByText(/not retryable/i)).toBeNull();
-    expect(within(rejectedRow).getByText(/Subscription checked .* · Usage unavailable/)).toBeTruthy();
+    expect(within(rejectedRow).getByText(/Live updates paused · Usage unavailable/)).toBeTruthy();
     expect(within(rejectedRow).queryByText("CLINEPASS")).toBeNull();
     expect(within(rejectedRow).queryByText("Paid")).toBeNull();
   });
@@ -1344,7 +1491,9 @@ describe("FleetOverview — ClinePass OAuth subscription contract", () => {
     expect(
       document.querySelector('.vnd-health-dot--warning[title="1/2 accounts healthy"]'),
     ).toBeTruthy();
-    screen.getByText("1 working / 1 live");
+    screen.getByText("1 models");
+    screen.getByText("2 accounts");
+    screen.getByText("1 require action");
   });
 
   it("offers targeted OAuth reauthentication when a subscribed session is definitively expired", async () => {
@@ -1377,7 +1526,190 @@ describe("FleetOverview — ClinePass OAuth subscription contract", () => {
     within(expiredRow).getByText("Sign-in required");
     expect(within(expiredRow).queryByText("$0.17")).toBeNull();
     expect(within(expiredRow).queryByText(/not retryable/i)).toBeNull();
-    within(expiredRow).getByText("Live updates paused · Sign in again");
+    within(expiredRow).getByText("Live updates paused · Usage unavailable");
+  });
+
+  it("offers no Edit control on an OAuth account — its identity already names it", async () => {
+    // For an OAuth account the Edit dialog holds ONE optional cosmetic field
+    // (the label): funding is detected from the provider and is api-key-only.
+    // The provider already returns the identity that names the row, so the
+    // control opened a dialog with nothing worth deciding. API-key accounts
+    // keep it — there the dialog also owns the funding classification.
+    vi.stubGlobal(
+      "fetch",
+      createFetchMock({
+        "GET /api/control/v1/providers": () =>
+          jsonResponse(200, { data: { providers: [PROVIDER_CLINEPASS] } }),
+        "GET /api/control/v1/accounts?limit=200": () =>
+          jsonResponse(200, { data: { accounts: [subscribed] } }),
+        "GET /api/control/v1/offerings?limit=200": () =>
+          jsonResponse(200, { data: clineOfferings.slice(0, 1) }),
+      }),
+    );
+    render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
+    await screen.findByText("ClinePass");
+    expandProvider("ClinePass");
+
+    const row = accountRow("cline-subscribed");
+    // The identity IS the name — that is what makes the label redundant here.
+    within(row).getByText("subscribed@example.test");
+    expect(within(row).queryByRole("button", { name: /edit account/i })).toBeNull();
+
+    // The rest of the action cluster is untouched — only the Edit control goes.
+    within(row).getByRole("button", { name: /sync: health/i });
+    within(row).getByRole("button", { name: /fetch models from provider/i });
+    within(row).getByRole("button", { name: /delete account/i });
+  });
+
+  it("finishes a reauth from the relayed callback code, because clinepass omits state", async () => {
+    // ClinePass does NOT echo `state` back (OmitStateFromCallback), so the
+    // backend CANNOT complete server-side: /callback renders a relay page that
+    // postMessages the code to window.opener, and only the opener holds the
+    // transaction id. Without this leg the relayed code is dropped, the
+    // transaction expires unconsumed, and re-authenticating can never change
+    // the account's health — which is exactly what happened live on
+    // 2026-08-04 (three reauth_begin successes, three unconsumed transactions).
+    const expired = account({
+      ...subscribed,
+      display_status: "expired",
+      health_state: "expired",
+      eligibility: { eligible: false, reason: "credential_expired" },
+      last_health_error: "OAuth session expired or was revoked — sign in again",
+    });
+    const fetchMock = createFetchMock({
+      "GET /api/control/v1/providers": () =>
+        jsonResponse(200, { data: { providers: [PROVIDER_CLINEPASS] } }),
+      "GET /api/control/v1/accounts?limit=200": () =>
+        jsonResponse(200, { data: { accounts: [expired] } }),
+      "GET /api/control/v1/offerings?limit=200": () =>
+        jsonResponse(200, { data: clineOfferings.slice(0, 1) }),
+      "POST /api/control/v1/accounts/cline-subscribed/reauth/begin": () =>
+        jsonResponse(202, {
+          data: {
+            transaction_id: "tx-reauth-1",
+            authorize_url: "https://app.cline.bot/authorize",
+            expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+          },
+        }),
+      "POST /api/control/v1/oauth/complete": () =>
+        jsonResponse(200, { data: { status: "completed", account_id: "cline-subscribed" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "open").mockImplementation(
+      () => ({ location: { assign: vi.fn() } }) as unknown as Window,
+    );
+
+    render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
+    await screen.findByText("ClinePass");
+    expandProvider("ClinePass");
+
+    fireEvent.click(
+      within(accountRow("cline-subscribed")).getByRole("button", {
+        name: "Reauthenticate account",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) => String(url).includes("/reauth/begin")),
+      ).toBe(true),
+    );
+
+    // The relay page's postMessage, verbatim (renderOAuthRelayPage posts with
+    // targetOrigin "*" because the callback is served by the backend origin
+    // while the dashboard may be on the dev port).
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "venom_oauth_callback", data: { code: "relayed-code" } },
+      }),
+    );
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url]) =>
+        String(url).endsWith("/api/control/v1/oauth/complete"),
+      );
+      expect(call, "the relayed code must be completed against the reauth transaction").toBeTruthy();
+      expect(JSON.parse(String((call![1] as RequestInit).body))).toEqual({
+        transaction_id: "tx-reauth-1",
+        code: "relayed-code",
+      });
+    });
+  });
+
+  it("explains an identity mismatch by naming the account to sign in as, and never calls it not retryable", async () => {
+    // The guard is CORRECT — it refuses to swap one account's credential into
+    // another — but the raw `account_identity_mismatch` code plus a
+    // "not retryable" badge told the owner nothing about the actual cause
+    // (they had signed in as the other ClinePass account) and was untrue: the
+    // action retries fine with the right account. `not retryable` on an
+    // account-lifecycle state is explicitly forbidden.
+    const expired = account({
+      ...subscribed,
+      display_status: "expired",
+      health_state: "expired",
+      last_health_error: "OAuth session expired or was revoked — sign in again",
+    });
+    vi.stubGlobal(
+      "fetch",
+      createFetchMock({
+        "GET /api/control/v1/providers": () =>
+          jsonResponse(200, { data: { providers: [PROVIDER_CLINEPASS] } }),
+        "GET /api/control/v1/accounts?limit=200": () =>
+          jsonResponse(200, { data: { accounts: [expired] } }),
+        "GET /api/control/v1/offerings?limit=200": () =>
+          jsonResponse(200, { data: clineOfferings.slice(0, 1) }),
+        "POST /api/control/v1/accounts/cline-subscribed/reauth/begin": () =>
+          jsonResponse(202, {
+            data: {
+              transaction_id: "tx-reauth-2",
+              authorize_url: "https://app.cline.bot/authorize",
+              expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+            },
+          }),
+        "POST /api/control/v1/oauth/complete": () =>
+          jsonResponse(400, {
+            error: {
+              code: "account_identity_mismatch",
+              message: "the OAuth code could not be completed",
+              request_id: "r-mismatch",
+              retryable: false,
+            },
+          }),
+      }),
+    );
+    vi.spyOn(window, "open").mockImplementation(
+      () => ({ location: { assign: vi.fn() } }) as unknown as Window,
+    );
+
+    render(<FleetOverview csrfToken={CSRF_TOKEN} onSessionExpired={vi.fn()} view="active" />);
+    await screen.findByText("ClinePass");
+    expandProvider("ClinePass");
+
+    fireEvent.click(
+      within(accountRow("cline-subscribed")).getByRole("button", {
+        name: "Reauthenticate account",
+      }),
+    );
+    // The relay listener only arms once Begin has returned the transaction id,
+    // so dispatching before that would drop the message and pass for the wrong
+    // reason.
+    await screen.findByText("Complete sign-in to restore this account.");
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "venom_oauth_callback", data: { code: "other-accounts-code" } },
+      }),
+    );
+
+    const row = accountRow("cline-subscribed");
+    // Names the CAUSE and the FIX (which account to use) in ONE sentence, and
+    // it lands in the row's own issue box — not a second stacked error panel,
+    // so the row keeps the same shape it has when no action has failed.
+    const issue = await within(row).findByText(/signed in (as|with) a different account/i);
+    expect(issue.textContent).toMatch(/subscribed@example\.test/);
+    expect(issue.closest(".vnd-account-issue-box")).not.toBeNull();
+
+    // The raw machine code and the false "not retryable" badge are both gone.
+    expect(within(row).queryByText(/not retryable/i)).toBeNull();
+    expect(within(row).queryByText(/account_identity_mismatch/)).toBeNull();
   });
 });
 
@@ -1471,17 +1803,17 @@ describe("FleetOverview — disconnect", () => {
     await screen.findByTitle("display_status: healthy");
 
     fireEvent.click(
-      within(accountRow("acct-1")).getByRole("button", { name: /disconnect account/i }),
+      within(accountRow("acct-1")).getByRole("button", { name: /delete account/i }),
     );
 
     // The confirmation now titles the account by its display name (email
     // here), never the opaque external_id.
-    const dialog = await screen.findByRole("dialog", { name: /disconnect ipfox111@example.test/i });
-    const confirmButton = within(dialog).getByRole("button", { name: /disconnect account/i });
+    const dialog = await screen.findByRole("dialog", { name: /delete ipfox111@example.test/i });
+    const confirmButton = within(dialog).getByRole("button", { name: /delete account/i });
     expect((confirmButton as HTMLButtonElement).disabled).toBe(true);
 
     const typeInput = dialog.querySelector("input") as HTMLInputElement;
-    fireEvent.change(typeInput, { target: { value: "disconnect" } });
+    fireEvent.change(typeInput, { target: { value: "delete" } });
     expect((confirmButton as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.click(confirmButton);

@@ -35,11 +35,6 @@ const DefaultAnthropicMaxTokens = 4096
 
 // Anthropic Messages request wire types ------------------------------------
 
-type anthropicTextBlock struct {
-	Type string `json:"type"` // "text"
-	Text string `json:"text"`
-}
-
 // anthropicImageSource is the base64 image block Anthropic accepts. A URL-only
 // image is NOT expressible here (Anthropic's inline source needs the bytes), so
 // it fails closed.

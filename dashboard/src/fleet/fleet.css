@@ -6,6 +6,36 @@
  * colors. Class names are prefixed `vnd-` (venom dashboard) so they can
  * never collide with the frozen package's own `vn-` namespace. */
 
+/* ==========================================================================
+   GLOBAL INPUT FOCUS OUTLINE OVERRIDES
+   Uses the design system's default strong border (#border-strong) for focused
+   elements and removes all browser/Tailwind outlines and double borders.
+   ========================================================================== */
+.vn-input:focus,
+.vn-input:focus-visible,
+.vn-input:focus-within,
+input:focus,
+input:focus-visible {
+  outline: none !important;
+  outline-width: 0 !important;
+  outline-offset: 0 !important;
+  border-color: var(--border-strong) !important;
+  box-shadow: none !important;
+}
+
+:root,
+[data-theme],
+body,
+* {
+  --input-border-focus: var(--border-strong) !important;
+  --tw-ring-color: transparent !important;
+  --tw-ring-offset-width: 0px !important;
+  --focus-ring: transparent !important;
+  --focus-ring-offset: 0px !important;
+  --focus-ring-width: 0px !important;
+}
+
+
 /* --- Active Providers: the compact row list ------------------------------ */
 
 .vnd-fleet-rows {
@@ -30,6 +60,12 @@
   padding: var(--space-2-5, 10px) var(--space-4);
   background: var(--surface-secondary);
   min-width: 0;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.vnd-provider-row-main:hover {
+  background: var(--surface-hover, var(--surface-secondary));
 }
 
 .vnd-provider-row-main > .vn-btn {
@@ -74,8 +110,70 @@
   font-size: var(--font-size-xs);
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1-5, 6px);
   line-height: 1.2;
+}
+
+.vnd-metric-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: var(--font-weight-medium, 500);
+}
+
+.vnd-metric-chip--healthy {
+  color: var(--status-healthy-fg);
+}
+
+.vnd-metric-chip--info {
+  color: var(--status-info-fg);
+}
+
+.vnd-metric-chip--warning {
+  color: var(--status-warning-fg);
+}
+
+.vnd-metric-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.vnd-metric-dot--healthy {
+  background-color: var(--status-healthy-fg);
+  box-shadow: 0 0 4px var(--status-healthy-fg);
+}
+
+.vnd-metric-dot--info {
+  background-color: var(--status-info-fg);
+  box-shadow: 0 0 4px var(--status-info-fg);
+}
+
+.vnd-metric-dot--warning {
+  background-color: var(--status-warning-fg);
+  box-shadow: 0 0 4px var(--status-warning-fg);
+}
+
+.vnd-metric-sep {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.vnd-expand-btn {
+  color: var(--text-primary) !important;
+  background: var(--surface-primary) !important;
+  border: var(--border-hairline) solid var(--border-default) !important;
+  border-radius: var(--radius-md);
+  flex: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.vnd-expand-btn:hover {
+  color: var(--text-primary) !important;
+  background: var(--surface-hover) !important;
+  border-color: var(--border-strong, var(--border-default)) !important;
 }
 
 .vnd-provider-row-actions {
@@ -85,11 +183,12 @@
   flex: none;
 }
 
-/* The expanded per-provider account panel: full-width Body section with distinct surface color */
 .vnd-provider-row-accounts {
   margin-top: 0;
   display: flex;
   flex-direction: column;
+  gap: var(--space-2-5, 10px);
+  padding: var(--space-3, 12px);
   background: var(--surface-primary);
   width: 100%;
 }
@@ -117,57 +216,224 @@
 .vnd-account {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  border: none;
-  border-bottom: var(--border-hairline) solid var(--border-subtle);
-  border-radius: 0;
-  background: transparent;
-  padding: var(--space-2-5, 10px) var(--space-4);
+  gap: var(--space-4, 16px);
+  border: var(--border-hairline) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  padding: var(--space-2, 8px) var(--space-4, 16px);
   width: 100%;
   min-width: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.vnd-account:last-child {
-  border-bottom: none;
+.vnd-account:hover {
+  border-color: var(--border-strong, var(--border-default));
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
 }
 
-/* Account-level attention is carried by a narrow semantic rail. Avoid a
-   full-row status fill: the row remains readable in both themes while the
-   warning/critical distinction stays obvious. */
-.vnd-account--subscription-required {
-  position: relative;
-  border-bottom-color: var(--status-warning-border);
-  box-shadow: inset 2px 0 0 var(--status-warning-fg);
+/* Status Left Accent Borders */
+.vnd-account--status-healthy {
+  border-left: 4px solid var(--status-healthy-fg);
 }
 
-.vnd-account--subscription-required .vnd-account-index {
-  background: var(--status-warning-bg);
-  border-color: var(--status-warning-border);
-  color: var(--status-warning-fg);
+.vnd-account--status-warning {
+  border-left: 4px solid var(--status-warning-fg);
 }
 
-.vnd-account--expired {
-  position: relative;
-  border-bottom-color: var(--status-critical-border);
-  box-shadow: inset 2px 0 0 var(--status-critical-fg);
+.vnd-account--status-critical {
+  border-left: 4px solid var(--status-critical-fg);
+}
+
+.vnd-account--status-stopped {
+  border-left: 4px solid var(--status-info-fg);
+}
+
+.vnd-account--status-inactive {
+  border-left: 4px solid var(--status-inactive-fg);
+}
+
+/* Left status bar holding circle icon and index chip */
+.vnd-account-status-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  flex: none;
+}
+
+.vnd-account-status-circle {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold, 700);
+  color: #ffffff;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.vnd-account-status-bar--healthy .vnd-account-status-circle {
+  background-color: var(--status-healthy-fg);
+  box-shadow: 0 0 6px var(--status-healthy-fg);
+}
+
+.vnd-account-status-bar--warning .vnd-account-status-circle {
+  background-color: var(--status-warning-fg);
+  box-shadow: 0 0 6px var(--status-warning-fg);
+}
+
+.vnd-account-status-bar--critical .vnd-account-status-circle {
+  background-color: var(--status-critical-fg);
+  box-shadow: 0 0 6px var(--status-critical-fg);
+}
+
+.vnd-account-status-bar--stopped .vnd-account-status-circle {
+  background-color: var(--status-info-fg);
+  box-shadow: 0 0 6px var(--status-info-fg);
+}
+
+.vnd-account-status-bar--inactive .vnd-account-status-circle {
+  background-color: var(--status-inactive-fg);
+  opacity: 0.8;
 }
 
 .vnd-account-index {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 28px;
-  height: 28px;
-  padding: 0 var(--space-1-5, 6px);
-  background: var(--surface-secondary);
-  border: var(--border-hairline) solid var(--border-default);
-  border-radius: var(--radius-md);
+  min-width: 32px;
+  height: 20px;
+  padding: 0 var(--space-1);
+  background: var(--surface-tertiary);
+  border: var(--border-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 10px;
   font-weight: var(--font-weight-semibold);
   align-self: center;
   flex: none;
+}
+
+/* Custom inline status/issue details box (quiet, soft, borderless text layout) */
+.vnd-account-issue-box {
+  display: flex;
+  flex-direction: row !important;
+  align-items: center !important;
+  width: 100%;
+  max-width: 650px;
+  box-sizing: border-box;
+  margin-top: var(--space-2, 8px);
+  padding: var(--space-2, 8px) var(--space-3, 12px) !important;
+  border-radius: var(--radius-md) !important;
+  border: 1px solid var(--border-subtle) !important;
+  background: var(--surface-canvas) !important;
+  gap: var(--space-2, 8px) !important;
+}
+
+.vnd-account-issue-box--critical {
+  background: var(--status-critical-bg) !important;
+  border-color: var(--status-critical-border) !important;
+}
+
+.vnd-account-issue-box--warning {
+  background: var(--status-warning-bg) !important;
+  border-color: var(--status-warning-border) !important;
+}
+
+.vnd-account-issue-box--degraded {
+  background: var(--status-degraded-bg) !important;
+  border-color: var(--status-degraded-border) !important;
+}
+
+.vnd-account-issue-box--inactive {
+  background: var(--surface-sunken) !important;
+  border-color: var(--border-default) !important;
+}
+
+.vnd-account-issue-desc {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--font-line-height-base);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px);
+  width: 100%;
+}
+
+.vnd-account-issue-box--critical .vnd-account-issue-desc {
+  color: var(--status-critical-fg) !important;
+}
+
+.vnd-account-issue-box--warning .vnd-account-issue-desc {
+  color: var(--status-warning-fg) !important;
+}
+
+.vnd-account-issue-box--degraded .vnd-account-issue-desc {
+  color: var(--status-degraded-fg) !important;
+}
+
+.vnd-account-issue-icon {
+  flex-shrink: 0;
+}
+
+.vnd-account-issue-box--critical .vnd-account-issue-icon {
+  color: var(--status-critical-fg) !important;
+}
+
+.vnd-account-issue-box--warning .vnd-account-issue-icon {
+  color: var(--status-warning-fg) !important;
+}
+
+.vnd-account-issue-box--degraded .vnd-account-issue-icon {
+  color: var(--status-degraded-fg) !important;
+}
+
+.vnd-account-inline-cta,
+.vnd-account-inline-cta-btn {
+  background: var(--surface-secondary) !important;
+  border: var(--border-hairline) solid var(--border-subtle) !important;
+  padding: 3px 8px !important;
+  border-radius: var(--radius-sm) !important;
+  color: var(--text-primary) !important;
+  font-weight: var(--font-weight-semibold, 600);
+  font-size: var(--font-size-2xs, 11px) !important;
+  text-decoration: none !important;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+  transition: all var(--duration-fast) var(--easing-standard) !important;
+}
+
+.vnd-account-inline-cta:hover,
+.vnd-account-inline-cta-btn:hover:not(:disabled) {
+  background: var(--surface-hover, var(--surface-tertiary)) !important;
+  border-color: var(--border-strong) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Slide transition for arrow indicator */
+.vnd-cta-arrow {
+  display: inline-block;
+  transition: transform var(--duration-fast) var(--easing-standard);
+}
+
+.vnd-account-inline-cta:hover .vnd-cta-arrow,
+.vnd-account-inline-cta-btn:hover:not(:disabled) .vnd-cta-arrow {
+  transform: translateX(2px);
+}
+
+/* Visually hide redundant health dot in metadata section (kept in DOM for vitest) */
+.vnd-account-meta .vnd-health-dot {
+  display: none !important;
 }
 
 .vnd-account-body {
@@ -206,7 +472,56 @@
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  padding: 0 !important;
+  background: var(--surface-sunken) !important;
+  border: 1px solid var(--border-default) !important;
+  border-radius: var(--radius-md) !important;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs) !important;
+  transition: all 0.2s ease;
+  height: 32px;
+  overflow: hidden;
+  position: relative !important;
+}
+
+.vnd-account-details .vn-secret[data-state="blocked"] {
+  border-style: solid !important;
+  border-color: var(--border-default) !important;
+  color: var(--text-muted) !important;
+}
+
+.vnd-account-details .vn-secret[data-state="revealed"] {
+  border-color: var(--status-warning-border, var(--border-strong)) !important;
+  background: var(--surface-hover) !important;
+}
+
+.vnd-account-details .vn-secret::before {
+  content: "" !important;
+  position: absolute !important;
+  left: 36px !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  width: 1px !important;
+  background: var(--border-default) !important;
+  transition: background-color 0.2s ease;
+}
+
+.vnd-account-details .vn-secret:hover {
+  border-color: var(--border-strong) !important;
+  background: var(--surface-hover) !important;
+}
+
+.vnd-account-details .vn-secret:hover::before {
+  background: var(--border-strong) !important;
+}
+
+/* Key icon prefix segment */
+.vnd-account-details .vn-secret > .vn-icon:first-child {
+  margin-left: 11px !important;
+  margin-right: 12px !important;
+  color: var(--text-muted) !important;
+  flex-shrink: 0;
+  display: inline-block !important;
 }
 
 .vnd-account-details .vn-secret-value {
@@ -215,6 +530,36 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding: 0 var(--space-2) !important;
+}
+
+.vnd-account-details .vn-secret button.vn-btn {
+  color: var(--text-secondary) !important;
+  background: transparent !important;
+  border: none !important;
+  border-left: 1px solid var(--border-default) !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  height: 100% !important;
+  width: 36px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: all 0.15s ease-in-out;
+  flex-shrink: 0;
+}
+
+.vnd-account-details .vn-secret:hover button.vn-btn {
+  border-left-color: var(--border-strong) !important;
+}
+
+.vnd-account-details .vn-secret button.vn-btn:hover {
+  background: var(--surface-hover) !important;
+  color: var(--text-primary) !important;
+}
+
+.vnd-account-details .vn-secret .vn-icon--shield {
+  display: none !important;
 }
 
 .vnd-account-email {
@@ -227,45 +572,98 @@
 .vnd-account-right {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--space-1);
+  align-items: flex-end;
+  gap: var(--space-2, 8px);
   flex: none;
+  align-self: center;
 }
 
 .vnd-account-actions {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-1-5, 6px);
 }
 
-.vnd-account-actions .vn-btn--icon {
-  background: var(--surface-secondary);
-  border: var(--border-hairline) solid var(--border-default);
-  border-radius: var(--radius-md);
-  padding: 3px 6px;
-  color: var(--text-secondary);
+.vnd-account-actions .vn-btn--icon,
+.vnd-provider-row-actions .vn-btn--icon {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md) !important;
+  padding: var(--space-1, 4px) var(--space-2, 8px) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: var(--text-secondary) !important;
+  opacity: 0.95 !important;
   transition: all 0.15s ease-in-out;
 }
 
-.vnd-account-actions .vn-btn--icon:hover:not(:disabled) {
-  background: var(--surface-tertiary, var(--surface-primary));
-  border-color: var(--border-strong);
-  color: var(--text-primary);
-  box-shadow: var(--elevation-flat, 0 1px 2px rgba(0, 0, 0, 0.2));
+.vnd-account-actions .vn-btn--icon:hover:not(:disabled),
+.vnd-provider-row-actions .vn-btn--icon:hover:not(:disabled) {
+  background: var(--surface-tertiary, var(--surface-primary)) !important;
+  border-color: var(--border-default) !important;
+  color: var(--text-primary) !important;
+  opacity: 1 !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
-.vnd-account-actions .vn-btn--icon:disabled {
-  opacity: 0.35;
+.vnd-account-actions .vn-btn--icon:disabled:not(.vnd-spinner):not(.vnd-btn--success):not(.vnd-btn--failure),
+.vnd-provider-row-actions .vn-btn--icon:disabled:not(.vnd-spinner):not(.vnd-btn--success):not(.vnd-btn--failure) {
+  opacity: 0.45 !important;
   cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Make primary actions (like Reauthenticate) pop cleanly when active */
+.vnd-account-actions .vn-btn--icon[title*="Sign in"],
+.vnd-account-actions .vn-btn--icon[variant="primary"] {
+  background: var(--status-critical-bg) !important;
+  border: 1px solid var(--status-critical-border) !important;
+  color: var(--status-critical-fg) !important;
+  opacity: 0.95;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.vnd-account-actions .vn-btn--icon[title*="Sign in"]:hover,
+.vnd-account-actions .vn-btn--icon[variant="primary"]:hover {
+  background: var(--status-critical-bg) !important;
+  border-color: var(--status-critical-fg) !important;
+  color: var(--status-critical-fg) !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+  opacity: 1;
+}
+
+/* Destructive action hover styling */
+.vnd-account-actions .vn-btn--icon[title*="Delete"]:hover:not(:disabled) {
+  color: var(--status-critical-fg);
+  background: var(--status-critical-bg);
+  border-color: var(--status-critical-border);
+}
+
+.vnd-account-actions-box {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px !important;
+  width: 240px;
 }
 
 .vnd-account-meta {
   display: flex;
   align-items: center;
+  justify-content: center;
+  text-align: center;
   gap: var(--space-1);
   color: var(--text-muted);
   font-size: var(--font-size-2xs);
   white-space: nowrap;
+  background: var(--surface-sunken) !important;
+  border: 1px solid var(--border-default) !important;
+  border-radius: var(--radius-md) !important;
+  padding: var(--space-1) var(--space-2) !important;
+  height: 24px;
+  box-sizing: border-box;
 }
 
 /* --- Compact quota meters -------------------------------------------------- */
@@ -284,6 +682,7 @@
   gap: var(--space-2);
   min-width: 0;
   font-size: var(--font-size-2xs);
+  height: 20px;
 }
 
 .vnd-quota-label {
@@ -291,17 +690,18 @@
   font-family: var(--font-family-mono);
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
-  min-width: var(--space-8);
+  width: 24px;
   flex: none;
 }
 
 .vnd-meter {
-  flex: 1;
-  min-width: 4rem;
-  height: 4px;
+  width: 120px;
+  flex: none;
+  height: 8px;
   border-radius: var(--radius-full);
-  background: var(--surface-primary);
-  border: var(--border-hairline) solid var(--border-subtle);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-default);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
   overflow: hidden;
 }
 
@@ -334,7 +734,9 @@
 .vnd-quota-pct {
   font-family: var(--font-family-mono);
   font-weight: var(--font-weight-semibold);
+  width: 24px;
   flex: none;
+  text-align: right;
 }
 .vnd-quota-pct--healthy { color: var(--status-healthy-fg); }
 .vnd-quota-pct--warning { color: var(--status-warning-fg); }
@@ -344,7 +746,10 @@
 .vnd-quota-reset {
   color: var(--text-muted);
   white-space: nowrap;
-  flex: none;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: var(--space-1);
 }
 
 /* --- Catalog card additions (image 4/5/6) ---------------------------------- */
@@ -484,8 +889,82 @@
 .vnd-report-chips {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-1, 4px);
   flex-wrap: wrap;
+  margin-top: var(--space-1, 4px);
+}
+
+/* Capability-badge palette (Model Test Report). A CATEGORICAL scale: one
+   distinct hue per operation so the badges are told apart at a glance — this
+   is not a status scale, so the design system's semantic status tokens
+   (healthy/warning/critical/…) cannot express it. The values live here rather
+   than as literals in ModelTestReport.tsx because raw colors are forbidden in
+   TS/TSX (they cannot follow a theme); declaring them once here keeps the ONE
+   place to retune the palette, and the component already reads its fallback
+   branch through var() the same way. Fixed hues by design, so they are
+   theme-independent — exactly as they were when inlined. */
+:root {
+  --vnd-cap-chat: #f97316;
+  --vnd-cap-chat-bg: rgba(249, 115, 22, 0.08);
+  --vnd-cap-coding: #8b5cf6;
+  --vnd-cap-coding-bg: rgba(139, 92, 246, 0.08);
+  --vnd-cap-reasoning: #eab308;
+  --vnd-cap-reasoning-bg: rgba(234, 179, 8, 0.08);
+  --vnd-cap-structured: #0d9488;
+  --vnd-cap-structured-bg: rgba(13, 148, 136, 0.08);
+  --vnd-cap-tools: #06b6d4;
+  --vnd-cap-tools-bg: rgba(6, 182, 212, 0.08);
+  --vnd-cap-vision: #3b82f6;
+  --vnd-cap-vision-bg: rgba(59, 130, 246, 0.08);
+  --vnd-cap-streaming: #ec4899;
+  --vnd-cap-streaming-bg: rgba(236, 72, 153, 0.08);
+}
+
+.vnd-capability-icon-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--cap-border-color);
+  background: var(--cap-bg-color);
+  box-sizing: border-box;
+  transition: all 0.15s ease-in-out;
+  cursor: help;
+}
+
+.vnd-capability-icon-box:hover {
+  transform: scale(1.08);
+  box-shadow: 0 0 6px var(--cap-border-color);
+}
+
+.vnd-capability-overflow-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: var(--font-size-3xs, 9px);
+  font-weight: var(--font-weight-bold, 700);
+  box-sizing: border-box;
+}
+
+.vnd-model-name-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+}
+
+.vnd-model-names {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 /* --- Debug Log panel (image 11) --------------------------------------------- */
@@ -549,12 +1028,122 @@
     width: 100%;
     padding-left: 40px;
     align-items: flex-start;
+    align-self: stretch;
+  }
+  .vnd-account-actions-box {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100% !important;
   }
   .vnd-account-actions {
     flex-wrap: wrap;
   }
   .vnd-account-meta {
+    width: 100% !important;
     white-space: normal;
+    height: auto !important;
+    padding: var(--space-1-5) var(--space-2) !important;
     flex-wrap: wrap;
   }
 }
+
+/* Override harsh active/focus states with soft, professional brand variables */
+input:focus,
+input:focus-visible,
+select:focus,
+select:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+.vn-input:focus,
+.vn-input:focus-visible,
+.vn-search-input:focus,
+.vn-search-input:focus-visible {
+  outline: none !important;
+  border-color: var(--border-strong) !important;
+  box-shadow: none !important;
+}
+
+[aria-selected="true"],
+[aria-checked="true"],
+[data-state="active"],
+.vn-segmented-control-option--selected,
+.vn-segmented-control-option[data-state="active"] {
+  background-color: var(--surface-hover, var(--surface-secondary)) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-strong) !important;
+}
+
+/* Spinner & action states styling for buttons */
+@keyframes vnd-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.vnd-spinner {
+  opacity: 1 !important;
+}
+
+.vnd-spinner .vn-icon {
+  animation: vnd-spin 0.8s linear infinite !important;
+  color: var(--text-primary) !important;
+  opacity: 1 !important;
+}
+
+.vnd-btn--success,
+.vnd-btn--failure,
+.vnd-spinner {
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  max-width: 28px !important;
+  min-height: 28px !important;
+  max-height: 28px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+  flex: 0 0 28px !important;
+}
+
+.vnd-btn--success {
+  opacity: 1 !important;
+  background: #16a34a !important;
+  border-color: #16a34a !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.4) !important;
+}
+
+.vnd-btn--success .vn-icon {
+  color: #ffffff !important;
+  opacity: 1 !important;
+}
+
+.vnd-btn--failure {
+  opacity: 1 !important;
+  background: #dc2626 !important;
+  border-color: #dc2626 !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.4) !important;
+}
+
+.vnd-btn--failure .vn-icon {
+  color: #ffffff !important;
+  opacity: 1 !important;
+}
+/* Dark theme adjustments to soften harsh sunken dark backgrounds */
+[data-theme="venom-dark"] .vnd-account-details .vn-secret,
+[data-theme="venom-dark"] .vnd-account-meta {
+  background: var(--surface-canvas) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+[data-theme="venom-dark"] .vnd-account-details .vn-secret::before,
+[data-theme="venom-dark"] .vnd-account-details .vn-secret button.vn-btn {
+  border-left-color: var(--border-subtle) !important;
+  border-right-color: var(--border-subtle) !important;
+}
+

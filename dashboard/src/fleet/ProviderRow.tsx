@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Badge, IconButton } from "@venom/design-system/primitives";
 import { Icon } from "@venom/design-system/icons";
 import { TypedErrorDisplay } from "@venom/design-system/domain";
+import { countsTowardFleet } from "./accountScope";
 import {
   AuthApiError,
   isSessionExpired,
@@ -39,8 +40,11 @@ export interface ProviderRowProps {
   onChanged: () => void;
 }
 
-/** The aggregate health dot's tone + explanation for a provider row. */
-function providerHealth(accounts: AccountProjection[]): { tone: string; title: string } {
+/** The aggregate health dot's tone + explanation for a provider row. Scoped to
+ * the COUNTED accounts (countsTowardFleet), so an account the owner disabled
+ * cannot hold the whole provider at "warning" forever. */
+function providerHealth(allAccounts: AccountProjection[]): { tone: string; title: string } {
+  const accounts = allAccounts.filter(countsTowardFleet);
   const healthy = accounts.filter((a) => a.display_status === "healthy").length;
   const title = `${healthy}/${accounts.length} account${accounts.length === 1 ? "" : "s"} healthy`;
   if (healthy === accounts.length && accounts.length > 0) return { tone: "healthy", title };
@@ -74,38 +78,53 @@ export default function ProviderRow(props: ProviderRowProps) {
 
   const [busy, setBusy] = useState(false);
   const [rowError, setRowError] = useState<AuthApiError | null>(null);
+  const [syncAllState, setSyncAllState] = useState<"idle" | "loading" | "success" | "failure">("idle");
+  const [refreshModelsState, setRefreshModelsState] = useState<"idle" | "loading" | "success" | "failure">("idle");
 
   const name = providerDisplayName(provider);
   const meta = providerMeta(provider.id);
   const health = providerHealth(accounts);
-  const healthyCount = accounts.filter((a) => a.display_status === "healthy").length;
+  // Header counters use the COUNTED scope; the row list below still renders
+  // every listed account, disabled ones included, so there is always a way
+  // back to enabling them.
+  const countedAccounts = accounts.filter(countsTowardFleet);
+  const healthyCount = countedAccounts.filter((a) => a.display_status === "healthy").length;
+  const requireActionCount = countedAccounts.length - healthyCount;
+  const connectedCount = accounts.filter((a) => a.connection_state === "connected").length;
 
-  async function runRowAction(action: () => Promise<void>) {
+  async function runRowAction(action: () => Promise<void>): Promise<boolean> {
     setBusy(true);
     setRowError(null);
     try {
       await action();
       onChanged();
+      return true;
     } catch (err) {
       if (isSessionExpired(err)) {
         onSessionExpired();
-        return;
+        return false;
       }
       setRowError(toApiError(err));
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
   function handleSyncAll() {
+    setSyncAllState("loading");
     void runRowAction(async () => {
       await syncProvider(provider.id, csrfToken);
+    }).then((success) => {
+      setSyncAllState(success ? "success" : "failure");
+      setTimeout(() => setSyncAllState("idle"), 2000);
     });
   }
 
   /** Discovery for EVERY account of this provider, each job polled to its
    * terminal status before the refetch — a 202 is never reported as done. */
   function handleRefreshModels() {
+    setRefreshModelsState("loading");
     void runRowAction(async () => {
       for (const account of accounts) {
         const handle = await startDiscovery(account.id, csrfToken);
@@ -119,19 +138,34 @@ export default function ProviderRow(props: ProviderRowProps) {
           });
         }
       }
+    }).then((success) => {
+      setRefreshModelsState(success ? "success" : "failure");
+      setTimeout(() => setRefreshModelsState("idle"), 2000);
     });
+  }
+
+  function handleHeaderClick() {
+    const selection = window.getSelection();
+    if (selection && selection.toString().trim().length > 0) {
+      return;
+    }
+    onToggleExpand();
   }
 
   return (
     <div className={`vnd-provider-row${expanded ? " vnd-provider-row--expanded" : ""}`}>
-      <div className="vnd-provider-row-main">
+      <div className="vnd-provider-row-main" onClick={handleHeaderClick}>
         <IconButton
           icon={expanded ? "chevron-down" : "chevron-right"}
           label={expanded ? `Collapse ${name} accounts` : `Expand ${name} accounts`}
           variant="ghost"
           size="sm"
+          className="vnd-expand-btn"
           aria-expanded={expanded}
-          onClick={onToggleExpand}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleExpand();
+          }}
         />
         <ProviderLogo slug={provider.id} name={name} size="md" />
         <div className="vnd-provider-row-body">
@@ -149,23 +183,49 @@ export default function ProviderRow(props: ProviderRowProps) {
                 rel="noreferrer noopener"
                 aria-label={`Open ${meta.siteLabel} in a new tab`}
                 title={`Open ${meta.siteLabel} in a new tab`}
+                onClick={(e) => e.stopPropagation()}
               >
                 <Icon name="external-link" size={13} />
               </a>
             ) : null}
           </div>
           <div className="vnd-provider-row-sub">
-            <span>{uniqueModelCount == null ? "—" : `${workingModelCount ?? 0} working / ${uniqueModelCount} live`}</span>
-            <span aria-hidden="true">·</span>
-            <span>
-              <span className="text-status-healthy-fg font-semibold">{healthyCount}</span> / {accounts.length} account
-              {accounts.length === 1 ? "" : "s"} healthy
+            <span className="vnd-metric-chip vnd-metric-chip--healthy" title={`${workingModelCount ?? 0} out of ${uniqueModelCount ?? 0} models verified working`}>
+              <span className="vnd-metric-dot vnd-metric-dot--healthy" aria-hidden="true" />
+              {uniqueModelCount == null ? "—" : uniqueModelCount} models
+            </span>
+            <span aria-hidden="true" className="vnd-metric-sep">·</span>
+            <span className="vnd-metric-chip vnd-metric-chip--info" title={`${connectedCount} out of ${accounts.length} accounts connected`}>
+              <span className="vnd-metric-dot vnd-metric-dot--info" aria-hidden="true" />
+              {connectedCount} accounts
+            </span>
+            <span aria-hidden="true" className="vnd-metric-sep">·</span>
+            <span className={`vnd-metric-chip ${requireActionCount > 0 ? "vnd-metric-chip--warning" : "vnd-metric-chip--healthy"}`} title={`${requireActionCount} accounts require owner action`}>
+              <span className={`vnd-metric-dot ${requireActionCount > 0 ? "vnd-metric-dot--warning" : "vnd-metric-dot--healthy"}`} aria-hidden="true" />
+              {requireActionCount} require action
             </span>
           </div>
         </div>
-        <div className="vnd-provider-row-actions">
+        <div className="vnd-provider-row-actions" onClick={(e) => e.stopPropagation()}>
           <IconButton
-            icon="zap"
+            icon={
+              syncAllState === "loading"
+                ? "loader-circle"
+                : syncAllState === "success"
+                  ? "check"
+                  : syncAllState === "failure"
+                    ? "x"
+                    : "zap"
+            }
+            className={
+              syncAllState === "loading"
+                ? "vnd-spinner"
+                : syncAllState === "success"
+                  ? "vnd-btn--success"
+                  : syncAllState === "failure"
+                    ? "vnd-btn--failure"
+                    : ""
+            }
             label="Sync all accounts"
             title="Sync all accounts"
             variant="ghost"
@@ -174,7 +234,24 @@ export default function ProviderRow(props: ProviderRowProps) {
             onClick={handleSyncAll}
           />
           <IconButton
-            icon="refresh-cw"
+            icon={
+              refreshModelsState === "loading"
+                ? "loader-circle"
+                : refreshModelsState === "success"
+                  ? "check"
+                  : refreshModelsState === "failure"
+                    ? "x"
+                    : "refresh-cw"
+            }
+            className={
+              refreshModelsState === "loading"
+                ? "vnd-spinner"
+                : refreshModelsState === "success"
+                  ? "vnd-btn--success"
+                  : refreshModelsState === "failure"
+                    ? "vnd-btn--failure"
+                    : ""
+            }
             label="Refresh models for every account"
             title="Refresh models for every account"
             variant="ghost"

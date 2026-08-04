@@ -30,11 +30,16 @@ import { useRefreshBurst } from "./useRefreshBurst";
 import { usePollingRefresh } from "./usePollingRefresh";
 import { providerDescription, providerDisplayName } from "./providerMeta";
 import type { FleetView } from "./FleetBreadcrumbChips";
+import { countsTowardFleet, isListedAccount } from "./accountScope";
+import {
+  CATEGORY_OPTIONS,
+  DEFAULT_AUTH_CATEGORY,
+  authCategoryLabel,
+  matchesAuthCategory,
+  type AuthCategory,
+} from "./authCategory";
 import "./fleet.css";
 
-/** The auth-mode filter the segmented tabs select. "all" is the only tab
- * that shows `custom_openai` entries. */
-export type AuthCategory = "all" | "oauth" | "api_key";
 
 export interface FleetOverviewProps {
   csrfToken: string;
@@ -47,17 +52,17 @@ export interface FleetOverviewProps {
    * provider ROW LIST (providers with ≥1 account); "all" renders the full
    * catalog CARD GRID. Defaults to "all". */
   view?: FleetView;
+  /** Switches the breadcrumb-row view. Connecting an account from the "all"
+   * catalog grid calls this with "active": the whole point of connecting is
+   * to SEE the new provider, and it does not appear in the grid the owner is
+   * standing on. Uncontrolled when absent (the view simply does not move). */
+  onViewChange?: (view: FleetView) => void;
   /** Controlled auth-category filter (the shell lifts it so the
    * breadcrumb's third segment can mirror it). Uncontrolled when absent. */
   category?: AuthCategory;
   onCategoryChange?: (category: AuthCategory) => void;
 }
 
-const CATEGORY_OPTIONS = [
-  { value: "all", label: "All" },
-  { value: "oauth", label: "OAuth" },
-  { value: "api_key", label: "API Key" },
-];
 
 /** Fetches every account page (bounded — an owner console's account count
  * is small; this cap just guards against a pathological infinite cursor
@@ -88,9 +93,7 @@ async function fetchAllOfferings(): Promise<EffectiveOffering[]> {
 }
 
 function matchesCategory(provider: Provider, category: AuthCategory): boolean {
-  if (category === "all") return true;
-  if (category === "oauth") return provider.auth_mode === "oauth2";
-  return provider.auth_mode === "api_key";
+  return matchesAuthCategory(provider.auth_mode, category);
 }
 
 /**
@@ -110,7 +113,14 @@ function matchesCategory(provider: Provider, category: AuthCategory): boolean {
  * "—" and the failure is surfaced once, inline.
  */
 export default function FleetOverview(props: FleetOverviewProps) {
-  const { csrfToken, onSessionExpired, onCounts, view = "all", onCategoryChange } = props;
+  const {
+    csrfToken,
+    onSessionExpired,
+    onCounts,
+    view = "all",
+    onViewChange,
+    onCategoryChange,
+  } = props;
 
   const [providers, setProviders] = useState<Provider[] | null>(null);
   const [accounts, setAccounts] = useState<AccountProjection[] | null>(null);
@@ -120,7 +130,7 @@ export default function FleetOverview(props: FleetOverviewProps) {
   const [reloadToken, setReloadToken] = useState(0);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [connectProvider, setConnectProvider] = useState<Provider | null>(null);
-  const [internalCategory, setInternalCategory] = useState<AuthCategory>("all");
+  const [internalCategory, setInternalCategory] = useState<AuthCategory>(DEFAULT_AUTH_CATEGORY);
   const [search, setSearch] = useState("");
   const [reportAccountId, setReportAccountId] = useState<string | null>(null);
 
@@ -253,7 +263,7 @@ export default function FleetOverview(props: FleetOverviewProps) {
   // "active fleet" derivation below works off liveAccounts, so a provider whose
   // only account is disconnected drops out of Active and is found again under
   // All Integrations (its original, un-connected catalog state).
-  const liveAccounts = accounts.filter((a) => a.connection_state !== "disconnected");
+  const liveAccounts = accounts.filter(isListedAccount);
 
   const accountsByProvider = new Map<string, AccountProjection[]>();
   for (const account of liveAccounts) {
@@ -268,9 +278,19 @@ export default function FleetOverview(props: FleetOverviewProps) {
 
   const categoryProviders = providers.filter((p) => matchesCategory(p, category));
   const scopedConnectedCount = categoryProviders.filter((p) => connectedProviders.has(p.id)).length;
-  const scopedAccounts = liveAccounts.filter((a) => {
+  // The COUNTED scope — every stat card and the model totals derive from it,
+  // and it is the only thing here that applies countsTowardFleet: a disabled
+  // account still renders (accountsByProvider above keeps it) but must read as
+  // if it were not there in every number, and come straight back on re-enable
+  // because these are derivations, not stored counts.
+  const scopedAccounts = liveAccounts.filter(countsTowardFleet).filter((a) => {
     const provider = providersById.get(a.provider);
-    return provider ? matchesCategory(provider, category) : category === "all";
+    // An account whose provider is missing from the catalog is an anomaly
+    // with no auth_mode to filter on. It used to surface under "All"; with
+    // that tab gone it is attributed to the key-authenticated tab, which is
+    // the complement branch — so such an account stays VISIBLE somewhere
+    // rather than being silently dropped from both tabs' counts.
+    return provider ? matchesCategory(provider, category) : category === "api_key";
   });
   const scopedAccountIds = new Set(scopedAccounts.map((a) => a.id));
   const scopedProviderCountForAccounts = new Set(scopedAccounts.map((a) => a.provider)).size;
@@ -302,7 +322,13 @@ export default function FleetOverview(props: FleetOverviewProps) {
           p.description.toLowerCase().includes(query),
       )
     : viewScoped;
-  const emptyActiveView = view === "active" && category === "all" && query.length === 0;
+  // "Nothing is connected in THIS tab" vs "your search matched nothing".
+  // The old `category === "all"` term is gone with the All tab: a category
+  // filter is now always in effect, so keeping it would make this
+  // permanently false and every empty active view would read as a failed
+  // search — with a Clear Search button that changes nothing.
+  const emptyActiveView = view === "active" && query.length === 0;
+  const categoryLabel = authCategoryLabel(category);
 
   /** Distinct-model stats (total discovered + verified-working) across ONE
    * provider's accounts, or null while the offerings read is unknown. */
@@ -410,10 +436,13 @@ export default function FleetOverview(props: FleetOverviewProps) {
         <div className="vn-panel p-8">
           <EmptyState
             icon={emptyActiveView ? "circle-check" : "search"}
-            title={emptyActiveView ? "No active providers" : "No integrations found"}
+            title={emptyActiveView ? `No active ${categoryLabel}` : "No integrations found"}
             description={
               emptyActiveView
-                ? "No provider accounts are connected yet. Choose All Integrations to browse the catalog."
+                ? // Scoped to the tab: an owner with API-key accounts but no
+                  // OAuth ones would be told "nothing is connected", which is
+                  // false, if this claimed the whole fleet was empty.
+                  `No ${categoryLabel} are connected yet. Choose All Integrations to browse the catalog.`
                 : "Try adjusting your search terms or category filters."
             }
             action={
@@ -468,6 +497,12 @@ export default function FleetOverview(props: FleetOverviewProps) {
         onClose={() => setConnectProvider(null)}
         onConnected={() => {
           setConnectProvider(null);
+          // Land the owner where the new account is actually visible. The
+          // catalog GRID ("all") only shows integrations, never accounts, so
+          // staying there after a successful connect hides the very thing
+          // that was just created; the row LIST ("active") is where it
+          // appears. Harmless when already on "active".
+          onViewChange?.("active");
           reload();
           startRefreshBurst();
         }}

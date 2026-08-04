@@ -1,6 +1,46 @@
-/* Tailwind's own layers only — no hand-authored rules here. All
-   utilities resolve through venomTailwindPreset (tailwind.config.js) to
-   @venom/design-system's CSS custom properties (07 §2.3/§8). */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ==========================================================================
+   GLOBAL DESIGN SYSTEM FOCUS & SELECTION OVERRIDES
+   Uses the design system's default strong border (#border-strong) for focused
+   elements and removes all browser/Tailwind outlines and double borders.
+   ========================================================================== */
+
+/* 1. Target inputs, textareas, selects, and their specific wrappers directly */
+input:focus,
+input:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+select:focus,
+select:focus-visible,
+.vn-input:focus,
+.vn-input:focus-within,
+.vn-input-wrapper:focus,
+.vn-input-wrapper:focus-within,
+.vn-search-input:focus,
+.vn-search-input:focus-within,
+.vn-filter-bar-input:focus,
+.vn-filter-bar-input:focus-within {
+  --tw-ring-color: transparent !important;
+  --tw-ring-offset-width: 0px !important;
+  --tw-ring-offset-color: transparent !important;
+  --focus-ring: transparent !important;
+  --focus-ring-offset: 0px !important;
+  --focus-ring-width: 0px !important;
+
+  outline: none !important;
+  box-shadow: none !important;
+  border-color: var(--border-strong) !important;
+}
+
+/* 2. Soften SegmentedControl options and Tabs only (no generic layout data-states) */
+.vn-segmented-control-option--selected,
+.vn-segmented-control-option[data-state="active"],
+.vn-tab--selected,
+.vn-nav-link--active {
+  background-color: var(--surface-hover, var(--surface-secondary)) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-strong) !important;
+}

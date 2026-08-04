@@ -17,7 +17,8 @@ import {
 } from "../api/controlClient";
 import { logout, type SessionTimes } from "../auth/authClient";
 import FleetBreadcrumbChips, { type FleetView } from "../fleet/FleetBreadcrumbChips";
-import FleetOverview, { type AuthCategory } from "../fleet/FleetOverview";
+import FleetOverview from "../fleet/FleetOverview";
+import { DEFAULT_AUTH_CATEGORY, type AuthCategory } from "../fleet/authCategory";
 import DebugLogPanel from "./DebugLogPanel";
 import TokenHealthSurface from "../health/TokenHealthSurface";
 import ConnectClientPage from "../connect/ConnectClientPage";
@@ -140,9 +141,9 @@ export default function AppShell(props: AppShellProps) {
   // source of truth.
   const [fleetView, setFleetView] = useState<FleetView>("active");
   // The Providers page's auth filter, lifted here so the breadcrumb's
-  // third segment can mirror it ("All Providers" / "OAuth Providers" /
-  // "API KEY Providers") — FleetOverview receives it controlled.
-  const [fleetCategory, setFleetCategory] = useState<AuthCategory>("all");
+  // third segment can mirror it ("OAuth Providers" / "API Key Providers")
+  // — FleetOverview receives it controlled.
+  const [fleetCategory, setFleetCategory] = useState<AuthCategory>(DEFAULT_AUTH_CATEGORY);
   // The Debug Log panel (providers page only) — a chip in the page-context
   // bar toggles it.
   const [debugOpen, setDebugOpen] = useState(false);
@@ -410,6 +411,7 @@ export default function AppShell(props: AppShellProps) {
             onSessionExpired,
             setFleetCounts,
             fleetView,
+            setFleetView,
             fleetCategory,
             setFleetCategory,
             apiKeyCreateOpen,
@@ -438,12 +440,14 @@ export default function AppShell(props: AppShellProps) {
 // returns undefined for it and the page supplies its own header.
 export { CONNECT_CLIENT_KEY };
 
-/** The providers-page breadcrumb's third segment per auth filter (the
- * documented "All Providers / OAuth Providers / API KEY Providers"). */
+/** The providers-page breadcrumb's third segment per auth filter. Kept
+ * WORD-FOR-WORD identical to the tab labels in FleetOverview's
+ * CATEGORY_OPTIONS — the crumb mirrors the tab, so two spellings of the same
+ * filter (the old crumb said "API KEY Providers" while the tab said
+ * "API Key") read as two different places. */
 const FLEET_CATEGORY_CRUMB: Record<AuthCategory, string> = {
-  all: "All Providers",
   oauth: "OAuth Providers",
-  api_key: "API KEY Providers",
+  api_key: "API Key Providers",
 };
 
 /** Reads the current browser path into a route (see ./route). Used at mount and
@@ -467,6 +471,7 @@ function renderSurface(
   onSessionExpired: () => void,
   onFleetCounts: (counts: { active: number; total: number }) => void,
   fleetView: FleetView,
+  onFleetViewChange: (view: FleetView) => void,
   fleetCategory: AuthCategory,
   onFleetCategoryChange: (category: AuthCategory) => void,
   apiKeyCreateOpen: boolean,
@@ -481,6 +486,7 @@ function renderSurface(
         onSessionExpired={onSessionExpired}
         onCounts={onFleetCounts}
         view={fleetView}
+        onViewChange={onFleetViewChange}
         category={fleetCategory}
         onCategoryChange={onFleetCategoryChange}
       />

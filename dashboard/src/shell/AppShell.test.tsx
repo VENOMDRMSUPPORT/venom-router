@@ -886,6 +886,11 @@ describe("AppShell — global breadcrumb", () => {
     await screen.findByRole("link", { name: /overview/i });
     fireEvent.click(screen.getByRole("link", { name: /providers/i }));
 
+    // Both providers in this fixture are key-authenticated, and the page now
+    // opens on the OAuth tab — step onto the tab that holds them.
+    await screen.findByRole("button", { name: "API Key Providers" });
+    fireEvent.click(screen.getByRole("button", { name: "API Key Providers" }));
+
     // Active Providers is the page-load default: only connected providers render.
     await screen.findByText("OpenCode Zen");
     expect(screen.queryByText("Agnes AI")).toBeNull();
@@ -963,16 +968,21 @@ describe("AppShell — global breadcrumb", () => {
       screen.getByRole("navigation", { name: /breadcrumb/i }).querySelector('[aria-current="page"]')
         ?.textContent;
     within(screen.getByRole("navigation", { name: /breadcrumb/i })).getByText("Providers");
-    expect(currentCrumb()).toBe("All Providers");
+    // OAuth is the default tab, so it is also the crumb the page lands on.
+    expect(currentCrumb()).toBe("OAuth Providers");
 
     const tabs = await screen.findByRole("group", {
       name: /filter providers by authentication type/i,
     });
-    fireEvent.click(within(tabs).getByRole("button", { name: "OAuth" }));
-    expect(currentCrumb()).toBe("OAuth Providers");
 
-    fireEvent.click(within(tabs).getByRole("button", { name: "API Key" }));
-    expect(currentCrumb()).toBe("API KEY Providers");
+    // The crumb must be WORD-FOR-WORD the tab's own label, not a re-spelling
+    // of it — the old crumb said "API KEY Providers" while the tab said
+    // "API Key", which read as two different destinations.
+    fireEvent.click(within(tabs).getByRole("button", { name: "API Key Providers" }));
+    expect(currentCrumb()).toBe("API Key Providers");
+
+    fireEvent.click(within(tabs).getByRole("button", { name: "OAuth Providers" }));
+    expect(currentCrumb()).toBe("OAuth Providers");
   });
 
   it("shows the Debug chip on the providers page only, toggling the Debug Log panel", async () => {
