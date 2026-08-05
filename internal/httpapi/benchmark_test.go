@@ -232,16 +232,25 @@ func jobIDFrom(t *testing.T, body map[string]any) string {
 
 // TestBenchmark_LiveOfferingAllSuccess_PersistsRunAndWritesRating is Step
 // 1(a): every request in the suite succeeds -> a benchmark_runs row exists,
-// models.quality_rating is set to the formula's value, and the job
-// completes. The expected rating is computed BY HAND from
-// localBenchmarkRating's own documented weights, never read from the
+// models.quality_rating is set to the formula's value ON THAT COLUMN'S OWN
+// SCALE, and the job completes. Both expected numbers are computed BY HAND
+// from localBenchmarkRating's own documented weights, never read from the
 // implementation (no tautology):
 //
 //	speed   = min(40/80, 1)        = 0.5
 //	latency = max(0, 1 - 100/2000) = 0.95
-//	rating  = 0.5*0.5 + 0.5*0.95   = 0.725
+//	rating  = 0.5*0.5 + 0.5*0.95   = 0.725   (benchmark_runs.rating, 0..1)
+//	column  = 0.725 * 100          = 72.5    (models.quality_rating, 0-100)
+//
+// The TWO scales are the point of this pair of assertions (whole-branch
+// review, 2026-08-05, finding 1): benchmark_runs.rating keeps the raw 0..1
+// measurement its migration documents, while models.quality_rating is the
+// 0-100 column 04 §3 and models.QualityScore (which divides by 100) define.
+// Pinning only the 0..1 value here is what let a perfect benchmark be
+// persisted as a near-worst 0.01 ranking score.
 func TestBenchmark_LiveOfferingAllSuccess_PersistsRunAndWritesRating(t *testing.T) {
-	const wantRating = 0.725
+	const wantRunRating = 0.725
+	const wantColumnRating = 72.5
 	sample := benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}
 	stream, calls := scriptedStream(t, []scriptedStep{{sample: sample}, {sample: sample}, {sample: sample}})
 
@@ -261,16 +270,16 @@ func TestBenchmark_LiveOfferingAllSuccess_PersistsRunAndWritesRating(t *testing.
 	}
 
 	got := f.qualityRating(t)
-	if got == nil || !floatsClose(*got, wantRating, 1e-9) {
-		t.Fatalf("quality_rating = %v, want %v", got, wantRating)
+	if got == nil || !floatsClose(*got, wantColumnRating, 1e-9) {
+		t.Fatalf("models.quality_rating = %v, want %v (the 0-100 column scale, 04 §3)", got, wantColumnRating)
 	}
 
 	run := f.latestRun(t)
 	if run.Requests != benchmarkDefaultRequests || run.Successes != benchmarkDefaultRequests {
 		t.Fatalf("run Requests/Successes = %d/%d, want %d/%d", run.Requests, run.Successes, benchmarkDefaultRequests, benchmarkDefaultRequests)
 	}
-	if run.Rating == nil || !floatsClose(*run.Rating, wantRating, 1e-9) {
-		t.Fatalf("run.Rating = %v, want %v", run.Rating, wantRating)
+	if run.Rating == nil || !floatsClose(*run.Rating, wantRunRating, 1e-9) {
+		t.Fatalf("benchmark_runs.rating = %v, want %v (the raw 0..1 measurement)", run.Rating, wantRunRating)
 	}
 	if run.AccountID != accountID || run.ProviderID != benchProvider || run.ProviderModelID != benchProvModel {
 		t.Fatalf("run target = %+v, want account=%s provider=%s model=%s", run, accountID, benchProvider, benchProvModel)
@@ -368,7 +377,9 @@ func TestBenchmark_LiveOfferingOneFailure_PreservesExistingRating(t *testing.T) 
 	f := newBenchmarkFixture(t, true, stream)
 	seedLiveOffering(t, f.db, "acct-bench-preserve")
 
-	const preexisting = 0.64
+	// A value on models.quality_rating's own 0-100 scale (04 §3) — what a
+	// PRIOR fully-successful benchmark would really have left behind.
+	const preexisting = 64.0
 	if _, err := f.db.Conn().Exec(`UPDATE models SET quality_rating = ? WHERE id = ?`, preexisting, benchModelID); err != nil {
 		t.Fatalf("seed pre-existing rating: %v", err)
 	}
@@ -523,8 +534,9 @@ func TestBenchmark_UnknownModelIs404AndCreatesNoJob(t *testing.T) {
 func TestBenchmark_SurvivesClientCancellation(t *testing.T) {
 	sample := benchmarkSample{OK: true, TTFT: 50 * time.Millisecond, TokensPerSec: 40}
 	// speed = min(40/80,1) = 0.5; latency = 1 - 50/2000 = 0.975
-	// rating = 0.5*0.5 + 0.5*0.975 = 0.7375
-	const wantRating = 0.7375
+	// rating = 0.5*0.5 + 0.5*0.975 = 0.7375 (benchmark_runs, 0..1)
+	// column = 0.7375 * 100        = 73.75  (models.quality_rating, 0-100)
+	const wantColumnRating = 73.75
 
 	release := make(chan struct{})
 	var once sync.Once
@@ -550,8 +562,8 @@ func TestBenchmark_SurvivesClientCancellation(t *testing.T) {
 		t.Fatalf("job status = %q (err %+v), want completed after client cancellation", row.Status, row.Error)
 	}
 	got := f.qualityRating(t)
-	if got == nil || !floatsClose(*got, wantRating, 1e-9) {
-		t.Fatalf("quality_rating = %v, want %v — the detached run must still persist its result", got, wantRating)
+	if got == nil || !floatsClose(*got, wantColumnRating, 1e-9) {
+		t.Fatalf("quality_rating = %v, want %v — the detached run must still persist its result", got, wantColumnRating)
 	}
 }
 

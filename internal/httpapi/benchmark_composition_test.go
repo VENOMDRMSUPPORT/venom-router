@@ -244,7 +244,11 @@ func TestBenchmark_ProductionStreamComposition_DrivesRealDispatchOverFakeTranspo
 	if err := db.Conn().QueryRow(`SELECT quality_rating FROM models WHERE id = ?`, benchCompModelID).Scan(&gotRating); err != nil {
 		t.Fatalf("read quality_rating: %v", err)
 	}
-	if gotRating == nil || *gotRating != *run.Rating {
-		t.Fatalf("models.quality_rating = %v, want %v (the run's own rating)", gotRating, run.Rating)
+	// The column is 0-100 (04 §3), the run's rating is 0..1 — so the
+	// persisted value is the run's rating SCALED, never the raw measurement
+	// (whole-branch review, 2026-08-05, finding 1).
+	wantColumn := *run.Rating * 100
+	if gotRating == nil || !floatsClose(*gotRating, wantColumn, 1e-9) {
+		t.Fatalf("models.quality_rating = %v, want %v (the run's own rating on the column's 0-100 scale)", gotRating, wantColumn)
 	}
 }

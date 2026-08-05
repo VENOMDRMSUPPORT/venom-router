@@ -56,6 +56,25 @@ const (
 // reports the rating.
 const benchmarkResultRef = "/api/control/v1/models"
 
+// benchmarkRatingColumnScale converts localBenchmarkRating's measurement to
+// the column it is persisted in.
+//
+// TWO documented scales are in play and they are NOT the same one:
+//
+//   - benchmark_runs.rating is "the derived 0..1 score"
+//     (00017_benchmark_runs.sql) — the raw output of localBenchmarkRating.
+//   - models.quality_rating is 0-100 (04 §3; enforced by
+//     models.NewCanonicalModel via models.ErrQualityRatingOutOfRange), and
+//     models.QualityScore — the routing quality factor and the read model's
+//     quality_score — divides it by 100.
+//
+// Writing the raw 0..1 measurement into the 0-100 column therefore inverted
+// the routing signal: a PERFECT benchmark (1.0) became a quality score of
+// 0.01, worse than the 0.5 neutral score an unbenchmarked model gets
+// (whole-branch review, 2026-08-05, finding 1). The scaling happens HERE, at
+// the single write site, so both tables keep their own documented contract.
+const benchmarkRatingColumnScale = 100.0
+
 // benchmarkNoLiveOffering is the typed job-failure code for a model with no
 // LIVE offering (CatalogRepo.ListOfferings' LiveOnly gate: available,
 // account connected/healthy/not-reauthenticating, AND a certified+supported
@@ -222,8 +241,10 @@ func (h *BenchmarkHandler) failJob(jobID, code, message string) {
 //     itself is evidence, never discarded because the news was bad.
 //   - models.quality_rating is written ONLY when the aggregate's Rating is
 //     non-nil (runBenchmarkSuite's own gate: every request in the suite
-//     succeeded). A suite with any failure measures reliability as much as
-//     speed, and writing a rating anyway would hide that.
+//     succeeded), and is written on THAT column's 0-100 scale
+//     (benchmarkRatingColumnScale). A suite with any failure measures
+//     reliability as much as speed, and writing a rating anyway would hide
+//     that.
 func (h *BenchmarkHandler) runBenchmark(ctx context.Context, jobID string, model storage.CanonicalModelRow) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -270,7 +291,10 @@ func (h *BenchmarkHandler) runBenchmark(ctx context.Context, jobID string, model
 	}
 
 	if aggregate.Rating != nil {
-		if err := h.catalog.SetQualityRating(ctx, model.ModelID, *aggregate.Rating, h.now()); err != nil {
+		// benchmarkRatingColumnScale, not the raw measurement: see that
+		// constant's doc comment for why the two tables hold this one fact on
+		// two different documented scales.
+		if err := h.catalog.SetQualityRating(ctx, model.ModelID, *aggregate.Rating*benchmarkRatingColumnScale, h.now()); err != nil {
 			h.failJob(jobID, "benchmark_failed", "quality rating write failed")
 			return
 		}
@@ -316,6 +340,10 @@ func (h *BenchmarkHandler) targetOffering(ctx context.Context, model storage.Can
 // source" for the LOCAL-benchmark source (spec D4): which run, account, and
 // offering was measured, how many requests succeeded, and the resulting
 // rating. Only ever called when run.Rating is non-nil.
+//
+// `rating` here is the RUN's own 0..1 measurement (benchmark_runs.rating),
+// which is what this audit row is provenance FOR; models.quality_rating
+// holds the same fact scaled by benchmarkRatingColumnScale.
 func benchmarkRunProvenanceReason(run storage.BenchmarkRun) string {
 	return fmt.Sprintf("source=local_benchmark,run_id=%s,account_id=%s,provider_model_id=%s,requests=%d,successes=%d,rating=%.4f",
 		run.ID, run.AccountID, run.ProviderModelID, run.Requests, run.Successes, *run.Rating)
