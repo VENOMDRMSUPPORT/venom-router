@@ -120,12 +120,13 @@ export interface SecretRevealControlProps {
   blocked?: boolean;
   onRevealRequest?: () => void;
   onHide?: () => void;
+  onCopy?: () => void;
   label?: string;
 }
 
 /** SecretRevealControl — masked by default; reveal gated on fresh re-verification; cleared on hide/blur; never persisted in the DOM after hide. */
 export function SecretRevealControl(props: SecretRevealControlProps) {
-  const { masked, secret, revealed = false, blocked = false, onRevealRequest, onHide, label = "credential" } = props;
+  const { masked, secret, revealed = false, blocked = false, onRevealRequest, onHide, onCopy, label = "credential" } = props;
   React.useEffect(() => {
     if (!revealed) return;
     const hide = () => onHide && onHide();
@@ -137,7 +138,7 @@ export function SecretRevealControl(props: SecretRevealControlProps) {
     <span className="vn-secret" data-state={state}>
       <Icon name="key-round" size={13} />
       <span className="vn-secret-value">{revealed && secret ? secret : masked}</span>
-      {revealed ? <CopyButton value={secret} label={"Copy " + label} /> : null}
+      {revealed ? <CopyButton value={secret} label={"Copy " + label} onCopied={onCopy} /> : null}
       <button type="button" className="vn-btn vn-btn--icon vn-btn--ghost vn-btn--sm"
         aria-label={revealed ? "Hide " + label : blocked ? "Reveal " + label + " (re-verification required)" : "Reveal " + label}
         title={blocked ? "Requires fresh owner re-verification (≤ 5 min)" : undefined}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import { toast } from "@venom/design-system";
 import {
   Badge,
   Button,
@@ -326,6 +327,9 @@ export default function AccountRow(props: AccountRowProps) {
         return;
       }
       setRevealError(toApiError(err));
+      toast.danger("Failed to reveal credential", {
+        detail: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       setRevealPending(false);
     }
@@ -443,9 +447,30 @@ export default function AccountRow(props: AccountRowProps) {
     void runLifecycleAction(() => resumeAccount(account.id, csrfToken));
   }
 
-  function handleDisconnectConfirmed() {
+  async function handleDisconnectConfirmed() {
     setDisconnectOpen(false);
-    void runLifecycleAction(() => disconnectAccount(account.id, csrfToken));
+    setActionPending(true);
+    setActionError(null);
+    setActionNote(null);
+    try {
+      await disconnectAccount(account.id, csrfToken);
+      toast.success("Account disconnected", {
+        detail: `Removed account "${account.label || account.id}"`,
+      });
+      onChanged();
+    } catch (err) {
+      if (isSessionExpired(err)) {
+        onSessionExpired();
+        return;
+      }
+      const apiErr = toApiError(err);
+      setActionError(apiErr);
+      toast.danger("Failed to disconnect account", {
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setActionPending(false);
+    }
   }
 
   const fundingLocked = account.funding?.locked ?? false;
@@ -456,12 +481,31 @@ export default function AccountRow(props: AccountRowProps) {
   async function handleEditSave() {
     setEditSubmitting(true);
     setEditError(null);
-    try {
-      const nextLabel = labelInput.trim();
-      if (nextLabel !== (account.label ?? "")) {
+    const nextLabel = labelInput.trim();
+    const labelChanged = nextLabel !== (account.label ?? "");
+    const fundingChanged = !fundingLocked && fundingChoice !== (account.funding?.funding ?? "unknown");
+
+    let hasError = false;
+
+    if (labelChanged) {
+      try {
         await patchAccountLabel(account.id, nextLabel, csrfToken);
+        toast.success("Account label updated", { detail: `Renamed to "${nextLabel}"` });
+      } catch (err) {
+        if (isSessionExpired(err)) {
+          onSessionExpired();
+          return;
+        }
+        setEditError(toApiError(err));
+        toast.danger("Failed to update account label", {
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        hasError = true;
       }
-      if (!fundingLocked && fundingChoice !== (account.funding?.funding ?? "unknown")) {
+    }
+
+    if (!hasError && fundingChanged) {
+      try {
         await updateFunding(
           account.id,
           {
@@ -470,18 +514,25 @@ export default function AccountRow(props: AccountRowProps) {
           },
           csrfToken,
         );
+        toast.success("Funding details updated");
+      } catch (err) {
+        if (isSessionExpired(err)) {
+          onSessionExpired();
+          return;
+        }
+        setEditError(toApiError(err));
+        toast.danger("Failed to update funding details", {
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        hasError = true;
       }
+    }
+
+    if (!hasError) {
       setEditOpen(false);
       onChanged();
-    } catch (err) {
-      if (isSessionExpired(err)) {
-        onSessionExpired();
-        return;
-      }
-      setEditError(toApiError(err));
-    } finally {
-      setEditSubmitting(false);
     }
+    setEditSubmitting(false);
   }
 
   function openEdit() {
@@ -720,6 +771,7 @@ export default function AccountRow(props: AccountRowProps) {
                 blocked={!revealed}
                 onRevealRequest={handleRevealRequest}
                 onHide={handleHide}
+                onCopy={() => toast.success("Credential copied to clipboard")}
                 label="credential"
               />
             ) : null}

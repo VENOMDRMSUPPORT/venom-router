@@ -34,6 +34,7 @@ export interface SecretRevealControlProps {
     blocked?: boolean;
     onRevealRequest?: () => void;
     onHide?: () => void;
+    onCopy?: () => void;
     label?: string;
 }
 /** SecretRevealControl — masked by default; reveal gated on fresh re-verification; cleared on hide/blur; never persisted in the DOM after hide. */
