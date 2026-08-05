@@ -628,9 +628,13 @@ export async function getCertification(offeringOperationID: string): Promise<Cer
 
 /** One offering-operation's capability truth. `routable` is the SERVER's
  * conjunction (intelligence.Project over models.Routable) — certification state
- * `certified` AND capability truth `supported`. It is never re-derived client
- * side; see ModelsSurface's own capabilityRoutability for how the two are
- * cross-checked rather than recomputed. */
+ * `certified` AND capability truth `supported` AND transport `effective`
+ * (04 §5). `effective` is hardcoded false this phase (no
+ * transport-effectiveness registry yet), so `routable` is currently false for
+ * every capability regardless of certification. This flag is rendered
+ * VERBATIM — ModelsSurface never re-derives or cross-checks it against
+ * `state`/`truth` client side; it only picks honest COPY for the negative case
+ * (see ModelsSurface's notRoutableCopy). */
 export interface OfferingCapability {
   operation: string;
   effective: boolean;

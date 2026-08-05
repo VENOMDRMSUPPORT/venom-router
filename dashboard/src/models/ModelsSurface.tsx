@@ -418,8 +418,15 @@ function OfferingRow(props: {
  *
  * Three truths this surface refuses to soften:
  *
- *   - Routability is a CONJUNCTION. `certified` alone is not routable; the
- *     capability truth must be `supported` too. See capabilityRoutability.
+ *   - Routability is the SERVER's verdict, trusted verbatim, never recomputed
+ *     client-side. `capability.routable` (intelligence.Project) is a
+ *     three-term conjunction (certified ∧ supported ∧ effective), and
+ *     `effective` is hardcoded false this phase (no transport-effectiveness
+ *     registry yet — a documented future unit). CapabilityCell/
+ *     notRoutableCopy render that honestly with a three-state split: green
+ *     "Routable" when true; "Not yet effective" when certified+supported but
+ *     not yet routable (awaiting the registry); plain "Not routable"
+ *     otherwise.
  *   - An unknown context and an unknown quality rating are rendered as unknown.
  *     Never 0, never blank — 0 is a specific, false claim.
  *   - `catalog_only` is a correct terminal classification, not a fault. It is
