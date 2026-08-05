@@ -9,8 +9,10 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
@@ -160,5 +162,174 @@ func TestUsabilityVerifier_LeaseErrorSurfaces(t *testing.T) {
 
 	if _, err := v.verifyAccount(context.Background(), "acct-1", "cred-1"); !errors.Is(err, wantErr) {
 		t.Fatalf("error = %v, want the lease error", err)
+	}
+}
+
+// --- the observed -> probing edge: fast lane drives it, the sweep does not ---
+
+// fakeCatalogStates is a stateful stand-in for the real catalog: it holds each
+// chat offering-operation's certification STATE and answers the two listers the
+// way the SQL does — `observed` rows only from ListObservedChatOfferings,
+// `probing` rows only from ListChatOfferingsToVerify. StartProbe is the real
+// observed -> probing edge, so a test cannot get a fresh row probed without
+// actually driving that edge first (no fake can hand the verifier a `probing`
+// row it never advanced).
+type fakeCatalogStates struct {
+	// state maps offering-operation id -> certification status.
+	state map[string]string
+	// model maps offering-operation id -> provider model id.
+	model map[string]string
+	// started records every StartProbe call, in order.
+	started []string
+	// startErr, when set for an id, makes that row's StartProbe fail.
+	startErr map[string]error
+}
+
+func (f *fakeCatalogStates) rowsInState(status string) []storage.ChatOfferingToVerify {
+	var out []storage.ChatOfferingToVerify
+	for id, s := range f.state {
+		if s == status {
+			out = append(out, storage.ChatOfferingToVerify{OfferingOperationID: id, ProviderModelID: f.model[id]})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].OfferingOperationID < out[j].OfferingOperationID })
+	return out
+}
+
+func (f *fakeCatalogStates) ListObservedChatOfferings(context.Context, string) ([]storage.ChatOfferingToVerify, error) {
+	return f.rowsInState("observed"), nil
+}
+
+func (f *fakeCatalogStates) ListChatOfferingsToVerify(context.Context, string) ([]storage.ChatOfferingToVerify, error) {
+	return f.rowsInState("probing"), nil
+}
+
+func (f *fakeCatalogStates) StartProbe(_ context.Context, offeringOperationID string) (models.Certification, error) {
+	f.started = append(f.started, offeringOperationID)
+	if err := f.startErr[offeringOperationID]; err != nil {
+		return models.Certification{}, err
+	}
+	if f.state[offeringOperationID] == "observed" {
+		f.state[offeringOperationID] = "probing"
+	}
+	return models.Certification{}, nil
+}
+
+func newFastLaneCatalog() *fakeCatalogStates {
+	return &fakeCatalogStates{
+		state: map[string]string{"op-fresh": "observed"},
+		model: map[string]string{"op-fresh": "brand-new-free"},
+	}
+}
+
+// TestUsabilityVerifier_FastLaneDrivesObservedChatOpsToProbing is finding 1's
+// unit pin: on a FRESH connect every chat row discovery just seeded is still
+// `observed`, so the fast lane must drive the observed -> probing edge itself
+// (the same CertificationDriver.StartProbe edge the drainer uses) before it can
+// list and probe anything. Without that drive the row is never probed and the
+// account waits a whole scheduler round.
+func TestUsabilityVerifier_FastLaneDrivesObservedChatOpsToProbing(t *testing.T) {
+	catalog := newFastLaneCatalog()
+	lc := &fakeCertLifecycle{}
+	v := &usabilityVerifier{
+		offerings: catalog,
+		observed:  catalog,
+		starter:   catalog,
+		creds:     &fakeLeaser{key: "leased-secret"},
+		driver:    lc,
+		probe:     probeByModel(map[string]zenChatUsability{"brand-new-free": zenChatUsable}),
+		baseURL:   "http://x",
+	}
+
+	got, err := v.verifyAccountFastLane(context.Background(), "acct-1", "cred-1")
+	if err != nil {
+		t.Fatalf("verifyAccountFastLane() error = %v", err)
+	}
+	if len(catalog.started) != 1 || catalog.started[0] != "op-fresh" {
+		t.Fatalf("StartProbe calls = %v, want exactly [op-fresh]", catalog.started)
+	}
+	if got.StartedProbing != 1 {
+		t.Fatalf("StartedProbing = %d, want 1", got.StartedProbing)
+	}
+	if got.Probed != 1 || got.Usable != 1 {
+		t.Fatalf("summary = %+v, want Probed 1 Usable 1 — the freshly observed row must actually get probed", got)
+	}
+	records := lc.recorded()
+	if len(records) != 1 || records[0].op != "op-fresh" {
+		t.Fatalf("recorded attempts = %+v, want one against op-fresh", records)
+	}
+}
+
+// TestUsabilityVerifier_ScheduledSweepIgnoresObservedChatOps pins the OTHER
+// half of the contract split: the SCHEDULED sweep keeps its probing-only
+// contract. The drainer owns the observed -> probing edge in the steady state,
+// so the sweep must never double-drive it — given the exact same freshly
+// observed catalog the fast-lane test uses, the sweep does nothing at all.
+func TestUsabilityVerifier_ScheduledSweepIgnoresObservedChatOps(t *testing.T) {
+	catalog := newFastLaneCatalog()
+	lc := &fakeCertLifecycle{}
+	leaser := &fakeLeaser{key: "leased-secret"}
+	v := &usabilityVerifier{
+		offerings: catalog,
+		observed:  catalog,
+		starter:   catalog,
+		creds:     leaser,
+		driver:    lc,
+		probe:     probeByModel(map[string]zenChatUsability{"brand-new-free": zenChatUsable}),
+		baseURL:   "http://x",
+	}
+
+	got, err := v.verifyAccount(context.Background(), "acct-1", "cred-1")
+	if err != nil {
+		t.Fatalf("verifyAccount() error = %v", err)
+	}
+	if len(catalog.started) != 0 {
+		t.Fatalf("the scheduled sweep drove the observed -> probing edge (%v) — that is the drainer's", catalog.started)
+	}
+	if got.Probed != 0 || got.StartedProbing != 0 {
+		t.Fatalf("summary = %+v, want zero — an `observed` row is not the sweep's work", got)
+	}
+	if leaser.called {
+		t.Fatal("credential was leased with no `probing` work to do")
+	}
+	if len(lc.recorded()) != 0 {
+		t.Fatalf("recorded %d attempts, want 0", len(lc.recorded()))
+	}
+}
+
+// TestUsabilityVerifier_FastLaneSkipsRowsWhoseEdgeFails proves a per-row
+// StartProbe failure is SKIPPED, never fatal: the sibling row still gets its
+// edge driven, probed and recorded — mirroring the drainer's own
+// count-and-continue posture.
+func TestUsabilityVerifier_FastLaneSkipsRowsWhoseEdgeFails(t *testing.T) {
+	catalog := &fakeCatalogStates{
+		state:    map[string]string{"op-bad": "observed", "op-good": "observed"},
+		model:    map[string]string{"op-bad": "cas-conflict-model", "op-good": "brand-new-free"},
+		startErr: map[string]error{"op-bad": errors.New("compare-and-swap conflict")},
+	}
+	lc := &fakeCertLifecycle{}
+	v := &usabilityVerifier{
+		offerings: catalog,
+		observed:  catalog,
+		starter:   catalog,
+		creds:     &fakeLeaser{key: "leased-secret"},
+		driver:    lc,
+		probe:     probeByModel(map[string]zenChatUsability{"brand-new-free": zenChatUsable}),
+		baseURL:   "http://x",
+	}
+
+	got, err := v.verifyAccountFastLane(context.Background(), "acct-1", "cred-1")
+	if err != nil {
+		t.Fatalf("verifyAccountFastLane() error = %v, want the failed row skipped rather than surfaced", err)
+	}
+	if got.StartedProbing != 1 {
+		t.Fatalf("StartedProbing = %d, want 1 (only op-good advanced)", got.StartedProbing)
+	}
+	if got.Probed != 1 || got.Usable != 1 {
+		t.Fatalf("summary = %+v, want Probed 1 Usable 1", got)
+	}
+	records := lc.recorded()
+	if len(records) != 1 || records[0].op != "op-good" {
+		t.Fatalf("recorded attempts = %+v, want one against op-good only", records)
 	}
 }

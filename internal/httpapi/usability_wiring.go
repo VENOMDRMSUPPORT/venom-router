@@ -97,10 +97,14 @@ type UsabilityService struct {
 	Tick func(context.Context) error
 	// VerifyAccount runs ONE account's usability pass right now, like a single
 	// sweep lane: it re-checks eligibility and resolves the active credential
-	// itself, so a caller only ever has to hand it ids. A provider absent from
-	// usabilityProviderSpecs() (map miss) is a no-op — it never touches the
-	// DB. An ineligible account (unhealthy, disconnected) or one with no
-	// active credential is skipped, exactly like the sweep would skip it.
+	// itself, so a caller only ever has to hand it ids. Unlike the sweep it
+	// also drives its own observed -> probing edge first
+	// (verifyAccountFastLane): its whole point is to run BEFORE the drainer
+	// tick that would otherwise do so, when every freshly discovered chat row
+	// is still `observed`. A provider absent from usabilityProviderSpecs()
+	// (map miss) is a no-op — it never touches the DB. An ineligible account
+	// (unhealthy, disconnected) or one with no active credential is skipped,
+	// exactly like the sweep would skip it.
 	// Errors are swallowed (logged nowhere, retried by the next sweep) —
 	// mirroring how usabilityTick.Run treats one account's failure.
 	VerifyAccount func(ctx context.Context, providerID, accountID string)
@@ -137,13 +141,20 @@ func BuildUsabilityService(db *storage.DB, kr *secrets.Keyring, now func() time.
 	for providerID, spec := range specs {
 		verifiers[providerID] = &usabilityVerifier{
 			offerings: catalogRepo,
-			declared:  catalogRepo,
-			creds:     credService,
-			driver:    driver,
-			probe:     spec.probe,
-			baseURL:   spec.baseURL,
-			// One fresh pacer per account per sweep: verifyAccount is called
-			// once per account, so this factory fires exactly that often.
+			// The fast lane's extra pair: the freshly seeded `observed` chat rows
+			// and the driver edge that advances them. The SAME driver the sweep
+			// records verdicts through, so both lanes share one certification
+			// wiring — and the same StartProbe edge ReviewDrainer drives.
+			observed: catalogRepo,
+			starter:  driver,
+			declared: catalogRepo,
+			creds:    credService,
+			driver:   driver,
+			probe:    spec.probe,
+			baseURL:  spec.baseURL,
+			// One fresh pacer per account per pass: verifyAccount /
+			// verifyAccountFastLane is called once per account, so this factory
+			// fires exactly that often.
 			newPacer: func() *usabilityPacer {
 				return newUsabilityPacer(usabilityProbeMaxConcurrency, now)
 			},
@@ -215,7 +226,11 @@ func BuildUsabilityService(db *storage.DB, kr *secrets.Keyring, now func() time.
 		// one-account lane, not the whole sweep, so it gets the whole budget.
 		laneCtx, cancel := context.WithTimeout(ctx, tick.sweepBudget())
 		defer cancel()
-		_, _ = verifier.verifyAccount(laneCtx, accountID, credentialID)
+		// verifyAccountFastLane, not verifyAccount: the caller fires this within
+		// milliseconds of a successful discovery, when every chat row that run
+		// created is still `observed` and the drainer has not ticked. Calling the
+		// sweep's probing-only pass here would find zero rows and deliver nothing.
+		_, _ = verifier.verifyAccountFastLane(laneCtx, accountID, credentialID)
 	}
 
 	return &UsabilityService{Tick: tick.Run, VerifyAccount: verifyAccount}, nil

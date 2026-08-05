@@ -49,6 +49,52 @@ func TestCatalogRepo_ListChatOfferingsToVerify_ProbingChatOpsOnly(t *testing.T) 
 	}
 }
 
+// TestCatalogRepo_ListObservedChatOfferings_ObservedChatOpsOnly proves the
+// FAST-LANE lister returns exactly the account's chat offering-operations whose
+// certification is still `observed` — the rows discovery just seeded, which the
+// fast lane must drive across the observed -> probing edge itself before it can
+// probe anything. It is the exact complement of
+// ListChatOfferingsToVerify: never a non-chat operation, never a chat op
+// already in `probing` (that lister owns those), never a terminal-state row,
+// and never another account's rows.
+func TestCatalogRepo_ListObservedChatOfferings_ObservedChatOpsOnly(t *testing.T) {
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-1")
+	insertAccount(t, db, "acct-1", "prov-1")
+	insertAccount(t, db, "acct-2", "prov-1")
+	insertModelFull(t, db, "model-free", "ck-free", "Free Model", nil, nil, nil)
+	insertModelFull(t, db, "model-two", "ck-two", "Second Model", nil, nil, nil)
+	insertModelFull(t, db, "model-obs", "ck-obs", "Observed Model", nil, nil, nil)
+
+	insertOfferingFull(t, db, "acct-1", "prov-1", "big-pickle", "model-free", nil, nil, nil, nil, nil, 0, 0)
+	insertOfferingFull(t, db, "acct-1", "prov-1", "gpt-5.5-pro", "model-two", nil, nil, nil, nil, nil, 0, 0)
+	insertOfferingFull(t, db, "acct-1", "prov-1", "deepseek-free", "model-obs", nil, nil, nil, nil, nil, 0, 0)
+	insertOfferingFull(t, db, "acct-2", "prov-1", "big-pickle", "model-free", nil, nil, nil, nil, nil, 0, 0)
+
+	// The one that MUST be returned: a freshly discovered chat op at `observed`.
+	insertOfferingOperationFull(t, db, "op-observed-chat", "acct-1", "prov-1", "deepseek-free", "chat", "observed", "unknown", 0, nil, "")
+	// Excluded: a chat op ALREADY in probing — ListChatOfferingsToVerify's row.
+	insertOfferingOperationFull(t, db, "op-probing-chat", "acct-1", "prov-1", "big-pickle", "chat", "probing", "unknown", 0, nil, "")
+	// Excluded: a chat op already certified.
+	insertOfferingOperationFull(t, db, "op-certified-chat", "acct-1", "prov-1", "gpt-5.5-pro", "chat", "certified", "supported", 1, nil, "")
+	// Excluded: an observed op for a non-chat operation.
+	insertOfferingOperationFull(t, db, "op-observed-tools", "acct-1", "prov-1", "big-pickle", "tools", "observed", "unknown", 0, nil, "")
+	// Excluded: another account's observed chat op.
+	insertOfferingOperationFull(t, db, "op-other-account", "acct-2", "prov-1", "big-pickle", "chat", "observed", "unknown", 0, nil, "")
+
+	repo := NewCatalogRepo(db)
+	got, err := repo.ListObservedChatOfferings(context.Background(), "acct-1")
+	if err != nil {
+		t.Fatalf("ListObservedChatOfferings() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("returned %d offerings, want 1; got %+v", len(got), got)
+	}
+	if got[0].OfferingOperationID != "op-observed-chat" || got[0].ProviderModelID != "deepseek-free" {
+		t.Fatalf("returned %+v, want op-observed-chat/deepseek-free", got[0])
+	}
+}
+
 // TestCatalogRepo_ListNonChatOperationsToCertify_ProbingNonChatOpsOnly proves
 // the declaration-certification lister returns exactly the account's NON-chat
 // offering-operations stranded in `probing` — never chat (that has its own

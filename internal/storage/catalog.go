@@ -298,6 +298,47 @@ func (r *CatalogRepo) ListChatOfferingsToVerify(ctx context.Context, accountID s
 	return out, nil
 }
 
+// ListObservedChatOfferings returns the account's chat offering-operations
+// whose certification is still `observed` — the exact complement of
+// ListChatOfferingsToVerify, and the rows the FAST LANE must drive across the
+// observed -> probing edge itself.
+//
+// Discovery seeds every freshly discovered chat operation at `observed`
+// (DiscoveryRepo.recordEvidenceObserved), and the observed -> probing edge
+// belongs to the probe_drain scheduler tick. That is fine for the STEADY-STATE
+// sweep — by the time it runs, the drainer has already moved the rows — but the
+// fast lane fires within milliseconds of a successful discovery, when every
+// fresh row is still `observed` and ListChatOfferingsToVerify therefore returns
+// nothing at all. This lister is how the fast lane sees that work; it does NOT
+// change the scheduled sweep's probing-only contract.
+func (r *CatalogRepo) ListObservedChatOfferings(ctx context.Context, accountID string) ([]ChatOfferingToVerify, error) {
+	rows, err := r.db.Conn().QueryContext(ctx,
+		`SELECT oo.id, oo.provider_model_id
+		 FROM offering_operations oo
+		 JOIN certifications c ON c.offering_operation_id = oo.id
+		 WHERE oo.account_id = ? AND oo.operation = 'chat' AND c.status = 'observed'
+		 ORDER BY oo.provider_model_id ASC`,
+		accountID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("storage: list observed chat offerings for %q: %w", accountID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []ChatOfferingToVerify
+	for rows.Next() {
+		var v ChatOfferingToVerify
+		if err := rows.Scan(&v.OfferingOperationID, &v.ProviderModelID); err != nil {
+			return nil, fmt.Errorf("storage: list observed chat offerings for %q: scan: %w", accountID, err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: list observed chat offerings for %q: %w", accountID, err)
+	}
+	return out, nil
+}
+
 // NonChatOperationToCertify is one declared non-chat capability (tools, vision,
 // …) awaiting certification-from-declaration.
 type NonChatOperationToCertify struct {

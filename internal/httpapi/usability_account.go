@@ -32,6 +32,10 @@ type usabilityRunSummary struct {
 	// CertifiedDeclared counts the non-chat capabilities certified from their
 	// provider declaration this pass (no runtime probe).
 	CertifiedDeclared int
+	// StartedProbing counts the chat offering-operations this pass itself drove
+	// across observed -> probing. Only the FAST LANE ever drives that edge, so
+	// it is always 0 for a scheduled sweep pass.
+	StartedProbing int
 }
 
 // declaredCapability is one declared non-chat capability (tools, vision, …) to
