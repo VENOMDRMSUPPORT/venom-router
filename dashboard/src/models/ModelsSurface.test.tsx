@@ -499,6 +499,34 @@ describe("ModelsSurface — unknowns are never fabricated", () => {
   });
 });
 
+describe("ModelsSurface — quality rating provenance (Plan 3, local-benchmark-rating)", () => {
+  it("labels a group's known rating as coming from the Local benchmark", async () => {
+    mockModels([group({ model_id: "model-rated", quality_rating: 0.87 })]);
+    renderSurface();
+
+    const cell = await screen.findByTestId("model-group-rating-model-rated");
+    expect(cell.textContent ?? "").toMatch(/0\.87/);
+    expect(within(cell).getByTitle(/local benchmark/i)).not.toBeNull();
+  });
+
+  it("labels a known offering quality score as coming from the Local benchmark", async () => {
+    mockModels([
+      group({
+        model_id: "model-rated-offering",
+        offerings: [
+          offering({ provider_model_id: "rated-1", quality_score: 0.87, quality_known: true }),
+        ],
+      }),
+    ]);
+    renderSurface();
+    await expandGroup("model-rated-offering");
+
+    const cell = screen.getByTestId("offering-quality-rated-1");
+    expect(cell.textContent ?? "").toMatch(/0\.87/);
+    expect(within(cell).getByTitle(/local benchmark/i)).not.toBeNull();
+  });
+});
+
 describe("ModelsSurface — triggers", () => {
   it("sends the CSRF token when triggering discovery", async () => {
     const mock = mockModels([group()], {
@@ -622,9 +650,14 @@ describe("ModelsSurface — triggers", () => {
     expect(outcome.textContent ?? "").not.toMatch(/\bcompleted\b|\bsucceeded\b|\bdone\b/i);
   });
 
-  it("never claims a rating was updated when a benchmark completes without one", async () => {
-    // QualityIndex is nil in production, so this is the NORMAL outcome today,
-    // not an edge case: the job completes and no rating is written.
+  it("states the honest completion outcome instead of the stale 'no canonical quality source' claim", async () => {
+    // Task 5 wired a REAL local benchmark: a completed job now sometimes DOES
+    // write models.quality_rating (every request in the suite succeeded) and
+    // sometimes withholds it (a partial failure). GET /jobs/{id}'s
+    // result_ref is the same static "/api/control/v1/models" reference
+    // either way, so this surface cannot tell which outcome happened from the
+    // job read alone — it must say so honestly rather than repeat the old,
+    // now-false claim that no canonical quality source exists at all.
     mockModels(
       [
         group({
@@ -649,9 +682,13 @@ describe("ModelsSurface — triggers", () => {
 
     const outcome = await screen.findByTestId("job-outcome");
     await waitFor(() => expect(outcome.textContent ?? "").toMatch(/completed/i));
-    // A completed benchmark job is NOT a new rating.
-    expect(outcome.textContent ?? "").not.toMatch(/rating updated|rated|score updated/i);
-    expect(outcome.textContent ?? "").toMatch(/no rating|without a rating|rating unchanged/i);
+    // The stale copy is gone.
+    expect(outcome.textContent ?? "").not.toMatch(/no canonical quality source/i);
+    // The honest replacement names the real mechanism and provenance, and
+    // states the condition rather than asserting an unverifiable specific
+    // outcome.
+    expect(outcome.textContent ?? "").toMatch(/local benchmark/i);
+    expect(outcome.textContent ?? "").toMatch(/withheld|unchanged/i);
   });
 
   it("explains a benchmark 409 as enrichment being disabled, not a permission problem", async () => {

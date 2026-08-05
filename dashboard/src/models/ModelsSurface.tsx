@@ -286,7 +286,13 @@ function OfferingRow(props: {
           <span data-testid={`offering-quality-${key}`} className="flex items-center gap-2">
             <span className="vn-caption">Quality</span>
             {o.quality_known ? (
-              <Badge tone="info" mono icon="gauge">
+              // Provenance (Plan 3, local-benchmark-rating): the only quality
+              // source this build writes is POST /models/{id}/benchmark's real
+              // measurement suite (spec D4 — no imported leaderboard numbers).
+              // A known score is therefore always a local-benchmark result,
+              // and the badge says so rather than leaving the number to imply
+              // an external rating it never had.
+              <Badge tone="info" mono icon="gauge" title="Local benchmark">
                 {o.quality_score.toFixed(2)}
               </Badge>
             ) : (
@@ -362,9 +368,14 @@ function OfferingRow(props: {
  *   - `catalog_only` is a correct terminal classification, not a fault. It is
  *     shown as "never enters a tier", in an informational tone.
  *
- * And one it refuses to imply: a completed benchmark job is not a new rating.
- * The QualityIndex seam is nil in production, so the job legitimately completes
- * without writing one. See benchmarkOutcome.
+ * And one it refuses to imply: a completed benchmark job is not UNCONDITIONALLY
+ * a new rating. The local benchmark (Plan 3 of the local-benchmark-rating
+ * design) writes models.quality_rating only when every request in its suite
+ * succeeds; a partial failure still completes the job but withholds the
+ * rating. GET /jobs/{id}'s result_ref is the single static
+ * "/api/control/v1/models" reference either way, so this surface cannot tell
+ * the two outcomes apart from the job read alone — see handleBenchmark's
+ * completion note, which says so honestly instead of guessing.
  */
 export default function ModelsSurface(props: ModelsSurfaceProps) {
   const { csrfToken, onSessionExpired } = props;
@@ -479,16 +490,21 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
         () => startBenchmark(modelId, csrfToken),
         (status) => ({
           label: `Benchmark job ${status}`,
-          // THE honesty requirement of this card. A benchmark can reach
-          // `completed` having written NO rating: the canonical-quality seam
-          // (QualityIndex) is nil in production, so the leaderboard always
-          // misses and the handler deliberately completes the job without
-          // fabricating a score. "Completed" therefore says nothing about
-          // whether a rating changed, and this note says so rather than letting
-          // the operator infer the flattering reading.
+          // THE honesty requirement of this card. The local benchmark
+          // (internal/httpapi/benchmark.go's runBenchmark) writes
+          // models.quality_rating ONLY when every request in its fixed suite
+          // succeeds; a partial failure still reaches job status `completed`
+          // but withholds the rating, leaving any existing one unchanged.
+          // GET /jobs/{id}'s result_ref is the single static
+          // "/api/control/v1/models" reference (09 §3.12: a reference, never
+          // inline content) in BOTH cases — this surface has no way to tell
+          // which outcome actually happened from the job read alone, so
+          // "completed" must not be narrated as a specific result it cannot
+          // verify. The catalog reload triggered on completion (below) shows
+          // whatever the real, current rating is either way.
           note:
             status === "completed"
-              ? "Completed with no rating — no canonical quality source is wired yet, so a benchmark cannot produce one. Any rating shown above is unchanged."
+              ? "Completed — the catalog has been reloaded. A rating (Local benchmark) is written only when every request in the run succeeds; a partial failure records the measurement but withholds the rating, so any existing rating stays unchanged."
               : "Benchmarks run in the background — this is the job's status, not a rating.",
           tone: status === "failed" ? "critical" : "info",
         }),
@@ -667,14 +683,20 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
                       source={ctx.provenance}
                     />
                   </span>
-                  <span className="flex items-center gap-2">
+                  <span
+                    className="flex items-center gap-2"
+                    data-testid={`model-group-rating-${g.model_id}`}
+                  >
                     <span className="vn-caption">Canonical rating</span>
                     {g.quality_rating == null ? (
                       <Badge tone="unknown" icon="circle-help">
                         Not rated — unknown
                       </Badge>
                     ) : (
-                      <Badge tone="info" mono icon="gauge">
+                      // Same provenance note as OfferingRow's quality badge:
+                      // the local benchmark is the only source that writes
+                      // this field today, so a known value always means one.
+                      <Badge tone="info" mono icon="gauge" title="Local benchmark">
                         {g.quality_rating.toFixed(2)}
                       </Badge>
                     )}
