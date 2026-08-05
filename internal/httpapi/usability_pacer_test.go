@@ -125,6 +125,35 @@ func TestPacer_HalfOpenRateLimitedReArmsPause(t *testing.T) {
 	}
 }
 
+// TestPacer_StragglerRateLimitDoesNotExtendPause covers the fix-round-1
+// defect: a probe admitted while the breaker was still closed (a "straggler")
+// can still be in flight when the 3rd consecutive rate-limit trips the
+// breaker open. When that straggler later reports OnRateLimited with its own
+// retryAfter, it must NOT override the pause advertised at open time and must
+// NOT re-trigger the open transition — only the true half-open probe's
+// OnRateLimited re-arms the pause.
+func TestPacer_StragglerRateLimitDoesNotExtendPause(t *testing.T) {
+	clock := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	now := func() time.Time { return clock }
+	p := newUsabilityPacer(4, now)
+
+	p.OnRateLimited(0)
+	p.OnRateLimited(0)
+	p.OnRateLimited(10 * time.Second) // 3rd consecutive -> opens with a 10s pause
+
+	clock = clock.Add(1 * time.Second)
+	p.OnRateLimited(60 * time.Second) // straggler admitted before the breaker opened
+
+	clock = clock.Add(8 * time.Second) // total elapsed since open: 9s of the original 10s
+	if p.Admit() {
+		t.Fatal("straggler's retryAfter must not extend the pause: 9s of the original 10s must not be enough")
+	}
+	clock = clock.Add(1 * time.Second) // total elapsed since open: 10s
+	if !p.Admit() {
+		t.Fatal("original 10s pause elapsed: half-open must admit exactly one (unchanged by the straggler)")
+	}
+}
+
 // TestPacer_ClampsAndDefaults covers the resolved edge decisions: maxConcurrency
 // < 1 clamps to 1, and a nil clock defaults to time.Now (so it must not panic
 // and must return a sane, non-zero-max concurrency).

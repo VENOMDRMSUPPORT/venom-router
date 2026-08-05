@@ -111,6 +111,14 @@ func (p *usabilityPacer) OnSuccess() {
 // opens the breaker for retryAfter (or defaultBreakerPause when retryAfter is
 // 0). If this was the half-open probe, it re-arms the same pause instead of
 // closing the breaker.
+//
+// Stragglers: because Concurrency() > 1 is the pacer's normal mode, probes
+// admitted while the breaker was still closed can still be in flight when
+// the 3rd consecutive rate-limit trips it open. When such a straggler later
+// reports OnRateLimited, breakerOpen is already true and halfOpenInFlight is
+// false (it isn't the half-open probe) — the advertised pause set at open
+// time MUST stand: pausedUntil is left untouched and the open transition is
+// not re-triggered. Only the concurrency halving above still applies.
 func (p *usabilityPacer) OnRateLimited(retryAfter time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -120,20 +128,27 @@ func (p *usabilityPacer) OnRateLimited(retryAfter time.Duration) {
 		p.cur = 1
 	}
 
-	pause := retryAfter
-	if pause <= 0 {
-		pause = defaultBreakerPause
-	}
-
-	if p.breakerOpen && p.halfOpenInFlight {
-		// The half-open probe failed again: re-arm the same pause.
-		p.halfOpenInFlight = false
-		p.pausedUntil = p.now().Add(pause)
+	if p.breakerOpen {
+		if p.halfOpenInFlight {
+			// The half-open probe failed again: re-arm the same pause.
+			pause := retryAfter
+			if pause <= 0 {
+				pause = defaultBreakerPause
+			}
+			p.halfOpenInFlight = false
+			p.pausedUntil = p.now().Add(pause)
+		}
+		// Else: a straggler admitted before the breaker opened. The pause
+		// advertised at open time stands untouched — see doc comment above.
 		return
 	}
 
 	p.consecutiveRL++
 	if p.consecutiveRL >= consecutiveRateLimitsToOpenBreaker {
+		pause := retryAfter
+		if pause <= 0 {
+			pause = defaultBreakerPause
+		}
 		p.breakerOpen = true
 		p.pausedUntil = p.now().Add(pause)
 	}
