@@ -5,13 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
 // BenchmarkRunRepo persists benchmark_runs rows (00017_benchmark_runs.sql)
 // — the durable record of one local benchmark attempt against a model, plus
-// the read path (LatestForModel) that surfaces the most recent attempt's
-// rating and timing to a consumer.
+// the read paths (LatestForModel for one model, LatestForModels for a whole
+// page of them) that surface the most recent attempt's rating and timing to a
+// consumer.
 type BenchmarkRunRepo struct {
 	db  *DB
 	now func() time.Time
@@ -78,19 +80,88 @@ func (r *BenchmarkRunRepo) Insert(ctx context.Context, run BenchmarkRun) error {
 	return nil
 }
 
-// LatestForModel returns modelID's most recent benchmark_runs row by
-// finished_at (idx_benchmark_runs_model backs this query), or
-// (BenchmarkRun{}, false, nil) when no row exists for modelID.
-func (r *BenchmarkRunRepo) LatestForModel(ctx context.Context, modelID string) (BenchmarkRun, bool, error) {
-	row := r.db.Conn().QueryRowContext(ctx,
-		`SELECT id, model_id, account_id, provider_id, provider_model_id, requests, successes, ttft_ms, tokens_per_sec, rating, started_at, finished_at
-		 FROM benchmark_runs
-		 WHERE model_id = ?
-		 ORDER BY finished_at DESC
-		 LIMIT 1`,
-		modelID,
-	)
+// LatestForModels is LatestForModel's BATCHED sibling: for each id in
+// modelIDs it returns THAT model's most recent benchmark_runs row by
+// finished_at, in ONE query. A model with no run at all is ABSENT from the
+// returned map — never present with a zero value, so a caller can never
+// mistake "never benchmarked" for "benchmarked at the epoch".
+//
+// It exists so a read model rendering a whole page of model groups can
+// resolve every group's benchmark provenance without one query per group
+// (internal/httpapi's ServeModels, mirroring the batched
+// ProbeRunRepo.SucceededOfferingOperationIDs lookup on the same page).
+//
+// Placeholder-growth note (same discipline as
+// SucceededOfferingOperationIDs): the IN(...) list grows with the number of
+// distinct canonical models on ONE page of offerings, bounded by httpapi's
+// maxPageLimit of 200, far below modernc.org/sqlite's 32766 placeholder
+// ceiling. Never remove the caller-side page bound on the assumption this
+// query can absorb an unbounded id list.
+//
+// Ties on finished_at are broken by id DESC so the result is deterministic
+// rather than whichever row the scan happened to reach first.
+func (r *BenchmarkRunRepo) LatestForModels(ctx context.Context, modelIDs []string) (map[string]BenchmarkRun, error) {
+	out := make(map[string]BenchmarkRun, len(modelIDs))
+	if len(modelIDs) == 0 {
+		return out, nil
+	}
 
+	seen := make(map[string]bool, len(modelIDs))
+	placeholders := make([]string, 0, len(modelIDs))
+	args := make([]any, 0, len(modelIDs))
+	for _, id := range modelIDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	if len(args) == 0 {
+		return out, nil
+	}
+
+	query := `SELECT id, model_id, account_id, provider_id, provider_model_id, requests, successes,
+	                 ttft_ms, tokens_per_sec, rating, started_at, finished_at
+	          FROM (
+	              SELECT id, model_id, account_id, provider_id, provider_model_id, requests, successes,
+	                     ttft_ms, tokens_per_sec, rating, started_at, finished_at,
+	                     ROW_NUMBER() OVER (PARTITION BY model_id ORDER BY finished_at DESC, id DESC) AS rn
+	              FROM benchmark_runs
+	              WHERE model_id IN (` + strings.Join(placeholders, ",") + `)
+	          )
+	          WHERE rn = 1`
+	rows, err := r.db.Conn().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("storage: latest benchmark runs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		run, err := scanBenchmarkRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("storage: latest benchmark runs: %w", err)
+		}
+		out[run.ModelID] = run
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: latest benchmark runs: %w", err)
+	}
+	return out, nil
+}
+
+// benchmarkRunScanner is what both read paths below scan from: *sql.Row
+// (LatestForModel) and *sql.Rows (LatestForModels) share this one method, so
+// the column decoding — including the nullable pointers and the Unix-second
+// timestamps — lives in exactly one place and cannot drift between them.
+type benchmarkRunScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanBenchmarkRun decodes one benchmark_runs row in the column order both
+// read paths select. Nullable columns stay nil pointers when NULL, never zero
+// values (see BenchmarkRun's field docs).
+func scanBenchmarkRun(src benchmarkRunScanner) (BenchmarkRun, error) {
 	var (
 		run        BenchmarkRun
 		ttft       sql.NullInt64
@@ -99,18 +170,13 @@ func (r *BenchmarkRunRepo) LatestForModel(ctx context.Context, modelID string) (
 		startedAt  int64
 		finishedAt int64
 	)
-	err := row.Scan(
+	if err := src.Scan(
 		&run.ID, &run.ModelID, &run.AccountID, &run.ProviderID, &run.ProviderModelID,
 		&run.Requests, &run.Successes, &ttft, &tps, &rating,
 		&startedAt, &finishedAt,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return BenchmarkRun{}, false, nil
+	); err != nil {
+		return BenchmarkRun{}, err
 	}
-	if err != nil {
-		return BenchmarkRun{}, false, fmt.Errorf("storage: latest benchmark run for model %q: %w", modelID, err)
-	}
-
 	if ttft.Valid {
 		v := ttft.Int64
 		run.TTFTMillis = &v
@@ -125,6 +191,28 @@ func (r *BenchmarkRunRepo) LatestForModel(ctx context.Context, modelID string) (
 	}
 	run.StartedAt = time.Unix(startedAt, 0).UTC()
 	run.FinishedAt = time.Unix(finishedAt, 0).UTC()
+	return run, nil
+}
 
+// LatestForModel returns modelID's most recent benchmark_runs row by
+// finished_at (idx_benchmark_runs_model backs this query), or
+// (BenchmarkRun{}, false, nil) when no row exists for modelID.
+func (r *BenchmarkRunRepo) LatestForModel(ctx context.Context, modelID string) (BenchmarkRun, bool, error) {
+	row := r.db.Conn().QueryRowContext(ctx,
+		`SELECT id, model_id, account_id, provider_id, provider_model_id, requests, successes, ttft_ms, tokens_per_sec, rating, started_at, finished_at
+		 FROM benchmark_runs
+		 WHERE model_id = ?
+		 ORDER BY finished_at DESC
+		 LIMIT 1`,
+		modelID,
+	)
+
+	run, err := scanBenchmarkRun(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return BenchmarkRun{}, false, nil
+	}
+	if err != nil {
+		return BenchmarkRun{}, false, fmt.Errorf("storage: latest benchmark run for model %q: %w", modelID, err)
+	}
 	return run, true, nil
 }

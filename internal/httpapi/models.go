@@ -31,6 +31,22 @@ type ModelsHandler struct {
 	// certified+supported non-chat capability renders "declared" rather
 	// than fabricating "probed" for an unknown fact.
 	probeRuns *storage.ProbeRunRepo
+
+	// benchmarkRuns answers "when was this canonical model last benchmarked,
+	// and how did that run go" for a whole page of model groups in ONE
+	// batched query (BenchmarkRunRepo.LatestForModels), wired by
+	// WithBenchmarkRuns exactly like probeRuns above.
+	//
+	// It exists to give a rating the DATED provenance 04 §3 and the
+	// local-benchmark spec require ("local benchmark, <date>"): without the
+	// run's finished_at a surface can only ever say "Local benchmark", and
+	// without its successes/requests it cannot tell that a rating SURVIVED a
+	// later partial-failure run rather than being produced by it.
+	//
+	// A nil value is the correct fail-closed default: every group reports
+	// latest_benchmark: null, which reads as "never benchmarked" — never as a
+	// fabricated date.
+	benchmarkRuns *storage.BenchmarkRunRepo
 }
 
 // WithProbeRuns returns a copy of h with probeRuns wired in (task-5). See
@@ -38,6 +54,14 @@ type ModelsHandler struct {
 func (h *ModelsHandler) WithProbeRuns(probeRuns *storage.ProbeRunRepo) *ModelsHandler {
 	clone := *h
 	clone.probeRuns = probeRuns
+	return &clone
+}
+
+// WithBenchmarkRuns returns a copy of h with benchmarkRuns wired in. See the
+// benchmarkRuns field doc for what it supplies and why nil is safe.
+func (h *ModelsHandler) WithBenchmarkRuns(benchmarkRuns *storage.BenchmarkRunRepo) *ModelsHandler {
+	clone := *h
+	clone.benchmarkRuns = benchmarkRuns
 	return &clone
 }
 
@@ -390,11 +414,37 @@ func (h *ModelsHandler) ServeOfferings(w http.ResponseWriter, r *http.Request) {
 // renders; no context/capability/quality/eligibility value is computed
 // here that Project did not already produce.
 type modelGroupJSON struct {
-	ModelID             string                  `json:"model_id"`
-	DisplayName         string                  `json:"display_name,omitempty"`
-	NativeContextTokens *int                    `json:"native_context_tokens"`
-	QualityRating       *float64                `json:"quality_rating"`
-	Offerings           []effectiveOfferingJSON `json:"offerings"`
+	ModelID             string   `json:"model_id"`
+	DisplayName         string   `json:"display_name,omitempty"`
+	NativeContextTokens *int     `json:"native_context_tokens"`
+	QualityRating       *float64 `json:"quality_rating"`
+	// LatestBenchmark is the DATED provenance for QualityRating (04 §3: a
+	// rating is "always anchored to a documented source, observed date, and
+	// confidence value"). It is a pointer so a model that has never been
+	// benchmarked serializes `null` — NEVER a zero date, which would claim a
+	// measurement that never happened. Deliberately NOT omitempty: an absent
+	// key and an explicit null must not be distinguishable by accident.
+	LatestBenchmark *latestBenchmarkJSON    `json:"latest_benchmark"`
+	Offerings       []effectiveOfferingJSON `json:"offerings"`
+}
+
+// latestBenchmarkJSON is the most recent local benchmark run for one
+// canonical model (benchmark_runs, via BenchmarkRunRepo.LatestForModels).
+//
+// Successes/Requests are carried alongside FinishedAt because the two answer
+// different questions, and only both together are honest: FinishedAt says
+// WHEN the model was last measured, while Successes < Requests says the
+// rating currently on the model did NOT come from that run — the local
+// benchmark writes a rating only when every request in its suite succeeds and
+// otherwise leaves the previous rating in place (internal/httpapi/benchmark.go).
+// Rating itself is deliberately NOT repeated here: models.quality_rating (on
+// the group) is the one rating any surface may render, and a second,
+// differently-scaled copy of it is exactly the disagreement this branch's
+// review had to fix.
+type latestBenchmarkJSON struct {
+	FinishedAt string `json:"finished_at"`
+	Requests   int    `json:"requests"`
+	Successes  int    `json:"successes"`
 }
 
 // ServeModels implements GET /api/control/v1/models (09 §2/04 §3): the same
@@ -448,10 +498,39 @@ func (h *ModelsHandler) ServeModels(w http.ResponseWriter, r *http.Request) {
 		g.Offerings = append(g.Offerings, toEffectiveOfferingJSON(h.buildProjection(ctx, row, succeeded)))
 	}
 
+	// ONE batched benchmark_runs query for this whole page's canonical models
+	// — never one per group.
+	latest, err := h.latestBenchmarks(ctx, order)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+
 	items := make([]modelGroupJSON, 0, len(order))
 	for _, modelID := range order {
-		items = append(items, *groups[modelID])
+		g := groups[modelID]
+		if run, ok := latest[modelID]; ok {
+			g.LatestBenchmark = &latestBenchmarkJSON{
+				FinishedAt: run.FinishedAt.UTC().Format(time.RFC3339),
+				Requests:   run.Requests,
+				Successes:  run.Successes,
+			}
+		}
+		items = append(items, *g)
 	}
 
 	writeDataMeta(w, http.StatusOK, items, paginationMeta(nextCursor))
+}
+
+// latestBenchmarks runs the ONE batched benchmark_runs query for a page's
+// canonical model ids. h.benchmarkRuns == nil (WithBenchmarkRuns never
+// called) and an empty page both short-circuit to nil without touching
+// storage — nil reads identically to an empty map at the one lookup below
+// (fail closed: no known run means latest_benchmark: null, never an invented
+// date).
+func (h *ModelsHandler) latestBenchmarks(ctx context.Context, modelIDs []string) (map[string]storage.BenchmarkRun, error) {
+	if h.benchmarkRuns == nil || len(modelIDs) == 0 {
+		return nil, nil
+	}
+	return h.benchmarkRuns.LatestForModels(ctx, modelIDs)
 }

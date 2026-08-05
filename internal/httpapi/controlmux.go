@@ -278,7 +278,14 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// there is exactly one probe_runs repo in this composition, shared by
 	// both the read model and the probe/certification routes.
 	probeRunRepo := storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown)
-	modelsHandler := NewModelsHandler(catalogRepo, nil).WithProbeRuns(probeRunRepo)
+	// benchmarkRunRepo is likewise constructed once here and shared by BOTH
+	// the read model (WithBenchmarkRuns: the dated rating provenance every
+	// quality badge renders) and the benchmark endpoint below that writes
+	// those rows — one benchmark_runs repo in this composition, never two.
+	benchmarkRunRepo := storage.NewBenchmarkRunRepo(db, nil)
+	modelsHandler := NewModelsHandler(catalogRepo, nil).
+		WithProbeRuns(probeRunRepo).
+		WithBenchmarkRuns(benchmarkRunRepo)
 	mux.Handle("/api/control/v1/models", gated(modelsHandler.ServeModels))
 	mux.Handle("/api/control/v1/offerings", gated(modelsHandler.ServeOfferings))
 
@@ -293,7 +300,7 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// registry every other route here shares.
 	benchmarkHandler := NewBenchmarkHandler(
 		catalogRepo, storage.NewJobRepo(db), storage.NewSettingsRepo(db),
-		storage.NewBenchmarkRunRepo(db, nil), buildBenchmarkStreamFn(reg, credentialRepo, credentialService),
+		benchmarkRunRepo, buildBenchmarkStreamFn(reg, credentialRepo, credentialService),
 		audit, newOAuthTransactionID, nil,
 	)
 	mux.Handle("/api/control/v1/models/{id}/benchmark", gated(benchmarkHandler.ServeBenchmark))

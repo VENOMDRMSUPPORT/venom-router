@@ -190,6 +190,99 @@ func TestBenchmarkRunRepo_LatestForModel_NewestByFinishedAt(t *testing.T) {
 	}
 }
 
+// TestBenchmarkRunRepo_LatestForModels_BatchedNewestPerModel proves the
+// BATCHED read path: for a set of model ids it returns each model's own
+// newest run by finished_at, in ONE query, omitting ids with no run at all
+// (the read model renders a missing entry as "never benchmarked", never as a
+// fabricated date).
+//
+// The seeding order is deliberately adversarial: for model A the newer run is
+// inserted first and for model B the older run is, so a result that merely
+// followed insertion order would pick the wrong row for one of them.
+func TestBenchmarkRunRepo_LatestForModels_BatchedNewestPerModel(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	f := newBenchmarkRunsFixture(t, fixedClock(now), "batched")
+	ctx := context.Background()
+	modelB := insertModel(t, f.db, "model-batched-b", "batched-b-canonical")
+
+	run := func(id, modelID string, requests, successes int, finishedAt time.Time, rating *float64) BenchmarkRun {
+		return BenchmarkRun{
+			ID: id, ModelID: modelID, AccountID: "acct-b", ProviderID: "prov-b", ProviderModelID: "pm-b",
+			Requests: requests, Successes: successes, Rating: rating,
+			StartedAt: finishedAt.Add(-time.Minute), FinishedAt: finishedAt,
+		}
+	}
+	rating := 0.5
+
+	for _, r := range []BenchmarkRun{
+		// model A: newest inserted FIRST.
+		run("run-a-new", f.modelID, 3, 3, now.Add(-10*time.Minute), &rating),
+		run("run-a-old", f.modelID, 3, 1, now.Add(-3*time.Hour), nil),
+		// model B: newest inserted LAST, and it is a PARTIAL run (2 of 3) —
+		// the case the read model has to be able to report.
+		run("run-b-old", modelB, 3, 3, now.Add(-4*time.Hour), &rating),
+		run("run-b-new", modelB, 3, 2, now.Add(-20*time.Minute), nil),
+	} {
+		if err := f.repo.Insert(ctx, r); err != nil {
+			t.Fatalf("Insert(%s): %v", r.ID, err)
+		}
+	}
+
+	got, err := f.repo.LatestForModels(ctx, []string{f.modelID, modelB, "model-never-benchmarked"})
+	if err != nil {
+		t.Fatalf("LatestForModels: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("LatestForModels returned %d entries (%+v), want 2 — the never-benchmarked id must be absent, not zero-valued", len(got), got)
+	}
+	if _, present := got["model-never-benchmarked"]; present {
+		t.Fatal("a model with no benchmark_runs row must be ABSENT from the map")
+	}
+
+	a, ok := got[f.modelID]
+	if !ok {
+		t.Fatalf("no entry for %q", f.modelID)
+	}
+	if a.ID != "run-a-new" {
+		t.Fatalf("model A latest = %q, want run-a-new (newest finished_at, inserted first)", a.ID)
+	}
+	if !a.FinishedAt.Equal(now.Add(-10 * time.Minute).Truncate(time.Second)) {
+		t.Fatalf("model A finished_at = %v, want %v", a.FinishedAt, now.Add(-10*time.Minute))
+	}
+	if a.Requests != 3 || a.Successes != 3 {
+		t.Fatalf("model A requests/successes = %d/%d, want 3/3", a.Requests, a.Successes)
+	}
+
+	b, ok := got[modelB]
+	if !ok {
+		t.Fatalf("no entry for %q", modelB)
+	}
+	if b.ID != "run-b-new" {
+		t.Fatalf("model B latest = %q, want run-b-new (newest finished_at, inserted last)", b.ID)
+	}
+	if b.Requests != 3 || b.Successes != 2 {
+		t.Fatalf("model B requests/successes = %d/%d, want 3/2 — a partial run is still the latest run", b.Requests, b.Successes)
+	}
+	if b.Rating != nil {
+		t.Fatalf("model B rating = %v, want nil — the partial run wrote no rating", *b.Rating)
+	}
+}
+
+// TestBenchmarkRunRepo_LatestForModels_NoIDs proves the batched read path
+// touches storage for an empty id list and returns an empty map rather than
+// building a degenerate IN () query.
+func TestBenchmarkRunRepo_LatestForModels_NoIDs(t *testing.T) {
+	f := newBenchmarkRunsFixture(t, fixedClock(time.Now()), "batched-empty")
+
+	got, err := f.repo.LatestForModels(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("LatestForModels(nil): %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("LatestForModels(nil) = %+v, want empty", got)
+	}
+}
+
 // TestBenchmarkRunRepo_LatestForModel_UnknownModel proves LatestForModel
 // returns the documented zero-value/false/nil triple for a model id with
 // no benchmark_runs rows at all.
