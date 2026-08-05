@@ -17,8 +17,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/execution"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
@@ -378,10 +380,17 @@ func TestModels_MatchesProjectExactly(t *testing.T) {
 	wantClassification := intelligence.Classify([]models.Operation{models.OperationChat, models.OperationVision}, []string{"text"}).Classification
 
 	want := intelligence.Project(intelligence.ProjectionInput{
-		ProviderID:          "prov-m",
-		Canonical:           wantCanonical,
-		NativeCapabilities:  nil,
-		Offering:            wantOffering,
+		ProviderID: "prov-m",
+		Canonical:  wantCanonical,
+		// NativeCapabilities is the offering's own resolved capability set
+		// (task-7): the canonical model id is CanonicalKey(providerID,
+		// providerModelID), so it carries no capability fact distinct from
+		// the offering's own.
+		NativeCapabilities: wantOffering.Capabilities,
+		Offering:           wantOffering,
+		// TransportOperations stays nil: h (newTestModelsHandler) never calls
+		// WithTransports, so prov-m has no wired transport this handler knows
+		// about — fail closed.
 		TransportOperations: nil,
 		Certifications:      certs,
 		Cost:                wantCost,
@@ -393,14 +402,24 @@ func TestModels_MatchesProjectExactly(t *testing.T) {
 	}
 }
 
-// --- TestModels_NativeAndTransportStayUnknown ---
+// --- TestModels_UnwiredTransportKeepsCapabilitiesUnroutable ---
 
-// TestModels_NativeAndTransportStayUnknown proves every rendered capability
-// has effective:false and routable:false even when the offering exposes
-// chat and a certification says certified+supported, because native
-// capability and transport support are UNKNOWN this phase (04 §2/§3: fail
-// closed, never fabricated from provider exposure alone).
-func TestModels_NativeAndTransportStayUnknown(t *testing.T) {
+// TestModels_UnwiredTransportKeepsCapabilitiesUnroutable proves every
+// rendered capability still has effective:false and routable:false when the
+// offering exposes chat and a certification says certified+supported, but
+// its provider has no wired transport in this handler (WithTransports was
+// never called here) — fail closed (04 §2/§3), never fabricated from
+// provider exposure alone.
+//
+// This test used to assert NativeCapabilities stayed nil (task-7 pinned that
+// as "unknown this phase" before this task existed). That is no longer true:
+// NativeCapabilities is now the offering's own resolved capability set — the
+// canonical model id is CanonicalKey(providerID, providerModelID), so it is
+// already provider-scoped and carries no capability fact distinct from the
+// resolved offering fact (see buildProjectionInput's doc comment). What
+// stays unknown, and is what this test now pins, is TransportOperations for
+// a provider this handler was never wired to serve.
+func TestModels_UnwiredTransportKeepsCapabilitiesUnroutable(t *testing.T) {
 	h, db := newTestModelsHandler(t, nil)
 
 	modelsSeedOffering(t, db, offeringSeed{
@@ -424,11 +443,12 @@ func TestModels_NativeAndTransportStayUnknown(t *testing.T) {
 		t.Fatalf("len(rows) = %d, want 1", len(rows))
 	}
 	in := h.buildProjectionInput(context.Background(), rows[0], nil)
-	if in.NativeCapabilities != nil {
-		t.Fatalf("ProjectionInput.NativeCapabilities = %v, want nil (unknown this phase)", in.NativeCapabilities)
+	wantNative := []models.Operation{models.OperationChat}
+	if !reflect.DeepEqual(in.NativeCapabilities, wantNative) {
+		t.Fatalf("ProjectionInput.NativeCapabilities = %v, want %v (the offering's own resolved capability set)", in.NativeCapabilities, wantNative)
 	}
 	if in.TransportOperations != nil {
-		t.Fatalf("ProjectionInput.TransportOperations = %v, want nil (unknown this phase)", in.TransportOperations)
+		t.Fatalf("ProjectionInput.TransportOperations = %v, want nil (prov-nt has no wired transport)", in.TransportOperations)
 	}
 
 	rec := httptest.NewRecorder()
@@ -457,10 +477,10 @@ func TestModels_NativeAndTransportStayUnknown(t *testing.T) {
 	}
 	for _, c := range env.Data[0].Capabilities {
 		if c.Effective {
-			t.Fatalf("capability %q effective = true, want false (native/transport unknown)", c.Operation)
+			t.Fatalf("capability %q effective = true, want false (prov-nt has no wired transport)", c.Operation)
 		}
 		if c.Routable {
-			t.Fatalf("capability %q routable = true, want false (native/transport unknown)", c.Operation)
+			t.Fatalf("capability %q routable = true, want false (prov-nt has no wired transport)", c.Operation)
 		}
 	}
 }
@@ -883,5 +903,210 @@ func TestControlMux_Models_And_Offerings_AreOwnerGated(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GET %s with session status = %d, want 200; body = %q", path, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// --- TestServeOfferings_CapabilitiesAreRoutableWhenCertifiedAndCarriable ---
+
+// seedArgs is what seedCertifiedOffering needs to build one fully-certified
+// offering.
+type seedArgs struct {
+	AccountID  string
+	ProviderID string
+	// ModelID is the PROVIDER's own model id (account_model_offerings.
+	// provider_model_id) — named to match the task-7 brief's fixture shape,
+	// not models.CanonicalModel.
+	ModelID       string
+	Capabilities  []string
+	Certified     []string
+	ContextTokens int
+}
+
+// seedCertifiedOffering builds one offering through the REAL production
+// write paths — intelligence.DiscoveryRepo.Apply (never a raw INSERT) for
+// the model/offering/offering_operations rows, then
+// intelligence.CertificationDriver's own StartProbe + RecordAttempt for
+// every operation named in Certified — so the seeded row shape cannot
+// drift from what production actually produces (task-7 brief: "it must
+// build the rows through the real DiscoveryRepo/CertificationDriver paths
+// rather than raw INSERTs, so it cannot drift from production behaviour").
+//
+// DiscoveryRepo.Apply already advances a brand-new offering_operations row's
+// certification from discovered to observed in the same transaction (04 §5
+// edge 1, see DiscoveryRepo.ensureOfferingOperation's own doc comment), so
+// this helper only needs to drive the remaining two edges itself: StartProbe
+// (observed -> probing) and RecordAttempt with a definitive supported
+// verdict (probing -> certified).
+func seedCertifiedOffering(t *testing.T, db *storage.DB, args seedArgs) {
+	t.Helper()
+	ctx := context.Background()
+	now := fixedModelsClock()
+	clock := func() time.Time { return now }
+
+	p3aSeedAccount(t, db, args.AccountID, args.ProviderID)
+
+	var ops []models.Operation
+	for _, c := range args.Capabilities {
+		op, err := models.ParseOperation(c)
+		if err != nil {
+			t.Fatalf("seedCertifiedOffering: invalid capability %q: %v", c, err)
+		}
+		ops = append(ops, op)
+	}
+
+	discoveryRepo := storage.NewDiscoveryRepo(db, newOAuthTransactionID)
+	runID := "run-" + args.AccountID + "-" + args.ProviderID
+	generation, err := discoveryRepo.BeginRun(ctx, args.AccountID, runID, now)
+	if err != nil {
+		t.Fatalf("BeginRun: %v", err)
+	}
+	contextTokens := args.ContextTokens
+	snapshot := intelligence.DiscoverySnapshot{
+		AccountID:  args.AccountID,
+		ProviderID: args.ProviderID,
+		Generation: generation,
+		Models: []intelligence.DiscoverySnapshotModel{
+			{
+				CanonicalKey:    args.ModelID + "-key",
+				ProviderModelID: args.ModelID,
+				DisplayName:     args.ModelID,
+				ContextLength:   &contextTokens,
+				Capabilities:    args.Capabilities,
+				Operations:      ops,
+			},
+		},
+	}
+	if applied, err := discoveryRepo.Apply(ctx, runID, snapshot, now); err != nil || !applied {
+		t.Fatalf("Apply: applied=%v err=%v", applied, err)
+	}
+
+	certRepo := storage.NewCertificationRepo(db, clock)
+	audit := newAuditEmitter(db, nil)
+	certAuditor := newCertificationAuditorAdapter(audit)
+	driver, err := intelligence.NewCertificationDriver(certRepo, certAuditor, intelligence.DefaultProbeRetryBudget, clock)
+	if err != nil {
+		t.Fatalf("NewCertificationDriver: %v", err)
+	}
+
+	for _, opName := range args.Certified {
+		var opID string
+		if err := db.Conn().QueryRow(
+			`SELECT id FROM offering_operations WHERE account_id = ? AND provider_model_id = ? AND operation = ?`,
+			args.AccountID, args.ModelID, opName,
+		).Scan(&opID); err != nil {
+			t.Fatalf("lookup offering_operations id for %q: %v", opName, err)
+		}
+		if _, err := driver.StartProbe(ctx, opID); err != nil {
+			t.Fatalf("StartProbe(%s): %v", opName, err)
+		}
+		if _, err := driver.RecordAttempt(ctx, opID, intelligence.ProbeOutcome{
+			Execution:  intelligence.ProbeSucceeded,
+			Truth:      models.TruthSupported,
+			Definitive: true,
+			Reason:     intelligence.ReasonCapabilityConfirmed,
+		}, 1); err != nil {
+			t.Fatalf("RecordAttempt(%s): %v", opName, err)
+		}
+	}
+}
+
+// TestServeOfferings_CapabilitiesAreRoutableWhenCertifiedAndCarriable is
+// task-7's own proof: a certified+supported, provider-declared capability
+// that a WIRED transport can actually carry must render routable:true — the
+// WORKING/ENABLED contradiction this task closes. Before this task,
+// NativeCapabilities and TransportOperations were unconditionally nil, so
+// this assertion failed for every capability of every offering no matter
+// what was certified or wired.
+func TestServeOfferings_CapabilitiesAreRoutableWhenCertifiedAndCarriable(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedOffering(t, db, seedArgs{
+		AccountID:     "acct-1",
+		ProviderID:    "clinepass",
+		ModelID:       "cline-pass/kimi-k3",
+		Capabilities:  []string{"chat", "tools", "vision"},
+		Certified:     []string{"chat", "tools", "vision"},
+		ContextTokens: 1048576,
+	})
+
+	h := NewModelsHandler(storage.NewCatalogRepo(db), nil).
+		WithTransports(map[string]execution.InferenceTransport{
+			"clinepass": execution.NewOpenAICompatibleTransport(http.DefaultClient, 0),
+		})
+
+	rec := httptest.NewRecorder()
+	h.ServeOfferings(rec, modelsRequest(http.MethodGet, "/api/control/v1/offerings?account_id=acct-1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	var body struct {
+		Data []struct {
+			Capabilities []struct {
+				Operation string `json:"operation"`
+				Effective bool   `json:"effective"`
+				Routable  bool   `json:"routable"`
+			} `json:"capabilities"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(body.Data) != 1 {
+		t.Fatalf("got %d offerings, want 1", len(body.Data))
+	}
+
+	routable := map[string]bool{}
+	for _, c := range body.Data[0].Capabilities {
+		routable[c.Operation] = c.Routable
+	}
+	for _, op := range []string{"chat", "tools", "vision"} {
+		if !routable[op] {
+			t.Fatalf("capability %q routable = false; it is certified+supported, declared by the offering, and the openai-compatible transport carries it", op)
+		}
+	}
+}
+
+// TestControlMux_RealCompositionWiresTransportsIntoModelsHandler is task-7's
+// composition-root mutation proof (brief step 7). Every OTHER test in this
+// file builds its own ModelsHandler directly and wires (or deliberately
+// omits) transports itself — none of them would notice
+// ControlMux.WithTransports(probeTransports) being dropped from the real
+// composition root, because they never go through it. This test does: it
+// drives the REAL ControlMux (p3aOwnerMux, the same helper the P3a gate
+// suite uses) with no test-supplied transport of its own, over a real,
+// always-registered provider (providers.OpenCodeZenID — wired with a real
+// openai_compatible transport by newProviderRegistry/liveProviderBaseURLs,
+// unconditionally, unlike antigravity). A certified+supported, declared
+// "chat" capability on that provider must render routable:true purely
+// because ControlMux built and wired the map — proving the wiring itself,
+// not just the handler's own logic once wired, is guarded.
+//
+// MUTATION: removing .WithTransports(probeTransports) from ControlMux's
+// modelsHandler construction (controlmux.go) turns this RED — every other
+// httpapi test stays green, which is exactly the coverage hole this test
+// closes.
+func TestControlMux_RealCompositionWiresTransportsIntoModelsHandler(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedOffering(t, db, seedArgs{
+		AccountID:     "acct-real-transport",
+		ProviderID:    string(providers.OpenCodeZenID),
+		ModelID:       "opencode-zen/real-transport-model",
+		Capabilities:  []string{"chat"},
+		Certified:     []string{"chat"},
+		ContextTokens: 100000,
+	})
+
+	mux, cookie, _ := p3aOwnerMux(t, db)
+	rec := p3aGet(t, mux, cookie, "/api/control/v1/offerings?account_id=acct-real-transport")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /offerings status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+	offerings := p3aDecodeOfferings(t, rec.Body.Bytes())
+	if len(offerings) != 1 {
+		t.Fatalf("len(offerings) = %d, want 1", len(offerings))
+	}
+	chat := findCapability(t, offerings[0].Capabilities, "chat")
+	if !chat.Routable {
+		t.Fatalf("chat routable = false through the REAL ControlMux composition, want true — opencode-zen is a registered provider with a wired openai_compatible transport, and this capability is certified+supported and declared. A false here means ControlMux's modelsHandler is missing .WithTransports(probeTransports)")
 	}
 }

@@ -265,6 +265,48 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// specific /providers/{id}/sync path first.
 	mux.Handle("/api/control/v1/providers/{id}/sync", gated(accountsHandler.ServeProviderSync))
 
+	// Probe/routability transport wiring (P3c-EXEC-001; task-7 catalog
+	// resolution & routability, 04 §2/§3): probeTransports is a DATA lookup
+	// (never a slug switch) from provider id to the
+	// execution.InferenceTransport that serves it. probeBaseURLs carries the
+	// FULL base each entry's transport needs (e.g.
+	// providers.OpenCodeZenBaseURL + "/v1": the openai_compatible transport's
+	// fixed "/chat/completions" suffix convention needs the version segment
+	// folded in, independent of whatever base_url the providers table stores
+	// for that provider's OTHER adapters). Every other provider is simply
+	// absent from both maps, so Available() reports it unavailable and
+	// ServeProbe refuses 409 probe_unsupported before any job row is ever
+	// created — fail-closed, never a fabricated capability.
+	// Both maps are DERIVED from the two single-source tables the request path
+	// also composes from (liveTransportImpls + liveProviderBaseURLs in
+	// chatcompletions.go) and from each provider's catalog-declared transport
+	// KIND — never a second hand-written literal that could silently disagree
+	// with the request path. Resolution is by typed capability
+	// (Definition.Transport -> TransportType), never a slug switch.
+	//
+	// Built HERE, above the read model below, rather than down by the probe
+	// route (P3c-EXEC-001's original location): task-7 wires this SAME map
+	// into ModelsHandler via WithTransports, so the projection's "is this
+	// capability carriable" answer and the probe path's "is this provider
+	// probeable" answer read the one map this composition ever builds — never
+	// a second copy that could silently disagree with the probe path's.
+	probeHTTPClient := &http.Client{Timeout: execution.DefaultOpenAICompatibleTimeout}
+	probeImpls := liveTransportImpls(probeHTTPClient, reg)
+	probeTransports := make(map[string]execution.InferenceTransport)
+	probeBaseURLs := make(map[string]string)
+	for id, base := range liveProviderBaseURLs() {
+		def, registered := reg.Definition(id)
+		if !registered {
+			continue // not registered in this composition: absent from both maps
+		}
+		impl, wired := probeImpls[execution.TransportType(def.Transport)]
+		if !wired {
+			continue // no implementation for its declared kind: absent, fail closed
+		}
+		probeTransports[string(id)] = impl
+		probeBaseURLs[string(id)] = base
+	}
+
 	// Effective-offering read model (P3a-CAPI-001, 09 §2 / 04 §3):
 	// GET /models and GET /offerings both read storage.CatalogRepo and
 	// render intelligence.Project's ONE shared projection — reads, so no
@@ -283,9 +325,16 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// quality badge renders) and the benchmark endpoint below that writes
 	// those rows — one benchmark_runs repo in this composition, never two.
 	benchmarkRunRepo := storage.NewBenchmarkRunRepo(db, nil)
+	// modelsHandler's WithTransports(probeTransports) is task-7's fix for the
+	// WORKING/ENABLED contradiction: before it, ModelsHandler always passed
+	// NativeCapabilities and TransportOperations as nil, so routable was
+	// false for every capability of every offering unconditionally. This is
+	// the SAME map probeTransportAdapterInstance uses below, built once above
+	// — never a second, independently-built map that could drift from it.
 	modelsHandler := NewModelsHandler(catalogRepo, nil).
 		WithProbeRuns(probeRunRepo).
-		WithBenchmarkRuns(benchmarkRunRepo)
+		WithBenchmarkRuns(benchmarkRunRepo).
+		WithTransports(probeTransports)
 	mux.Handle("/api/control/v1/models", gated(modelsHandler.ServeModels))
 	mux.Handle("/api/control/v1/offerings", gated(modelsHandler.ServeOfferings))
 
@@ -340,43 +389,10 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// async 202 + the canonical shared job surface, exactly like
 	// discovery/quota-refresh above. certRepo/probeRunRepo are shared with
 	// the certification-read route (DiscoveryHandler.WithProbeRuns)
-	// immediately below, rather than each building its own.
-	//
-	// Probe transport wiring (P3c-EXEC-001): probeTransports is a DATA
-	// lookup (never a slug switch) from provider id to the
-	// execution.InferenceTransport that serves it — today, only
-	// opencode-zen (the one provider with both a base URL and a live
-	// API-key credential adapter). probeBaseURLs carries the FULL base
-	// each entry's transport needs (providers.OpenCodeZenBaseURL + "/v1":
-	// this transport's fixed "/chat/completions" suffix convention needs
-	// the version segment folded in, independent of whatever base_url the
-	// providers table stores for that provider's OTHER adapters). Every
-	// other provider is simply absent from both maps, so Available()
-	// reports it unavailable and ServeProbe refuses 409 probe_unsupported
-	// before any job row is ever created — fail-closed, never a
-	// fabricated capability.
-	// Both maps are DERIVED from the two single-source tables the request path
-	// also composes from (liveTransportImpls + liveProviderBaseURLs in
-	// chatcompletions.go) and from each provider's catalog-declared transport
-	// KIND — never a second hand-written literal that could silently disagree
-	// with the request path. Resolution is by typed capability
-	// (Definition.Transport -> TransportType), never a slug switch.
-	probeHTTPClient := &http.Client{Timeout: execution.DefaultOpenAICompatibleTimeout}
-	probeImpls := liveTransportImpls(probeHTTPClient, reg)
-	probeTransports := make(map[string]execution.InferenceTransport)
-	probeBaseURLs := make(map[string]string)
-	for id, base := range liveProviderBaseURLs() {
-		def, registered := reg.Definition(id)
-		if !registered {
-			continue // not registered in this composition: absent from both maps
-		}
-		impl, wired := probeImpls[execution.TransportType(def.Transport)]
-		if !wired {
-			continue // no implementation for its declared kind: absent, fail closed
-		}
-		probeTransports[string(id)] = impl
-		probeBaseURLs[string(id)] = base
-	}
+	// immediately below, rather than each building its own. probeTransports/
+	// probeBaseURLs are the SAME maps built above (before the read model),
+	// reused here rather than rebuilt — see their construction site's doc
+	// comment for why they now live there.
 	certRepo := storage.NewCertificationRepo(db, nil)
 	// probeRunRepo was already constructed earlier, alongside catalogRepo,
 	// so it could be wired into modelsHandler via WithProbeRuns — reused

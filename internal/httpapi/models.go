@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/execution"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
@@ -47,6 +48,14 @@ type ModelsHandler struct {
 	// latest_benchmark: null, which reads as "never benchmarked" — never as a
 	// fabricated date.
 	benchmarkRuns *storage.BenchmarkRunRepo
+
+	// transports maps provider id to the transport that serves it, so the
+	// projection can intersect an offering's declared capabilities with what
+	// this build can actually put on the wire. It is the SAME map the probe
+	// path uses, built once at the composition root. A provider absent from
+	// it has no wired transport: nothing it declares is carriable, so nothing
+	// is routable — fail closed, never a fabricated capability.
+	transports map[string]execution.InferenceTransport
 }
 
 // WithProbeRuns returns a copy of h with probeRuns wired in (task-5). See
@@ -63,6 +72,15 @@ func (h *ModelsHandler) WithBenchmarkRuns(benchmarkRuns *storage.BenchmarkRunRep
 	clone := *h
 	clone.benchmarkRuns = benchmarkRuns
 	return &clone
+}
+
+// WithTransports returns a copy of h that intersects capabilities with each
+// provider's transport support. See the transports field doc for the
+// fail-closed contract a provider absent from the map gets.
+func (h *ModelsHandler) WithTransports(transports map[string]execution.InferenceTransport) *ModelsHandler {
+	next := *h
+	next.transports = transports
+	return &next
 }
 
 // NewModelsHandler builds the handler over catalog (the read-only M4 view)
@@ -143,13 +161,33 @@ func (h *ModelsHandler) buildProjection(ctx context.Context, row storage.Catalog
 	return intelligence.Project(h.buildProjectionInput(ctx, row, succeeded))
 }
 
+// transportOperationsFor reports the operations this build can put on the
+// wire for providerID, converted from execution's vocabulary onto the
+// domain's. A provider with no wired transport reports nil, which Project
+// reads as UNKNOWN and fails closed on.
+//
+// execution.Operation carries only the five operations a transport can
+// actually express; context_window and image_generation are deliberately
+// not transport operations — a transport carries requests, not a context
+// limit, and image_generation has no wire expression on this seam.
+func (h *ModelsHandler) transportOperationsFor(providerID string) []models.Operation {
+	transport, wired := h.transports[providerID]
+	if !wired {
+		return nil
+	}
+	var out []models.Operation
+	for _, op := range transport.SupportedCapabilities(execution.ResolvedRoute{Provider: execution.ProviderID(providerID)}) {
+		if parsed, err := models.ParseOperation(string(op)); err == nil {
+			out = append(out, parsed)
+		}
+	}
+	return out
+}
+
 // buildProjectionInput assembles one offering's intelligence.ProjectionInput
 // from its storage.CatalogOfferingRow — split out from buildProjection so a
-// test can assert directly on NativeCapabilities/TransportOperations (both
-// of which must stay nil this phase) without that assertion collapsing
-// through Project's AND-of-both-nil-sources "effective" computation, which
-// on its own cannot distinguish "only one seam was wrongly populated" from
-// "neither was." succeeded is task-5's page-batched succeeded-probe fact.
+// test can assert directly on NativeCapabilities/TransportOperations.
+// succeeded is task-5's page-batched succeeded-probe fact.
 func (h *ModelsHandler) buildProjectionInput(ctx context.Context, row storage.CatalogOfferingRow, succeeded map[string]bool) intelligence.ProjectionInput {
 	availability, err := models.ParseAvailability(row.Availability)
 	if err != nil {
@@ -222,17 +260,14 @@ func (h *ModelsHandler) buildProjectionInput(ctx context.Context, row storage.Ca
 	return intelligence.ProjectionInput{
 		ProviderID: row.ProviderID,
 		Canonical:  canonical,
-		// NativeCapabilities and TransportOperations are ALWAYS nil this
-		// phase (04 §2/§3): M4 persists no native-capability fact and no
-		// transport-registry exists yet. Populating either from the
-		// offering's own exposed capabilities, a model name, or an adapter
-		// id would fabricate a capability that was never actually observed
-		// — Project's fail-closed intersection already treats a nil source
-		// as UNKNOWN, so every capability here correctly reports
-		// effective=false until a later unit supplies real evidence.
-		NativeCapabilities:  nil,
+		// The canonical model id is CanonicalKey(providerID, providerModelID),
+		// so a canonical model is already provider-scoped and carries no
+		// capability fact distinct from the resolved offering fact. Passing the
+		// offering's own resolved set is therefore the honest value, not a
+		// second store to drift; `effective` reduces to resolved-and-carriable.
+		NativeCapabilities:  offeringOps,
 		Offering:            offering,
-		TransportOperations: nil,
+		TransportOperations: h.transportOperationsFor(row.ProviderID),
 		Certifications:      certs,
 		Cost:                cost,
 		Classification:      classification,
