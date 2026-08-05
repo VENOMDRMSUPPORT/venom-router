@@ -5,7 +5,6 @@ import { TypedErrorDisplay } from "@venom/design-system/domain";
 import {
   AuthApiError,
   isSessionExpired,
-  startBenchmark,
   startDiscovery,
   startProbe,
   toApiError,
@@ -68,18 +67,6 @@ const CAPABILITY_CHIP_CAP = 6;
  * lie. "Enabled" here is the server's own routability (certified AND
  * supported), reported, not toggled.
  */
-export async function handleStartBenchmark(modelId: string, csrfToken: string) {
-  try {
-    await startBenchmark(modelId, csrfToken);
-    toast.success("Benchmark job started", { detail: "Job handle created" });
-  } catch (err) {
-    toast.danger("Failed to start benchmark", {
-      detail: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  }
-}
-
 export default function ModelTestReport(props: ModelTestReportProps) {
   const { open, account, providerName, offerings, csrfToken, onSessionExpired, onClose, onRefetch } = props;
 

@@ -703,13 +703,36 @@ export interface EffectiveOffering {
   tiers: Record<string, OfferingTierEligibility>;
 }
 
+/** The most recent local benchmark run for one canonical model — the DATED
+ * provenance behind `ModelGroup.quality_rating` (04 §3: a rating is anchored to
+ * a documented source AND an observed date).
+ *
+ * `successes < requests` is load-bearing, not decoration: the local benchmark
+ * writes a rating only when EVERY request in its suite succeeds and otherwise
+ * leaves the previous rating in place. So a partial latest run means the rating
+ * currently shown came from an EARLIER run, and a surface that presented it as
+ * this run's result would be claiming a measurement that was withheld. */
+export interface LatestBenchmark {
+  /** RFC3339, UTC — as the server serialized the run's finished_at. */
+  finished_at: string;
+  requests: number;
+  successes: number;
+}
+
 /** One canonical model group (GET /models). Grouping is presentation only —
- * every offering carries exactly the projection GET /offerings returns. */
+ * every offering carries exactly the projection GET /offerings returns.
+ *
+ * `quality_rating` is the canonical model's rating on its COLUMN scale, 0-100
+ * (04 §3) — NOT the same number as an offering's `quality_score`, which is that
+ * rating divided by 100. Anything rendering both must put them on one scale;
+ * see ModelsSurface. `latest_benchmark` is null when the model has never been
+ * benchmarked. */
 export interface ModelGroup {
   model_id: string;
   display_name?: string;
   native_context_tokens: number | null;
   quality_rating: number | null;
+  latest_benchmark: LatestBenchmark | null;
   offerings: EffectiveOffering[];
 }
 

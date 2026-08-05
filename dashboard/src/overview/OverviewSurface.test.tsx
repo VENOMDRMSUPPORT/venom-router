@@ -72,7 +72,10 @@ function modelGroup(overrides: Partial<ModelGroup> = {}): ModelGroup {
     model_id: "model-zen-chat",
     display_name: "Zen Chat",
     native_context_tokens: 262144,
-    quality_rating: 0.8,
+    // The 0-100 column scale models.quality_rating really uses (04 §3) —
+    // 0.8 here was an impossible backend state.
+    quality_rating: 80,
+    latest_benchmark: null,
     offerings: [],
     ...overrides,
   };

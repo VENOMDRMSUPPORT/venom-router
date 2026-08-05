@@ -26,6 +26,7 @@ import {
   toApiError,
   type AuthApiError,
   type EffectiveOffering,
+  type LatestBenchmark,
   type ModelGroup,
   type OfferingCapability,
 } from "../api/controlClient";
@@ -164,6 +165,63 @@ function ContextProvenanceMark(props: { tokens: number | null; provenance?: stri
   return null;
 }
 
+/** The scale `models.quality_rating` is stored on: 0-100 (04 §3, enforced by
+ * internal/models.NewCanonicalModel). An offering's `quality_score` is that
+ * same rating divided by 100 (internal/models.QualityScore), which is what
+ * routing ranks on.
+ *
+ * Two scales for one fact is a trap — the whole-branch review found the group
+ * header printing the raw column ("0.73", when the column held 0.73 by
+ * mistake) beside an offering row printing "0.01" for the same model. So this
+ * surface commits to ONE scale everywhere: the 0..1 score, two decimals,
+ * derived from quality_rating/100 for the group header. The raw 0-100 column
+ * value is never rendered. */
+const QUALITY_RATING_SCALE = 100;
+
+/** The group header's displayed rating: the canonical 0-100 column expressed on
+ * the same 0..1 scale every offering row shows. */
+function groupQualityScore(rating: number): number {
+  return rating / QUALITY_RATING_SCALE;
+}
+
+/** The ISO day (yyyy-mm-dd) of an RFC3339 timestamp, or null when the value is
+ * not shaped like one.
+ *
+ * Deliberately a prefix match rather than `new Date(...).toLocaleDateString()`:
+ * the server serializes finished_at in UTC, and a locale/timezone-dependent
+ * rendering would show two different days to two owners for the SAME
+ * measurement. Null (rather than a guess) is what keeps a malformed value from
+ * being displayed as a real date. */
+function isoDay(timestamp: string): string | null {
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(timestamp);
+  return match ? match[1] : null;
+}
+
+/** The provenance tooltip both quality badges carry (spec line ~205: "local
+ * benchmark, <date>").
+ *
+ * Three honest states, never blended:
+ *   - no run recorded (or an unparseable timestamp): "Local benchmark" alone —
+ *     the source is known, the date is not, and inventing one would be a claim.
+ *   - the latest run measured every request: "Local benchmark, <date>" — that
+ *     run is what produced the rating being shown.
+ *   - the latest run was PARTIAL: the rating on screen is NOT from it. The
+ *     local benchmark writes a rating only on a fully successful suite and
+ *     leaves the previous rating in place otherwise (see
+ *     internal/httpapi/benchmark.go), so the tooltip names the newer run, says
+ *     how much of it succeeded, and says the rating predates it. */
+function benchmarkProvenanceTitle(latest: LatestBenchmark | null | undefined): string {
+  const day = latest ? isoDay(latest.finished_at) : null;
+  if (!latest || day === null) return "Local benchmark";
+  if (latest.successes < latest.requests) {
+    return (
+      `Local benchmark — the latest run (${day}) completed only ${latest.successes} of ` +
+      `${latest.requests} requests, so it withheld a rating. The rating shown is from an earlier run.`
+    );
+  }
+  return `Local benchmark, ${day}`;
+}
+
 /** The in-flight/finished outcome of an async trigger. `note` carries the
  * honesty caveat a bare status cannot (see benchmarkNote). */
 interface JobOutcome {
@@ -217,10 +275,15 @@ function CapabilityCell(props: { offeringKey: string; capability: OfferingCapabi
 /** One offering row: identity, availability, context, quality, capabilities. */
 function OfferingRow(props: {
   offering: EffectiveOffering;
+  /** The group's benchmark provenance line (benchmarkProvenanceTitle). It is
+   * passed DOWN rather than recomputed here so this row and its group header
+   * can never disagree about when the model was last measured — the run is a
+   * per-model fact, not a per-offering one. */
+  provenanceTitle: string;
   busy: boolean;
   onProbe: (offeringOperationID: string) => void;
 }) {
-  const { offering: o, busy, onProbe } = props;
+  const { offering: o, provenanceTitle, busy, onProbe } = props;
   const key = o.provider_model_id;
   const catalogOnly = o.availability === "catalog_only";
 
@@ -291,8 +354,9 @@ function OfferingRow(props: {
               // measurement suite (spec D4 — no imported leaderboard numbers).
               // A known score is therefore always a local-benchmark result,
               // and the badge says so rather than leaving the number to imply
-              // an external rating it never had.
-              <Badge tone="info" mono icon="gauge" title="Local benchmark">
+              // an external rating it never had, and it carries the run's own
+              // DATE (benchmarkProvenanceTitle) rather than an undated claim.
+              <Badge tone="info" mono icon="gauge" title={provenanceTitle}>
                 {o.quality_score.toFixed(2)}
               </Badge>
             ) : (
@@ -593,6 +657,9 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
           const isOpen = expanded[g.model_id] ?? false;
           const firstOffering = g.offerings[0];
           const ctx = groupContext(g);
+          // ONE provenance line per model, shared by the header badge and
+          // every offering row inside this group.
+          const provenanceTitle = benchmarkProvenanceTitle(g.latest_benchmark);
           return (
             <Card key={g.model_id} data-testid={`model-group-${g.model_id}`}>
               <div className="flex flex-col gap-3">
@@ -695,9 +762,16 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
                     ) : (
                       // Same provenance note as OfferingRow's quality badge:
                       // the local benchmark is the only source that writes
-                      // this field today, so a known value always means one.
-                      <Badge tone="info" mono icon="gauge" title="Local benchmark">
-                        {g.quality_rating.toFixed(2)}
+                      // this field today, so a known value always means one —
+                      // and the SAME dated title is used, from the same run.
+                      //
+                      // The number is derived (groupQualityScore) rather than
+                      // printed raw: quality_rating is the 0-100 column and
+                      // every offering row below shows rating/100, so
+                      // rendering the column here would put two different
+                      // numbers for one rating on one card.
+                      <Badge tone="info" mono icon="gauge" title={provenanceTitle}>
+                        {groupQualityScore(g.quality_rating).toFixed(2)}
                       </Badge>
                     )}
                   </span>
@@ -717,6 +791,7 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
                         <OfferingRow
                           key={`${o.account_id}:${o.provider_model_id}`}
                           offering={o}
+                          provenanceTitle={provenanceTitle}
                           busy={busy}
                           onProbe={(id) => void handleProbe(id)}
                         />

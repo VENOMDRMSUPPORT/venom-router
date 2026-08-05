@@ -53,12 +53,19 @@ function offering(overrides: Partial<EffectiveOffering> = {}): EffectiveOffering
   };
 }
 
+/** The default group mirrors a REAL backend state, which the old default did
+ * not: `models.quality_rating` is the 0-100 column (04 §3) and an offering's
+ * `quality_score` is that same rating / 100 (models.QualityScore). Pairing
+ * `quality_rating: 0.82` with `quality_score: 0.82` — as this fixture used to
+ * — is a state the backend cannot produce, and it is exactly what hid the
+ * write-side scale bug from these tests. 82 / 0.82 is the honest pair. */
 function group(overrides: Partial<ModelGroup> = {}): ModelGroup {
   return {
     model_id: "model-zen-chat",
     display_name: "Zen Chat",
     native_context_tokens: 262144,
-    quality_rating: 0.82,
+    quality_rating: 82,
+    latest_benchmark: { finished_at: "2026-08-04T09:30:00Z", requests: 3, successes: 3 },
     offerings: [offering()],
     ...overrides,
   };
@@ -501,12 +508,39 @@ describe("ModelsSurface — unknowns are never fabricated", () => {
 
 describe("ModelsSurface — quality rating provenance (Plan 3, local-benchmark-rating)", () => {
   it("labels a group's known rating as coming from the Local benchmark", async () => {
-    mockModels([group({ model_id: "model-rated", quality_rating: 0.87 })]);
+    // 87 is the 0-100 column value; the surface shows ONE scale (0..1) so the
+    // header and the offering rows can never read as two different ratings.
+    mockModels([group({ model_id: "model-rated", quality_rating: 87 })]);
     renderSurface();
 
     const cell = await screen.findByTestId("model-group-rating-model-rated");
     expect(cell.textContent ?? "").toMatch(/0\.87/);
     expect(within(cell).getByTitle(/local benchmark/i)).not.toBeNull();
+  });
+
+  it("shows the group header and the offering row on the SAME scale", async () => {
+    // The whole-branch review's self-contradiction: the header rendered the
+    // raw 0-100 column while the row rendered quality_score. One honest
+    // backend state must produce one number on both surfaces.
+    mockModels([
+      group({
+        model_id: "model-one-scale",
+        quality_rating: 72.5,
+        offerings: [
+          offering({ provider_model_id: "one-scale-1", quality_score: 0.725, quality_known: true }),
+        ],
+      }),
+    ]);
+    renderSurface();
+    await expandGroup("model-one-scale");
+
+    const header = screen.getByTestId("model-group-rating-model-one-scale");
+    const row = screen.getByTestId("offering-quality-one-scale-1");
+    expect(header.textContent ?? "").toMatch(/0\.72|0\.73/);
+    expect(row.textContent ?? "").toMatch(/0\.72|0\.73/);
+    // And neither surface shows the raw column value.
+    expect(header.textContent ?? "").not.toMatch(/72\.5/);
+    expect(row.textContent ?? "").not.toMatch(/72\.5/);
   });
 
   it("labels a known offering quality score as coming from the Local benchmark", async () => {
@@ -524,6 +558,62 @@ describe("ModelsSurface — quality rating provenance (Plan 3, local-benchmark-r
     const cell = screen.getByTestId("offering-quality-rated-1");
     expect(cell.textContent ?? "").toMatch(/0\.87/);
     expect(within(cell).getByTitle(/local benchmark/i)).not.toBeNull();
+  });
+
+  it("dates the Local benchmark provenance on BOTH rating badges", async () => {
+    // Spec line ~205: the provenance reads "local benchmark, <date>". The date
+    // is the latest run's finished_at, rendered as a locale-independent ISO
+    // day so a reader in any timezone sees the same string the server sent.
+    mockModels([
+      group({
+        model_id: "model-dated",
+        quality_rating: 87,
+        latest_benchmark: { finished_at: "2026-08-04T09:30:00Z", requests: 3, successes: 3 },
+        offerings: [
+          offering({ provider_model_id: "dated-1", quality_score: 0.87, quality_known: true }),
+        ],
+      }),
+    ]);
+    renderSurface();
+    await expandGroup("model-dated");
+
+    const header = screen.getByTestId("model-group-rating-model-dated");
+    expect(within(header).getByTitle(/local benchmark, 2026-08-04/i)).not.toBeNull();
+    const row = screen.getByTestId("offering-quality-dated-1");
+    expect(within(row).getByTitle(/local benchmark, 2026-08-04/i)).not.toBeNull();
+  });
+
+  it("marks a rating the latest partial run did not refresh", async () => {
+    // The stale-rating hole: a partial run withholds the rating and leaves the
+    // previous one in place, so the badge must not present the surviving
+    // rating as that run's result.
+    mockModels([
+      group({
+        model_id: "model-stale",
+        quality_rating: 64,
+        latest_benchmark: { finished_at: "2026-08-05T11:00:00Z", requests: 3, successes: 2 },
+      }),
+    ]);
+    renderSurface();
+
+    const header = await screen.findByTestId("model-group-rating-model-stale");
+    const title = within(header).getByTitle(/local benchmark/i).getAttribute("title") ?? "";
+    expect(title).toMatch(/2026-08-05/);
+    expect(title).toMatch(/2 of 3/);
+    expect(title).toMatch(/earlier run|withheld|not from/i);
+  });
+
+  it("says only 'Local benchmark' when no run has ever been recorded", async () => {
+    // A rating with no run to date it must NOT invent one.
+    mockModels([
+      group({ model_id: "model-undated", quality_rating: 50, latest_benchmark: null }),
+    ]);
+    renderSurface();
+
+    const header = await screen.findByTestId("model-group-rating-model-undated");
+    const title = within(header).getByTitle(/local benchmark/i).getAttribute("title") ?? "";
+    expect(title).toBe("Local benchmark");
+    expect(title).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 });
 
