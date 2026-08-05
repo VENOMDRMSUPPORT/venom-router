@@ -226,27 +226,63 @@ describe("ModelsSurface — the certification conjunction", () => {
     expect(rendered.size).toBe(states.length);
   });
 
-  it("fails closed when the API's routable flag contradicts the state/truth it reported", async () => {
-    // A server that said routable:true for a non-conjunction pair is a bug
-    // somewhere. The surface must not amplify it into a routable claim.
+  it("renders certified + supported + not-yet-routable as 'Not yet effective', never as an inconsistency", async () => {
+    // This phase, the server's routable is a THREE-term conjunction (certified
+    // AND supported AND effective — 04 §5), and `effective` is hardcoded false
+    // for every capability (internal/httpapi/models.go: no transport registry
+    // yet). A certified+supported capability therefore ALWAYS comes back
+    // routable:false right now. That is not a bug and not a disagreement
+    // between the API's fields — it is this phase's honest, expected state, so
+    // the badge must say so plainly rather than accusing the API of being
+    // inconsistent with itself.
     mockModels([
       group({
-        model_id: "model-contradiction",
+        model_id: "model-not-yet-effective",
         offerings: [
           offering({
-            provider_model_id: "contra-1",
-            capabilities: [capability({ state: "suspended", truth: "unknown", routable: true })],
+            provider_model_id: "nye-1",
+            capabilities: [capability({ state: "certified", truth: "supported", routable: false })],
           }),
         ],
       }),
     ]);
     renderSurface();
-    await expandGroup("model-contradiction");
+    await expandGroup("model-not-yet-effective");
 
-    const chip = screen.getByTestId("capability-routable-contra-1-chat");
-    expect(chip.textContent ?? "").toMatch(/not routable/i);
-    expect(screen.getByTestId("capability-contra-1-chat").textContent ?? "").toMatch(
+    const chip = screen.getByTestId("capability-routable-nye-1-chat");
+    expect(chip.textContent ?? "").toMatch(/not yet effective/i);
+    expect(chip.textContent ?? "").not.toMatch(/not routable/i);
+    expect(chip.querySelector("[title]")?.getAttribute("title") ?? "").toMatch(
+      /awaiting the transport-effectiveness registry/i,
+    );
+
+    // The old "Inconsistent API answer" badge is gone entirely — the server's
+    // routable is trusted verbatim, never recomputed or second-guessed here.
+    expect(screen.getByTestId("capability-nye-1-chat").textContent ?? "").not.toMatch(
       /inconsistent/i,
+    );
+  });
+
+  it("renders a plain 'Not routable' (never 'Not yet effective') when the capability is not certified+supported", async () => {
+    mockModels([
+      group({
+        model_id: "model-not-routable",
+        offerings: [
+          offering({
+            provider_model_id: "nr-1",
+            capabilities: [capability({ state: "suspended", truth: "unknown", routable: false })],
+          }),
+        ],
+      }),
+    ]);
+    renderSurface();
+    await expandGroup("model-not-routable");
+
+    const chip = screen.getByTestId("capability-routable-nr-1-chat");
+    expect(chip.textContent ?? "").toMatch(/not routable/i);
+    expect(chip.textContent ?? "").not.toMatch(/not yet effective/i);
+    expect(chip.querySelector("[title]")?.getAttribute("title") ?? "").toMatch(
+      /not certified as supported yet/i,
     );
   });
 });

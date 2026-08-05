@@ -61,30 +61,32 @@ async function fetchAllModelGroups(): Promise<ModelGroup[]> {
 }
 
 /**
- * The routability of one capability, as a fact this surface REPORTS rather than
- * computes.
+ * The negative-badge copy for one capability whose `routable` came back
+ * false, chosen from the state/truth pair the server reported ALONGSIDE that
+ * flag.
  *
- * `capability.routable` is the server's answer (intelligence.Project over
- * models.Routable). `state === "certified" && truth === "supported"` is the same
- * conjunction 04 §5 defines, recomputed here for ONE purpose only: to detect
- * disagreement. The word "routable" is shown only when both agree.
- *
- * That is deliberately stricter than trusting either source. If the server said
- * routable for a pair the conjunction rejects, something upstream is wrong, and
- * the honest rendering of "we have two answers and they conflict" is NOT the
- * optimistic one — an operator acting on a false routable waits for traffic that
- * never comes. Fail closed, and say the two disagree so the bug is visible
- * instead of silently resolved in the wrong direction.
+ * `capability.routable` (intelligence.Project over models.Routable) is this
+ * surface's single source of truth for routability — it is trusted verbatim,
+ * never recomputed or second-guessed against a client-side conjunction. The
+ * server's real routable is a THREE-term conjunction (certified ∧ supported ∧
+ * EFFECTIVE — 04 §5), and `effective` is hardcoded false for every capability
+ * this phase (internal/httpapi/models.go: NativeCapabilities/
+ * TransportOperations are nil until the transport-effectiveness registry — a
+ * documented future unit — ships). A certified+supported capability
+ * therefore ALWAYS comes back not-routable right now, and that is this
+ * phase's honest, expected state — not a disagreement between two answers the
+ * API gave. The two-term check below exists only to pick the RIGHT honest
+ * copy for that state, never to challenge the server's routable verdict.
  */
-function capabilityRoutability(capability: OfferingCapability): {
-  routable: boolean;
-  inconsistent: boolean;
-} {
-  const conjunction = capability.state === "certified" && capability.truth === "supported";
-  return {
-    routable: capability.routable && conjunction,
-    inconsistent: capability.routable !== conjunction,
-  };
+function notRoutableCopy(capability: OfferingCapability): { label: string; title: string } {
+  if (capability.state === "certified" && capability.truth === "supported") {
+    return {
+      label: "Not yet effective",
+      title:
+        "Certified and supported; awaiting the transport-effectiveness registry (a future unit) — real routing uses the candidate pool, not this flag.",
+    };
+  }
+  return { label: "Not routable", title: "Not certified as supported yet" };
 }
 
 /** True when any of this offering's capabilities is not yet CERTIFIED as
@@ -231,11 +233,11 @@ interface JobOutcome {
 }
 
 /** One capability's cell: certification state, capability truth, and the
- * conjunction of the two — all three, always, because a single chip cannot say
- * WHICH half of the conjunction failed. */
+ * server's own routable verdict — trusted verbatim, never recomputed. */
 function CapabilityCell(props: { offeringKey: string; capability: OfferingCapability }) {
   const { offeringKey, capability } = props;
-  const { routable, inconsistent } = capabilityRoutability(capability);
+  const routable = capability.routable;
+  const notRoutable = routable ? null : notRoutableCopy(capability);
 
   return (
     <div
@@ -254,20 +256,11 @@ function CapabilityCell(props: { offeringKey: string; capability: OfferingCapabi
             Routable
           </Badge>
         ) : (
-          <Badge tone="warning" icon="circle-slash">
-            Not routable
+          <Badge tone="warning" icon="circle-slash" title={notRoutable?.title}>
+            {notRoutable?.label}
           </Badge>
         )}
       </span>
-      {inconsistent ? (
-        <Badge
-          tone="warning"
-          icon="triangle-alert"
-          title="The API's routable flag disagrees with the certification state and capability truth it reported alongside it"
-        >
-          Inconsistent API answer
-        </Badge>
-      ) : null}
     </div>
   );
 }
