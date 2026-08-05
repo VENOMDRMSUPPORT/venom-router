@@ -47,7 +47,7 @@ func TestClinePass_CompleteOAuth_EmbeddedCodeSkipsExchange(t *testing.T) {
 	}{
 		"/users/me": {200, `{"success":true,"data":{"id":"uid-9","email":"user@example.com"}}`},
 	}}
-	a := NewClinePassAdapter(post.probe, get.probe)
+	a := NewClinePassAdapter(post.probe, get.probe, nil, nil)
 	id, creds, err := a.CompleteOAuth(context.Background(), code, "verifier-unused", "http://127.0.0.1:8081/callback")
 	if err != nil {
 		t.Fatalf("CompleteOAuth: %v", err)

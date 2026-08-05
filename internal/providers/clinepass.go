@@ -124,11 +124,18 @@ type clinePassStoredToken struct {
 type ClinePassAdapter struct {
 	postProbe ClinePassPostProbe
 	getProbe  ClinePassGetProbe
+	facts     *ModelsDevSource
 }
 
-// NewClinePassAdapter builds the adapter over the two injected seams.
-func NewClinePassAdapter(postProbe ClinePassPostProbe, getProbe ClinePassGetProbe) *ClinePassAdapter {
-	return &ClinePassAdapter{postProbe: postProbe, getProbe: getProbe}
+// NewClinePassAdapter builds the adapter over the injected seams. modelsDevProbe
+// supplies the public models.dev dataset, which is clinepass's only source of
+// capability and limit facts: its own discovery wire returns {id, name} only.
+func NewClinePassAdapter(postProbe ClinePassPostProbe, getProbe ClinePassGetProbe, modelsDevProbe ModelsDevProbe, now func() time.Time) *ClinePassAdapter {
+	return &ClinePassAdapter{
+		postProbe: postProbe,
+		getProbe:  getProbe,
+		facts:     NewModelsDevSource(modelsDevProbe, now),
+	}
 }
 
 // OmitStateFromCallback reports true: clinepass's authorize redirect does NOT
@@ -510,6 +517,22 @@ func (a *ClinePassAdapter) DiscoverModels(ctx context.Context, creds StoredCrede
 		return nil, fmt.Errorf("providers: clinepass: parse models: %w", err)
 	}
 
+	// The discovery wire returns {id, name} only, so models.dev is this
+	// provider's ONLY capability and limits source. Its entries are keyed
+	// exactly as the live ids are (verified 2026-08-05: 11 of 12 join with no
+	// normalization), and the key mapping is base-URL verified by
+	// FactsForProvider. A live id with no catalog entry passes through as
+	// chat-only with nil limits: the live list is authoritative for WHICH
+	// models exist, and nothing is ever inferred from a sibling model's id.
+	//
+	// A catalog that cannot be fetched yields no facts and no error — every
+	// live model is still listed. Discovery is never gated on an external
+	// registry.
+	catalog, factsErr := a.facts.FactsForProvider(ctx, ClinePassID, ClinePassBaseURL)
+	if factsErr != nil {
+		catalog = map[string]ModelsDevFacts{}
+	}
+
 	seen := make(map[string]struct{}, len(list.ClinePass))
 	out := make([]DiscoveredModel, 0, len(list.ClinePass))
 	for _, m := range list.ClinePass {
@@ -520,25 +543,32 @@ func (a *ClinePassAdapter) DiscoverModels(ctx context.Context, creds StoredCrede
 			continue
 		}
 		seen[m.ID] = struct{}{}
+
+		f, known := catalog[m.ID]
+		if known && f.Deprecated {
+			continue
+		}
+
 		display := m.Name
+		if known && f.DisplayName != "" {
+			display = f.DisplayName
+		}
 		if display == "" {
 			display = m.ID
 		}
-		// The wire returns {id, name} only (docs/evidence/clinepass-legacy-wire-reference.md:97-105)
-		// and clinepass has no models.dev entry, so "no guessing" forbids
-		// declaring anything beyond chat. tools/structured_output/context_window
-		// are listed as CANDIDATES instead of Capabilities: this creates a
-		// probeable offering_operations row for each without fabricating a
-		// declaration — only a real runtime probe can certify them (Task 3).
-		// context_window is included so the context probe has a row to target
-		// at all; without it "ctx unknown" for clinepass could never become
-		// verified regardless of how many probes run.
-		out = append(out, DiscoveredModel{
-			ProviderModelID:     m.ID,
-			DisplayName:         display,
-			Capabilities:        []string{"chat"},
-			CandidateOperations: []string{"tools", "structured_output", "context_window"},
-		})
+
+		dm := DiscoveredModel{
+			ProviderModelID: m.ID,
+			DisplayName:     display,
+			Capabilities:    []string{"chat"},
+		}
+		if known {
+			dm.Capabilities = OperationsFromFacts(f)
+			dm.ContextLength = f.Context
+			dm.MaxInputTokens = f.MaxInput
+			dm.MaxOutputTokens = f.Output
+		}
+		out = append(out, dm)
 	}
 	return out, nil
 }
@@ -810,8 +840,8 @@ func clinePassTokenAndUserInfo(creds StoredCredentials) (string, *clinePassUserI
 // RegisterClinePass registers the clinepass OAuth + Identity + Discovery +
 // Quota + Health adapters into reg with the native_oauth transport and the
 // openai_chat wire schema.
-func RegisterClinePass(reg *Registry, postProbe ClinePassPostProbe, getProbe ClinePassGetProbe) error {
-	adapter := NewClinePassAdapter(postProbe, getProbe)
+func RegisterClinePass(reg *Registry, postProbe ClinePassPostProbe, getProbe ClinePassGetProbe, modelsDevProbe ModelsDevProbe, now func() time.Time) error {
+	adapter := NewClinePassAdapter(postProbe, getProbe, modelsDevProbe, now)
 	return reg.Register(Definition{
 		ID:         ClinePassID,
 		AuthMode:   AuthModeOAuth,

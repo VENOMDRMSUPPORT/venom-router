@@ -95,8 +95,12 @@ func clinePassWorkosPrefixed(token string) string {
 	return clinePassTokenPrefix + token
 }
 
-// registerClinePass registers the clinepass OAuth adapter into reg over the real
-// seams. Registered unconditionally (no confidential-client env vars).
+// registerClinePass registers the clinepass OAuth adapter into reg over the
+// real seams. Registered unconditionally (no confidential-client env vars).
+// It reuses openCodeZenModelsDevProbeSeam for the public models.dev dataset
+// (provider-agnostic, sends no credential) — clinepass's own discovery wire
+// returns {id, name} only, so this dataset is its only source of capability
+// and limit facts.
 func registerClinePass(reg *providers.Registry) error {
-	return providers.RegisterClinePass(reg, clinePassPostSeam, clinePassGetSeam)
+	return providers.RegisterClinePass(reg, clinePassPostSeam, clinePassGetSeam, openCodeZenModelsDevProbeSeam, nil)
 }

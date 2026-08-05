@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -108,7 +110,7 @@ func TestClinePass_HealthDetectsSubscription(t *testing.T) {
 				"/api/v1/users/me":                   {200, clineIdentityOK},
 				"/api/v1/users/me/plan/usage-limits": {tc.limitsStatus, tc.limitsBody},
 			})
-			a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe)
+			a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe, nil, nil)
 
 			obs, err := a.CheckAccountHealth(context.Background(), stored)
 			if err != nil {
@@ -134,7 +136,7 @@ func TestClinePass_HealthDetectsSubscription(t *testing.T) {
 // never run (or soften the verdict) when the credential itself is rejected.
 func TestClinePass_HealthRejectedTokenStaysExpired(t *testing.T) {
 	stored, _ := marshalClinePassToken("at", "rt", 99, nil)
-	a := NewClinePassAdapter((&fakeClinePost{}).probe, clineIdentityGet(401, `{}`).probe)
+	a := NewClinePassAdapter((&fakeClinePost{}).probe, clineIdentityGet(401, `{}`).probe, nil, nil)
 	obs, err := a.CheckAccountHealth(context.Background(), stored)
 	if err != nil {
 		t.Fatalf("CheckAccountHealth: %v", err)
@@ -166,7 +168,7 @@ func TestClinePass_BaseURLMatchesCatalog(t *testing.T) {
 
 func TestClinePass_RegistersNativeOAuthOpenAIChat(t *testing.T) {
 	reg := NewRegistry()
-	if err := RegisterClinePass(reg, (&fakeClinePost{}).probe, clineIdentityGet(200, clineIdentityOK).probe); err != nil {
+	if err := RegisterClinePass(reg, (&fakeClinePost{}).probe, clineIdentityGet(200, clineIdentityOK).probe, nil, nil); err != nil {
 		t.Fatalf("RegisterClinePass: %v", err)
 	}
 	def, _ := reg.Definition(ClinePassID)
@@ -179,7 +181,7 @@ func TestClinePass_RegistersNativeOAuthOpenAIChat(t *testing.T) {
 // 2 (client_type=extension present): the reference flow sends exactly
 // client_type/callback_url/redirect_uri/state (legacy 2026-08-03).
 func TestClinePass_AuthorizeURL(t *testing.T) {
-	a := NewClinePassAdapter((&fakeClinePost{}).probe, clineIdentityGet(200, clineIdentityOK).probe)
+	a := NewClinePassAdapter((&fakeClinePost{}).probe, clineIdentityGet(200, clineIdentityOK).probe, nil, nil)
 	raw, err := a.BeginOAuth(context.Background(), "http://localhost/cb", "st", "challenge-should-be-ignored")
 	if err != nil {
 		t.Fatalf("BeginOAuth: %v", err)
@@ -205,7 +207,7 @@ func TestClinePass_AuthorizeURL(t *testing.T) {
 // verifier is NOT in the body.
 func TestClinePass_CompleteParsesEnvelopeAndUserInfo(t *testing.T) {
 	post := &fakeClinePost{status: 200, body: clineTokenOK}
-	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe)
+	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe, nil, nil)
 	id, creds, err := a.CompleteOAuth(context.Background(), "the-code", "verifier", "http://localhost/cb")
 	if err != nil {
 		t.Fatalf("CompleteOAuth: %v", err)
@@ -236,7 +238,7 @@ func TestClinePass_IdentityFallsBackToUsersMe(t *testing.T) {
 	tokenNoUser := `{"success":true,"data":{"accessToken":"at-1","refreshToken":"rt-1"}}`
 	me := `{"success":true,"data":{"id":"u-9","clineUserId":"cline-fallback","email":"f@b.com"}}`
 	post := &fakeClinePost{status: 200, body: tokenNoUser}
-	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, me).probe)
+	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, me).probe, nil, nil)
 	id, _, err := a.CompleteOAuth(context.Background(), "c", "v", "cb")
 	if err != nil {
 		t.Fatalf("CompleteOAuth: %v", err)
@@ -250,7 +252,7 @@ func TestClinePass_IdentityFallsBackToUsersMe(t *testing.T) {
 // like "abc#fragment" exchanges as "abc" (legacy 2026-08-03).
 func TestClinePass_CodeFragmentIsStripped(t *testing.T) {
 	post := &fakeClinePost{status: 200, body: clineTokenOK}
-	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe)
+	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe, nil, nil)
 	if _, _, err := a.CompleteOAuth(context.Background(), "abc#frag", "v", "cb"); err != nil {
 		t.Fatalf("CompleteOAuth: %v", err)
 	}
@@ -265,7 +267,7 @@ func TestClinePass_CodeFragmentIsStripped(t *testing.T) {
 // domain + this catalog flag).
 func TestClinePass_FundingPaidAndLocked(t *testing.T) {
 	post := &fakeClinePost{status: 200, body: clineTokenOK}
-	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe)
+	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe, nil, nil)
 	id, _, err := a.CompleteOAuth(context.Background(), "c", "v", "cb")
 	if err != nil {
 		t.Fatalf("CompleteOAuth: %v", err)
@@ -288,7 +290,7 @@ func TestClinePass_FundingPaidAndLocked(t *testing.T) {
 // TestClinePass_MissingUserIDIsTypedError is mutation row 3.
 func TestClinePass_MissingUserIDIsTypedError(t *testing.T) {
 	post := &fakeClinePost{status: 200, body: `{"success":true,"data":{"accessToken":"at-1"}}`}
-	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, `{"success":true,"data":{"email":"a@b.com"}}`).probe)
+	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, `{"success":true,"data":{"email":"a@b.com"}}`).probe, nil, nil)
 	id, _, err := a.CompleteOAuth(context.Background(), "c", "v", "cb")
 	if !errors.Is(err, ErrMissingStableIdentity) {
 		t.Fatalf("error = %v, want ErrMissingStableIdentity", err)
@@ -302,7 +304,7 @@ func TestClinePass_RefreshRetention(t *testing.T) {
 	old, _ := json.Marshal(clinePassStoredToken{AccessToken: "old-at", RefreshToken: "old-rt"})
 	t.Run("none keeps old", func(t *testing.T) {
 		post := &fakeClinePost{status: 200, body: `{"success":true,"data":{"accessToken":"new-at","expiresAt":"2026-08-03T16:00:00Z"}}`}
-		a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe)
+		a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe, nil, nil)
 		out, err := a.RefreshCredentials(context.Background(), StoredCredentials{Value: string(old)})
 		if err != nil {
 			t.Fatalf("Refresh: %v", err)
@@ -316,7 +318,7 @@ func TestClinePass_RefreshRetention(t *testing.T) {
 	t.Run("new refresh replaces and userInfo retained", func(t *testing.T) {
 		withInfo, _ := json.Marshal(clinePassStoredToken{AccessToken: "old-at", RefreshToken: "old-rt", UserInfo: &clinePassUserInfo{ClineUserID: "cline-777", Email: "a@b.com"}})
 		post := &fakeClinePost{status: 200, body: `{"success":true,"data":{"accessToken":"new-at","refreshToken":"new-rt","expiresAt":"2026-08-03T16:00:00Z"}}`}
-		a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe)
+		a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe, nil, nil)
 		out, err := a.RefreshCredentials(context.Background(), StoredCredentials{Value: string(withInfo)})
 		if err != nil {
 			t.Fatalf("Refresh: %v", err)
@@ -329,7 +331,7 @@ func TestClinePass_RefreshRetention(t *testing.T) {
 	})
 	t.Run("failed refresh returns error", func(t *testing.T) {
 		post := &fakeClinePost{err: errors.New("down")}
-		a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe)
+		a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe, nil, nil)
 		if _, err := a.RefreshCredentials(context.Background(), StoredCredentials{Value: string(old)}); err == nil {
 			t.Fatal("Refresh error = nil, want a typed failure")
 		}
@@ -341,7 +343,7 @@ func TestClinePass_RefreshRetention(t *testing.T) {
 func TestClinePass_RefreshBodyCamelCase(t *testing.T) {
 	old, _ := json.Marshal(clinePassStoredToken{AccessToken: "old-at", RefreshToken: "old-rt"})
 	post := &fakeClinePost{status: 200, body: `{"success":true,"data":{"accessToken":"new-at"}}`}
-	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe)
+	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe, nil, nil)
 	if _, err := a.RefreshCredentials(context.Background(), StoredCredentials{Value: string(old)}); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
@@ -355,7 +357,7 @@ func TestClinePass_RefreshClassifiesProviderBodyBeforeExpiringAccount(t *testing
 
 	t.Run("ambiguous 401 is transient", func(t *testing.T) {
 		post := &fakeClinePost{status: 401, body: `{"error":{"message":"gateway policy rejected request"}}`}
-		a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe)
+		a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe, nil, nil)
 		_, err := a.RefreshCredentials(context.Background(), StoredCredentials{Value: string(old)})
 		if !errors.Is(err, ErrProviderUnavailable) {
 			t.Fatalf("error = %v, want ErrProviderUnavailable", err)
@@ -368,7 +370,7 @@ func TestClinePass_RefreshClassifiesProviderBodyBeforeExpiringAccount(t *testing
 	for _, marker := range []string{"invalid_grant", "refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated"} {
 		t.Run(marker+" is definitive", func(t *testing.T) {
 			post := &fakeClinePost{status: 401, body: `{"error":{"message":"` + marker + `"}}`}
-			a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe)
+			a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe, nil, nil)
 			_, err := a.RefreshCredentials(context.Background(), StoredCredentials{Value: string(old)})
 			if !errors.Is(err, ErrInvalidCredential) {
 				t.Fatalf("error = %v, want ErrInvalidCredential", err)
@@ -391,7 +393,12 @@ func TestClinePass_DiscoveryIsPassOnly(t *testing.T) {
 		"recommended":[{"id":"cline/opus","name":"Opus (dup)"},{"id":"cline/sonnet","name":"Sonnet"}],
 		"free":[{"id":"cline/free","name":"Free"}]}`},
 	})
-	a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe)
+	// cline/opus carries no cline-pass models.dev entry (the fixture's keys are
+	// all cline-pass/*), so the catalog probe here is exercised but has nothing
+	// to join — this test is about group selection, not catalog enrichment.
+	a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe, func(context.Context) ([]byte, error) {
+		return modelsDevFixture, nil
+	}, nil)
 	models, err := a.DiscoverModels(context.Background(), storedCline("at"))
 	if err != nil {
 		t.Fatalf("DiscoverModels: %v", err)
@@ -404,20 +411,19 @@ func TestClinePass_DiscoveryIsPassOnly(t *testing.T) {
 	}
 }
 
-// TestClinePass_DiscoveryDeclaresChatOnlyWithToolsAndStructuredOutputAsCandidates
-// proves clinepass never fabricates a declaration it has no wire evidence
-// for (the wire returns {id, name} only — no capability metadata, no
-// models.dev entry) while still making "tools"/"structured_output"/
-// "context_window" reachable for a REAL runtime probe: Capabilities carries
-// only "chat"; CandidateOperations carries the three unverified operations
-// instead of silently having no offering_operations row at all (Task 3).
-//
-// context_window is included alongside tools/structured_output because the
-// context probe (internal/intelligence's probeTarget) requires an
-// offering_operations row to probe against — without a context_window
-// candidate row, "ctx unknown" for clinepass has no path to ever become
-// verified, no matter how many times the probe runs.
-func TestClinePass_DiscoveryDeclaresChatOnlyWithToolsAndStructuredOutputAsCandidates(t *testing.T) {
+// TestClinePass_DiscoveryUncataloguedIDIsChatOnlyWithNoCandidates replaces the
+// earlier TestClinePass_DiscoveryDeclaresChatOnlyWithToolsAndStructuredOutputAsCandidates,
+// which pinned a now-false premise: that clinepass "has no models.dev entry"
+// and so must expose tools/structured_output/context_window as
+// CandidateOperations placeholders instead of declaring anything. The catalog
+// IS joined now (TestClinePass_DiscoveryJoinsTheModelsDevCatalog proves the
+// hit case). This test covers what remains true for an id the catalog
+// genuinely does not know: cline/opus has no entry under any cline-pass key
+// in modelsDevFixture, so it still comes back chat-only with nil limits —
+// and CandidateOperations, the mechanism that used to carry the unverified
+// guesses, is gone entirely; a live id with no catalog entry simply has no
+// evidence for anything beyond chat.
+func TestClinePass_DiscoveryUncataloguedIDIsChatOnlyWithNoCandidates(t *testing.T) {
 	get := clineGet(map[string]struct {
 		status int
 		body   string
@@ -425,7 +431,9 @@ func TestClinePass_DiscoveryDeclaresChatOnlyWithToolsAndStructuredOutputAsCandid
 		"/api/v1/users/me/plan/usage-limits": {200, `{"success":true,"data":{"limits":[{"type":"five_hour","percentUsed":1}]}}`},
 		"/recommended-models":                {200, `{"clinePass":[{"id":"cline/opus","name":"Opus"}]}`},
 	})
-	a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe)
+	a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe, func(context.Context) ([]byte, error) {
+		return modelsDevFixture, nil
+	}, nil)
 	models, err := a.DiscoverModels(context.Background(), storedCline("at"))
 	if err != nil {
 		t.Fatalf("DiscoverModels: %v", err)
@@ -435,13 +443,105 @@ func TestClinePass_DiscoveryDeclaresChatOnlyWithToolsAndStructuredOutputAsCandid
 	}
 	m := models[0]
 	if len(m.Capabilities) != 1 || m.Capabilities[0] != "chat" {
-		t.Fatalf("Capabilities = %v, want exactly [chat] — clinepass's wire declares nothing else", m.Capabilities)
+		t.Fatalf("Capabilities = %v, want exactly [chat] — cline/opus has no models.dev entry", m.Capabilities)
 	}
-	if len(m.CandidateOperations) != 3 ||
-		m.CandidateOperations[0] != "tools" ||
-		m.CandidateOperations[1] != "structured_output" ||
-		m.CandidateOperations[2] != "context_window" {
-		t.Fatalf("CandidateOperations = %v, want [tools, structured_output, context_window]", m.CandidateOperations)
+	if len(m.CandidateOperations) != 0 {
+		t.Fatalf("CandidateOperations = %v, want none — the mechanism is dropped now that the catalog is joined", m.CandidateOperations)
+	}
+	if m.ContextLength != nil {
+		t.Fatalf("ContextLength = %v, want nil for an uncatalogued id", *m.ContextLength)
+	}
+}
+
+// TestClinePass_DiscoveryJoinsTheModelsDevCatalog proves the false premise
+// ("clinepass has no models.dev entry") is corrected: the dataset's cline-pass
+// key joins the live discovery ids exactly, with no normalization. kimi-k3
+// gets its full declared operations and limits from the fixture; the
+// uncatalogued qwen3.8-max live id stays listed, chat-only, with nothing
+// invented from its sibling.
+func TestClinePass_DiscoveryJoinsTheModelsDevCatalog(t *testing.T) {
+	getProbe := func(_ context.Context, url, _ string) (int, []byte, error) {
+		switch {
+		case strings.Contains(url, clinePassUsageLimitsPath):
+			return 200, []byte(`{"success":true,"data":{"limits":[{"type":"five_hour","percentUsed":1}]}}`), nil
+		case strings.Contains(url, clinePassModelsPath):
+			return 200, []byte(`{"clinePass":[
+				{"id":"cline-pass/kimi-k3","name":"cline-pass/kimi-k3"},
+				{"id":"cline-pass/qwen3.8-max","name":"cline-pass/qwen3.8-max"}
+			]}`), nil
+		}
+		return 404, nil, nil
+	}
+	adapter := NewClinePassAdapter(nil, getProbe, func(context.Context) ([]byte, error) {
+		return modelsDevFixture, nil
+	}, nil)
+
+	got, err := adapter.DiscoverModels(context.Background(), StoredCredentials{
+		Value: `{"access_token":"t","refresh_token":"r","expires_at":9999999999}`,
+	})
+	if err != nil {
+		t.Fatalf("DiscoverModels: %v", err)
+	}
+	byID := map[string]DiscoveredModel{}
+	for _, m := range got {
+		byID[m.ProviderModelID] = m
+	}
+
+	k3 := byID["cline-pass/kimi-k3"]
+	for _, want := range []string{"chat", "tools", "structured_output", "vision", "context_window", "reasoning"} {
+		if !slices.Contains(k3.Capabilities, want) {
+			t.Fatalf("kimi-k3 capabilities = %v, want %q present from the catalog", k3.Capabilities, want)
+		}
+	}
+	if k3.ContextLength == nil || *k3.ContextLength != 1048576 {
+		t.Fatalf("kimi-k3 ContextLength = %v, want 1048576 from limit.context", k3.ContextLength)
+	}
+	if k3.MaxOutputTokens == nil || *k3.MaxOutputTokens != 131072 {
+		t.Fatalf("kimi-k3 MaxOutputTokens = %v, want 131072 from limit.output", k3.MaxOutputTokens)
+	}
+	if k3.DisplayName != "Kimi K3" {
+		t.Fatalf("kimi-k3 DisplayName = %q, want %q from the catalog name", k3.DisplayName, "Kimi K3")
+	}
+
+	// An uncatalogued live id must still be listed, with nothing invented.
+	newer, ok := byID["cline-pass/qwen3.8-max"]
+	if !ok {
+		t.Fatal("an uncatalogued live id was dropped; the live list is authoritative for existence")
+	}
+	if !reflect.DeepEqual(newer.Capabilities, []string{"chat"}) {
+		t.Fatalf("uncatalogued capabilities = %v, want [chat] only — nothing may be inferred from its siblings", newer.Capabilities)
+	}
+	if newer.ContextLength != nil {
+		t.Fatalf("uncatalogued ContextLength = %v, want nil", *newer.ContextLength)
+	}
+}
+
+// TestClinePass_CatalogUnavailableLeavesLiveModelsListed proves discovery is
+// never gated on the external models.dev registry: a catalog fetch failure
+// yields no facts and NO error — every live model is still listed, chat-only,
+// with nil limits.
+func TestClinePass_CatalogUnavailableLeavesLiveModelsListed(t *testing.T) {
+	getProbe := func(_ context.Context, url, _ string) (int, []byte, error) {
+		switch {
+		case strings.Contains(url, clinePassUsageLimitsPath):
+			return 200, []byte(`{"success":true,"data":{"limits":[{"type":"five_hour","percentUsed":1}]}}`), nil
+		case strings.Contains(url, clinePassModelsPath):
+			return 200, []byte(`{"clinePass":[{"id":"cline-pass/kimi-k3","name":"x"}]}`), nil
+		}
+		return 404, nil, nil
+	}
+	adapter := NewClinePassAdapter(nil, getProbe, func(context.Context) ([]byte, error) {
+		return nil, errors.New("models.dev unreachable")
+	}, nil)
+
+	got, err := adapter.DiscoverModels(context.Background(), StoredCredentials{
+		Value: `{"access_token":"t","refresh_token":"r","expires_at":9999999999}`,
+	})
+	if err != nil {
+		t.Fatalf("DiscoverModels must succeed without the catalog; discovery is not gated on an external registry: %v", err)
+	}
+	if len(got) != 1 || !reflect.DeepEqual(got[0].Capabilities, []string{"chat"}) {
+		t.Fatalf("got %v, want the live model listed as chat-only", got)
 	}
 }
 
@@ -453,7 +553,7 @@ func TestClinePass_DiscoveryRejectsAccountWithoutPass(t *testing.T) {
 		"/api/v1/users/me/plan/usage-limits": {200, `{"success":true,"data":{"limits":[]}}`},
 		"/recommended-models":                {200, `{"clinePass":[{"id":"must-not-load"}]}`},
 	})
-	a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe)
+	a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe, nil, nil)
 	_, err := a.DiscoverModels(context.Background(), storedCline("at"))
 	if !errors.Is(err, ErrSubscriptionRequired) {
 		t.Fatalf("error = %v, want ErrSubscriptionRequired", err)
@@ -475,7 +575,7 @@ func TestClinePass_Quota(t *testing.T) {
 				{"type":"five_hour","percentUsed":42.5,"resetsAt":"2026-08-03T15:00:00Z"},
 				{"type":"weekly","percentUsed":10,"resetsAt":"2026-08-03T15:00:00Z"}]}}`},
 		})
-		a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe)
+		a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe, nil, nil)
 		res, err := a.FetchQuota(context.Background(), storedCline("at"))
 		if err != nil {
 			t.Fatalf("FetchQuota: %v", err)
@@ -509,7 +609,7 @@ func TestClinePass_Quota(t *testing.T) {
 			status int
 			body   string
 		}{"/api/v1/users/me": {200, `{"success":true,"data":{}}`}})
-		a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe)
+		a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe, nil, nil)
 		res, err := a.FetchQuota(context.Background(), storedCline("at"))
 		if err != nil {
 			t.Fatalf("FetchQuota: %v", err)
@@ -528,7 +628,7 @@ func TestClinePass_Quota(t *testing.T) {
 			"/api/v1/users/u-42/balance":         {200, `{"success":true,"data":{"balance":0}}`},
 			"/api/v1/users/me/plan/usage-limits": {200, `{"success":true,"data":{"limits":[{"type":"monthly","percentUsed":5}]}}`},
 		})
-		a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe)
+		a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe, nil, nil)
 		res, err := a.FetchQuota(context.Background(), storedCline("at"))
 		if err != nil {
 			t.Fatalf("FetchQuota: %v", err)
@@ -542,7 +642,7 @@ func TestClinePass_Quota(t *testing.T) {
 func TestClinePass_TokenNeverInError(t *testing.T) {
 	const marker = "PLAINMARKER-cline-token"
 	post := &fakeClinePost{status: 401}
-	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe)
+	a := NewClinePassAdapter(post.probe, clineIdentityGet(200, clineIdentityOK).probe, nil, nil)
 	_, _, err := a.CompleteOAuth(context.Background(), marker, "v", "cb")
 	if err != nil && strings.Contains(err.Error(), marker) {
 		t.Fatalf("error leaks the code: %v", err)
