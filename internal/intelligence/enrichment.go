@@ -200,12 +200,20 @@ func metadataEvidence(scope Scope, entry MetadataEntry, now time.Time) []Evidenc
 }
 
 // QualityEvidence turns one analysis-leaderboard QualityEntry into
-// precedence-engine Evidence (04 §2b/§4). It is EXPORTED so that every caller
-// that reads the leaderboard — EnrichmentService.Enrich here, and
-// P6-CAPI-001”'s POST /models/{id}/benchmark in internal/httpapi — stamps the
-// identical provenance for the identical row. A second, hand-rolled Evidence
-// literal elsewhere would be a second source of truth for how strong a
-// leaderboard claim is.
+// precedence-engine Evidence (04 §2b/§4).
+//
+// Its ONE caller today is EnrichmentService.Enrich in this file. It stays
+// EXPORTED so that any future caller reading the leaderboard stamps the
+// identical provenance for the identical row rather than hand-rolling a
+// second Evidence literal, which would become a second source of truth for
+// how strong a leaderboard claim is.
+//
+// POST /models/{id}/benchmark used to be that second caller. Plan 3 of the
+// local-benchmark-rating design (Task 5, 2026-08-05) replaced its imported
+// leaderboard lookup with a real local measurement suite (spec D4: "No
+// imported leaderboard numbers"), so it no longer produces leaderboard
+// evidence at all — it stamps its own local-benchmark provenance into the
+// audit trail instead (internal/httpapi.benchmarkRunProvenanceReason).
 //
 // An entry with a nil Rating yields NO evidence: the leaderboard knowing the
 // model but having no score for it is 04 §3”'s "no quality signal available",

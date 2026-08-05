@@ -142,10 +142,14 @@ func benchmarkActiveCredentialID(ctx context.Context, credentials benchmarkCrede
 
 // newBenchmarkStreamFn builds the production benchmarkStreamFn.
 //
-//   - dispatcher drives the real streamed dispatch (production: the shared
-//     *execution.Dispatcher built by BuildInferenceDispatcher(reg,
-//     liveTransportImpls(...)) — the SAME instance the chat-completions
-//     request path uses, per Task 3's Step-0 decision).
+//   - dispatcher drives the real streamed dispatch (production: an
+//     *execution.Dispatcher composed from the same production tables the
+//     chat-completions request path composes its own from —
+//     BuildInferenceDispatcher(reg, liveTransportImpls(...)), per Task 3's
+//     Step-0 decision. buildBenchmarkStreamFn builds its own dispatcher
+//     value, and benchmark_composition_test.go proves the COMPOSITION is the
+//     production one; it does not prove pointer identity with the handler's,
+//     so this comment must not claim the same instance).
 //   - baseURLFor resolves a provider id to its fully-resolved base URL
 //     (production: the same liveProviderBaseURLs()-backed closure
 //     buildChatCompletionsHandler builds for EngineDeps.BaseURLFor,
