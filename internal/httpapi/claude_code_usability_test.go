@@ -72,7 +72,7 @@ func TestClassifyClaudeCodeChatUsability_TableOfVerdicts(t *testing.T) {
 // anthropic_messages codec (internal/execution/anthropicwire.go), and
 // classifies a well-formed content response as usable.
 func TestProbeClaudeCodeChatUsability_WireShape(t *testing.T) {
-	var gotMethod, gotPath, gotAuth, gotVersion, gotBeta string
+	var gotMethod, gotPath, gotAuth, gotVersion, gotBeta, gotApp, gotUA string
 	var gotBody openCodeZenChatProbeRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -80,6 +80,8 @@ func TestProbeClaudeCodeChatUsability_WireShape(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		gotVersion = r.Header.Get("anthropic-version")
 		gotBeta = r.Header.Get("anthropic-beta")
+		gotApp = r.Header.Get("X-App")
+		gotUA = r.Header.Get("User-Agent")
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		_, _ = w.Write([]byte(`{"type":"message","content":[{"type":"text","text":"ok"}]}`))
 	}))
@@ -107,6 +109,12 @@ func TestProbeClaudeCodeChatUsability_WireShape(t *testing.T) {
 	}
 	if gotBeta != claudeCodeMessagesAnthropicBeta {
 		t.Fatalf("anthropic-beta = %q, want %q (copied from the production codec)", gotBeta, claudeCodeMessagesAnthropicBeta)
+	}
+	if gotApp != claudeCodeMessagesAppHeader {
+		t.Fatalf("X-App = %q, want %q (copied from the production codec)", gotApp, claudeCodeMessagesAppHeader)
+	}
+	if gotUA != claudeCodeMessagesUserAgent {
+		t.Fatalf("User-Agent = %q, want %q (copied from the production anthropic_messages codec, NOT the GET-seam's claudeCodeUserAgent)", gotUA, claudeCodeMessagesUserAgent)
 	}
 	if gotBody.Model != "claude-sonnet-4" || gotBody.MaxTokens != 1 {
 		t.Fatalf("body = %+v, want the named model + max_tokens:1 (minimal spend, spec D6)", gotBody)

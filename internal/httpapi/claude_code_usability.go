@@ -9,12 +9,22 @@ import (
 	"net/http"
 )
 
-// claudeCodeMessagesAnthropicBeta is the oauth beta header the production
+// claudeCodeMessagesAnthropicBeta / claudeCodeMessagesAppHeader /
+// claudeCodeMessagesUserAgent are the headers the production
 // anthropic_messages codec sets on EVERY authenticated /v1/messages call
-// (internal/execution/anthropicwire.go's anthropicBetaHeader constant, applied
-// by nativeoauth.go). It is copied here rather than guessed — this probe
-// exercises the exact same /v1/messages wire contract and must stay in sync.
-const claudeCodeMessagesAnthropicBeta = "oauth-2025-04-20"
+// (internal/execution/anthropicwire.go's anthropicBetaHeader/anthropicApp-
+// Header/anthropicUserAgentHeader constants, applied by
+// nativeoauth.go's anthropicMessagesCodec.applyHeaders). They are copied here
+// rather than guessed, and deliberately NOT reused from claude_code_seams.go's
+// claudeCodeAppHeader/claudeCodeUserAgent — those back the GET identity/usage
+// seam (a different call path with its own claude-cli version string), not
+// the /v1/messages codec this probe exercises. Must stay in sync with
+// anthropicwire.go.
+const (
+	claudeCodeMessagesAnthropicBeta = "oauth-2025-04-20"
+	claudeCodeMessagesAppHeader     = "cli"
+	claudeCodeMessagesUserAgent     = "claude-cli/0.1 (venom-router)"
+)
 
 // claudeCodeUsabilityEnvelope is the subset of an Anthropic /v1/messages
 // response the usability classifier reads: the error envelope's machine
@@ -79,11 +89,11 @@ func classifyClaudeCodeChatUsability(status int, body []byte) zenChatUsability {
 //
 // The request is the smallest possible spend (spec D6): max_tokens: 1, the
 // single word "ping" — this runs against the owner's real subscription. The
-// anthropic-version and anthropic-beta headers are copied verbatim from the
-// production anthropic_messages codec (claudeCodeAnthropicVersion /
-// claudeCodeMessagesAnthropicBeta), never guessed; X-App and User-Agent match
-// claude_code_seams.go's other authenticated api.anthropic.com calls, since
-// 03 §3 documents that any missing required header draws a 429.
+// anthropic-version, anthropic-beta, X-App, and User-Agent headers are all
+// copied verbatim from the production anthropic_messages codec
+// (claudeCodeAnthropicVersion / claudeCodeMessagesAnthropicBeta /
+// claudeCodeMessagesAppHeader / claudeCodeMessagesUserAgent), never guessed —
+// 03 §3 documents that any missing/wrong required header draws a 429.
 //
 // The error is non-nil ONLY on a transport failure (the model's usability is
 // then simply unknown) — never on a provider error response, which is a real
@@ -116,8 +126,8 @@ func probeClaudeCodeChatUsability(ctx context.Context, baseURL, credentialPlaint
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", claudeCodeAnthropicVersion)
 	req.Header.Set("anthropic-beta", claudeCodeMessagesAnthropicBeta)
-	req.Header.Set("X-App", claudeCodeAppHeader)
-	req.Header.Set("User-Agent", claudeCodeUserAgent)
+	req.Header.Set("X-App", claudeCodeMessagesAppHeader)
+	req.Header.Set("User-Agent", claudeCodeMessagesUserAgent)
 
 	resp, err := claudeCodeHTTPClient.Do(req)
 	if err != nil {
