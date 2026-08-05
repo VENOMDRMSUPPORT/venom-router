@@ -262,7 +262,7 @@ understood as a real upstream gap, not a bug in this pipeline.
 | Operation | Derived from |
 |---|---|
 | `chat` | the provider's endpoint is a chat-completions gateway |
-| `streaming` | **our transport** — `execution.InferenceTransport.SupportedOperations()`, which already returns `[chat, streaming]` and is currently read by nobody |
+| `streaming` | **our transport** — `execution.InferenceTransport.SupportedCapabilities(route)`, which already returns `[chat, streaming]` and is read by nobody (§4.3.1) |
 | `tools` | `tool_call` |
 | `structured_output` | `structured_output` |
 | `vision` | `modalities.input` contains `image` |
@@ -283,16 +283,27 @@ the media-only branch to keep it out of chat routing.
 model therefore gets exactly one row and its other seven operations are
 permanently unknowable.
 
-New rule: **every offering gets a row for all eight operations.** The row's
-certification state encodes what we know:
+An earlier draft of this section required **a row for all eight operations on
+every offering**, plus an operation-aware `ReviewDrainer` to stop the
+un-measurable ones stranding in `probing`. Writing the implementation plan
+showed that to be solving a problem at the wrong end.
 
-- catalog- or provider-declared → `certified` / `supported`, provenance recorded
-- undeclared but measurable → `observed`, awaiting Phase 2
-- undeclared and not measurable → stays `discovered` / `unknown`, displayed as unknown
+That requirement existed only because adapters declared nothing, so a
+capability with no row could never be probed into existence. Catalog resolution
+removes the cause: the operations are **declared at the source**, so rows follow
+declarations exactly as the existing mechanism already does, and no
+`ReviewDrainer` change is needed.
 
-`ReviewDrainer` (`internal/intelligence/admission.go:208-247`) becomes
-operation-aware: it must not drive an operation into `probing` when no measurement
-exists for it. That is the exact cause of today's permanently-stranded rows.
+The rule is therefore unchanged from today's, and now finally has real input:
+
+- declared (provider wire **or** catalog) → a row, certified from the
+  declaration, provenance recorded
+- undeclared → no row, displayed as unknown
+
+The candidate-operation mechanism (`DiscoveredModel.CandidateOperations`)
+becomes unnecessary for any catalogued provider and is dropped from ClinePass,
+which was its only user. It existed to create a probeable row for a capability
+that could not be declared; with the catalog joined, it can be.
 
 ### 4.2 Phase 2 — Live Qualification
 
@@ -365,6 +376,43 @@ tick. Requests are tiny by construction.
 Pass the real `NativeCapabilities` and `TransportOperations` into the projection
 instead of `nil`. This single change makes `effective` and `routable` mean what
 they say, and turns the ENABLED counter into a real number.
+
+#### 4.3.1 The transports under-declare themselves
+
+Wiring `TransportOperations` naively would make things **worse**, not better.
+Every concrete transport declares the same two operations:
+
+| Transport | Declares | file:line |
+|---|---|---|
+| `OpenAICompatibleTransport` | `[chat, streaming]` | `openaicompat.go:530` |
+| `NativeAPITransport` | `[chat, streaming]` | `nativeapi.go:227` |
+| `NativeOAuthTransport` | delegates to its codec; all three codecs return `[chat, streaming]` | `nativeoauth.go:233, 277, 319, 437` |
+| `BifrostTransport` | `[chat]` | `bifrost.go:252` |
+
+And `execution.Operation` has only **four** values — `chat`, `streaming`,
+`tools`, `vision` (`execution/types.go:48-59`) — against `models.Operation`'s
+eight.
+
+Because `effective` is an intersection, feeding those declarations in as-is
+would cap every offering at chat and streaming and make `tools` and `vision`
+permanently unroutable. The declarations are simply **stale**: they predate
+P5-EXEC-004, which gave the transports `NormalizedRequest.Tools`,
+`ToolChoice` and `Message.Parts`, and a typed `ErrRequestFeatureUnsupported`
+for anything they cannot express. The transports gained the ability and their
+self-description was never updated.
+
+**Therefore:** each transport's `SupportedCapabilities` is corrected to declare
+what it actually serializes, and `execution.Operation` gains the constants that
+correction needs. Each correction is paired with a test that fails if the
+serialization it claims is removed — a declaration that cannot be falsified by
+deleting the behaviour it describes is worthless.
+
+`context_window`, `reasoning` and `image_generation` are deliberately **not**
+transport operations. A transport carries requests; it does not "carry" a
+context limit. Their `effective` therefore stays false, which is correct:
+`context_window` is consumed as a number through `EffectiveContextTokens` and
+the `AdmissionContextUnverified` gate, not as a routable operation, and the
+other two are display-and-certify-only by owner decision (§9).
 
 ### 4.4 Context
 
@@ -546,7 +594,7 @@ distinct. As implemented they are:
 |---|---|---|
 | `NativeCapabilities` | what the canonical model can do | the resolved set — see below |
 | `Offering.Capabilities` | what **this provider account** exposes of it | provider wire declarations **∪** catalog declarations for that provider key |
-| `TransportOperations` | what **our code** can actually carry | `execution.InferenceTransport.SupportedOperations()` |
+| `TransportOperations` | what **our code** can actually carry | `execution.InferenceTransport.SupportedCapabilities(route)`, corrected per §4.3.1 |
 
 **The native axis is deliberately collapsed onto the offering axis, and no new
 column is added.** A canonical model id is `models.CanonicalKey(providerID,
