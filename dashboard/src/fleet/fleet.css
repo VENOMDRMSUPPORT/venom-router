@@ -1147,3 +1147,12 @@ textarea:focus-visible,
   border-right-color: var(--border-subtle) !important;
 }
 
+/* Capability provenance (task-6, CapabilityChips.tsx): a "declared" chip
+   (certified with no runtime probe evidence) reads as dashed WITHOUT a
+   hover — the tooltip's provenance line is the only other place this
+   distinction lives, and hover is not always available. "probed" and ""
+   keep the plain solid border from .vnd-capability-icon-box above. */
+.vnd-capability-icon-box--declared {
+  border-style: dashed;
+}
+
