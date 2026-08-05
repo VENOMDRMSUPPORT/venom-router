@@ -74,6 +74,14 @@ The recurring shape: the machinery exists; the last wire is missing.
   any advertised count: `distinctModelStats.working` is the headline everywhere.
 - Model Test Report: unchanged — it shows the full discovered set with
   WORKING/FAILED/UNTESTED status; it is where unverified models live.
+- **One row per provider offering — no cross-provider merging or exclusion**
+  (owner note 2026-08-05): the same underlying model reachable through two
+  providers (e.g. `claude fable 5` via antigravity and `claude-5-fable` via
+  claude-code) appears **twice**, once per provider. Each Live Models row
+  carries the provider's logo and name alongside the model's display name,
+  capability icons, context, and rating. This matches the existing canonical
+  identity (a per-`(provider, model_id)` hash — no cross-provider equivalence
+  in v1) — the page must never dedupe what identity keeps distinct.
 
 ### B. Universal chat-usability probes (no provider without a judge)
 
@@ -151,7 +159,16 @@ exponential backoff):
   The evidence already distinguishes these paths; the projection surfaces it.
   Both UI surfaces render it: **Live Models page** and the **Model Test Report
   modal** — ✓ proven (probed/used), ≈ declared. Chat is always ✓-or-absent
-  (runtime-verified by definition). Vision stays declared-only (≈) this phase:
+  (runtime-verified by definition).
+- **Capabilities render as icon chips with tooltips, never words** (owner note
+  2026-08-05, reference image = the Model Test Report's capability icon boxes):
+  the categorical `--vnd-cap-*` palette and the icon-box component already used
+  by `ModelTestReport.tsx` (`vnd-capability-icon-box`) become the single shared
+  capability renderer, extracted and reused on the Live Models page. The
+  tooltip carries the operation name, provenance (proven ✓ / declared ≈), truth,
+  and state; provenance is visually encoded on the chip itself (e.g. solid
+  border for proven, dashed for declared) so the distinction survives without
+  hovering. Vision stays declared-only (≈) this phase:
   the probe layer cannot synthesize a vision witness (`probeadapters.go:143-152`)
   and building one is out of scope.
 
