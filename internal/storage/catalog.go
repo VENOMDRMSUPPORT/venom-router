@@ -104,6 +104,10 @@ func (r *CatalogRepo) ListOfferings(ctx context.Context, params CatalogListParam
 		args  []any
 		conds []string
 	)
+	// m.native_context_tokens has exactly one writer anywhere in this
+	// codebase: DiscoveryRepo.SetNativeContextTokens (discovery.go) — the
+	// context probe's verified write-back. The dashboard's "native"
+	// context-provenance checkmark is only ever honest because of that.
 	query.WriteString(`SELECT amo.account_id, amo.provider_id, amo.provider_model_id, amo.model_id, amo.availability,
 		amo.context_length, amo.max_input_tokens, amo.max_output_tokens,
 		amo.capabilities_json, amo.pricing_json, amo.first_seen_at, amo.last_seen_at,
