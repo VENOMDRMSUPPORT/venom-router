@@ -104,17 +104,26 @@ func TestProbeClaudeCodeChatUsability_WireShape(t *testing.T) {
 	if gotAuth != "Bearer raw-oauth-token" {
 		t.Fatalf("Authorization = %q, want bearer with the extracted access token", gotAuth)
 	}
-	if gotVersion != claudeCodeAnthropicVersion {
-		t.Fatalf("anthropic-version = %q, want %q (copied from the production codec)", gotVersion, claudeCodeAnthropicVersion)
+	// Asserted against LITERAL values pinned from the production codec
+	// (internal/execution/anthropicwire.go:18-21's anthropicVersionHeader/
+	// anthropicBetaHeader/anthropicAppHeader/anthropicUserAgentHeader, applied
+	// by nativeoauth.go:302-309's anthropicMessagesCodec.applyHeaders) —
+	// deliberately NOT the package's own claudeCodeAnthropicVersion /
+	// claudeCodeMessagesAnthropicBeta / claudeCodeMessagesAppHeader /
+	// claudeCodeMessagesUserAgent constants. Comparing against those would let
+	// a typo'd constant pass silently since both sides read the same
+	// identifier — the known "production compared to its own constant" trap.
+	if gotVersion != "2023-06-01" {
+		t.Fatalf("anthropic-version = %q, want the literal %q copied from the production codec", gotVersion, "2023-06-01")
 	}
-	if gotBeta != claudeCodeMessagesAnthropicBeta {
-		t.Fatalf("anthropic-beta = %q, want %q (copied from the production codec)", gotBeta, claudeCodeMessagesAnthropicBeta)
+	if gotBeta != "oauth-2025-04-20" {
+		t.Fatalf("anthropic-beta = %q, want the literal %q copied from the production codec", gotBeta, "oauth-2025-04-20")
 	}
-	if gotApp != claudeCodeMessagesAppHeader {
-		t.Fatalf("X-App = %q, want %q (copied from the production codec)", gotApp, claudeCodeMessagesAppHeader)
+	if gotApp != "cli" {
+		t.Fatalf("X-App = %q, want the literal %q copied from the production codec", gotApp, "cli")
 	}
-	if gotUA != claudeCodeMessagesUserAgent {
-		t.Fatalf("User-Agent = %q, want %q (copied from the production anthropic_messages codec, NOT the GET-seam's claudeCodeUserAgent)", gotUA, claudeCodeMessagesUserAgent)
+	if gotUA != "claude-cli/0.1 (venom-router)" {
+		t.Fatalf("User-Agent = %q, want the literal %q copied from the production anthropic_messages codec (NOT the GET-seam's claude-cli/2.1.92 string)", gotUA, "claude-cli/0.1 (venom-router)")
 	}
 	if gotBody.Model != "claude-sonnet-4" || gotBody.MaxTokens != 1 {
 		t.Fatalf("body = %+v, want the named model + max_tokens:1 (minimal spend, spec D6)", gotBody)
