@@ -13,6 +13,11 @@
 // at least one proven-supported capability; FAILED needs at least one
 // proven-unsupported one AND no supported one; anything else is UNTESTED —
 // never coerced to a fabricated pass or fail.
+//
+// The fleet HEADLINE count is narrower and lives in distinctModelStats /
+// hasVerifiedChat: it counts proven CHAT only, so the advertised
+// "{working} working" can never exceed the Live Models gate's population.
+// See distinctModelStats' own comment for why the two differ.
 
 import type { EffectiveOffering } from "../api/controlClient";
 
@@ -35,23 +40,61 @@ export function isOfferingEnabled(offering: Pick<EffectiveOffering, "capabilitie
   return offering.capabilities.some((c) => c.routable === true);
 }
 
+/** "Proven CHAT": this offering has a CHAT capability that is both
+ * `certified` and `supported` — i.e. a real completion actually came back
+ * from a real probe, and that evidence is still current.
+ *
+ * This is a verbatim mirror of the server's Live Models gate
+ * (`CatalogRepo.ListOfferings` with LiveOnly: `oo.operation = 'chat' AND
+ * c.status = 'certified' AND c.capability_truth = 'supported'`), which is the
+ * whole point — see distinctModelStats.
+ *
+ * Both clauses carry weight:
+ *   - `operation === "chat"`, because the server certifies DECLARED non-chat
+ *     capabilities (tools, vision, …) straight from their models.dev
+ *     declaration with no runtime probe at all, so a supported `tools` truth
+ *     proves only that the provider ADVERTISED the capability;
+ *   - `state === "certified"`, because models.Certification.Transition
+ *     PRESERVES the truth across certified -> expired (the recertify TTL
+ *     sweep) and certified -> suspended. "supported but no longer certified"
+ *     is a real row, and the gate excludes it. */
+export function hasVerifiedChat(offering: Pick<EffectiveOffering, "capabilities">): boolean {
+  return offering.capabilities.some(
+    (c) => c.operation === "chat" && c.state === "certified" && c.truth === "supported",
+  );
+}
+
 export interface DistinctModelStats {
   /** Distinct provider_model_id count. */
   total: number;
-  /** Distinct models with at least one WORKING offering. */
+  /** Distinct models with at least one PROVEN-CHAT offering. */
   working: number;
 }
 
 /** Distinct-model stats across a set of offerings (possibly spanning
  * several accounts): `total` counts distinct provider_model_id values;
- * `working` counts the distinct models where AT LEAST ONE offering derives
- * WORKING. */
+ * `working` counts the distinct models where AT LEAST ONE offering has
+ * PROVEN CHAT (hasVerifiedChat).
+ *
+ * Why chat and not deriveModelStatus's "any proven capability" (D1 — one
+ * honest number, stated once): this stat IS the fleet headline, rendered as
+ * "{working} working / {total} discovered", and the page's own Live Models
+ * list is populated by the certified+supported CHAT gate. Counting a model
+ * working off a DECLARED non-chat capability — which the server certifies
+ * with no runtime probe — would advertise "N working" beside a Live Models
+ * list showing zero, which is exactly what happens to an account whose chat
+ * probes all rate-limit. The advertised count must equal the gate's
+ * population.
+ *
+ * deriveModelStatus is deliberately NOT narrowed the same way: the Model Test
+ * Report's per-model badge reports what was actually proven about THAT model,
+ * where a proven `tools` capability is a legitimate, non-headline fact. */
 export function distinctModelStats(offerings: readonly EffectiveOffering[]): DistinctModelStats {
   const seen = new Set<string>();
   const working = new Set<string>();
   for (const offering of offerings) {
     seen.add(offering.provider_model_id);
-    if (deriveModelStatus(offering) === "working") working.add(offering.provider_model_id);
+    if (hasVerifiedChat(offering)) working.add(offering.provider_model_id);
   }
   return { total: seen.size, working: working.size };
 }
