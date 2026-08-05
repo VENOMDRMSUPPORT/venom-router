@@ -273,8 +273,31 @@ understood as a real upstream gap, not a bug in this pipeline.
 **Behaviour change:** a model whose output modalities are not all text is
 currently *dropped from the catalog entirely* (`modelsdev.go:213-215`). With
 `image_generation` in scope this is wrong — such a model is discovered and
-classified, not hidden. `internal/intelligence/classification.go` already has
-the media-only branch to keep it out of chat routing.
+classified, not hidden.
+
+**Correction (2026-08-06, found in review during implementation).** An earlier
+draft of this section justified that change by asserting that
+`internal/intelligence/classification.go` keeps media-only offerings out of chat
+routing. **That was false.** `OutputAllText` has zero consumers outside
+`internal/providers`; `Classify` short-circuits on the first `chat` operation and
+returns `ClassificationRoutableCandidate` before consulting modalities at all;
+and `classification_test.go:38-46` deliberately pins that a chat-exposing
+offering is never `catalog_only`. Keeping these models while still asserting
+`chat` for them would have routed image-generation models to chat requests.
+
+The real fix is at the source: `chat` is **grounded in declared text output**,
+exactly as every other operation is grounded in an explicit field.
+
+| Declared `modalities.output` | `chat` emitted? |
+|---|---|
+| absent or empty | yes — unknown output must not drop a chat model |
+| contains `"text"` | yes |
+| explicitly non-empty without `"text"` | **no** |
+
+A pure image-output entry therefore claims only `image_generation`, and
+classification's media-only branch fires as designed. Emitting `chat`
+unconditionally was itself a guess, and the project's own no-guessing rule
+forbids it.
 
 **Unit: operation rows**
 

@@ -1050,7 +1050,23 @@ func TestModelsFromLiveIDs_KeepsImageOutputModelsAndDropsDeprecated(t *testing.T
 }
 ```
 
-`OutputAllText` remains on the struct and is still parsed — `internal/intelligence/classification.go` consumes the media-only signal to keep such an offering out of chat routing.
+`OutputAllText` remains on the struct and is still parsed.
+
+> **Correction applied during implementation (fix round 1, commit `d25cba1`).**
+> This step originally justified keeping image-output models by claiming
+> `internal/intelligence/classification.go` consumes a media-only signal to keep
+> them out of chat routing. **That claim was false** — `OutputAllText` has no
+> consumer outside `internal/providers`, `Classify` short-circuits on the first
+> `chat` operation, and `classification_test.go:38-46` pins that a chat-exposing
+> offering is never `catalog_only`. Keeping these models while `OperationsFromFacts`
+> still emitted `chat` unconditionally would have made image-generation models
+> routable for chat.
+>
+> The delivered fix grounds `chat` in declared text output: output absent or
+> empty → emit `chat` (unknown must not drop a chat model); output contains
+> `"text"` → emit `chat`; output explicitly non-empty without `"text"` → do not
+> emit `chat`. A new field `OutputDeclaresNonTextOnly` carries that third case,
+> distinct from `OutputAllText` (which is true for both "absent" and "all text").
 
 - [ ] **Step 5: Run the package**
 
