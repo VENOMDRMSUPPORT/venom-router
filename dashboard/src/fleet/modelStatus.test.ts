@@ -16,6 +16,7 @@ function capability(overrides: Partial<OfferingCapability> = {}): OfferingCapabi
     state: "discovered",
     truth: "unknown",
     routable: false,
+    provenance: "",
     ...overrides,
   };
 }

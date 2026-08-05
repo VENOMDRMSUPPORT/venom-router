@@ -392,6 +392,87 @@ func TestProbeRunRepo_ReclaimStale(t *testing.T) {
 	}
 }
 
+// TestProbeRunRepo_SucceededOfferingOperationIDs proves the batched
+// task-5 provenance lookup: given a set of offering_operation_ids, it
+// returns exactly the ones with at least one SUCCEEDED probe_runs row —
+// one with a succeeded run, one with only a failed run, one with no run at
+// all, and one that is not even in the requested set (must never appear).
+// It also proves an empty input returns an empty, non-nil map.
+func TestProbeRunRepo_SucceededOfferingOperationIDs(t *testing.T) {
+	now := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+	db := migratedCatalogDB(t)
+	repo := NewProbeRunRepo(db, fixedClock(now), 7*24*time.Hour)
+	ctx := context.Background()
+
+	succeededOpID := seedOfferingOperationChain(t, db, "acct-succ", "prov-succ", "model-succ", "pm-succ")
+	failedOpID := seedOfferingOperationChain(t, db, "acct-failed", "prov-failed", "model-failed", "pm-failed")
+	noRunOpID := seedOfferingOperationChain(t, db, "acct-norun", "prov-norun", "model-norun", "pm-norun")
+	notRequestedOpID := seedOfferingOperationChain(t, db, "acct-unreq", "prov-unreq", "model-unreq", "pm-unreq")
+
+	if err := repo.Start(ctx, ProbeRunParams{
+		ID: "run-succ", OfferingOperationID: succeededOpID, AccountID: "acct-succ", ProviderID: "prov-succ",
+		Operation: "tools", Class: intelligence.ProbeStandard, StartedAt: now,
+	}); err != nil {
+		t.Fatalf("start succeeded run: %v", err)
+	}
+	if err := repo.Finish(ctx, "run-succ", intelligence.ProbeSucceeded, now); err != nil {
+		t.Fatalf("finish succeeded run: %v", err)
+	}
+
+	if err := repo.Start(ctx, ProbeRunParams{
+		ID: "run-failed", OfferingOperationID: failedOpID, AccountID: "acct-failed", ProviderID: "prov-failed",
+		Operation: "tools", Class: intelligence.ProbeStandard, StartedAt: now,
+	}); err != nil {
+		t.Fatalf("start failed run: %v", err)
+	}
+	if err := repo.Finish(ctx, "run-failed", intelligence.ProbeTerminalFailure, now); err != nil {
+		t.Fatalf("finish failed run: %v", err)
+	}
+
+	// A succeeded run exists for notRequestedOpID too, but it must never
+	// surface because it is never passed in the requested id list below.
+	if err := repo.Start(ctx, ProbeRunParams{
+		ID: "run-unrequested", OfferingOperationID: notRequestedOpID, AccountID: "acct-unreq", ProviderID: "prov-unreq",
+		Operation: "tools", Class: intelligence.ProbeStandard, StartedAt: now,
+	}); err != nil {
+		t.Fatalf("start unrequested run: %v", err)
+	}
+	if err := repo.Finish(ctx, "run-unrequested", intelligence.ProbeSucceeded, now); err != nil {
+		t.Fatalf("finish unrequested run: %v", err)
+	}
+
+	got, err := repo.SucceededOfferingOperationIDs(ctx, []string{succeededOpID, failedOpID, noRunOpID})
+	if err != nil {
+		t.Fatalf("SucceededOfferingOperationIDs: %v", err)
+	}
+	if !got[succeededOpID] {
+		t.Errorf("succeededOpID missing from result: %+v", got)
+	}
+	if got[failedOpID] {
+		t.Errorf("failedOpID present in result, want absent (only a terminal_failure run exists): %+v", got)
+	}
+	if got[noRunOpID] {
+		t.Errorf("noRunOpID present in result, want absent (no probe_runs row exists): %+v", got)
+	}
+	if got[notRequestedOpID] {
+		t.Errorf("notRequestedOpID present in result despite never being requested: %+v", got)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len(got) = %d, want exactly 1 (%+v)", len(got), got)
+	}
+
+	empty, err := repo.SucceededOfferingOperationIDs(ctx, nil)
+	if err != nil {
+		t.Fatalf("SucceededOfferingOperationIDs(nil): %v", err)
+	}
+	if empty == nil {
+		t.Fatalf("SucceededOfferingOperationIDs(nil) = nil map, want a non-nil empty map")
+	}
+	if len(empty) != 0 {
+		t.Fatalf("SucceededOfferingOperationIDs(nil) = %+v, want empty", empty)
+	}
+}
+
 // TestProbeRunRepo_SatisfiesIntelligencePorts is a compile-time-adjacent
 // runtime check that ProbeRunRepo's methods are actually callable through
 // the three intelligence port interfaces it claims to implement (the

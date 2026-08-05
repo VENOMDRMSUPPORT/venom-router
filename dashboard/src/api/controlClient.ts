@@ -647,6 +647,16 @@ export interface OfferingCapability {
    * from provider_model_id — the real ids are minted randomly by DiscoveryRepo, so
    * a composed id would address a different row or 404. */
   offering_operation_id?: string;
+  /** Capability provenance (task-5): "probed" when this capability was earned
+   * by a real runtime probe — chat's own runtime usability sweep/fast-lane,
+   * ALWAYS (chat has no declared path by construction), or a non-chat
+   * operation with a succeeded probe run; "declared" when a non-chat
+   * operation was certified with no probe evidence
+   * (certifyDeclaredCapabilities); and "" when this operation is not
+   * certified+supported at all — provenance only qualifies an earned
+   * certification. Always present (never omitted): "" is itself a
+   * meaningful value here, unlike offering_operation_id above. */
+  provenance: "probed" | "declared" | "";
 }
 
 /** One offering's resolved cost fact. `is_free` is `null` when unknown — which

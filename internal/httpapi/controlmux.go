@@ -272,7 +272,13 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// catalogRepo is shared with the discovery/certification routes below
 	// rather than each building its own.
 	catalogRepo := storage.NewCatalogRepo(db)
-	modelsHandler := NewModelsHandler(catalogRepo, nil)
+	// probeRunRepo is constructed here (rather than down by the probe route
+	// below, where it used to live) so ModelsHandler can be wired with the
+	// SAME instance via WithProbeRuns (task-5: capability provenance) —
+	// there is exactly one probe_runs repo in this composition, shared by
+	// both the read model and the probe/certification routes.
+	probeRunRepo := storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown)
+	modelsHandler := NewModelsHandler(catalogRepo, nil).WithProbeRuns(probeRunRepo)
 	mux.Handle("/api/control/v1/models", gated(modelsHandler.ServeModels))
 	mux.Handle("/api/control/v1/offerings", gated(modelsHandler.ServeOfferings))
 
@@ -364,7 +370,9 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 		probeBaseURLs[string(id)] = base
 	}
 	certRepo := storage.NewCertificationRepo(db, nil)
-	probeRunRepo := storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown)
+	// probeRunRepo was already constructed earlier, alongside catalogRepo,
+	// so it could be wired into modelsHandler via WithProbeRuns — reused
+	// here rather than built a second time.
 	certAuditor := newCertificationAuditorAdapter(audit)
 	certDriver, _ := intelligence.NewCertificationDriver(certRepo, certAuditor, intelligence.DefaultProbeRetryBudget, nil)
 	probeReserver := newProbeReserverAdapter(storage.NewQuotaReservationRepo(db, nil))

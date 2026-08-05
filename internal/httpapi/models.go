@@ -21,6 +21,24 @@ type ModelsHandler struct {
 	catalog  *storage.CatalogRepo
 	resolver *intelligence.FreeSafetyResolver
 	now      func() time.Time
+
+	// probeRuns is task-5's capability-provenance seam: it answers "does a
+	// SUCCEEDED probe run exist for this offering_operation_id" in one
+	// batched query per page (WithProbeRuns wires it in, mirroring
+	// DiscoveryHandler.WithProbeRuns — a copy-returning method rather than a
+	// constructor parameter, so every existing NewModelsHandler call site
+	// stays valid). A nil value is the correct fail-closed default: every
+	// certified+supported non-chat capability renders "declared" rather
+	// than fabricating "probed" for an unknown fact.
+	probeRuns *storage.ProbeRunRepo
+}
+
+// WithProbeRuns returns a copy of h with probeRuns wired in (task-5). See
+// the probeRuns field doc for why this is a copy-returning method.
+func (h *ModelsHandler) WithProbeRuns(probeRuns *storage.ProbeRunRepo) *ModelsHandler {
+	clone := *h
+	clone.probeRuns = probeRuns
+	return &clone
 }
 
 // NewModelsHandler builds the handler over catalog (the read-only M4 view)
@@ -40,12 +58,50 @@ func NewModelsHandler(catalog *storage.CatalogRepo, now func() time.Time) *Model
 	return &ModelsHandler{catalog: catalog, resolver: resolver, now: now}
 }
 
+// collectOfferingOperationIDs gathers every offering_operations row id
+// present across rows' certified operations, deduplicated — the batched
+// IN (...) key set task-5's provenance lookup queries with, ONE query per
+// page rather than one per offering-operation.
+func collectOfferingOperationIDs(rows []storage.CatalogOfferingRow) []string {
+	seen := make(map[string]bool)
+	var ids []string
+	for _, row := range rows {
+		for _, op := range row.Operations {
+			if op.ID != "" && !seen[op.ID] {
+				seen[op.ID] = true
+				ids = append(ids, op.ID)
+			}
+		}
+	}
+	return ids
+}
+
+// succeededProbeIDs runs task-5's ONE batched probe_runs query for an
+// entire page of rows. h.probeRuns == nil (WithProbeRuns never called) and
+// a page with no offering-operations at all both short-circuit to nil
+// without touching storage — nil is read identically to an empty map by
+// every lookup below (fail closed: no known succeeded probe run demotes a
+// non-chat certified capability to "declared", never fabricates "probed").
+func (h *ModelsHandler) succeededProbeIDs(ctx context.Context, rows []storage.CatalogOfferingRow) (map[string]bool, error) {
+	if h.probeRuns == nil {
+		return nil, nil
+	}
+	ids := collectOfferingOperationIDs(rows)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return h.probeRuns.SucceededOfferingOperationIDs(ctx, ids)
+}
+
 // buildProjection assembles one offering's intelligence.ProjectionInput from
 // its storage.CatalogOfferingRow and calls intelligence.Project — the ONLY
 // place this handler computes anything; every field below is either read
-// verbatim from row or handed to a shared intelligence function.
-func (h *ModelsHandler) buildProjection(ctx context.Context, row storage.CatalogOfferingRow) intelligence.EffectiveOffering {
-	return intelligence.Project(h.buildProjectionInput(ctx, row))
+// verbatim from row or handed to a shared intelligence function. succeeded
+// is the page-batched task-5 provenance fact from succeededProbeIDs (nil is
+// fine — every operation lookup against a nil map reads as "no succeeded
+// run known").
+func (h *ModelsHandler) buildProjection(ctx context.Context, row storage.CatalogOfferingRow, succeeded map[string]bool) intelligence.EffectiveOffering {
+	return intelligence.Project(h.buildProjectionInput(ctx, row, succeeded))
 }
 
 // buildProjectionInput assembles one offering's intelligence.ProjectionInput
@@ -54,8 +110,8 @@ func (h *ModelsHandler) buildProjection(ctx context.Context, row storage.Catalog
 // of which must stay nil this phase) without that assertion collapsing
 // through Project's AND-of-both-nil-sources "effective" computation, which
 // on its own cannot distinguish "only one seam was wrongly populated" from
-// "neither was."
-func (h *ModelsHandler) buildProjectionInput(ctx context.Context, row storage.CatalogOfferingRow) intelligence.ProjectionInput {
+// "neither was." succeeded is task-5's page-batched succeeded-probe fact.
+func (h *ModelsHandler) buildProjectionInput(ctx context.Context, row storage.CatalogOfferingRow, succeeded map[string]bool) intelligence.ProjectionInput {
 	availability, err := models.ParseAvailability(row.Availability)
 	if err != nil {
 		// Fail closed (04 §2/§3): an unparseable/corrupt availability value
@@ -71,6 +127,12 @@ func (h *ModelsHandler) buildProjectionInput(ctx context.Context, row storage.Ca
 	}
 
 	certs := make(map[models.Operation]models.Certification, len(row.Operations))
+	// provedOps is task-5's per-operation "a succeeded probe run exists"
+	// fact, keyed by models.Operation (the projection's own vocabulary)
+	// rather than by the raw offering_operation_id — built here, alongside
+	// certs, from the SAME opRow.ID -> op mapping so it can never point at
+	// the wrong operation's row.
+	provedOps := make(map[models.Operation]bool, len(row.Operations))
 	for _, opRow := range row.Operations {
 		op, err := models.ParseOperation(opRow.Operation)
 		if err != nil {
@@ -91,6 +153,9 @@ func (h *ModelsHandler) buildProjectionInput(ctx context.Context, row storage.Ca
 			Version:             opRow.CertificationVersion,
 			CertifiedAt:         opRow.CertifiedAt,
 			EvidenceRef:         opRow.EvidenceRef,
+		}
+		if succeeded[opRow.ID] {
+			provedOps[op] = true
 		}
 	}
 
@@ -132,6 +197,7 @@ func (h *ModelsHandler) buildProjectionInput(ctx context.Context, row storage.Ca
 		Certifications:      certs,
 		Cost:                cost,
 		Classification:      classification,
+		ProvedOperations:    provedOps,
 	}
 }
 
@@ -146,6 +212,12 @@ func (h *ModelsHandler) buildProjectionInput(ctx context.Context, row storage.Ca
 // identifier it could pass straight to the probe endpoint; omitting the key says
 // "not probeable" unambiguously. The value is never composed here — it comes from
 // the certification row via intelligence.Project.
+//
+// Provenance is NEVER omitempty, unlike OfferingOperationID: "" is itself a
+// meaningful closed value here (task-5) — "this capability is not
+// certified+supported, so provenance does not apply" — and a client must be
+// able to tell that state apart from the key being absent by some other
+// bug, so the empty string is always sent explicitly.
 type capabilityJSON struct {
 	Operation           string `json:"operation"`
 	Effective           bool   `json:"effective"`
@@ -153,6 +225,7 @@ type capabilityJSON struct {
 	Truth               string `json:"truth"`
 	Routable            bool   `json:"routable"`
 	OfferingOperationID string `json:"offering_operation_id,omitempty"`
+	Provenance          string `json:"provenance"`
 }
 
 type costJSON struct {
@@ -202,6 +275,7 @@ func toEffectiveOfferingJSON(eo intelligence.EffectiveOffering) effectiveOfferin
 			Truth:               string(c.Truth),
 			Routable:            c.Routable,
 			OfferingOperationID: c.OfferingOperationID,
+			Provenance:          c.Provenance,
 		})
 	}
 
@@ -277,9 +351,17 @@ func (h *ModelsHandler) ServeOfferings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ONE batched probe_runs query for this whole page (task-5) — never one
+	// per offering-operation.
+	succeeded, err := h.succeededProbeIDs(ctx, rows)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+
 	items := make([]effectiveOfferingJSON, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, toEffectiveOfferingJSON(h.buildProjection(ctx, row)))
+		items = append(items, toEffectiveOfferingJSON(h.buildProjection(ctx, row, succeeded)))
 	}
 
 	writeDataMeta(w, http.StatusOK, items, paginationMeta(nextCursor))
@@ -326,6 +408,14 @@ func (h *ModelsHandler) ServeModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ONE batched probe_runs query for this whole page (task-5) — never one
+	// per offering-operation.
+	succeeded, err := h.succeededProbeIDs(ctx, rows)
+	if err != nil {
+		writeAuthError(w, http.StatusInternalServerError, "internal", "internal error", true)
+		return
+	}
+
 	var order []string
 	groups := make(map[string]*modelGroupJSON)
 	for _, row := range rows {
@@ -340,7 +430,7 @@ func (h *ModelsHandler) ServeModels(w http.ResponseWriter, r *http.Request) {
 			groups[row.ModelID] = g
 			order = append(order, row.ModelID)
 		}
-		g.Offerings = append(g.Offerings, toEffectiveOfferingJSON(h.buildProjection(ctx, row)))
+		g.Offerings = append(g.Offerings, toEffectiveOfferingJSON(h.buildProjection(ctx, row, succeeded)))
 	}
 
 	items := make([]modelGroupJSON, 0, len(order))

@@ -234,7 +234,7 @@ func TestModels_RenderedTiersComeFromProject(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("len(rows) = %d, want 1", len(rows))
 	}
-	projected := h.buildProjection(ctx, rows[0])
+	projected := h.buildProjection(ctx, rows[0], nil)
 
 	// Precondition: the cost fact really is verified-free, so cost alone
 	// would admit every tier and only the context gate can exclude them.
@@ -325,7 +325,7 @@ func TestModels_MatchesProjectExactly(t *testing.T) {
 	}
 	row := rows[0]
 
-	got := h.buildProjection(ctx, row)
+	got := h.buildProjection(ctx, row, nil)
 
 	certs := make(map[models.Operation]models.Certification, len(row.Operations))
 	for _, opRow := range row.Operations {
@@ -418,7 +418,7 @@ func TestModels_NativeAndTransportStayUnknown(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("len(rows) = %d, want 1", len(rows))
 	}
-	in := h.buildProjectionInput(context.Background(), rows[0])
+	in := h.buildProjectionInput(context.Background(), rows[0], nil)
 	if in.NativeCapabilities != nil {
 		t.Fatalf("ProjectionInput.NativeCapabilities = %v, want nil (unknown this phase)", in.NativeCapabilities)
 	}
@@ -608,10 +608,102 @@ func TestModels_CapabilityCarriesItsOwnOfferingOperationID(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}
-	for _, c := range h.buildProjection(context.Background(), rows[0]).Capabilities {
+	for _, c := range h.buildProjection(context.Background(), rows[0], nil).Capabilities {
 		if wantID, tracked := want[string(c.Operation)]; tracked && c.OfferingOperationID != wantID {
 			t.Errorf("projection %q OfferingOperationID = %q, want %q", c.Operation, c.OfferingOperationID, wantID)
 		}
+	}
+}
+
+// TestModels_CapabilityProvenanceFromProbeRuns is task-5's real-sqlite proof:
+// a certified+supported "tools" operation WITH a succeeded probe_runs row
+// renders "provenance":"probed"; the SAME operation on a different offering
+// WITHOUT a succeeded run renders "declared"; and a certified+supported
+// "chat" operation renders "probed" even with NO probe_runs row at all (chat
+// has no declared path by construction). The handler is built via
+// WithProbeRuns exactly like ControlMux wires it, so this exercises the real
+// batched query, not a stub.
+func TestModels_CapabilityProvenanceFromProbeRuns(t *testing.T) {
+	clock := fixedModelsClock()
+	h, db := newTestModelsHandler(t, func() time.Time { return clock })
+	h = h.WithProbeRuns(storage.NewProbeRunRepo(db, func() time.Time { return clock }, 7*24*time.Hour))
+
+	// Offering A: certified+supported chat (no probe run at all) + certified+
+	// supported tools WITH a succeeded probe run.
+	modelsSeedOffering(t, db, offeringSeed{
+		AccountID: "acct-prov-a", ProviderID: "prov-prov-a",
+		ProviderModelID: "pm-prov-a", ModelID: "model-prov-a",
+		ContextLength:    modelsIntPtr(100000),
+		CapabilitiesJSON: modelsStrPtr(`["chat","tools"]`),
+		Operations: []offeringOpSeed{
+			{Operation: "chat", Status: "certified", Truth: "supported"},
+			{Operation: "tools", Status: "certified", Truth: "supported"},
+		},
+	})
+	// Offering B: certified+supported tools with NO probe run.
+	modelsSeedOffering(t, db, offeringSeed{
+		AccountID: "acct-prov-b", ProviderID: "prov-prov-b",
+		ProviderModelID: "pm-prov-b", ModelID: "model-prov-b",
+		ContextLength:    modelsIntPtr(100000),
+		CapabilitiesJSON: modelsStrPtr(`["tools"]`),
+		Operations: []offeringOpSeed{
+			{Operation: "tools", Status: "certified", Truth: "supported"},
+		},
+	})
+
+	provedToolsOpID := "pm-prov-a-op-tools"
+	probeRuns := storage.NewProbeRunRepo(db, func() time.Time { return clock }, 7*24*time.Hour)
+	ctx := context.Background()
+	if err := probeRuns.Start(ctx, storage.ProbeRunParams{
+		ID: "run-prov-a-tools", OfferingOperationID: provedToolsOpID,
+		AccountID: "acct-prov-a", ProviderID: "prov-prov-a",
+		Operation: "tools", Class: intelligence.ProbeStandard, StartedAt: clock,
+	}); err != nil {
+		t.Fatalf("start probe run: %v", err)
+	}
+	if err := probeRuns.Finish(ctx, "run-prov-a-tools", intelligence.ProbeSucceeded, clock); err != nil {
+		t.Fatalf("finish probe run: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeOfferings(rec, modelsRequest(http.MethodGet, "/api/control/v1/offerings"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+
+	var env struct {
+		Data []struct {
+			ProviderModelID string `json:"provider_model_id"`
+			Capabilities    []struct {
+				Operation  string `json:"operation"`
+				Provenance string `json:"provenance"`
+			} `json:"capabilities"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v; body = %q", err, rec.Body.String())
+	}
+	if len(env.Data) != 2 {
+		t.Fatalf("len(data) = %d, want 2; body = %s", len(env.Data), rec.Body.String())
+	}
+
+	byModel := map[string]map[string]string{}
+	for _, o := range env.Data {
+		caps := map[string]string{}
+		for _, c := range o.Capabilities {
+			caps[c.Operation] = c.Provenance
+		}
+		byModel[o.ProviderModelID] = caps
+	}
+
+	if got := byModel["pm-prov-a"]["chat"]; got != "probed" {
+		t.Errorf("pm-prov-a chat provenance = %q, want \"probed\" (chat has no declared path)", got)
+	}
+	if got := byModel["pm-prov-a"]["tools"]; got != "probed" {
+		t.Errorf("pm-prov-a tools provenance = %q, want \"probed\" (a succeeded probe run exists)", got)
+	}
+	if got := byModel["pm-prov-b"]["tools"]; got != "declared" {
+		t.Errorf("pm-prov-b tools provenance = %q, want \"declared\" (no probe run exists)", got)
 	}
 }
 

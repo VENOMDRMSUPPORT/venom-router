@@ -16,6 +16,7 @@ function capability(overrides: Partial<OfferingCapability> = {}): OfferingCapabi
     state: "certified",
     truth: "supported",
     routable: true,
+    provenance: "probed",
     ...overrides,
   };
 }

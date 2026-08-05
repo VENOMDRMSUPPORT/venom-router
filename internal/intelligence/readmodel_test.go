@@ -398,6 +398,84 @@ func TestProject_CapabilityWithoutCertificationHasNoOfferingOperationID(t *testi
 	}
 }
 
+// TestProject_CapabilityProvenance proves the derivation rule (task-5): chat
+// is ALWAYS "probed" when certified+supported (no declared path exists for
+// chat by construction — it is only ever certified by the runtime usability
+// sweep/fast-lane); a non-chat operation is "probed" iff ProvedOperations
+// says a succeeded probe run exists for it, else "declared" (it was
+// certified by certifyDeclaredCapabilities); and any operation that is not
+// certified+supported carries no provenance at all — provenance only
+// qualifies an earned certification. MUTATION: computing Provenance from
+// Effective/Routable instead of state+truth alone, or defaulting an unproved
+// non-chat op to "probed", turns this RED.
+func TestProject_CapabilityProvenance(t *testing.T) {
+	cases := []struct {
+		name           string
+		operation      models.Operation
+		state          models.CertificationState
+		truth          models.CapabilityTruth
+		provedOps      map[models.Operation]bool
+		wantProvenance string
+	}{
+		{
+			name:      "chat certified+supported is always probed, even with no ProvedOperations fact",
+			operation: models.OperationChat, state: models.CertCertified, truth: models.TruthSupported,
+			provedOps: nil, wantProvenance: ProvenanceProbed,
+		},
+		{
+			name:      "non-chat certified+supported WITH a succeeded probe run is probed",
+			operation: models.OperationTools, state: models.CertCertified, truth: models.TruthSupported,
+			provedOps: map[models.Operation]bool{models.OperationTools: true}, wantProvenance: ProvenanceProbed,
+		},
+		{
+			name:      "non-chat certified+supported WITHOUT a succeeded probe run is declared",
+			operation: models.OperationTools, state: models.CertCertified, truth: models.TruthSupported,
+			provedOps: nil, wantProvenance: ProvenanceDeclared,
+		},
+		{
+			name:      "not certified+supported (discovered/unknown) carries no provenance",
+			operation: models.OperationVision, state: models.CertDiscovered, truth: models.TruthUnknown,
+			provedOps: nil, wantProvenance: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := ProjectionInput{
+				ProviderID:         "prov1",
+				Canonical:          models.CanonicalModel{DisplayName: "Model"},
+				NativeCapabilities: []models.Operation{tc.operation},
+				Offering: models.Offering{
+					Identity:     models.OfferingIdentity{AccountID: "acct1", ProviderModelID: "model-a"},
+					Availability: models.AvailabilityAvailable,
+					Capabilities: []models.Operation{tc.operation},
+				},
+				TransportOperations: []models.Operation{tc.operation},
+				Certifications: map[models.Operation]models.Certification{
+					tc.operation: {State: tc.state, Truth: tc.truth},
+				},
+				Cost:             unknownFact(),
+				Classification:   ClassificationRoutableCandidate,
+				ProvedOperations: tc.provedOps,
+			}
+
+			out := Project(in)
+			var found *EffectiveCapability
+			for i := range out.Capabilities {
+				if out.Capabilities[i].Operation == tc.operation {
+					found = &out.Capabilities[i]
+				}
+			}
+			if found == nil {
+				t.Fatalf("%s capability missing from Capabilities", tc.operation)
+			}
+			if found.Provenance != tc.wantProvenance {
+				t.Fatalf("Provenance = %q, want %q (state=%s truth=%s proved=%v)", found.Provenance, tc.wantProvenance, tc.state, tc.truth, tc.provedOps)
+			}
+		})
+	}
+}
+
 func TestProject_Deterministic(t *testing.T) {
 	in := baseInput()
 	in.NativeCapabilities = []models.Operation{models.OperationVision, models.OperationChat, models.OperationTools}

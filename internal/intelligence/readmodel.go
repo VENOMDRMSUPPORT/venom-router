@@ -17,6 +17,16 @@ const (
 	ReasonCatalogOnly    = "catalog_only"
 )
 
+// Provenance values for EffectiveCapability.Provenance (task-5: capability
+// provenance). The empty string is the third closed value — deliberately
+// left as a bare "" rather than a named constant, matching
+// EffectiveCapability.OfferingOperationID's own "absence is meaningful"
+// convention just below.
+const (
+	ProvenanceProbed   = "probed"
+	ProvenanceDeclared = "declared"
+)
+
 // ProjectionInput is everything Project needs to build one offering's
 // EffectiveOffering. Canonical is consumed as-is — Project never adds
 // fields to models.CanonicalModel/Offering/Certification, it only reads
@@ -33,6 +43,15 @@ type ProjectionInput struct {
 	Certifications      map[models.Operation]models.Certification
 	Cost                ResolvedCostFact
 	Classification      OfferingClassification
+
+	// ProvedOperations records, per operation, whether a SUCCEEDED probe run
+	// exists for that operation's offering_operations row (task-5). It is
+	// supplied by the httpapi assembler from a batched probe_runs query — the
+	// projection itself never queries storage. A nil map (or a false/absent
+	// entry) means "no succeeded probe run is known", which is the correct
+	// fail-closed default: it only ever demotes a non-chat certified
+	// capability's provenance to "declared", never fabricates "probed".
+	ProvedOperations map[models.Operation]bool
 }
 
 // EffectiveCapability is one operation's fully-resolved routing status.
@@ -55,6 +74,17 @@ type EffectiveCapability struct {
 	// composed or borrowed id — one that pointed at a different row would probe
 	// the wrong operation.
 	OfferingOperationID string
+
+	// Provenance is this operation's certification provenance (task-5):
+	// "probed" when it was earned by a real runtime probe (chat's runtime
+	// usability sweep/fast-lane, ALWAYS — chat has no declared path by
+	// construction; or a non-chat operation with a succeeded probe_runs
+	// row), "declared" when a non-chat operation was certified by
+	// certifyDeclaredCapabilities with no probe evidence, and "" when this
+	// operation is not certified+supported at all — provenance only
+	// qualifies an earned certification, it is never inferred for anything
+	// less than models.Routable's own state+truth combination.
+	Provenance string
 }
 
 // TierEligibility is one tier's final eligibility decision plus the
@@ -104,7 +134,7 @@ func Project(in ProjectionInput) EffectiveOffering {
 		Availability:           in.Offering.Availability,
 		EffectiveContextTokens: contextTokens,
 		ContextProvenance:      provenance,
-		Capabilities:           projectCapabilities(in.NativeCapabilities, in.Offering.Capabilities, in.TransportOperations, in.Certifications),
+		Capabilities:           projectCapabilities(in.NativeCapabilities, in.Offering.Capabilities, in.TransportOperations, in.Certifications, in.ProvedOperations),
 		QualityScore:           models.QualityScore(in.Canonical.QualityRating),
 		QualityKnown:           in.Canonical.QualityRating != nil,
 		Cost:                   in.Cost,
@@ -123,8 +153,12 @@ func Project(in ProjectionInput) EffectiveOffering {
 // union of native/provider/transport support, in models.Operations()
 // order (deterministic regardless of any map iteration elsewhere). A nil
 // native or nil transport set means UNKNOWN — nothing is effective for any
-// operation, fail closed, never "everything supported."
-func projectCapabilities(native, providerExposed, transport []models.Operation, certs map[models.Operation]models.Certification) []EffectiveCapability {
+// operation, fail closed, never "everything supported." proved carries the
+// per-operation "a succeeded probe run exists" fact (task-5's provenance
+// derivation); it is independent of native/providerExposed/transport/
+// effective — provenance is derived from state+truth alone, never from
+// whether this offering happens to be routable right now.
+func projectCapabilities(native, providerExposed, transport []models.Operation, certs map[models.Operation]models.Certification, proved map[models.Operation]bool) []EffectiveCapability {
 	union := make(map[models.Operation]bool)
 	for _, op := range native {
 		union[op] = true
@@ -158,6 +192,22 @@ func projectCapabilities(native, providerExposed, transport []models.Operation, 
 			offeringOperationID = cert.OfferingOperationID
 		}
 
+		provenance := ""
+		if models.Routable(state, truth) {
+			switch {
+			case op == models.OperationChat:
+				// Chat has no declared path by construction — it is only ever
+				// certified via the runtime usability probe (sweep/fast-lane)
+				// or real use, so a certified+supported chat capability is
+				// ALWAYS "probed" regardless of proved's contents.
+				provenance = ProvenanceProbed
+			case proved[op]:
+				provenance = ProvenanceProbed
+			default:
+				provenance = ProvenanceDeclared
+			}
+		}
+
 		out = append(out, EffectiveCapability{
 			Operation:           op,
 			Effective:           effective,
@@ -165,6 +215,7 @@ func projectCapabilities(native, providerExposed, transport []models.Operation, 
 			Truth:               truth,
 			Routable:            models.Routable(state, truth) && effective,
 			OfferingOperationID: offeringOperationID,
+			Provenance:          provenance,
 		})
 	}
 	return out

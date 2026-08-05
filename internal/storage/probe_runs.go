@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
@@ -287,6 +288,48 @@ func (r *ProbeRunRepo) CountAttempts(ctx context.Context, offeringOperationID st
 		return 0, fmt.Errorf("storage: count probe attempts for %q: %w", offeringOperationID, err)
 	}
 	return count, nil
+}
+
+// SucceededOfferingOperationIDs returns the subset of offeringOperationIDs
+// that have at least one SUCCEEDED probe_runs row — the batched (task-5)
+// query the httpapi assembler uses to derive capability provenance
+// ("probed" vs "declared") for one page of offerings at a time, ONE query
+// per page rather than one per offering-operation (no N+1). An empty input
+// returns an empty, non-nil map without touching the database; an id with
+// no succeeded run (or no probe_runs row at all) is simply absent from the
+// result — never present with a false value.
+func (r *ProbeRunRepo) SucceededOfferingOperationIDs(ctx context.Context, offeringOperationIDs []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(offeringOperationIDs))
+	if len(offeringOperationIDs) == 0 {
+		return out, nil
+	}
+
+	placeholders := make([]string, len(offeringOperationIDs))
+	args := make([]any, len(offeringOperationIDs))
+	for i, id := range offeringOperationIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := `SELECT DISTINCT offering_operation_id FROM probe_runs WHERE execution = 'succeeded' AND offering_operation_id IN (` +
+		strings.Join(placeholders, ",") + `)`
+	rows, err := r.db.Conn().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("storage: succeeded offering-operation ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("storage: succeeded offering-operation ids: scan: %w", err)
+		}
+		out[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: succeeded offering-operation ids: %w", err)
+	}
+	return out, nil
 }
 
 // intelligenceOperationContextWindow mirrors models.OperationContextWindow's
