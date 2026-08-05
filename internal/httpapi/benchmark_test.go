@@ -2,10 +2,12 @@ package httpapi
 
 // benchmark_test.go exercises the P6-CAPI-001 canonical-quality endpoint:
 // POST /models/{id}/benchmark (09 §3.12 async-job shape, 04 §3/§5 canonical
-// quality). The endpoint reads an analysis leaderboard through the injected
-// intelligence.QualityIndex seam and resolves the result through the SAME
-// precedence engine every other fact goes through — it never runs inference
-// and never invents a rating.
+// quality). Plan 3 of the local-benchmark-rating design (2026-08-05) rewired
+// this job to run a REAL fixed measurement suite against the model's own
+// live offering (through the injected benchmarkStreamFn seam — a fake here,
+// the real dispatch path in production) rather than reading an imported
+// leaderboard. It never fabricates a rating: one is written only when every
+// request in the suite succeeded.
 
 import (
 	"context"
@@ -14,10 +16,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
@@ -35,12 +37,16 @@ type benchmarkFixture struct {
 	jobs     *storage.JobRepo
 	settings *storage.SettingsRepo
 	catalog  *storage.CatalogRepo
+	runs     *storage.BenchmarkRunRepo
 }
 
 // newBenchmarkFixture seeds a provider + canonical model + alias over a fresh
-// migrated DB and wires a BenchmarkHandler with the supplied leaderboard seam.
-// enrichmentEnabled seeds the owner toggle this endpoint gates on.
-func newBenchmarkFixture(t *testing.T, enrichmentEnabled bool, quality intelligence.QualityIndex) *benchmarkFixture {
+// migrated DB and wires a BenchmarkHandler with the supplied fake stream.
+// enrichmentEnabled seeds the owner toggle this endpoint gates on. It seeds
+// no live offering — tests that need one call seedLiveOffering themselves,
+// so "no live offering" (the typed no_live_offering failure) is the fixture's
+// own honest default rather than something each test has to arrange.
+func newBenchmarkFixture(t *testing.T, enrichmentEnabled bool, stream benchmarkStreamFn) *benchmarkFixture {
 	t.Helper()
 	db := testControlDB(t)
 
@@ -70,11 +76,50 @@ func newBenchmarkFixture(t *testing.T, enrichmentEnabled bool, quality intellige
 
 	jobs := storage.NewJobRepo(db)
 	catalog := storage.NewCatalogRepo(db)
+	runs := storage.NewBenchmarkRunRepo(db, func() time.Time { return benchNow })
 	handler := NewBenchmarkHandler(
-		catalog, jobs, settings, quality, newAuditEmitter(db, nil),
+		catalog, jobs, settings, runs, stream, newAuditEmitter(db, nil),
 		newOAuthTransactionID, func() time.Time { return benchNow },
 	)
-	return &benchmarkFixture{handler: handler, db: db, jobs: jobs, settings: settings, catalog: catalog}
+	return &benchmarkFixture{handler: handler, db: db, jobs: jobs, settings: settings, catalog: catalog, runs: runs}
+}
+
+// seedLiveOffering makes benchModelID's one alias (benchProvider/
+// benchProvModel) satisfy CatalogRepo.ListOfferings' LiveOnly gate: a
+// connected+healthy account, an available offering, and a
+// certified+supported chat offering_operation — exactly what Plan 1's
+// honest gate requires before a model can be considered "live".
+func seedLiveOffering(t *testing.T, db *storage.DB, accountID string) {
+	t.Helper()
+	if _, err := db.Conn().Exec(
+		`INSERT INTO accounts (id, provider_id, external_id, auth_type, connection_state, health_state, reauth_in_progress, created_at, updated_at)
+		 VALUES (?, ?, ?, 'api_key', 'connected', 'healthy', 0, 0, 0)`,
+		accountID, benchProvider, accountID,
+	); err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	if _, err := db.Conn().Exec(
+		`INSERT INTO account_model_offerings (account_id, provider_id, provider_model_id, model_id, availability, first_seen_at, last_seen_at)
+		 VALUES (?, ?, ?, ?, 'available', 0, 0)`,
+		accountID, benchProvider, benchProvModel, benchModelID,
+	); err != nil {
+		t.Fatalf("seed offering: %v", err)
+	}
+	opID := "op-" + accountID + "-chat"
+	if _, err := db.Conn().Exec(
+		`INSERT INTO offering_operations (id, account_id, provider_id, provider_model_id, operation, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 'chat', 0, 0)`,
+		opID, accountID, benchProvider, benchProvModel,
+	); err != nil {
+		t.Fatalf("seed offering operation: %v", err)
+	}
+	if _, err := db.Conn().Exec(
+		`INSERT INTO certifications (offering_operation_id, status, capability_truth, version, created_at, updated_at)
+		 VALUES (?, 'certified', 'supported', 1, 0, 0)`,
+		opID,
+	); err != nil {
+		t.Fatalf("seed certification: %v", err)
+	}
 }
 
 func (f *benchmarkFixture) post(t *testing.T, modelID string) (*httptest.ResponseRecorder, map[string]any) {
@@ -122,6 +167,33 @@ func (f *benchmarkFixture) qualityRating(t *testing.T) *float64 {
 	return v
 }
 
+// benchmarkRunCount counts benchmark_runs rows for benchModelID — the
+// "a row is inserted ALWAYS once the suite ran, never when it could not run
+// at all" proof.
+func (f *benchmarkFixture) benchmarkRunCount(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := f.db.Conn().QueryRow(`SELECT COUNT(*) FROM benchmark_runs WHERE model_id = ?`, benchModelID).Scan(&n); err != nil {
+		t.Fatalf("count benchmark_runs: %v", err)
+	}
+	return n
+}
+
+// latestRun reads back benchModelID's most recent benchmark_runs row through
+// the REAL repo read path (BenchmarkRunRepo.LatestForModel), never by
+// re-deriving it from the aggregate the test already knows.
+func (f *benchmarkFixture) latestRun(t *testing.T) storage.BenchmarkRun {
+	t.Helper()
+	run, ok, err := f.runs.LatestForModel(context.Background(), benchModelID)
+	if err != nil {
+		t.Fatalf("LatestForModel: %v", err)
+	}
+	if !ok {
+		t.Fatalf("LatestForModel(%q): no row, want one", benchModelID)
+	}
+	return run
+}
+
 // awaitTerminalJob polls the REAL job row until it reaches a terminal state,
 // which is how the detached background run reports itself.
 func (f *benchmarkFixture) awaitTerminalJob(t *testing.T, jobID string) storage.JobRow {
@@ -141,41 +213,254 @@ func (f *benchmarkFixture) awaitTerminalJob(t *testing.T, jobID string) storage.
 	return storage.JobRow{}
 }
 
-func ratingIndex(rating float64, exact bool) intelligence.QualityIndex {
-	return func(_ context.Context, _, _ string) (intelligence.QualityEntry, bool, error) {
-		return intelligence.QualityEntry{
-			Rating: &rating, SourceRef: "analysis-leaderboard/v3",
-			ExactIdentityMatch: exact, DatasetVersion: "2026-07",
-		}, true, nil
+// jobIDFrom pulls job_id out of a decoded 202 body.
+func jobIDFrom(t *testing.T, body map[string]any) string {
+	t.Helper()
+	data, ok := body["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("no data object: %#v", body)
+	}
+	id, _ := data["job_id"].(string)
+	if id == "" {
+		t.Fatalf("job_id = %#v, want a non-empty id", data["job_id"])
+	}
+	return id
+}
+
+// --- TDD Step 1 tests (task-5-brief.md): (a) live+all-success, (b) live+one
+// failure, (c) no live offering, (d) enrichment disabled. ------------------
+
+// TestBenchmark_LiveOfferingAllSuccess_PersistsRunAndWritesRating is Step
+// 1(a): every request in the suite succeeds -> a benchmark_runs row exists,
+// models.quality_rating is set to the formula's value, and the job
+// completes. The expected rating is computed BY HAND from
+// localBenchmarkRating's own documented weights, never read from the
+// implementation (no tautology):
+//
+//	speed   = min(40/80, 1)        = 0.5
+//	latency = max(0, 1 - 100/2000) = 0.95
+//	rating  = 0.5*0.5 + 0.5*0.95   = 0.725
+func TestBenchmark_LiveOfferingAllSuccess_PersistsRunAndWritesRating(t *testing.T) {
+	const wantRating = 0.725
+	sample := benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}
+	stream, calls := scriptedStream(t, []scriptedStep{{sample: sample}, {sample: sample}, {sample: sample}})
+
+	f := newBenchmarkFixture(t, true, stream)
+	const accountID = "acct-bench-live"
+	seedLiveOffering(t, f.db, accountID)
+
+	_, body := f.post(t, benchModelID)
+	jobID := jobIDFrom(t, body)
+	row := f.awaitTerminalJob(t, jobID)
+	if row.Status != storage.JobCompleted {
+		t.Fatalf("job status = %q (err %+v), want completed", row.Status, row.Error)
+	}
+
+	if len(*calls) != benchmarkDefaultRequests {
+		t.Fatalf("stream invoked %d times, want %d", len(*calls), benchmarkDefaultRequests)
+	}
+
+	got := f.qualityRating(t)
+	if got == nil || !floatsClose(*got, wantRating, 1e-9) {
+		t.Fatalf("quality_rating = %v, want %v", got, wantRating)
+	}
+
+	run := f.latestRun(t)
+	if run.Requests != benchmarkDefaultRequests || run.Successes != benchmarkDefaultRequests {
+		t.Fatalf("run Requests/Successes = %d/%d, want %d/%d", run.Requests, run.Successes, benchmarkDefaultRequests, benchmarkDefaultRequests)
+	}
+	if run.Rating == nil || !floatsClose(*run.Rating, wantRating, 1e-9) {
+		t.Fatalf("run.Rating = %v, want %v", run.Rating, wantRating)
+	}
+	if run.AccountID != accountID || run.ProviderID != benchProvider || run.ProviderModelID != benchProvModel {
+		t.Fatalf("run target = %+v, want account=%s provider=%s model=%s", run, accountID, benchProvider, benchProvModel)
+	}
+	if run.ModelID != benchModelID {
+		t.Fatalf("run.ModelID = %q, want %q", run.ModelID, benchModelID)
 	}
 }
 
-// noSignalIndex is a leaderboard that simply has no entry for this model — a
-// LEGITIMATE outcome, not an error.
-func noSignalIndex() intelligence.QualityIndex {
-	return func(_ context.Context, _, _ string) (intelligence.QualityEntry, bool, error) {
-		return intelligence.QualityEntry{}, false, nil
+// TestBenchmark_LiveOfferingAllSuccess_RecordsProvenance proves the rating
+// write still goes through the audit path (04 §3: "always anchored to a
+// documented source") — now stamped with the LOCAL-benchmark source, never
+// the retired leaderboard-evidence shape.
+func TestBenchmark_LiveOfferingAllSuccess_RecordsProvenance(t *testing.T) {
+	sample := benchmarkSample{OK: true, TTFT: 50 * time.Millisecond, TokensPerSec: 80}
+	stream, _ := scriptedStream(t, []scriptedStep{{sample: sample}, {sample: sample}, {sample: sample}})
+
+	f := newBenchmarkFixture(t, true, stream)
+	const accountID = "acct-bench-provenance"
+	seedLiveOffering(t, f.db, accountID)
+
+	_, body := f.post(t, benchModelID)
+	jobID := jobIDFrom(t, body)
+	row := f.awaitTerminalJob(t, jobID)
+	if row.Status != storage.JobCompleted {
+		t.Fatalf("job status = %q (err %+v), want completed", row.Status, row.Error)
+	}
+
+	var reason string
+	if err := f.db.Conn().QueryRow(
+		`SELECT reason_code FROM audit_events WHERE action = ? AND entity_id = ? ORDER BY id DESC LIMIT 1`,
+		auditActionModelQualityRating, benchModelID,
+	).Scan(&reason); err != nil {
+		t.Fatalf("read provenance audit row: %v", err)
+	}
+	for _, want := range []string{"source=local_benchmark", "account_id=" + accountID, "requests=3", "successes=3"} {
+		if !strings.Contains(reason, want) {
+			t.Fatalf("provenance reason %q is missing %q", reason, want)
+		}
 	}
 }
+
+// TestBenchmark_LiveOfferingOneFailure_RecordsRunButWithholdsRating is Step
+// 1(b): one request fails -> a benchmark_runs row exists with a NULL
+// rating, models.quality_rating stays untouched, and the job still
+// COMPLETES — the measurement is recorded, the rating honestly withheld.
+func TestBenchmark_LiveOfferingOneFailure_RecordsRunButWithholdsRating(t *testing.T) {
+	steps := []scriptedStep{
+		{sample: benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}},
+		{sample: benchmarkSample{OK: false}},
+		{sample: benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}},
+	}
+	stream, _ := scriptedStream(t, steps)
+
+	f := newBenchmarkFixture(t, true, stream)
+	seedLiveOffering(t, f.db, "acct-bench-partial")
+
+	_, body := f.post(t, benchModelID)
+	jobID := jobIDFrom(t, body)
+	row := f.awaitTerminalJob(t, jobID)
+	if row.Status != storage.JobCompleted {
+		t.Fatalf("job status = %q (err %+v), want completed — a partial failure is still a completed measurement", row.Status, row.Error)
+	}
+
+	if got := f.qualityRating(t); got != nil {
+		t.Fatalf("quality_rating = %v, want NULL — one request failed, the success gate withholds the rating", *got)
+	}
+
+	run := f.latestRun(t)
+	if run.Requests != 3 || run.Successes != 2 {
+		t.Fatalf("run Requests/Successes = %d/%d, want 3/2", run.Requests, run.Successes)
+	}
+	if run.Rating != nil {
+		t.Fatalf("run.Rating = %v, want nil", *run.Rating)
+	}
+	if run.TTFTMillis == nil || run.TokensPerSec == nil {
+		t.Fatalf("run medians = %v/%v, want both non-nil — the 2 successful samples are still evidence", run.TTFTMillis, run.TokensPerSec)
+	}
+}
+
+// TestBenchmark_LiveOfferingOneFailure_PreservesExistingRating is the
+// never-fabricate proof for the suite-failure path: a PRE-EXISTING rating
+// must survive a completed-but-unrated run untouched — not overwritten with
+// NULL, not zeroed. (This is the honest replacement for the old
+// leaderboard-miss test of the same shape — see task-5-report.md for why
+// the leaderboard-based scenario this test used to cover no longer exists.)
+func TestBenchmark_LiveOfferingOneFailure_PreservesExistingRating(t *testing.T) {
+	steps := []scriptedStep{
+		{sample: benchmarkSample{OK: false}},
+		{sample: benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}},
+		{sample: benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}},
+	}
+	stream, _ := scriptedStream(t, steps)
+
+	f := newBenchmarkFixture(t, true, stream)
+	seedLiveOffering(t, f.db, "acct-bench-preserve")
+
+	const preexisting = 0.64
+	if _, err := f.db.Conn().Exec(`UPDATE models SET quality_rating = ? WHERE id = ?`, preexisting, benchModelID); err != nil {
+		t.Fatalf("seed pre-existing rating: %v", err)
+	}
+
+	_, body := f.post(t, benchModelID)
+	jobID := jobIDFrom(t, body)
+	row := f.awaitTerminalJob(t, jobID)
+	if row.Status != storage.JobCompleted {
+		t.Fatalf("job status = %q (err %+v), want completed", row.Status, row.Error)
+	}
+
+	got := f.qualityRating(t)
+	if got == nil {
+		t.Fatalf("quality_rating became NULL; the pre-existing %v must be left alone", preexisting)
+	}
+	if !floatsClose(*got, preexisting, 1e-9) {
+		t.Fatalf("quality_rating = %v, want the untouched %v (never an invented or zero rating)", *got, preexisting)
+	}
+}
+
+// TestBenchmark_NoLiveOffering_FailsTypedAndCreatesNoRun is Step 1(c): a
+// model with an alias but NO live offering must fail the job typed
+// no_live_offering, and — unlike the suite-ran-but-failed case above —
+// benchmark_runs must gain NO row at all, because nothing was ever measured.
+func TestBenchmark_NoLiveOffering_FailsTypedAndCreatesNoRun(t *testing.T) {
+	stream, calls := scriptedStream(t, nil)
+	f := newBenchmarkFixture(t, true, stream)
+	// Deliberately no seedLiveOffering call.
+
+	_, body := f.post(t, benchModelID)
+	jobID := jobIDFrom(t, body)
+	row := f.awaitTerminalJob(t, jobID)
+	if row.Status != storage.JobFailed {
+		t.Fatalf("job status = %q (err %+v), want failed", row.Status, row.Error)
+	}
+	if row.Error == nil || row.Error.Code != benchmarkNoLiveOffering {
+		t.Fatalf("job error = %+v, want code %q", row.Error, benchmarkNoLiveOffering)
+	}
+	if n := f.benchmarkRunCount(t); n != 0 {
+		t.Fatalf("benchmark_runs rows = %d, want 0 — nothing was measured", n)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("stream invoked %d times, want 0 — there was no target to measure", len(*calls))
+	}
+	if got := f.qualityRating(t); got != nil {
+		t.Fatalf("quality_rating = %v, want unchanged (NULL)", *got)
+	}
+}
+
+// TestBenchmark_DisabledIsRefusedAndCreatesNoJob is Step 1(d): the
+// owner-enabled gate is UNCHANGED by this rewrite — it must still 409
+// enrichment_disabled and create no job, before the seam is ever consulted.
+func TestBenchmark_DisabledIsRefusedAndCreatesNoJob(t *testing.T) {
+	stream, calls := scriptedStream(t, nil)
+	f := newBenchmarkFixture(t, false, stream)
+	before := f.jobCount(t)
+
+	rec, body := f.post(t, benchModelID)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body %s)", rec.Code, rec.Body.String())
+	}
+	if code := body["error"].(map[string]any)["code"]; code != "enrichment_disabled" {
+		t.Fatalf("error code = %#v, want enrichment_disabled", code)
+	}
+	if after := f.jobCount(t); after != before {
+		t.Fatalf("job count went %d -> %d; a refusal must create no job", before, after)
+	}
+	if got := f.qualityRating(t); got != nil {
+		t.Fatalf("quality_rating = %v, want unchanged (NULL)", *got)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("stream invoked %d times, want 0 — the gate must refuse before the seam is ever touched", len(*calls))
+	}
+}
+
+// --- Pre-existing coverage, updated for the new seam -----------------------
 
 // TestBenchmark_AcceptedShapeAndJobResolves proves the 202 envelope and that
 // the returned job id resolves through the canonical GET /jobs/{job_id}
-// surface — looked up for real, never compared to itself.
+// surface — looked up for real, never compared to itself. No live offering
+// is seeded: this test only cares about the accept/job-resolution shape, not
+// the terminal outcome (awaitTerminalJob accepts either terminal status).
 func TestBenchmark_AcceptedShapeAndJobResolves(t *testing.T) {
-	f := newBenchmarkFixture(t, true, ratingIndex(78, true))
+	stream, _ := scriptedStream(t, nil)
+	f := newBenchmarkFixture(t, true, stream)
 
 	rec, body := f.post(t, benchModelID)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202 (body %s)", rec.Code, rec.Body.String())
 	}
-	data, ok := body["data"].(map[string]any)
-	if !ok {
-		t.Fatalf("no data object: %#v", body)
-	}
-	jobID, _ := data["job_id"].(string)
-	if jobID == "" {
-		t.Fatalf("job_id = %#v, want a non-empty id", data["job_id"])
-	}
+	jobID := jobIDFrom(t, body)
+	data := body["data"].(map[string]any)
 	if data["status_url"] != "/api/control/v1/jobs/"+jobID {
 		t.Fatalf("status_url = %#v, want the canonical shared job route", data["status_url"])
 	}
@@ -211,7 +496,8 @@ func TestBenchmark_AcceptedShapeAndJobResolves(t *testing.T) {
 // validated BEFORE any job row exists — a 404 must leave the database exactly
 // as it was.
 func TestBenchmark_UnknownModelIs404AndCreatesNoJob(t *testing.T) {
-	f := newBenchmarkFixture(t, true, ratingIndex(78, true))
+	stream, _ := scriptedStream(t, nil)
+	f := newBenchmarkFixture(t, true, stream)
 	before := f.jobCount(t)
 
 	rec, body := f.post(t, "no-such-model")
@@ -226,137 +512,35 @@ func TestBenchmark_UnknownModelIs404AndCreatesNoJob(t *testing.T) {
 	}
 }
 
-// TestBenchmark_DisabledIsRefusedAndCreatesNoJob proves the owner-enabled gate.
-//
-// The gate is `enrichment_enabled` (PUT /settings, PUT /settings/enrichment):
-// 04 §2b classes the analysis leaderboard as pipeline B ("Metadata
-// enrichment... Off by default; owner-enabled"), which is exactly the pipeline
-// this endpoint drives.
-func TestBenchmark_DisabledIsRefusedAndCreatesNoJob(t *testing.T) {
-	f := newBenchmarkFixture(t, false, ratingIndex(78, true))
-	before := f.jobCount(t)
-
-	rec, body := f.post(t, benchModelID)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409 (body %s)", rec.Code, rec.Body.String())
-	}
-	if code := body["error"].(map[string]any)["code"]; code != "enrichment_disabled" {
-		t.Fatalf("error code = %#v, want enrichment_disabled", code)
-	}
-	if after := f.jobCount(t); after != before {
-		t.Fatalf("job count went %d -> %d; a refusal must create no job", before, after)
-	}
-	if got := f.qualityRating(t); got != nil {
-		t.Fatalf("quality_rating = %v, want unchanged (NULL)", *got)
-	}
-}
-
-// TestBenchmark_NoSignalCompletesWithoutWritingARating is the never-fabricate
-// proof. It seeds a PRE-EXISTING rating so the assertion also catches the
-// "helpfully overwrite it with 0" failure, not just "wrote something to NULL".
-func TestBenchmark_NoSignalCompletesWithoutWritingARating(t *testing.T) {
-	f := newBenchmarkFixture(t, true, noSignalIndex())
-
-	const preexisting = 64.5
-	if _, err := f.db.Conn().Exec(`UPDATE models SET quality_rating = ? WHERE id = ?`, preexisting, benchModelID); err != nil {
-		t.Fatalf("seed pre-existing rating: %v", err)
-	}
-
-	rec, body := f.post(t, benchModelID)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202", rec.Code)
-	}
-	jobID := body["data"].(map[string]any)["job_id"].(string)
-
-	row := f.awaitTerminalJob(t, jobID)
-	if row.Status != storage.JobCompleted {
-		t.Fatalf("job status = %q, want completed — a leaderboard with no signal is a legitimate outcome, not a failure", row.Status)
-	}
-
-	got := f.qualityRating(t)
-	if got == nil {
-		t.Fatalf("quality_rating became NULL; the pre-existing %v must be left alone", preexisting)
-	}
-	if *got != preexisting {
-		t.Fatalf("quality_rating = %v, want the untouched %v (never an invented or zero rating)", *got, preexisting)
-	}
-}
-
-// TestBenchmark_SignalPersistsRatingWithProvenance proves the happy path
-// writes through the precedence engine and records where the value came from.
-func TestBenchmark_SignalPersistsRatingWithProvenance(t *testing.T) {
-	const rating = 81.5
-	f := newBenchmarkFixture(t, true, ratingIndex(rating, true))
-
-	_, body := f.post(t, benchModelID)
-	jobID := body["data"].(map[string]any)["job_id"].(string)
-	row := f.awaitTerminalJob(t, jobID)
-	if row.Status != storage.JobCompleted {
-		t.Fatalf("job status = %q (err %+v), want completed", row.Status, row.Error)
-	}
-
-	got := f.qualityRating(t)
-	if got == nil || *got != rating {
-		t.Fatalf("quality_rating = %v, want %v", got, rating)
-	}
-
-	// Provenance: an audit row records the winning evidence's source and
-	// dataset version. models has no provenance column (00006 is frozen and
-	// this unit adds no migration), so the audit trail is where it lands.
-	var reason string
-	if err := f.db.Conn().QueryRow(
-		`SELECT reason_code FROM audit_events WHERE action = ? AND entity_id = ? ORDER BY id DESC LIMIT 1`,
-		auditActionModelQualityRating, benchModelID,
-	).Scan(&reason); err != nil {
-		t.Fatalf("read provenance audit row: %v", err)
-	}
-	for _, want := range []string{"source=external_registry", "dataset=2026-07", "exact_identity_match=true"} {
-		if !strings.Contains(reason, want) {
-			t.Fatalf("provenance reason %q is missing %q", reason, want)
-		}
-	}
-}
-
-// TestBenchmark_NonExactMatchNeverCertifies proves a name/family match cannot
-// write a canonical rating: 04 §4 downgrades heuristic-sourced evidence to
-// probe_suggested, which is NOT a resolved value.
-func TestBenchmark_NonExactMatchNeverCertifies(t *testing.T) {
-	f := newBenchmarkFixture(t, true, ratingIndex(90, false))
-
-	_, body := f.post(t, benchModelID)
-	jobID := body["data"].(map[string]any)["job_id"].(string)
-	row := f.awaitTerminalJob(t, jobID)
-	if row.Status != storage.JobCompleted {
-		t.Fatalf("job status = %q, want completed", row.Status)
-	}
-	if got := f.qualityRating(t); got != nil {
-		t.Fatalf("quality_rating = %v, want NULL — a non-exact identity match can only suggest a probe, never certify (04 §4)", *got)
-	}
-}
-
 // TestBenchmark_SurvivesClientCancellation proves the accepted job runs on a
 // DETACHED context. Once the caller has been told 202 with a job id, a
 // disconnecting client must not silently cancel the work that id refers to.
+// The fake stream blocks on its FIRST call until the test has cancelled the
+// client request and closed `release`, so the suite genuinely resumes after
+// cancellation; every call (including the first, once released) returns an
+// identical successful sample so the resulting rating is a single hand-
+// computable value.
 func TestBenchmark_SurvivesClientCancellation(t *testing.T) {
-	const rating = 55.0
+	sample := benchmarkSample{OK: true, TTFT: 50 * time.Millisecond, TokensPerSec: 40}
+	// speed = min(40/80,1) = 0.5; latency = 1 - 50/2000 = 0.975
+	// rating = 0.5*0.5 + 0.5*0.975 = 0.7375
+	const wantRating = 0.7375
+
 	release := make(chan struct{})
-	f := newBenchmarkFixture(t, true, func(ctx context.Context, _, _ string) (intelligence.QualityEntry, bool, error) {
-		// Block until the test has cancelled the client request, so the
-		// leaderboard read genuinely happens after cancellation.
-		<-release
-		if err := ctx.Err(); err != nil {
-			return intelligence.QualityEntry{}, false, err
-		}
-		r := rating
-		return intelligence.QualityEntry{
-			Rating: &r, SourceRef: "analysis-leaderboard/v3",
-			ExactIdentityMatch: true, DatasetVersion: "2026-07",
-		}, true, nil
-	})
+	var once sync.Once
+	stream := func(ctx context.Context, accountID, providerID, providerModelID, prompt string, maxTokens int) (benchmarkSample, error) {
+		once.Do(func() {
+			<-release
+		})
+		return sample, nil
+	}
+
+	f := newBenchmarkFixture(t, true, stream)
+	seedLiveOffering(t, f.db, "acct-bench-cancel")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	_, body := f.postCtx(t, benchModelID, ctx)
-	jobID := body["data"].(map[string]any)["job_id"].(string)
+	jobID := jobIDFrom(t, body)
 
 	cancel()
 	close(release)
@@ -366,14 +550,15 @@ func TestBenchmark_SurvivesClientCancellation(t *testing.T) {
 		t.Fatalf("job status = %q (err %+v), want completed after client cancellation", row.Status, row.Error)
 	}
 	got := f.qualityRating(t)
-	if got == nil || *got != rating {
-		t.Fatalf("quality_rating = %v, want %v — the detached run must still persist its result", got, rating)
+	if got == nil || !floatsClose(*got, wantRating, 1e-9) {
+		t.Fatalf("quality_rating = %v, want %v — the detached run must still persist its result", got, wantRating)
 	}
 }
 
 // TestBenchmark_MethodNotAllowed proves the endpoint is POST-only.
 func TestBenchmark_MethodNotAllowed(t *testing.T) {
-	f := newBenchmarkFixture(t, true, ratingIndex(78, true))
+	stream, _ := scriptedStream(t, nil)
+	f := newBenchmarkFixture(t, true, stream)
 
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		t.Run(method, func(t *testing.T) {
@@ -389,12 +574,15 @@ func TestBenchmark_MethodNotAllowed(t *testing.T) {
 }
 
 // TestBenchmark_EmitsExactlyOneAuditRowOnAccept pins the accept-path audit
-// contract: one row, secret-free.
+// contract: one row, secret-free. No live offering is seeded — the job fails
+// no_live_offering, which is irrelevant to what this test asserts (the
+// ACCEPT audit event, emitted before the job even runs).
 func TestBenchmark_EmitsExactlyOneAuditRowOnAccept(t *testing.T) {
-	f := newBenchmarkFixture(t, true, noSignalIndex())
+	stream, _ := scriptedStream(t, nil)
+	f := newBenchmarkFixture(t, true, stream)
 
 	_, body := f.post(t, benchModelID)
-	jobID := body["data"].(map[string]any)["job_id"].(string)
+	jobID := jobIDFrom(t, body)
 	f.awaitTerminalJob(t, jobID)
 
 	var n int

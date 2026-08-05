@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/application"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/execution"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
@@ -14,28 +16,28 @@ import (
 // /models/{id}/benchmark — the owner-triggered refresh of a canonical
 // model's QUALITY RATING (04 §3/§5, 09 §3.12).
 //
-// WHAT THIS IS NOT. It runs no inference, contacts no provider, and creates
-// no table. 04 §5 defines canonical quality as "one reproducible rating per
-// exact model version (never re-run per provider)", sourced from "a public
-// benchmark (exact match, with a versioned calibration to a 0-100 scale)";
-// 04 §2 names that source "an analysis leaderboard for quality signals". So
-// the work here is exactly one leaderboard read (through the existing
-// intelligence.QualityIndex seam), resolved through the SAME precedence
-// engine every other fact goes through, landing in the frozen 00006
-// models.quality_rating column.
+// Plan 3 of the local-benchmark-rating design (2026-08-05) replaced this
+// job's original no-op quality resolution with a REAL measurement: a small
+// fixed suite of streamed chat completions run against the model's own best
+// LIVE offering, on the owner's own account. There is no imported
+// leaderboard number anywhere in this file any more (spec D4: "No imported
+// leaderboard numbers" — the honest-model-verification design's local
+// benchmark is "the one genuinely new unit"). The rating this job writes is
+// therefore a LOCAL, on-account measurement, not a universal quality score.
 //
-// OWNER-ENABLED GATE. 04 §2b classifies the analysis leaderboard as pipeline
-// B ("Metadata enrichment... Default state: Off by default; owner-enabled"),
-// as opposed to pipeline A's always-on free-safety resolution. This endpoint
-// drives pipeline B and nothing else, so its gate IS the existing
-// enrichment_enabled owner toggle rather than a new flag. The refusal is 409,
-// not 403: the caller is an authenticated, fully authorized owner, and the
-// request conflicts with current STATE (a pipeline they have switched off),
-// which is the same shape as probe.go's 409 probe_unsupported. A 403 would
-// wrongly imply the owner lacks permission to do this at all.
+// OWNER-ENABLED GATE. The benchmark spends the owner's own account
+// credits/quota running real inference, so — exactly like the metadata
+// enrichment pipeline it replaced — it stays behind the existing
+// enrichment_enabled owner toggle (04 §2b's pipeline-B framing) rather than
+// a new flag. The refusal is 409, not 403: the caller is an authenticated,
+// fully authorized owner, and the request conflicts with current STATE (a
+// pipeline they have switched off), which is the same shape as probe.go's
+// 409 probe_unsupported. A 403 would wrongly imply the owner lacks
+// permission to do this at all.
 
 // benchmarkRunTimeout bounds the detached background run, mirroring
-// probeRunTimeout's role for a probe.
+// probeRunTimeout's role for a probe. It must comfortably fit
+// benchmarkDefaultRequests sequential streamed completions.
 const benchmarkRunTimeout = 2 * time.Minute
 
 // auditActionModelBenchmark records the accept of a benchmark request;
@@ -54,19 +56,32 @@ const (
 // reports the rating.
 const benchmarkResultRef = "/api/control/v1/models"
 
+// benchmarkNoLiveOffering is the typed job-failure code for a model with no
+// LIVE offering (CatalogRepo.ListOfferings' LiveOnly gate: available,
+// account connected/healthy/not-reauthenticating, AND a certified+supported
+// chat offering_operation — Plan 1's honest gate). There is nothing this job
+// could safely dispatch real inference against, so it fails rather than
+// fabricating a target or silently completing with nothing measured.
+const benchmarkNoLiveOffering = "no_live_offering"
+
 // BenchmarkHandler serves POST /models/{id}/benchmark. Owner-session + CSRF
 // gated via ControlMux's `gated`.
 type BenchmarkHandler struct {
 	catalog  *storage.CatalogRepo
 	jobs     *storage.JobRepo
 	settings *storage.SettingsRepo
-	// quality is the injected analysis-leaderboard read. A nil seam is a
-	// leaderboard that always misses — which completes the job honestly
-	// without a rating, never a fabricated one.
-	quality intelligence.QualityIndex
-	audit   *auditEmitter
-	newID   func() string
-	now     func() time.Time
+	// runs persists every attempt's measurement (benchmark_runs,
+	// 00017_benchmark_runs.sql) — ALWAYS, even when the suite's success gate
+	// fails, because the measurement itself is evidence.
+	runs *storage.BenchmarkRunRepo
+	// stream runs ONE streamed completion for a given offering. Production
+	// wiring (buildBenchmarkStreamFn, this file) drives the real dispatch
+	// path; tests inject a fake to control exactly which samples the suite
+	// sees without any network I/O.
+	stream benchmarkStreamFn
+	audit  *auditEmitter
+	newID  func() string
+	now    func() time.Time
 }
 
 // NewBenchmarkHandler builds the handler. newID/now default to
@@ -75,7 +90,8 @@ func NewBenchmarkHandler(
 	catalog *storage.CatalogRepo,
 	jobs *storage.JobRepo,
 	settings *storage.SettingsRepo,
-	quality intelligence.QualityIndex,
+	runs *storage.BenchmarkRunRepo,
+	stream benchmarkStreamFn,
 	audit *auditEmitter,
 	newID func() string,
 	now func() time.Time,
@@ -88,8 +104,32 @@ func NewBenchmarkHandler(
 	}
 	return &BenchmarkHandler{
 		catalog: catalog, jobs: jobs, settings: settings,
-		quality: quality, audit: audit, newID: newID, now: now,
+		runs: runs, stream: stream, audit: audit, newID: newID, now: now,
 	}
+}
+
+// buildBenchmarkStreamFn composes the PRODUCTION benchmarkStreamFn from the
+// SAME tables the request path uses (liveTransportImpls +
+// liveProviderBaseURLs, chatcompletions.go) plus the account credential
+// repo/service ControlMux already builds for account reveal. It is a
+// separate, directly-callable function — rather than inlined into
+// ControlMux — specifically so a test can drive the EXACT composition
+// production wires and prove that mutating it (not some test-owned
+// equivalent) is what the test's assertions depend on
+// (benchmark_composition_test.go's mutation-proof test) — the same
+// composition-root mutation discipline this package already applies to
+// BuildInferenceDispatcher.
+func buildBenchmarkStreamFn(
+	reg *providers.Registry,
+	credentialRepo *storage.AccountCredentialRepo,
+	credentialService *application.CredentialService,
+) benchmarkStreamFn {
+	httpClient := &http.Client{Timeout: execution.DefaultOpenAICompatibleTimeout}
+	impls := liveTransportImpls(httpClient, reg)
+	dispatcher := BuildInferenceDispatcher(reg, impls)
+	baseURLs := liveProviderBaseURLs()
+	baseURLFor := func(providerID string) string { return baseURLs[providers.ProviderID(providerID)] }
+	return newBenchmarkStreamFn(dispatcher, baseURLFor, credentialRepo, credentialService)
 }
 
 // benchmarkResponseJSON is the 202 payload — the same {job_id, status_url}
@@ -133,7 +173,7 @@ func (h *BenchmarkHandler) ServeBenchmark(w http.ResponseWriter, r *http.Request
 	if !settings.EnrichmentEnabled {
 		h.audit.Emit(ctx, auditActionModelBenchmark, AuditResultFailure, auditResourceModel, modelID, "enrichment_disabled")
 		writeErrorDetails(w, http.StatusConflict, "enrichment_disabled",
-			"canonical quality benchmarking reads an external analysis leaderboard, which is part of the owner-enabled metadata-enrichment pipeline; enable enrichment_enabled via PUT /settings first",
+			"the local benchmark runs real inference on the owner's own account, which is part of the owner-enabled metadata-enrichment pipeline; enable enrichment_enabled via PUT /settings first",
 			false, nil)
 		return
 	}
@@ -171,21 +211,19 @@ func (h *BenchmarkHandler) failJob(jobID, code, message string) {
 		&storage.JobError{Code: code, Message: message}, storage.DefaultJobRetention)
 }
 
-// runBenchmark performs the one leaderboard read and resolves it.
+// runBenchmark resolves the model's one live offering, runs the fixed
+// measurement suite against it, and persists what it measured.
 //
-// The three outcomes, and why "no rating written" is a SUCCESS in two of them:
-//
-//   - The leaderboard has no entry, or the entry carries a nil Rating: 04 §3's
-//     "NULL means 'no quality signal available'". The job completes and the
-//     stored rating is left exactly as it was. Writing 0 here would be a
-//     fabricated fact, and overwriting an existing rating with "we found
-//     nothing this time" would destroy a real one.
-//   - The entry is a non-exact (name/family) match: enrichmentProvenance
-//     stamps it SourceHeuristic, and 04 §4 downgrades a heuristic winner to
-//     probe_suggested — "heuristics may schedule a probe but can never
-//     certify". Not a resolved value, so nothing is written.
-//   - The entry is an exact identity match: SourceExternalRegistry evidence
-//     resolves to a known value, which is persisted with its provenance.
+// The three job outcomes:
+//   - No live offering: the job FAILS typed no_live_offering. No
+//     benchmark_runs row is written — there was nothing to measure.
+//   - A live offering exists: a benchmark_runs row is inserted ALWAYS once
+//     the suite has run, even when every request failed — the measurement
+//     itself is evidence, never discarded because the news was bad.
+//   - models.quality_rating is written ONLY when the aggregate's Rating is
+//     non-nil (runBenchmarkSuite's own gate: every request in the suite
+//     succeeded). A suite with any failure measures reliability as much as
+//     speed, and writing a rating anyway would hide that.
 func (h *BenchmarkHandler) runBenchmark(ctx context.Context, jobID string, model storage.CanonicalModelRow) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -199,74 +237,86 @@ func (h *BenchmarkHandler) runBenchmark(ctx context.Context, jobID string, model
 		return
 	}
 
-	resolution, ok := h.resolveQuality(ctx, model)
+	offering, ok, err := h.targetOffering(ctx, model)
+	if err != nil {
+		h.failJob(jobID, "internal", "benchmark run failed to resolve a live offering")
+		return
+	}
 	if !ok {
-		// No signal, or a signal that cannot certify. A legitimate outcome:
-		// the job completed, and the model's rating is untouched.
-		_ = h.jobs.MarkTerminal(context.Background(), jobID, storage.JobCompleted, h.now(),
-			benchmarkResultRef, nil, storage.DefaultJobRetention)
+		h.failJob(jobID, benchmarkNoLiveOffering, "the model has no live (verified chat) offering to benchmark")
 		return
 	}
 
-	rating, isFloat := resolution.Value.(float64)
-	if !isFloat {
-		// The precedence engine carries Value as `any`; a non-numeric winner
-		// is a malformed source, not a rating. Fail closed rather than
-		// coercing it.
-		h.failJob(jobID, "benchmark_failed", "resolved quality value was not a number")
+	aggregate := runBenchmarkSuite(ctx, h.stream, offering.AccountID, offering.ProviderID, offering.ProviderModelID, benchmarkDefaultRequests)
+	finishedAt := h.now()
+
+	run := storage.BenchmarkRun{
+		ID:              h.newID(),
+		ModelID:         model.ModelID,
+		AccountID:       offering.AccountID,
+		ProviderID:      offering.ProviderID,
+		ProviderModelID: offering.ProviderModelID,
+		Requests:        aggregate.Requests,
+		Successes:       aggregate.Successes,
+		TTFTMillis:      aggregate.TTFTMillis,
+		TokensPerSec:    aggregate.TokensPerSec,
+		Rating:          aggregate.Rating,
+		StartedAt:       startedAt,
+		FinishedAt:      finishedAt,
+	}
+	if err := h.runs.Insert(ctx, run); err != nil {
+		h.failJob(jobID, "internal", "benchmark run failed to persist its measurement")
 		return
 	}
 
-	if err := h.catalog.SetQualityRating(ctx, model.ModelID, rating, h.now()); err != nil {
-		h.failJob(jobID, "benchmark_failed", "quality rating write failed")
-		return
+	if aggregate.Rating != nil {
+		if err := h.catalog.SetQualityRating(ctx, model.ModelID, *aggregate.Rating, h.now()); err != nil {
+			h.failJob(jobID, "benchmark_failed", "quality rating write failed")
+			return
+		}
+		// Provenance (04 §3: a rating is "always anchored to a documented
+		// source, observed date, and confidence value"). Codes and ids only
+		// — never a response body.
+		h.audit.Emit(context.Background(), auditActionModelQualityRating, AuditResultSuccess,
+			auditResourceModel, model.ModelID, benchmarkRunProvenanceReason(run))
 	}
-
-	// Provenance (04 §3: a rating is "always anchored to a documented source,
-	// observed date, and confidence value"). Codes and a dataset version only
-	// — never a response body.
-	h.audit.Emit(context.Background(), auditActionModelQualityRating, AuditResultSuccess,
-		auditResourceModel, model.ModelID, benchmarkProvenanceReason(resolution.Winner))
 
 	_ = h.jobs.MarkTerminal(context.Background(), jobID, storage.JobCompleted, h.now(),
 		benchmarkResultRef, nil, storage.DefaultJobRetention)
 }
 
-// resolveQuality performs the leaderboard read and runs the result through
-// the precedence engine. ok=false means "no rating may be written".
-func (h *BenchmarkHandler) resolveQuality(ctx context.Context, model storage.CanonicalModelRow) (intelligence.Resolution, bool) {
-	if h.quality == nil {
-		return intelligence.Resolution{}, false
+// targetOffering resolves model's benchmark target: its first LIVE offering
+// (CatalogRepo.ListOfferings with LiveOnly: true — availability=available,
+// account connected/healthy/not-reauthenticating, AND a certified+supported
+// chat offering_operation — Plan 1's honest gate), ordered deterministically
+// by (account_id, provider_model_id) exactly as ListOfferings itself orders.
+// It walks every page rather than assuming the model's one live offering
+// sits on page one.
+func (h *BenchmarkHandler) targetOffering(ctx context.Context, model storage.CanonicalModelRow) (storage.CatalogOfferingRow, bool, error) {
+	cursor := ""
+	for {
+		rows, next, err := h.catalog.ListOfferings(ctx, storage.CatalogListParams{LiveOnly: true, Cursor: cursor})
+		if err != nil {
+			return storage.CatalogOfferingRow{}, false, err
+		}
+		for _, row := range rows {
+			if row.ModelID == model.ModelID {
+				return row, true, nil
+			}
+		}
+		if next == "" {
+			return storage.CatalogOfferingRow{}, false, nil
+		}
+		cursor = next
 	}
-
-	entry, hit, err := h.quality(ctx, model.ProviderID, model.ProviderModelID)
-	if err != nil || !hit {
-		return intelligence.Resolution{}, false
-	}
-
-	// The EnrichmentService seam and this endpoint agree on one shared
-	// Evidence shape: intelligence.QualityEvidence is the single place a
-	// QualityEntry becomes precedence-engine Evidence, so the two callers can
-	// never stamp different provenance for the same leaderboard row.
-	scope := intelligence.Scope{ProviderModelID: model.ProviderModelID}
-	now := h.now()
-	evidence := intelligence.QualityEvidence(scope, entry, now)
-	if len(evidence) == 0 {
-		// A hit whose Rating is nil: the leaderboard knows the model but has
-		// no score for it.
-		return intelligence.Resolution{}, false
-	}
-
-	resolution := intelligence.Resolve(intelligence.FieldQualityRating, evidence, now)
-	if resolution.Kind != intelligence.ResolutionKnown {
-		return intelligence.Resolution{}, false
-	}
-	return resolution, true
 }
 
-// benchmarkProvenanceReason renders the winning evidence's provenance as a
-// short, secret-free audit reason.
-func benchmarkProvenanceReason(w intelligence.Evidence) string {
-	return fmt.Sprintf("source=%s,verification=%s,confidence=%.2f,dataset=%s,exact_identity_match=%t",
-		w.Source, w.Verification, w.Confidence, w.DatasetVersion, w.ExactIdentityMatch)
+// benchmarkRunProvenanceReason renders one persisted benchmark_runs row as a
+// short, secret-free audit reason — 04 §3's "always anchored to a documented
+// source" for the LOCAL-benchmark source (spec D4): which run, account, and
+// offering was measured, how many requests succeeded, and the resulting
+// rating. Only ever called when run.Rating is non-nil.
+func benchmarkRunProvenanceReason(run storage.BenchmarkRun) string {
+	return fmt.Sprintf("source=local_benchmark,run_id=%s,account_id=%s,provider_model_id=%s,requests=%d,successes=%d,rating=%.4f",
+		run.ID, run.AccountID, run.ProviderModelID, run.Requests, run.Successes, *run.Rating)
 }

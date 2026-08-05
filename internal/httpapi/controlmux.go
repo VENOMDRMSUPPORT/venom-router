@@ -282,18 +282,19 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	mux.Handle("/api/control/v1/models", gated(modelsHandler.ServeModels))
 	mux.Handle("/api/control/v1/offerings", gated(modelsHandler.ServeOfferings))
 
-	// Canonical quality benchmark (P6-CAPI-001, 04 §3/§5, 09 §3.12): POST
+	// Canonical quality benchmark (P6-CAPI-001, 04 §3/§5, 09 §3.12; Plan 3 of
+	// the local-benchmark-rating design, 2026-08-05): POST
 	// /models/{id}/benchmark, async 202 + the canonical shared job surface.
-	// The QualityIndex seam is nil here for the same reason the metadata
-	// registry seam is: no unit has yet wired a real analysis-leaderboard HTTP
-	// client (04 §2b's pipeline B is owner-enabled and still unwired). A nil
-	// seam behaves as a leaderboard that always misses, so the endpoint
-	// completes its job honestly WITHOUT writing a rating — never a fabricated
-	// one. Wiring a real leaderboard client is a later unit's work and
-	// requires no change here beyond passing it in.
+	// The job now runs REAL inference (buildBenchmarkStreamFn, benchmark.go)
+	// against the model's own live offering, on the owner's own account —
+	// there is no leaderboard seam left to wire nil (spec D4: "No imported
+	// leaderboard numbers"). credentialRepo/credentialService are the SAME
+	// instances already built above for account reveal; reg is the SAME
+	// registry every other route here shares.
 	benchmarkHandler := NewBenchmarkHandler(
 		catalogRepo, storage.NewJobRepo(db), storage.NewSettingsRepo(db),
-		nil, audit, newOAuthTransactionID, nil,
+		storage.NewBenchmarkRunRepo(db, nil), buildBenchmarkStreamFn(reg, credentialRepo, credentialService),
+		audit, newOAuthTransactionID, nil,
 	)
 	mux.Handle("/api/control/v1/models/{id}/benchmark", gated(benchmarkHandler.ServeBenchmark))
 
