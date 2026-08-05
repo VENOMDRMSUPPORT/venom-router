@@ -24,12 +24,16 @@ const discoverRoute = "POST /accounts/{id}/discover"
 const discoveryRunTimeout = 3 * time.Minute
 
 // usabilityFastLaneTimeout bounds the detached fast-lane usability
-// verification fired after a discovery run succeeds (design 2026-08-05) —
-// generous enough for one account's full model catalog to be probed (it
-// mirrors the scheduled sweep's own per-lane usabilitySweepBudget). It gets
-// its OWN context.WithoutCancel + timeout rather than reusing runDiscovery's
-// ctx: that ctx's cancel fires the instant runDiscovery returns to its
-// caller, which would otherwise abort the fast lane before it ever runs.
+// verification fired after a discovery run succeeds (design 2026-08-05).
+// It is DELIBERATELY a superset of the scheduled sweep's own 25s per-lane
+// usabilitySweepBudget (internal/httpapi/usability_wiring.go), not a mirror
+// of it: VerifyAccount does its own account lookup + eligibility + credential
+// resolution BEFORE handing off to that same 25s-budgeted lane, so the outer
+// timeout needs headroom for that lookup on top of the lane's own budget. It
+// gets its OWN context.WithoutCancel + timeout rather than reusing
+// runDiscovery's ctx: that ctx's cancel fires the instant runDiscovery
+// returns to its caller, which would otherwise abort the fast lane before it
+// ever runs.
 const usabilityFastLaneTimeout = 30 * time.Second
 
 // discoveryResultRef is the ONE reference shape a discovery job's

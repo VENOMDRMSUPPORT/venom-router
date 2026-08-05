@@ -194,6 +194,16 @@ func BuildUsabilityService(db *storage.DB, kr *secrets.Keyring, now func() time.
 		if err != nil || !ok {
 			return
 		}
+		// The sweep's own list() closure above gets provider membership for
+		// free — it only ever queries AccountRepo.List scoped to providerID in
+		// the first place. VerifyAccount instead loads the account by id
+		// alone, so it must check membership explicitly: without this, a
+		// mismatched (providerID, accountID) pair would lease account Y's
+		// decrypted credential and probe it against provider X's baseURL and
+		// verifier (wrong probe, wrong endpoint, wrong credential entirely).
+		if account.ProviderID != providerID {
+			return
+		}
 		if !usabilityAccountEligible(account) {
 			return
 		}
