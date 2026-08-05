@@ -99,6 +99,20 @@ func NewModelsDevSource(probe ModelsDevProbe, now func() time.Time) *ModelsDevSo
 // returns a non-nil error — which the caller treats as "no enrichment" (still
 // list the live ids), never as an empty account.
 func (s *ModelsDevSource) Facts(ctx context.Context, providerKey string) (map[string]ModelsDevFacts, error) {
+	facts, _, err := s.factsAndRaw(ctx, providerKey)
+	return facts, err
+}
+
+// factsAndRaw is the shared fetch/cache/parse path behind Facts and
+// FactsForProvider. It returns the parsed facts AND the exact raw dataset
+// bytes they were parsed from, both read under a single s.mu acquisition —
+// callers that also need to inspect the raw dataset (e.g. FactsForProvider's
+// api-field verification) must use this instead of calling Facts and then
+// separately re-reading s.raw, since a concurrent refetch between two
+// separate lock acquisitions could swap s.raw out from under them and leave
+// the verification checking a different dataset snapshot than the one the
+// facts actually came from.
+func (s *ModelsDevSource) factsAndRaw(ctx context.Context, providerKey string) (map[string]ModelsDevFacts, []byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -106,13 +120,13 @@ func (s *ModelsDevSource) Facts(ctx context.Context, providerKey string) (map[st
 	if s.raw == nil || now.Sub(s.fetchedAt) >= s.ttl {
 		body, err := s.probe(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("providers: models.dev facts fetch: %w", err)
+			return nil, nil, fmt.Errorf("providers: models.dev facts fetch: %w", err)
 		}
 		// Validate the top-level shape once so a malformed dataset is a typed
 		// failure rather than silently-empty facts for every key.
 		var probeShape map[string]json.RawMessage
 		if err := json.Unmarshal(body, &probeShape); err != nil {
-			return nil, fmt.Errorf("providers: models.dev facts parse: %w", err)
+			return nil, nil, fmt.Errorf("providers: models.dev facts parse: %w", err)
 		}
 		s.raw = body
 		s.fetchedAt = now
@@ -120,14 +134,14 @@ func (s *ModelsDevSource) Facts(ctx context.Context, providerKey string) (map[st
 	}
 
 	if facts, ok := s.byKey[providerKey]; ok {
-		return facts, nil
+		return facts, s.raw, nil
 	}
 	facts, err := parseModelsDevFacts(s.raw, providerKey)
 	if err != nil {
-		return nil, err
+		return nil, s.raw, err
 	}
 	s.byKey[providerKey] = facts
-	return facts, nil
+	return facts, s.raw, nil
 }
 
 // parseModelsDevFacts extracts providerKey's per-model facts from the full
