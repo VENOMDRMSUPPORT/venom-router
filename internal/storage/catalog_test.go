@@ -357,21 +357,45 @@ func TestCatalogRepo_ListOfferings_LiveOnlyFiltersOperationallyDeadRows(t *testi
 // capability was never verified (still at the seeded discovered/unknown
 // default) leaked onto the Live Models surface.
 //
-// Three cases:
+// Seven cases. B alone combines status='discovered' with truth='unknown',
+// which is mutation-REDUNDANT between those two checks: deleting either
+// check in isolation still leaves B correctly excluded by the other, so it
+// cannot prove either check individually matters (the same "mutation-inert"
+// shape flagged in fix round 1, one level down). F and G isolate status and
+// truth into their own rows so each mutation is independently caught (see
+// the mutation table in the Task 9 fix report):
 //
 //	A — certified+supported chat, healthy connected account -> IN.
-//	B — chat op left at the seeded default (no certifications row at all,
-//	    so the LEFT JOIN fallback is discovered/unknown), same healthy
-//	    account -> OUT. This is the leak the gate closes.
+//	B — chat op explicitly at discovered/unknown (a REAL certifications row,
+//	    not merely absent), same healthy account -> OUT. This is the leak
+//	    the gate closes.
 //	C — certified+supported chat, but the account is unhealthy -> OUT. The
 //	    pre-existing account-health clause must still apply; the new EXISTS
 //	    clause is additive, not a replacement.
+//	D — chat op uncertified, but a NON-chat op (tools) on the SAME offering
+//	    is certified+supported -> OUT. Pins oo.operation = 'chat': without
+//	    it, any certified+supported operation would wrongly admit the row.
+//	E — account correlation. acct-e1 and acct-e2 are BOTH healthy; acct-e1's
+//	    own chat op is uncertified, while acct-e2 happens to carry a
+//	    certified+supported chat op for the SAME provider_model_id
+//	    ("model-e"). acct-e1's offering -> OUT (only acct-e2's own offering
+//	    is live). Pins oo.account_id = amo.account_id: without it, a
+//	    certified chat op belonging to ANY account for that
+//	    provider_model_id would satisfy the EXISTS.
+//	F — chat op at status='suspended' (NOT certified) but
+//	    capability_truth='supported' -> OUT. Pins c.status='certified' in
+//	    isolation: truth alone is satisfied here, so only the status check
+//	    can be excluding it.
+//	G — chat op at status='certified' but capability_truth='unsupported'
+//	    (NOT supported) -> OUT. Pins c.capability_truth='supported' in
+//	    isolation: status alone is satisfied here, so only the truth check
+//	    can be excluding it.
 func TestCatalogRepo_ListOfferings_LiveOnlyRequiresCertifiedChat(t *testing.T) {
 	db := migratedCatalogRepoDB(t)
 	insertProvider(t, db, "prov-honest")
 	insertModelFull(t, db, "model-honest", "ck-honest", "Honest Model", nil, nil, nil)
 
-	// A and B share one healthy, connected account.
+	// A, B and D share one healthy, connected account.
 	insertAccount(t, db, "acct-honest", "prov-honest")
 	mustExec(t, db, `UPDATE accounts SET connection_state = 'connected', health_state = 'healthy', reauth_in_progress = 0 WHERE id = ?`, "acct-honest")
 
@@ -380,9 +404,8 @@ func TestCatalogRepo_ListOfferings_LiveOnlyRequiresCertifiedChat(t *testing.T) {
 		"certified", "supported", 1, nil, "")
 
 	insertOfferingFull(t, db, "acct-honest", "prov-honest", "model-b", "model-honest", nil, nil, nil, nil, nil, 0, 0)
-	if err := insertOfferingOperation(db, "op-b-chat", "acct-honest", "prov-honest", "model-b", "chat"); err != nil {
-		t.Fatalf("insert offering_operation op-b-chat: %v", err)
-	}
+	insertOfferingOperationFull(t, db, "op-b-chat", "acct-honest", "prov-honest", "model-b", "chat",
+		"discovered", "unknown", 1, nil, "")
 
 	// C is certified+supported but sits on an unhealthy account.
 	insertAccount(t, db, "acct-unhealthy", "prov-honest")
@@ -391,24 +414,67 @@ func TestCatalogRepo_ListOfferings_LiveOnlyRequiresCertifiedChat(t *testing.T) {
 	insertOfferingOperationFull(t, db, "op-c-chat", "acct-unhealthy", "prov-honest", "model-c", "chat",
 		"certified", "supported", 1, nil, "")
 
+	// D: chat uncertified, but its own "tools" op is certified+supported.
+	insertOfferingFull(t, db, "acct-honest", "prov-honest", "model-d", "model-honest", nil, nil, nil, nil, nil, 0, 0)
+	insertOfferingOperationFull(t, db, "op-d-chat", "acct-honest", "prov-honest", "model-d", "chat",
+		"discovered", "unknown", 1, nil, "")
+	insertOfferingOperationFull(t, db, "op-d-tools", "acct-honest", "prov-honest", "model-d", "tools",
+		"certified", "supported", 1, nil, "")
+
+	// E: two healthy accounts sharing one provider_model_id ("model-e").
+	// acct-e1's own chat op is uncertified; acct-e2's chat op for the SAME
+	// provider_model_id is certified+supported. Only acct-e2's row may be
+	// live.
+	insertAccount(t, db, "acct-e1", "prov-honest")
+	mustExec(t, db, `UPDATE accounts SET connection_state = 'connected', health_state = 'healthy', reauth_in_progress = 0 WHERE id = ?`, "acct-e1")
+	insertOfferingFull(t, db, "acct-e1", "prov-honest", "model-e", "model-honest", nil, nil, nil, nil, nil, 0, 0)
+	insertOfferingOperationFull(t, db, "op-e1-chat", "acct-e1", "prov-honest", "model-e", "chat",
+		"discovered", "unknown", 1, nil, "")
+
+	insertAccount(t, db, "acct-e2", "prov-honest")
+	mustExec(t, db, `UPDATE accounts SET connection_state = 'connected', health_state = 'healthy', reauth_in_progress = 0 WHERE id = ?`, "acct-e2")
+	insertOfferingFull(t, db, "acct-e2", "prov-honest", "model-e", "model-honest", nil, nil, nil, nil, nil, 0, 0)
+	insertOfferingOperationFull(t, db, "op-e2-chat", "acct-e2", "prov-honest", "model-e", "chat",
+		"certified", "supported", 1, nil, "")
+
+	// F: status alone would reject this row (truth is already 'supported').
+	insertOfferingFull(t, db, "acct-honest", "prov-honest", "model-f", "model-honest", nil, nil, nil, nil, nil, 0, 0)
+	insertOfferingOperationFull(t, db, "op-f-chat", "acct-honest", "prov-honest", "model-f", "chat",
+		"suspended", "supported", 1, nil, "")
+
+	// G: truth alone would reject this row (status is already 'certified').
+	insertOfferingFull(t, db, "acct-honest", "prov-honest", "model-g", "model-honest", nil, nil, nil, nil, nil, 0, 0)
+	insertOfferingOperationFull(t, db, "op-g-chat", "acct-honest", "prov-honest", "model-g", "chat",
+		"certified", "unsupported", 1, nil, "")
+
 	repo := NewCatalogRepo(db)
 
-	// Sanity: the unfiltered read sees all three, proving the fixture (not
-	// missing data) is what LiveOnly narrows.
+	// Sanity: the unfiltered read sees all eight offerings, proving the
+	// fixture (not missing data) is what LiveOnly narrows.
 	raw, _, err := repo.ListOfferings(context.Background(), CatalogListParams{Limit: 20})
 	if err != nil {
 		t.Fatalf("raw ListOfferings: %v", err)
 	}
-	if len(raw) != 3 {
-		t.Fatalf("raw rows = %d, want 3 so the fixture proves filtering rather than missing data", len(raw))
+	if len(raw) != 8 {
+		t.Fatalf("raw rows = %d, want 8 so the fixture proves filtering rather than missing data", len(raw))
 	}
 
 	live, _, err := repo.ListOfferings(context.Background(), CatalogListParams{LiveOnly: true, Limit: 20})
 	if err != nil {
 		t.Fatalf("live ListOfferings: %v", err)
 	}
-	if len(live) != 1 || live[0].ProviderModelID != "model-a" {
-		t.Fatalf("live rows = %+v, want only model-a (certified+supported chat on a healthy account)", live)
+	wantLive := map[string]string{ // accountID -> providerModelID
+		"acct-honest": "model-a",
+		"acct-e2":     "model-e",
+	}
+	if len(live) != len(wantLive) {
+		t.Fatalf("live rows = %+v, want exactly %v", live, wantLive)
+	}
+	for _, row := range live {
+		wantPMID, ok := wantLive[row.AccountID]
+		if !ok || wantPMID != row.ProviderModelID {
+			t.Fatalf("live row (account=%s, provider_model_id=%s) unexpected; want exactly %v", row.AccountID, row.ProviderModelID, wantLive)
+		}
 	}
 }
 

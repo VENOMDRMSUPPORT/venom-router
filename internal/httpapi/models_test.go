@@ -146,6 +146,12 @@ func TestModelsHandler_ServesOnlyHealthyConnectedOfferings(t *testing.T) {
 	modelsSeedOffering(t, db, offeringSeed{
 		AccountID: "acct-model-expired", ProviderID: "prov-model-dead",
 		ProviderModelID: "pm-dead", ModelID: "canonical-dead", ModelDisplayName: "Dead Model",
+		// Same certified+supported chat op as the live seed above: account
+		// health must be the ONLY discriminator this test isolates. Without
+		// this, canonical-dead would be excluded for two independent reasons
+		// (unhealthy account AND uncertified chat), and the health-clause
+		// assertion below would no longer be pinned to the health clause.
+		Operations: []offeringOpSeed{{Operation: "chat", Status: "certified", Truth: "supported"}},
 	})
 	if _, err := db.Conn().Exec(`UPDATE accounts SET connection_state = 'connected', health_state = 'healthy' WHERE id = 'acct-model-live'`); err != nil {
 		t.Fatalf("mark live account: %v", err)
