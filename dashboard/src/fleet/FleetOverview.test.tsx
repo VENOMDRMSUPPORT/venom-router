@@ -523,8 +523,10 @@ describe("FleetOverview — contextual stat cards", () => {
     expect(statCard("Accounts").textContent).toContain("2");
     expect(statCard("Accounts").textContent).toContain("across 1 provider");
     expect(statCard("Healthy").textContent).toContain("1/2");
-    expect(statCard("Models").textContent).toContain("2");
-    expect(statCard("Models").textContent).toContain("1 working · unique");
+    // The tile headlines the verified-working count, not the raw discovered
+    // total — the total stays visible in the meta line.
+    expect(statCard("Working Models").querySelector(".vn-stat-value")?.textContent).toBe("1");
+    expect(statCard("Working Models").textContent).toContain("2 discovered");
 
     fireEvent.click(within(tabs).getByRole("button", { name: "OAuth Providers" }));
     expect(statCard("Accounts").textContent).toContain("0");
@@ -592,7 +594,7 @@ describe("FleetOverview — contextual stat cards", () => {
         }),
     });
 
-    const models = statCard("Models");
+    const models = statCard("Working Models");
     expect(within(models).getByText("—")).toBeTruthy();
     expect(models.textContent).not.toContain("0");
     screen.getByText(/could not load model offerings/i);
@@ -615,7 +617,7 @@ describe("FleetOverview — Active Providers rows", () => {
     // 1/2, not 1/3: the aggregate is scoped to the COUNTED accounts, so the
     // owner's disabled account cannot hold the provider at "warning" forever.
     screen.getByTitle("1/2 accounts healthy");
-    screen.getByText(/\d+ models/);
+    screen.getByText(/\d+ working \/ \d+ discovered/);
     screen.getByText(/\d+ accounts/);
     screen.getByRole("button", { name: /sync all accounts/i });
     screen.getByRole("button", { name: /refresh models for every account/i });
@@ -1491,7 +1493,7 @@ describe("FleetOverview — ClinePass OAuth subscription contract", () => {
     expect(
       document.querySelector('.vnd-health-dot--warning[title="1/2 accounts healthy"]'),
     ).toBeTruthy();
-    screen.getByText("1 models");
+    screen.getByText("1 working / 1 discovered");
     screen.getByText("2 accounts");
     screen.getByText("1 require action");
   });

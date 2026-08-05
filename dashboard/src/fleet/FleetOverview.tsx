@@ -398,13 +398,13 @@ export default function FleetOverview(props: FleetOverviewProps) {
         {/* An offerings read that has not landed renders the honest "—",
          * never a fabricated 0. */}
         <StatCard
-          label="Models"
-          value={modelStats ? modelStats.total : "—"}
+          label="Working Models"
+          value={modelStats ? modelStats.working : "—"}
           tone={modelStats ? undefined : "unknown"}
           icon="box"
           meta={
             modelStats
-              ? `${modelStats.working} working · unique`
+              ? `${modelStats.total} discovered`
               : offeringsError
                 ? "offerings unavailable"
                 : "loading…"
