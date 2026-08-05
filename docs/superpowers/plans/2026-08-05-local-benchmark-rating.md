@@ -63,7 +63,9 @@ DROP TABLE benchmark_runs;
 - [ ] **Step 2: Run to verify failure; add the migration; green.**
 - [ ] **Step 3: Commit** — `git commit -m "feat(storage): benchmark_runs migration"`
 
----### Task 2: BenchmarkRunRepo
+---
+
+### Task 2: BenchmarkRunRepo
 
 **Files:**
 - Create: `internal/storage/benchmarkruns.go`
