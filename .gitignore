@@ -52,3 +52,4 @@ tmp/
 !internal/httpui/dist/
 internal/httpui/dist/*
 !internal/httpui/dist/.buildmarker
+.kilo/
