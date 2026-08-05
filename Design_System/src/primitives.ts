@@ -53,6 +53,7 @@ export * from "../components/feedback/Progress";
 export * from "../components/feedback/Skeleton";
 export * from "../components/feedback/Spinner";
 export * from "../components/feedback/Toast";
+export * from "../components/feedback/ToastContext";
 
 export * from "../components/overlay/Dialog";
 export * from "../components/overlay/Drawer";
