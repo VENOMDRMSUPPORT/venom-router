@@ -27,11 +27,12 @@ const probeRoute = "POST /offerings/{id}/probe"
 const probeRunTimeout = 2 * time.Minute
 
 // probeableOperations is the fixed four-value subset of the broader
-// seven-value models.Operation vocabulary this endpoint may ever probe
+// eight-value models.Operation vocabulary this endpoint may ever probe
 // (09 §3.8, 04 §5): chat/streaming are certified by other means (actual
-// successful use, not a deliberate probe) and image_generation is
-// reserved future scope (04 §5) — none of the three is ever accepted
-// here.
+// successful use, not a deliberate probe), and image_generation and
+// reasoning are both reserved future scope (04 §5's 2026-08-05 "bounded
+// additive vocabulary unfreeze" amendment) — certifiable, but not routed by
+// any V1 tier. None of those four is ever accepted here.
 var probeableOperations = map[models.Operation]bool{
 	models.OperationContextWindow:    true,
 	models.OperationTools:            true,

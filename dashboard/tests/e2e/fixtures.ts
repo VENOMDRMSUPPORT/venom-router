@@ -190,6 +190,10 @@ const CAPABILITY = {
   truth: "supported",
   routable: true,
   offering_operation_id: OFFERING_OPERATION_ID,
+  // Never omitted on the wire (internal/httpapi/models.go's capabilityJSON:
+  // "" is itself a meaningful closed value, not an absent key) — default to
+  // "" here to match that shape rather than fabricating "probed"/"declared".
+  provenance: "",
 };
 
 const OFFERING = {

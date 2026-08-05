@@ -380,12 +380,21 @@ func (r *DiscoveryRepo) ensureOfferingOperation(ctx context.Context, tx *sql.Tx,
 	}
 	// GOVERNOR CORRECTION (P3c-CERT-008): edge 1 fires on THIS snapshot too,
 	// not only on a later re-discovery. 04 §5 edge 1's trigger names
-	// "discovery snapshot / provider metadata" literally, and an operation
-	// row only ever exists because the provider explicitly reported the
-	// capability that produced it — that IS the first concrete evidence.
-	// Firing only on the already-existing-row branch would mean a freshly
-	// discovered offering-operation could never be probed until the owner
-	// triggered discovery a SECOND time (nothing schedules discovery), an
+	// "discovery snapshot / provider metadata" literally — but this method's
+	// two callers (the declared m.Operations loop and the CANDIDATE
+	// m.CandidateOperations loop, Task 3, above) both insert through here, so
+	// a fresh row's mere existence is NOT by itself the provider's
+	// declaration; it is only evidence that a discovery snapshot happened at
+	// all, which is what the discovered->observed edge actually requires.
+	// Whether an operation was ACTUALLY declared is decided elsewhere:
+	// catalog.go's ListNonChatOperationsToCertify reads
+	// account_model_offerings.capabilities_json (written from
+	// m.Capabilities only, never from CandidateOperations) as the one
+	// honest declared/candidate boundary, which is what stops a candidate
+	// row from ever being certified off mere discovery. Firing only on the
+	// already-existing-row branch would mean a freshly discovered
+	// offering-operation could never be probed until the owner triggered
+	// discovery a SECOND time (nothing schedules discovery), an
 	// undiscoverable requirement no document states.
 	return r.recordEvidenceObserved(ctx, tx, id, epoch)
 }
@@ -437,6 +446,11 @@ func (r *DiscoveryRepo) recordEvidenceObserved(ctx context.Context, tx *sql.Tx, 
 // A modelID matching no row is ErrModelNotFound, not a silent no-op — the
 // same typed-error contract CatalogRepo.SetQualityRating already uses for
 // an identical "write against a vanished model" case.
+//
+// This is the ONLY writer of models.native_context_tokens anywhere in this
+// codebase — the dashboard's "native"-provenance checkmark on a context
+// badge (ModelsSurface.tsx) is only ever honest because this method, and
+// nothing else, ever sets that column.
 func (r *DiscoveryRepo) SetNativeContextTokens(ctx context.Context, modelID string, tokens int) error {
 	if tokens <= 0 {
 		return fmt.Errorf("storage: native context tokens must be positive, got %d", tokens)

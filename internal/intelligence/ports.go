@@ -37,7 +37,7 @@ type GenerationAllocator interface {
 // ready for atomic apply (04 §1 steps 4-5). Capabilities is the raw
 // (validated, UTF-8/control-char-clean) capability strings the provider
 // reported, retained for the record; Operations is the subset of those
-// strings that parse against models.Operation's fixed seven-value
+// strings that parse against models.Operation's fixed eight-value
 // vocabulary and is what actually produces offering_operations rows — an
 // unrecognized capability string is kept in Capabilities but contributes
 // no operation. Pricing and Evidence have already passed through this

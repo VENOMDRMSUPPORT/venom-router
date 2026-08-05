@@ -4,7 +4,7 @@ CREATE TABLE models (
     id                     TEXT PRIMARY KEY,
     canonical_key_sha256   TEXT NOT NULL UNIQUE,
     display_name           TEXT,
-    native_context_tokens  INTEGER,
+    native_context_tokens  INTEGER,   -- ONLY writer: DiscoveryRepo.SetNativeContextTokens (internal/storage/discovery.go)
     native_modalities_json TEXT,
     quality_rating         REAL,
     created_at             INTEGER NOT NULL,
