@@ -107,6 +107,11 @@ func BuildUsabilityTick(db *storage.DB, kr *secrets.Keyring, now func() time.Tim
 			driver:    driver,
 			probe:     spec.probe,
 			baseURL:   spec.baseURL,
+			// One fresh pacer per account per sweep: verifyAccount is called
+			// once per account, so this factory fires exactly that often.
+			newPacer: func() *usabilityPacer {
+				return newUsabilityPacer(usabilityProbeMaxConcurrency, now)
+			},
 		}
 	}
 

@@ -37,6 +37,14 @@ type usabilityVerifier struct {
 	driver    certRecorder
 	probe     usabilityProbeFn
 	baseURL   string
+	// newPacer mints this account's pacer for THIS pass. It is a factory, not
+	// a shared pacer, because pacer state (shrunken concurrency, an open
+	// breaker) is per account per sweep: one throttled account must not narrow
+	// another's window, and every sweep starts fresh — cross-sweep protection
+	// is the provider's own Retry-After, not stale in-memory state. A nil
+	// factory leaves the pacer nil, which verifyAccountChatUsability treats as
+	// unpaced-at-full-width.
+	newPacer func() *usabilityPacer
 }
 
 // verifyAccount runs one usability pass for accountID using credentialID. The
@@ -83,8 +91,13 @@ func (v *usabilityVerifier) verifyAccount(ctx context.Context, accountID, creden
 		offerings[i] = chatOffering{OfferingOperationID: r.OfferingOperationID, ProviderModelID: r.ProviderModelID}
 	}
 
+	var pacer *usabilityPacer
+	if v.newPacer != nil {
+		pacer = v.newPacer()
+	}
+
 	if err := v.creds.Use(ctx, credentialID, func(key []byte) error {
-		chat := verifyAccountChatUsability(ctx, v.driver, v.probe, v.baseURL, string(key), offerings)
+		chat := verifyAccountChatUsability(ctx, v.driver, v.probe, pacer, v.baseURL, string(key), offerings)
 		summary.Probed = chat.Probed
 		summary.Usable = chat.Usable
 		summary.StoppedOnAuth = chat.StoppedOnAuth
