@@ -40,7 +40,9 @@ tmp/
 
 # Tool caches
 .codegraph/
+.cursor/
 .hive/
+.kilo/
 .omo/
 .gemini/
 
@@ -52,4 +54,3 @@ tmp/
 !internal/httpui/dist/
 internal/httpui/dist/*
 !internal/httpui/dist/.buildmarker
-.kilo/
