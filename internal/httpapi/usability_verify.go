@@ -2,15 +2,25 @@ package httpapi
 
 import (
 	"context"
+	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
 )
 
+// usabilityProbeResult is one probe's full outcome: the semantic verdict plus
+// the provider's advertised backoff (Retry-After / retry-after-ms), when it
+// sent one. RetryAfter is zero when nothing was advertised — never a guessed
+// default. A later pacer (task 6) consumes RetryAfter to schedule the retry.
+type usabilityProbeResult struct {
+	Verdict    zenChatUsability
+	RetryAfter time.Duration
+}
+
 // usabilityProbeFn is the seam over the real per-model chat-usability probe
 // (probeOpenCodeZenChatUsability), injected so the verify step is testable
 // without a live provider.
-type usabilityProbeFn func(ctx context.Context, baseURL, key, modelID string) (zenChatUsability, error)
+type usabilityProbeFn func(ctx context.Context, baseURL, key, modelID string) (usabilityProbeResult, error)
 
 // certRecorder is the slice of intelligence.CertificationDriver the verify step
 // needs: turn a probe outcome into a lifecycle move. *CertificationDriver
@@ -29,17 +39,17 @@ type certRecorder interface {
 //     model to unsupported. The error is returned for the caller to reschedule.
 //   - a provider ERROR response IS a verdict (the classifier already read it
 //     from the body) and is recorded like any other attempt.
-func executeChatUsabilityProbe(ctx context.Context, rec certRecorder, probe usabilityProbeFn, baseURL, key, offeringOperationID, modelID string, attempts int) (zenChatUsability, error) {
-	verdict, err := probe(ctx, baseURL, key, modelID)
+func executeChatUsabilityProbe(ctx context.Context, rec certRecorder, probe usabilityProbeFn, baseURL, key, offeringOperationID, modelID string, attempts int) (usabilityProbeResult, error) {
+	res, err := probe(ctx, baseURL, key, modelID)
 	if err != nil {
-		return verdict, err
+		return res, err
 	}
-	outcome, err := zenUsabilityProbeOutcome(verdict)
+	outcome, err := zenUsabilityProbeOutcome(res.Verdict)
 	if err != nil {
-		return verdict, err
+		return res, err
 	}
 	if _, err := rec.RecordAttempt(ctx, offeringOperationID, outcome, attempts); err != nil {
-		return verdict, err
+		return res, err
 	}
-	return verdict, nil
+	return res, nil
 }

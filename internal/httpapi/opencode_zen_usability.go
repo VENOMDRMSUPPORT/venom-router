@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 )
@@ -88,6 +90,31 @@ func classifyOpenCodeZenChatUsability(status int, body []byte) zenChatUsability 
 	return zenChatInconclusive
 }
 
+// usabilityRetryAfter extracts the provider's advertised backoff: the JSON
+// body's retry-after-ms / retry-after fields win over the HTTP Retry-After
+// header (seconds). 0 = nothing advertised.
+func usabilityRetryAfter(header http.Header, body []byte) time.Duration {
+	var env struct {
+		Error struct {
+			RetryAfterMS int `json:"retry-after-ms"`
+			RetryAfter   int `json:"retry-after"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(body, &env)
+	if env.Error.RetryAfterMS > 0 {
+		return time.Duration(env.Error.RetryAfterMS) * time.Millisecond
+	}
+	if env.Error.RetryAfter > 0 {
+		return time.Duration(env.Error.RetryAfter) * time.Second
+	}
+	if s := header.Get("Retry-After"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 0
+}
+
 // probeOpenCodeZenChatUsability runs ONE minimal real chat completion for a
 // SPECIFIC model (discovery supplies the id) and returns the usability verdict.
 // It is the per-model usability probe, distinct from the account-health seam:
@@ -98,31 +125,32 @@ func classifyOpenCodeZenChatUsability(status int, body []byte) zenChatUsability 
 // then simply unknown) — never on a provider error response, which is a real
 // verdict the classifier reads from the body. key travels only as the
 // Authorization header and is never logged; the body is read only to classify.
-func probeOpenCodeZenChatUsability(ctx context.Context, baseURL, key, modelID string) (zenChatUsability, error) {
+func probeOpenCodeZenChatUsability(ctx context.Context, baseURL, key, modelID string) (usabilityProbeResult, error) {
 	reqBody, err := json.Marshal(openCodeZenChatProbeRequest{
 		Model:     modelID,
 		Messages:  []openCodeZenChatProbeMessage{{Role: "user", Content: "ping"}},
 		MaxTokens: 1,
 	})
 	if err != nil {
-		return zenChatInconclusive, fmt.Errorf("httpapi: opencode-zen usability probe marshal: %w", err)
+		return usabilityProbeResult{Verdict: zenChatInconclusive}, fmt.Errorf("httpapi: opencode-zen usability probe marshal: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/v1/chat/completions", bytes.NewReader(reqBody))
 	if err != nil {
-		return zenChatInconclusive, fmt.Errorf("httpapi: opencode-zen usability probe request: %w", err)
+		return usabilityProbeResult{Verdict: zenChatInconclusive}, fmt.Errorf("httpapi: opencode-zen usability probe request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := openCodeZenHTTPClient.Do(req)
 	if err != nil {
-		return zenChatInconclusive, fmt.Errorf("httpapi: opencode-zen usability probe: %w", err)
+		return usabilityProbeResult{Verdict: zenChatInconclusive}, fmt.Errorf("httpapi: opencode-zen usability probe: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, openCodeZenProbeBodyLimit))
-	return classifyOpenCodeZenChatUsability(resp.StatusCode, body), nil
+	verdict := classifyOpenCodeZenChatUsability(resp.StatusCode, body)
+	return usabilityProbeResult{Verdict: verdict, RetryAfter: usabilityRetryAfter(resp.Header, body)}, nil
 }
 
 // zenUsabilitySignal maps a chat-usability verdict onto the EXISTING

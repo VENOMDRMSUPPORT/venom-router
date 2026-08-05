@@ -145,14 +145,14 @@ func classifyClinePassChatUsability(status int, body []byte) zenChatUsability {
 // the workos-prefixed Authorization header, never logged. The error is non-nil
 // ONLY on a transport failure (usability then unknown); a provider error
 // response is a verdict the classifier reads from the body.
-func probeClinePassChatUsability(ctx context.Context, baseURL, credentialPlaintext, modelID string) (zenChatUsability, error) {
+func probeClinePassChatUsability(ctx context.Context, baseURL, credentialPlaintext, modelID string) (usabilityProbeResult, error) {
 	var stored struct {
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.Unmarshal([]byte(credentialPlaintext), &stored); err != nil || stored.AccessToken == "" {
 		// Not a parseable token envelope — an account-level credential
 		// problem, not a per-model verdict.
-		return zenChatAuthFailure, nil
+		return usabilityProbeResult{Verdict: zenChatAuthFailure}, nil
 	}
 
 	reqBody, err := json.Marshal(openCodeZenChatProbeRequest{
@@ -161,12 +161,12 @@ func probeClinePassChatUsability(ctx context.Context, baseURL, credentialPlainte
 		MaxTokens: clinePassModelTestMaxTokens,
 	})
 	if err != nil {
-		return zenChatInconclusive, fmt.Errorf("httpapi: clinepass usability probe marshal: %w", err)
+		return usabilityProbeResult{Verdict: zenChatInconclusive}, fmt.Errorf("httpapi: clinepass usability probe marshal: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1/chat/completions", bytes.NewReader(reqBody))
 	if err != nil {
-		return zenChatInconclusive, fmt.Errorf("httpapi: clinepass usability probe request: %w", err)
+		return usabilityProbeResult{Verdict: zenChatInconclusive}, fmt.Errorf("httpapi: clinepass usability probe request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+clinePassWorkosPrefixed(stored.AccessToken))
 	req.Header.Set("Content-Type", "application/json")
@@ -176,10 +176,11 @@ func probeClinePassChatUsability(ctx context.Context, baseURL, credentialPlainte
 
 	resp, err := clinePassUsabilityHTTPClient.Do(req)
 	if err != nil {
-		return zenChatInconclusive, fmt.Errorf("httpapi: clinepass usability probe: %w", err)
+		return usabilityProbeResult{Verdict: zenChatInconclusive}, fmt.Errorf("httpapi: clinepass usability probe: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, clinePassProbeBodyLimit))
-	return classifyClinePassChatUsability(resp.StatusCode, body), nil
+	verdict := classifyClinePassChatUsability(resp.StatusCode, body)
+	return usabilityProbeResult{Verdict: verdict, RetryAfter: usabilityRetryAfter(resp.Header, body)}, nil
 }

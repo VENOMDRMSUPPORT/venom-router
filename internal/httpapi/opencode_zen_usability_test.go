@@ -19,7 +19,13 @@ package httpapi
 //   - anything else (unknown error type, malformed/empty body, non-2xx with no
 //     recognized envelope) -> inconclusive.
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+)
 
 func TestClassifyOpenCodeZenChatUsability(t *testing.T) {
 	// A real big-pickle 200: a reasoning model that spent the whole tiny
@@ -64,5 +70,48 @@ func TestClassifyOpenCodeZenChatUsability(t *testing.T) {
 				t.Fatalf("classifyOpenCodeZenChatUsability(%d, %q) = %v, want %v", tc.status, tc.body, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestProbeOpenCodeZen_RetryAfterSurfaced pins the seam that lets a provider's
+// advertised backoff survive the probe: the HTTP Retry-After header (seconds).
+func TestProbeOpenCodeZen_RetryAfterSurfaced(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"error":{"type":"FreeUsageLimitError"}}`))
+	}))
+	defer srv.Close()
+	res, err := probeOpenCodeZenChatUsability(context.Background(), srv.URL, "k", "m")
+	if err != nil {
+		t.Fatalf("transport error: %v", err)
+	}
+	if res.Verdict != zenChatFreeExhausted {
+		t.Fatalf("verdict = %v, want zenChatFreeExhausted", res.Verdict)
+	}
+	if res.RetryAfter != 7*time.Second {
+		t.Fatalf("retryAfter = %v, want 7s", res.RetryAfter)
+	}
+}
+
+// TestProbeOpenCodeZen_RetryAfterMSBodyWinsOverHeader pins zen's documented
+// body field (retry-after-ms, milliseconds) taking priority over the coarser
+// HTTP header when the provider sends both.
+func TestProbeOpenCodeZen_RetryAfterMSBodyWinsOverHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"error":{"type":"FreeUsageLimitError","retry-after-ms":1500}}`))
+	}))
+	defer srv.Close()
+	res, err := probeOpenCodeZenChatUsability(context.Background(), srv.URL, "k", "m")
+	if err != nil {
+		t.Fatalf("transport error: %v", err)
+	}
+	if res.Verdict != zenChatFreeExhausted {
+		t.Fatalf("verdict = %v, want zenChatFreeExhausted", res.Verdict)
+	}
+	if res.RetryAfter != 1500*time.Millisecond {
+		t.Fatalf("retryAfter = %v, want 1500ms (body wins over header)", res.RetryAfter)
 	}
 }

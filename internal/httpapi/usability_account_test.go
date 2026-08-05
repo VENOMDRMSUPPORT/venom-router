@@ -31,8 +31,8 @@ func (f *fakeCertLifecycle) RecordAttempt(_ context.Context, op string, o intell
 }
 
 func probeByModel(m map[string]zenChatUsability) usabilityProbeFn {
-	return func(_ context.Context, _, _, modelID string) (zenChatUsability, error) {
-		return m[modelID], nil
+	return func(_ context.Context, _, _, modelID string) (usabilityProbeResult, error) {
+		return usabilityProbeResult{Verdict: m[modelID]}, nil
 	}
 }
 
@@ -120,11 +120,11 @@ func TestVerifyAccountChatUsability_TransportFailureSkipsWithoutRecording(t *tes
 		{OfferingOperationID: "op-b", ProviderModelID: "big-pickle"},
 	}
 	// op-a's probe hits a transport failure; op-b succeeds.
-	probe := func(_ context.Context, _, _, modelID string) (zenChatUsability, error) {
+	probe := func(_ context.Context, _, _, modelID string) (usabilityProbeResult, error) {
 		if modelID == "unreachable" {
-			return zenChatInconclusive, errors.New("connection refused")
+			return usabilityProbeResult{Verdict: zenChatInconclusive}, errors.New("connection refused")
 		}
-		return zenChatUsable, nil
+		return usabilityProbeResult{Verdict: zenChatUsable}, nil
 	}
 
 	got := verifyAccountChatUsability(context.Background(), lc, probe, "http://x", "key", offerings)

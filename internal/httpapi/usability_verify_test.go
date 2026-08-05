@@ -35,19 +35,19 @@ func (f *fakeCertRecorder) RecordAttempt(_ context.Context, offeringOperationID 
 }
 
 func fakeProbe(v zenChatUsability, err error) usabilityProbeFn {
-	return func(context.Context, string, string, string) (zenChatUsability, error) {
-		return v, err
+	return func(context.Context, string, string, string) (usabilityProbeResult, error) {
+		return usabilityProbeResult{Verdict: v}, err
 	}
 }
 
 func TestExecuteChatUsabilityProbe_UsableRecordsSupportedVerdict(t *testing.T) {
 	rec := &fakeCertRecorder{}
-	verdict, err := executeChatUsabilityProbe(context.Background(), rec, fakeProbe(zenChatUsable, nil), "http://x", "key", "op-1", "big-pickle", 1)
+	res, err := executeChatUsabilityProbe(context.Background(), rec, fakeProbe(zenChatUsable, nil), "http://x", "key", "op-1", "big-pickle", 1)
 	if err != nil {
 		t.Fatalf("error = %v", err)
 	}
-	if verdict != zenChatUsable {
-		t.Fatalf("verdict = %v, want zenChatUsable", verdict)
+	if res.Verdict != zenChatUsable {
+		t.Fatalf("verdict = %v, want zenChatUsable", res.Verdict)
 	}
 	if rec.calls != 1 {
 		t.Fatalf("RecordAttempt calls = %d, want 1", rec.calls)

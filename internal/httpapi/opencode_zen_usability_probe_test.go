@@ -61,8 +61,8 @@ func TestProbeOpenCodeZenChatUsability(t *testing.T) {
 			if err != nil {
 				t.Fatalf("probeOpenCodeZenChatUsability() error = %v", err)
 			}
-			if got != tc.want {
-				t.Fatalf("probeOpenCodeZenChatUsability() = %v, want %v", got, tc.want)
+			if got.Verdict != tc.want {
+				t.Fatalf("probeOpenCodeZenChatUsability() = %v, want %v", got.Verdict, tc.want)
 			}
 			if gotModel != "big-pickle" {
 				t.Fatalf("probe sent model %q, want the requested big-pickle", gotModel)

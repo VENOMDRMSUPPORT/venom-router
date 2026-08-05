@@ -117,12 +117,12 @@ func TestProbeClinePassChatUsability_WireShape(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	stored := `{"access_token":"raw-token","refresh_token":"r","expires_at":99}`
-	verdict, err := probeClinePassChatUsability(context.Background(), srv.URL, stored, "kimi-k2")
+	res, err := probeClinePassChatUsability(context.Background(), srv.URL, stored, "kimi-k2")
 	if err != nil {
 		t.Fatalf("probe: %v", err)
 	}
-	if verdict != zenChatUsable {
-		t.Fatalf("verdict = %v, want usable", verdict)
+	if res.Verdict != zenChatUsable {
+		t.Fatalf("verdict = %v, want usable", res.Verdict)
 	}
 	if gotPath != "/api/v1/chat/completions" {
 		t.Fatalf("path = %q, want /api/v1/chat/completions", gotPath)
@@ -149,12 +149,12 @@ func TestProbeClinePassChatUsability_UnparseableCredentialIsAuthFailure(t *testi
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
 	t.Cleanup(srv.Close)
 
-	verdict, err := probeClinePassChatUsability(context.Background(), srv.URL, "not-json", "m")
+	res, err := probeClinePassChatUsability(context.Background(), srv.URL, "not-json", "m")
 	if err != nil {
 		t.Fatalf("probe: %v", err)
 	}
-	if verdict != zenChatAuthFailure {
-		t.Fatalf("verdict = %v, want auth failure", verdict)
+	if res.Verdict != zenChatAuthFailure {
+		t.Fatalf("verdict = %v, want auth failure", res.Verdict)
 	}
 	if calls != 0 {
 		t.Fatalf("server received %d calls, want 0", calls)

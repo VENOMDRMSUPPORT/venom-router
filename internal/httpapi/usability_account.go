@@ -71,15 +71,15 @@ func certifyDeclaredCapabilities(ctx context.Context, rec certRecorder, caps []d
 func verifyAccountChatUsability(ctx context.Context, rec certRecorder, probe usabilityProbeFn, baseURL, key string, offerings []chatOffering) usabilityRunSummary {
 	var s usabilityRunSummary
 	for _, off := range offerings {
-		verdict, err := executeChatUsabilityProbe(ctx, rec, probe, baseURL, key, off.OfferingOperationID, off.ProviderModelID, 1)
+		res, err := executeChatUsabilityProbe(ctx, rec, probe, baseURL, key, off.OfferingOperationID, off.ProviderModelID, 1)
 		if err != nil {
 			continue
 		}
 		s.Probed++
-		if verdict == zenChatUsable {
+		if res.Verdict == zenChatUsable {
 			s.Usable++
 		}
-		if verdict == zenChatAuthFailure {
+		if res.Verdict == zenChatAuthFailure {
 			s.StoppedOnAuth = true
 			return s
 		}
