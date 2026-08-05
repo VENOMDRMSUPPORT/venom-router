@@ -18,12 +18,25 @@ import (
 // size the owner tunes.
 const usabilitySweepAccountLimit = 100
 
-// usabilitySweepBudget caps how long one sweep may run. The boot scheduler runs
-// ticks SEQUENTIALLY on a 30s interval, so an unbounded sweep (60 models that
-// each time out at 15s) would starve the quota/probe ticks. A per-run deadline
-// keeps every sweep well under the interval; probes still in flight when it
-// fires return a context error (a transport failure -> skipped, never recorded),
-// and the remaining ops are picked up on the next tick.
+// usabilitySweepBudget caps how long any ONE PHASE of a sweep may run. The boot
+// scheduler runs ticks SEQUENTIALLY on a 30s interval and hands the tick the
+// root context with no per-tick timeout of its own, so an unbounded sweep (60
+// models that each time out at 15s, or one account query stuck behind a long
+// transaction on the single-connection SQLite pool) would starve the
+// quota/probe ticks.
+//
+// usabilityTick.Run therefore applies this budget TWICE OVER, never once around
+// the whole sweep:
+//
+//   - the LIST phase gets its own deadline (it runs before any lane exists);
+//   - EACH provider lane gets its own, independent deadline.
+//
+// Because the lanes run in PARALLEL, that still bounds one sweep's probe phase
+// at a single budget of wall-clock no matter how many providers are swept —
+// while guaranteeing that a provider which burns its whole budget on timeouts
+// shortens nobody else's. Probes still in flight when a lane's deadline fires
+// return a context error (a transport failure -> skipped, never recorded), and
+// the remaining ops are picked up on the next tick.
 const usabilitySweepBudget = 25 * time.Second
 
 // usabilityProviderSpec is one provider's model-usability probe wiring: the

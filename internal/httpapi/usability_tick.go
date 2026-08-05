@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 // accountToVerify is one account the sweep should verify: its provider (for
@@ -23,6 +24,18 @@ type accountToVerify struct {
 type usabilityTick struct {
 	list   func(ctx context.Context) ([]accountToVerify, error)
 	verify func(ctx context.Context, target accountToVerify) (usabilityRunSummary, error)
+	// budget bounds the list phase and EACH provider lane, separately. Zero
+	// means usabilitySweepBudget; it is a field only so tests can pin the
+	// deadline behaviour without waiting out the production budget.
+	budget time.Duration
+}
+
+// sweepBudget is the deadline one phase of the sweep may consume.
+func (t *usabilityTick) sweepBudget() time.Duration {
+	if t.budget <= 0 {
+		return usabilitySweepBudget
+	}
+	return t.budget
 }
 
 // Run verifies every account the lister returns, one LANE per provider running
@@ -39,11 +52,22 @@ type usabilityTick struct {
 // budget, and the per-model pacer inside verifyAccountChatUsability is the
 // parallelism that provider is allowed.
 //
-// Each lane gets its OWN usabilitySweepBudget deadline rather than sharing one
-// around the whole sweep — a provider that burns its full budget on timeouts
-// must not shorten anybody else's.
+// Each lane gets its OWN sweepBudget deadline rather than sharing one around
+// the whole sweep — a provider that burns its full budget on timeouts must not
+// shorten anybody else's.
+//
+// The LIST phase gets its own deadline too, and needs one: it runs before any
+// lane exists, on the raw scheduler context, and the scheduler passes the root
+// context through with no per-tick timeout. The lister issues one account query
+// per provider against a single-connection SQLite pool, so a long transaction
+// elsewhere would otherwise block the whole sweep — and every other sequential
+// tick behind it — indefinitely. Its deadline is released before the lanes
+// start: the accounts are plain data by then, and the lanes must each get a
+// full, independent budget rather than the list phase's leftovers.
 func (t *usabilityTick) Run(ctx context.Context) error {
-	accounts, err := t.list(ctx)
+	listCtx, cancelList := context.WithTimeout(ctx, t.sweepBudget())
+	accounts, err := t.list(listCtx)
+	cancelList()
 	if err != nil {
 		return err
 	}
@@ -56,7 +80,7 @@ func (t *usabilityTick) Run(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			laneCtx, cancel := context.WithTimeout(ctx, usabilitySweepBudget)
+			laneCtx, cancel := context.WithTimeout(ctx, t.sweepBudget())
 			defer cancel()
 			for _, a := range targets {
 				if _, err := t.verify(laneCtx, a); err != nil {
