@@ -290,29 +290,78 @@ func (r *ProbeRunRepo) CountAttempts(ctx context.Context, offeringOperationID st
 	return count, nil
 }
 
-// SucceededOfferingOperationIDs returns the subset of offeringOperationIDs
-// that have at least one SUCCEEDED probe_runs row — the batched (task-5)
-// query the httpapi assembler uses to derive capability provenance
-// ("probed" vs "declared") for one page of offerings at a time, ONE query
-// per page rather than one per offering-operation (no N+1). An empty input
-// returns an empty, non-nil map without touching the database; an id with
-// no succeeded run (or no probe_runs row at all) is simply absent from the
-// result — never present with a false value.
-func (r *ProbeRunRepo) SucceededOfferingOperationIDs(ctx context.Context, offeringOperationIDs []string) (map[string]bool, error) {
-	out := make(map[string]bool, len(offeringOperationIDs))
-	if len(offeringOperationIDs) == 0 {
+// SucceededOfferingOperationIDs returns the subset of ids in thresholds that
+// have a SUCCEEDED probe_runs row finishing AT OR AFTER that id's threshold
+// — the batched (task-5) query the httpapi assembler uses to derive
+// capability provenance ("probed" vs "declared") for one page of offerings
+// at a time, ONE query per page rather than one per offering-operation (no
+// N+1).
+//
+// thresholds maps offering_operation_id -> the CURRENT certification's
+// certified_at (Unix seconds). This is the whole-branch-review fix
+// (2026-08-05): the prior version matched ANY succeeded run ever, untied to
+// the certification it was meant to corroborate. That let an
+// out-of-cooldown certification EXPIRE, get re-certified from a bare
+// DECLARATION (no new probe), and still surface as "probed" purely because
+// some OLDER, pre-expiry probe run happened to have succeeded once — stale
+// evidence laundering a certification it never actually attested to. A run
+// only counts when it finished no earlier than the certification it is
+// being asked to corroborate.
+//
+// A threshold of 0 (or negative) is the fail-closed "this id was never
+// really certified" sentinel: it counts nothing, ever, regardless of any
+// succeeded run's finish time — an all-time-valid Unix-epoch threshold
+// would otherwise let "any run at all" satisfy it. Callers always pass the
+// real certified_at for a certified+supported operation; storage enforces
+// the fail-closed rule independently so a caller bug can never fabricate
+// "probed".
+//
+// An empty input returns an empty, non-nil map without touching the
+// database; an id with no succeeded run, only a failed run, a threshold of
+// 0, or a succeeded run that finished before its threshold is simply absent
+// from the result — never present with a false value. An id never passed in
+// thresholds is likewise never present, however its own probe history reads.
+//
+// Implementation note: an IN (...) query cannot carry a PER-ROW threshold,
+// so this fetches MAX(finished_at) grouped by offering_operation_id for the
+// requested ids in ONE query, then compares each id's max against
+// thresholds[id] here in Go — simpler than a joined VALUES/json_each table
+// and exactly as correct, since each id's threshold is only ever compared
+// against ITS OWN max.
+func (r *ProbeRunRepo) SucceededOfferingOperationIDs(ctx context.Context, thresholds map[string]int64) (map[string]bool, error) {
+	out := make(map[string]bool, len(thresholds))
+	if len(thresholds) == 0 {
 		return out, nil
 	}
 
-	placeholders := make([]string, len(offeringOperationIDs))
-	args := make([]any, len(offeringOperationIDs))
-	for i, id := range offeringOperationIDs {
-		placeholders[i] = "?"
-		args[i] = id
+	ids := make([]string, 0, len(thresholds))
+	placeholders := make([]string, 0, len(thresholds))
+	args := make([]any, 0, len(thresholds))
+	for id, threshold := range thresholds {
+		if threshold <= 0 {
+			// Fail closed: never query for an id whose threshold can never
+			// be satisfied anyway (see doc comment above).
+			continue
+		}
+		ids = append(ids, id)
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	if len(ids) == 0 {
+		return out, nil
 	}
 
-	query := `SELECT DISTINCT offering_operation_id FROM probe_runs WHERE execution = 'succeeded' AND offering_operation_id IN (` +
-		strings.Join(placeholders, ",") + `)`
+	// Placeholder-growth note: this IN(...) list grows with the number of
+	// distinct offering_operation_ids on one page of offerings — bounded by
+	// httpapi's own maxPageLimit (200 offerings) times models.Operation's
+	// fixed eight-value vocabulary, i.e. at most 1600 params per call, well
+	// under modernc.org/sqlite's placeholder ceiling of 32766. Never remove
+	// the caller-side page bound on the assumption this query can absorb an
+	// unbounded id list.
+	query := `SELECT offering_operation_id, MAX(finished_at) FROM probe_runs
+		 WHERE execution = 'succeeded' AND offering_operation_id IN (` +
+		strings.Join(placeholders, ",") + `)
+		 GROUP BY offering_operation_id`
 	rows, err := r.db.Conn().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("storage: succeeded offering-operation ids: %w", err)
@@ -321,10 +370,13 @@ func (r *ProbeRunRepo) SucceededOfferingOperationIDs(ctx context.Context, offeri
 
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
+		var maxFinished sql.NullInt64
+		if err := rows.Scan(&id, &maxFinished); err != nil {
 			return nil, fmt.Errorf("storage: succeeded offering-operation ids: scan: %w", err)
 		}
-		out[id] = true
+		if maxFinished.Valid && maxFinished.Int64 >= thresholds[id] {
+			out[id] = true
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("storage: succeeded offering-operation ids: %w", err)

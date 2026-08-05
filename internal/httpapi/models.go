@@ -58,22 +58,37 @@ func NewModelsHandler(catalog *storage.CatalogRepo, now func() time.Time) *Model
 	return &ModelsHandler{catalog: catalog, resolver: resolver, now: now}
 }
 
-// collectOfferingOperationIDs gathers every offering_operations row id
-// present across rows' certified operations, deduplicated — the batched
-// IN (...) key set task-5's provenance lookup queries with, ONE query per
-// page rather than one per offering-operation.
-func collectOfferingOperationIDs(rows []storage.CatalogOfferingRow) []string {
-	seen := make(map[string]bool)
-	var ids []string
+// collectOfferingOperationThresholds gathers every offering_operations row
+// id present across rows' certified operations, deduplicated, mapped to
+// THAT id's own certification's certified_at (Unix seconds; 0 when the
+// operation has no certified_at at all) — the batched per-id threshold set
+// task-5's provenance lookup queries with, ONE query per page rather than
+// one per offering-operation.
+//
+// The threshold is load-bearing (whole-branch-review fix, 2026-08-05): a
+// succeeded probe_runs row only proves the CURRENT certification when it
+// finished at or after that certification was earned. Without a per-id
+// threshold, a stale succeeded run from a PRIOR (now-expired,
+// re-certified-from-declaration) certification could launder the new one as
+// "probed" purely because some older probe happened to have succeeded once.
+func collectOfferingOperationThresholds(rows []storage.CatalogOfferingRow) map[string]int64 {
+	thresholds := make(map[string]int64)
 	for _, row := range rows {
 		for _, op := range row.Operations {
-			if op.ID != "" && !seen[op.ID] {
-				seen[op.ID] = true
-				ids = append(ids, op.ID)
+			if op.ID == "" {
+				continue
 			}
+			if _, seen := thresholds[op.ID]; seen {
+				continue
+			}
+			var threshold int64
+			if op.CertifiedAt != nil {
+				threshold = op.CertifiedAt.Unix()
+			}
+			thresholds[op.ID] = threshold
 		}
 	}
-	return ids
+	return thresholds
 }
 
 // succeededProbeIDs runs task-5's ONE batched probe_runs query for an
@@ -86,11 +101,11 @@ func (h *ModelsHandler) succeededProbeIDs(ctx context.Context, rows []storage.Ca
 	if h.probeRuns == nil {
 		return nil, nil
 	}
-	ids := collectOfferingOperationIDs(rows)
-	if len(ids) == 0 {
+	thresholds := collectOfferingOperationThresholds(rows)
+	if len(thresholds) == 0 {
 		return nil, nil
 	}
-	return h.probeRuns.SucceededOfferingOperationIDs(ctx, ids)
+	return h.probeRuns.SucceededOfferingOperationIDs(ctx, thresholds)
 }
 
 // buildProjection assembles one offering's intelligence.ProjectionInput from

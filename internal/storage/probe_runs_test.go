@@ -393,31 +393,61 @@ func TestProbeRunRepo_ReclaimStale(t *testing.T) {
 }
 
 // TestProbeRunRepo_SucceededOfferingOperationIDs proves the batched
-// task-5 provenance lookup: given a set of offering_operation_ids, it
-// returns exactly the ones with at least one SUCCEEDED probe_runs row —
-// one with a succeeded run, one with only a failed run, one with no run at
-// all, and one that is not even in the requested set (must never appear).
-// It also proves an empty input returns an empty, non-nil map.
+// task-5 provenance lookup, NOW constrained per-id to the CURRENT
+// certification's certified_at threshold (the whole-branch-review fix): a
+// succeeded run only counts when it finished AT OR AFTER the threshold the
+// caller supplies for that id — never "any succeeded run ever", which would
+// let a run that predates a LATER re-certification launder that
+// re-certification as "probed" off stale, pre-expiry evidence.
+//
+// Cases: a run that finished strictly before its threshold (stale —
+// predates the current certification); a run that finished exactly at its
+// threshold; a run that finished strictly after its threshold; a run with a
+// threshold of 0 (fail-closed "never certified" sentinel) despite a real
+// succeeded run existing; a run with only a failed attempt; an id with no
+// run at all; and an id with a succeeded run that is simply never present
+// in the requested thresholds map (must never appear). It also proves an
+// empty input returns an empty, non-nil map.
 func TestProbeRunRepo_SucceededOfferingOperationIDs(t *testing.T) {
 	now := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
 	db := migratedCatalogDB(t)
 	repo := NewProbeRunRepo(db, fixedClock(now), 7*24*time.Hour)
 	ctx := context.Background()
 
-	succeededOpID := seedOfferingOperationChain(t, db, "acct-succ", "prov-succ", "model-succ", "pm-succ")
+	atOpID := seedOfferingOperationChain(t, db, "acct-at", "prov-at", "model-at", "pm-at")
+	afterOpID := seedOfferingOperationChain(t, db, "acct-after", "prov-after", "model-after", "pm-after")
+	staleOpID := seedOfferingOperationChain(t, db, "acct-stale", "prov-stale", "model-stale", "pm-stale")
+	zeroThresholdOpID := seedOfferingOperationChain(t, db, "acct-zero", "prov-zero", "model-zero", "pm-zero")
 	failedOpID := seedOfferingOperationChain(t, db, "acct-failed", "prov-failed", "model-failed", "pm-failed")
 	noRunOpID := seedOfferingOperationChain(t, db, "acct-norun", "prov-norun", "model-norun", "pm-norun")
 	notRequestedOpID := seedOfferingOperationChain(t, db, "acct-unreq", "prov-unreq", "model-unreq", "pm-unreq")
 
-	if err := repo.Start(ctx, ProbeRunParams{
-		ID: "run-succ", OfferingOperationID: succeededOpID, AccountID: "acct-succ", ProviderID: "prov-succ",
-		Operation: "tools", Class: intelligence.ProbeStandard, StartedAt: now,
-	}); err != nil {
-		t.Fatalf("start succeeded run: %v", err)
+	finishSucceeded := func(runID, opID, accountID, providerID string, finishedAt time.Time) {
+		t.Helper()
+		if err := repo.Start(ctx, ProbeRunParams{
+			ID: runID, OfferingOperationID: opID, AccountID: accountID, ProviderID: providerID,
+			Operation: "tools", Class: intelligence.ProbeStandard, StartedAt: finishedAt,
+		}); err != nil {
+			t.Fatalf("start run %q: %v", runID, err)
+		}
+		if err := repo.Finish(ctx, runID, intelligence.ProbeSucceeded, finishedAt); err != nil {
+			t.Fatalf("finish run %q: %v", runID, err)
+		}
 	}
-	if err := repo.Finish(ctx, "run-succ", intelligence.ProbeSucceeded, now); err != nil {
-		t.Fatalf("finish succeeded run: %v", err)
-	}
+
+	// atOpID: certified_at == now; the run finishes exactly at that instant.
+	finishSucceeded("run-at", atOpID, "acct-at", "prov-at", now)
+	// afterOpID: certified_at == now; the run finishes an hour AFTER it —
+	// the re-certification-then-real-probe order the fix must accept.
+	finishSucceeded("run-after", afterOpID, "acct-after", "prov-after", now.Add(time.Hour))
+	// staleOpID: the run finished an hour BEFORE certified_at == now — the
+	// exact laundering scenario the finding describes (a probe that
+	// succeeded under a PRIOR certification must not prove the current one).
+	finishSucceeded("run-stale", staleOpID, "acct-stale", "prov-stale", now.Add(-time.Hour))
+	// zeroThresholdOpID: a real succeeded run exists, finished at now, but
+	// the caller passes threshold 0 (fail-closed "never actually certified"
+	// sentinel) — it must never count, regardless of when the run finished.
+	finishSucceeded("run-zero", zeroThresholdOpID, "acct-zero", "prov-zero", now)
 
 	if err := repo.Start(ctx, ProbeRunParams{
 		ID: "run-failed", OfferingOperationID: failedOpID, AccountID: "acct-failed", ProviderID: "prov-failed",
@@ -430,23 +460,34 @@ func TestProbeRunRepo_SucceededOfferingOperationIDs(t *testing.T) {
 	}
 
 	// A succeeded run exists for notRequestedOpID too, but it must never
-	// surface because it is never passed in the requested id list below.
-	if err := repo.Start(ctx, ProbeRunParams{
-		ID: "run-unrequested", OfferingOperationID: notRequestedOpID, AccountID: "acct-unreq", ProviderID: "prov-unreq",
-		Operation: "tools", Class: intelligence.ProbeStandard, StartedAt: now,
-	}); err != nil {
-		t.Fatalf("start unrequested run: %v", err)
-	}
-	if err := repo.Finish(ctx, "run-unrequested", intelligence.ProbeSucceeded, now); err != nil {
-		t.Fatalf("finish unrequested run: %v", err)
+	// surface because it is never passed in the requested thresholds map
+	// below.
+	finishSucceeded("run-unrequested", notRequestedOpID, "acct-unreq", "prov-unreq", now)
+
+	thresholds := map[string]int64{
+		atOpID:            now.Unix(),
+		afterOpID:         now.Unix(),
+		staleOpID:         now.Unix(),
+		zeroThresholdOpID: 0,
+		failedOpID:        now.Unix(),
+		noRunOpID:         now.Unix(),
 	}
 
-	got, err := repo.SucceededOfferingOperationIDs(ctx, []string{succeededOpID, failedOpID, noRunOpID})
+	got, err := repo.SucceededOfferingOperationIDs(ctx, thresholds)
 	if err != nil {
 		t.Fatalf("SucceededOfferingOperationIDs: %v", err)
 	}
-	if !got[succeededOpID] {
-		t.Errorf("succeededOpID missing from result: %+v", got)
+	if !got[atOpID] {
+		t.Errorf("atOpID missing from result (run finished AT the threshold): %+v", got)
+	}
+	if !got[afterOpID] {
+		t.Errorf("afterOpID missing from result (run finished AFTER the threshold): %+v", got)
+	}
+	if got[staleOpID] {
+		t.Errorf("staleOpID present in result, want absent (the succeeded run predates the current certification): %+v", got)
+	}
+	if got[zeroThresholdOpID] {
+		t.Errorf("zeroThresholdOpID present in result, want absent (threshold 0 must fail closed despite a real succeeded run): %+v", got)
 	}
 	if got[failedOpID] {
 		t.Errorf("failedOpID present in result, want absent (only a terminal_failure run exists): %+v", got)
@@ -457,8 +498,8 @@ func TestProbeRunRepo_SucceededOfferingOperationIDs(t *testing.T) {
 	if got[notRequestedOpID] {
 		t.Errorf("notRequestedOpID present in result despite never being requested: %+v", got)
 	}
-	if len(got) != 1 {
-		t.Fatalf("len(got) = %d, want exactly 1 (%+v)", len(got), got)
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want exactly 2 (%+v)", len(got), got)
 	}
 
 	empty, err := repo.SucceededOfferingOperationIDs(ctx, nil)

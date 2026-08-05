@@ -41,9 +41,10 @@ func newTestModelsHandler(t *testing.T, clock func() time.Time) (*ModelsHandler,
 
 // offeringOpSeed is one offering_operations + certifications row to seed.
 type offeringOpSeed struct {
-	Operation string
-	Status    string // "" defaults to "discovered"
-	Truth     string // "" defaults to "unknown"
+	Operation   string
+	Status      string     // "" defaults to "discovered"
+	Truth       string     // "" defaults to "unknown"
+	CertifiedAt *time.Time // nil leaves certified_at NULL (never certified)
 }
 
 // offeringSeed is everything modelsSeedOffering needs to seed one full
@@ -111,9 +112,13 @@ func modelsSeedOffering(t *testing.T, db *storage.DB, s offeringSeed) {
 		); err != nil {
 			t.Fatalf("seed offering_operation %s: %v", op.Operation, err)
 		}
+		var certifiedAtArg any
+		if op.CertifiedAt != nil {
+			certifiedAtArg = op.CertifiedAt.Unix()
+		}
 		if _, err := db.Conn().Exec(
-			`INSERT INTO certifications (offering_operation_id, status, capability_truth, version, created_at, updated_at) VALUES (?, ?, ?, 1, 0, 0)`,
-			opID, status, truth,
+			`INSERT INTO certifications (offering_operation_id, status, capability_truth, version, certified_at, created_at, updated_at) VALUES (?, ?, ?, 1, ?, 0, 0)`,
+			opID, status, truth, certifiedAtArg,
 		); err != nil {
 			t.Fatalf("seed certification for %s: %v", op.Operation, err)
 		}
@@ -628,16 +633,23 @@ func TestModels_CapabilityProvenanceFromProbeRuns(t *testing.T) {
 	h, db := newTestModelsHandler(t, func() time.Time { return clock })
 	h = h.WithProbeRuns(storage.NewProbeRunRepo(db, func() time.Time { return clock }, 7*24*time.Hour))
 
+	// certifiedAt is BEFORE the probe run's finished_at below — the run
+	// proves THIS certification (finished at/after it was earned), matching
+	// the fixed-branch-review threshold rule in
+	// storage.ProbeRunRepo.SucceededOfferingOperationIDs.
+	certifiedAt := clock.Add(-time.Minute)
+
 	// Offering A: certified+supported chat (no probe run at all) + certified+
-	// supported tools WITH a succeeded probe run.
+	// supported tools WITH a succeeded probe run that finished AFTER
+	// certified_at.
 	modelsSeedOffering(t, db, offeringSeed{
 		AccountID: "acct-prov-a", ProviderID: "prov-prov-a",
 		ProviderModelID: "pm-prov-a", ModelID: "model-prov-a",
 		ContextLength:    modelsIntPtr(100000),
 		CapabilitiesJSON: modelsStrPtr(`["chat","tools"]`),
 		Operations: []offeringOpSeed{
-			{Operation: "chat", Status: "certified", Truth: "supported"},
-			{Operation: "tools", Status: "certified", Truth: "supported"},
+			{Operation: "chat", Status: "certified", Truth: "supported", CertifiedAt: &certifiedAt},
+			{Operation: "tools", Status: "certified", Truth: "supported", CertifiedAt: &certifiedAt},
 		},
 	})
 	// Offering B: certified+supported tools with NO probe run.
@@ -647,7 +659,7 @@ func TestModels_CapabilityProvenanceFromProbeRuns(t *testing.T) {
 		ContextLength:    modelsIntPtr(100000),
 		CapabilitiesJSON: modelsStrPtr(`["tools"]`),
 		Operations: []offeringOpSeed{
-			{Operation: "tools", Status: "certified", Truth: "supported"},
+			{Operation: "tools", Status: "certified", Truth: "supported", CertifiedAt: &certifiedAt},
 		},
 	})
 
@@ -704,6 +716,112 @@ func TestModels_CapabilityProvenanceFromProbeRuns(t *testing.T) {
 	}
 	if got := byModel["pm-prov-b"]["tools"]; got != "declared" {
 		t.Errorf("pm-prov-b tools provenance = %q, want \"declared\" (no probe run exists)", got)
+	}
+}
+
+// TestModels_CapabilityProvenanceIgnoresPreCertificationProbeRun is the
+// whole-branch-review fix's real-sqlite proof (2026-08-05): a succeeded
+// probe_runs row that finished BEFORE the offering-operation's CURRENT
+// certified_at must never render "probed" — that is exactly the laundering
+// bug the fix closes (a certification EXPIRES, is re-certified from a bare
+// DECLARATION with no new probe, and a stale pre-expiry succeeded run must
+// not be allowed to make the new certification look runtime-proven).
+//
+// Two offerings prove both sides of the threshold in one real-sqlite pass:
+// "stale" has a succeeded run finishing BEFORE certified_at (must read
+// "declared"); "fresh" has a succeeded run finishing exactly AT
+// certified_at (must read "probed" — the >= boundary is inclusive).
+func TestModels_CapabilityProvenanceIgnoresPreCertificationProbeRun(t *testing.T) {
+	clock := fixedModelsClock()
+	h, db := newTestModelsHandler(t, func() time.Time { return clock })
+	h = h.WithProbeRuns(storage.NewProbeRunRepo(db, func() time.Time { return clock }, 7*24*time.Hour))
+
+	certifiedAt := clock
+
+	modelsSeedOffering(t, db, offeringSeed{
+		AccountID: "acct-stale", ProviderID: "prov-stale",
+		ProviderModelID: "pm-stale", ModelID: "model-stale",
+		ContextLength:    modelsIntPtr(100000),
+		CapabilitiesJSON: modelsStrPtr(`["tools"]`),
+		Operations: []offeringOpSeed{
+			{Operation: "tools", Status: "certified", Truth: "supported", CertifiedAt: &certifiedAt},
+		},
+	})
+	modelsSeedOffering(t, db, offeringSeed{
+		AccountID: "acct-fresh", ProviderID: "prov-fresh",
+		ProviderModelID: "pm-fresh", ModelID: "model-fresh",
+		ContextLength:    modelsIntPtr(100000),
+		CapabilitiesJSON: modelsStrPtr(`["tools"]`),
+		Operations: []offeringOpSeed{
+			{Operation: "tools", Status: "certified", Truth: "supported", CertifiedAt: &certifiedAt},
+		},
+	})
+
+	probeRuns := storage.NewProbeRunRepo(db, func() time.Time { return clock }, 7*24*time.Hour)
+	ctx := context.Background()
+
+	// stale: the succeeded run finished an HOUR BEFORE certified_at — evidence
+	// from a certification cycle that no longer exists.
+	staleFinishedAt := certifiedAt.Add(-time.Hour)
+	if err := probeRuns.Start(ctx, storage.ProbeRunParams{
+		ID: "run-stale-tools", OfferingOperationID: "pm-stale-op-tools",
+		AccountID: "acct-stale", ProviderID: "prov-stale",
+		Operation: "tools", Class: intelligence.ProbeStandard, StartedAt: staleFinishedAt,
+	}); err != nil {
+		t.Fatalf("start stale probe run: %v", err)
+	}
+	if err := probeRuns.Finish(ctx, "run-stale-tools", intelligence.ProbeSucceeded, staleFinishedAt); err != nil {
+		t.Fatalf("finish stale probe run: %v", err)
+	}
+
+	// fresh: the succeeded run finished exactly AT certified_at.
+	if err := probeRuns.Start(ctx, storage.ProbeRunParams{
+		ID: "run-fresh-tools", OfferingOperationID: "pm-fresh-op-tools",
+		AccountID: "acct-fresh", ProviderID: "prov-fresh",
+		Operation: "tools", Class: intelligence.ProbeStandard, StartedAt: certifiedAt,
+	}); err != nil {
+		t.Fatalf("start fresh probe run: %v", err)
+	}
+	if err := probeRuns.Finish(ctx, "run-fresh-tools", intelligence.ProbeSucceeded, certifiedAt); err != nil {
+		t.Fatalf("finish fresh probe run: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeOfferings(rec, modelsRequest(http.MethodGet, "/api/control/v1/offerings"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+
+	var env struct {
+		Data []struct {
+			ProviderModelID string `json:"provider_model_id"`
+			Capabilities    []struct {
+				Operation  string `json:"operation"`
+				Provenance string `json:"provenance"`
+			} `json:"capabilities"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v; body = %q", err, rec.Body.String())
+	}
+	if len(env.Data) != 2 {
+		t.Fatalf("len(data) = %d, want 2; body = %s", len(env.Data), rec.Body.String())
+	}
+
+	byModel := map[string]map[string]string{}
+	for _, o := range env.Data {
+		caps := map[string]string{}
+		for _, c := range o.Capabilities {
+			caps[c.Operation] = c.Provenance
+		}
+		byModel[o.ProviderModelID] = caps
+	}
+
+	if got := byModel["pm-stale"]["tools"]; got != "declared" {
+		t.Errorf("pm-stale tools provenance = %q, want \"declared\" (the succeeded run predates the current certification and must not launder it as probed)", got)
+	}
+	if got := byModel["pm-fresh"]["tools"]; got != "probed" {
+		t.Errorf("pm-fresh tools provenance = %q, want \"probed\" (the succeeded run finished at/after certified_at)", got)
 	}
 }
 
