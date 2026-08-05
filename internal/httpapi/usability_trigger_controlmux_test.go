@@ -261,7 +261,7 @@ func TestControlMux_DiscoverySuccess_FastLaneCertifiesFreshChatModelEndToEnd(t *
 	// Discovery must have seeded the chat op at `observed` — the precondition
 	// the whole finding is about. If this ever reads `probing`, something else
 	// started driving the edge and this test stopped proving anything.
-	status, truth, found := chatCertificationOf(t, db, accountID, usabilityTriggerFastLaneFreeModelID)
+	status, _, found := chatCertificationOf(t, db, accountID, usabilityTriggerFastLaneFreeModelID)
 	if !found {
 		t.Fatalf("discovery created no chat offering-operation for %q", usabilityTriggerFastLaneFreeModelID)
 	}
@@ -269,6 +269,7 @@ func TestControlMux_DiscoverySuccess_FastLaneCertifiesFreshChatModelEndToEnd(t *
 		t.Fatalf("chat certification status right after discovery = %q, want observed (or already certified if the fast lane won the race)", status)
 	}
 
+	var truth string
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		status, truth, found = chatCertificationOf(t, db, accountID, usabilityTriggerFastLaneFreeModelID)
