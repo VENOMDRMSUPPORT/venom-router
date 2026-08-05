@@ -622,5 +622,11 @@ falsely claims them and the future Design System is not required to build V1 scr
     operation's transport behavior, discovery, per-operation certification, funding + quota
     reservation, fallback, tier policy, diagnostics, playground/UI, a roadmap phase, and an
     acceptance gate.
+- **Reasoning.** `reasoning` (added 2026-08-05, bounded additive vocabulary unfreeze — see
+  [02 §3](02-domain-model.md#3-entities) / [04 §5](04-model-intelligence.md#5-certification))
+  remains a *recognized* operation — a provider's declared reasoning capability (e.g. claude-code's
+  official `capabilities.reasoning`) is discoverable and certifiable — but, on the same terms as
+  `image_generation` above: it is **not** part of the V1 tier capability surface, no V1 tier routes
+  it, and no V1 acceptance gate depends on it.
 - **Embeddings / audio operations**, cross-provider model equivalence, and per-offering funding
   overrides remain future scope (unchanged from the V1 exclusions elsewhere in the spec).

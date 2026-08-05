@@ -22,7 +22,7 @@ func TestParseAvailability_RejectsUnknownValue(t *testing.T) {
 func TestParseOperation_ValidVocabulary(t *testing.T) {
 	valid := []string{
 		"chat", "streaming", "tools", "structured_output",
-		"vision", "context_window", "image_generation",
+		"vision", "context_window", "image_generation", "reasoning",
 	}
 	for _, s := range valid {
 		if _, err := ParseOperation(s); err != nil {
@@ -39,10 +39,33 @@ func TestParseOperation_RejectsUnrecognized(t *testing.T) {
 	}
 }
 
-func TestOperations_EnumeratesExactlySeven(t *testing.T) {
+func TestParseOperation_Reasoning(t *testing.T) {
+	op, err := ParseOperation("reasoning")
+	if err != nil {
+		t.Fatalf("ParseOperation(\"reasoning\"): unexpected error: %v", err)
+	}
+	if op != OperationReasoning {
+		t.Fatalf("ParseOperation(\"reasoning\") = %q, want %q", op, OperationReasoning)
+	}
+}
+
+func TestOperations_ContainsReasoningExactlyOnce(t *testing.T) {
 	got := Operations()
-	if len(got) != 7 {
-		t.Fatalf("Operations() has %d entries, want exactly 7: %v", len(got), got)
+	count := 0
+	for _, op := range got {
+		if op == OperationReasoning {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("Operations() contains OperationReasoning %d times, want exactly 1: %v", count, got)
+	}
+}
+
+func TestOperations_EnumeratesExactlyEight(t *testing.T) {
+	got := Operations()
+	if len(got) != 8 {
+		t.Fatalf("Operations() has %d entries, want exactly 8: %v", len(got), got)
 	}
 }
 

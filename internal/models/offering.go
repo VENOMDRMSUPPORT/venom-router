@@ -32,9 +32,10 @@ func ParseAvailability(s string) (Availability, error) {
 }
 
 // Operation is the offering-operation vocabulary (02 §3 / 04 §5): the unit
-// of certification and routing. image_generation is recognized and
-// certifiable but reserved for future scope — not routed by any V1 tier
-// (05 §9).
+// of certification and routing. image_generation and reasoning (added
+// 2026-08-05, bounded additive unfreeze — see 02 §3 / 04 §5 / 05 §9) are
+// recognized and certifiable but reserved for future scope — not routed by
+// any V1 tier (05 §9).
 type Operation string
 
 const (
@@ -45,10 +46,11 @@ const (
 	OperationVision           Operation = "vision"
 	OperationContextWindow    Operation = "context_window"
 	OperationImageGeneration  Operation = "image_generation"
+	OperationReasoning        Operation = "reasoning"
 )
 
 // ErrUnknownOperation is returned by ParseOperation for any value outside
-// the fixed seven-operation vocabulary.
+// the fixed eight-operation vocabulary.
 var ErrUnknownOperation = errors.New("models: unrecognized operation value")
 
 // operationSet backs both ParseOperation's validity check and Operations'
@@ -61,9 +63,10 @@ var operationSet = []Operation{
 	OperationVision,
 	OperationContextWindow,
 	OperationImageGeneration,
+	OperationReasoning,
 }
 
-// ParseOperation fails closed on any value outside the exact seven-value
+// ParseOperation fails closed on any value outside the exact eight-value
 // vocabulary — no case folding, no trimming, no provider-specific
 // extensions.
 func ParseOperation(s string) (Operation, error) {
@@ -75,7 +78,7 @@ func ParseOperation(s string) (Operation, error) {
 	return "", fmt.Errorf("%w: %q", ErrUnknownOperation, s)
 }
 
-// Operations returns the fixed seven-value operation enumeration, in the
+// Operations returns the fixed eight-value operation enumeration, in the
 // order documented by 02 §3 / 04 §5.
 func Operations() []Operation {
 	out := make([]Operation, len(operationSet))

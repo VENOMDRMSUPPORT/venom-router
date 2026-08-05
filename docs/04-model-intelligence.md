@@ -242,6 +242,11 @@ Two separable certifications:
   Chat success does **not** certify tools. (`image_generation` is a recognized operation
   **reserved for future scope** — certifiable when the feature lands, but not routed by any V1 tier;
   see [05 §9](05-tier-engine.md#9-future-scope-non-v1).)
+  **Amendment (2026-08-05, bounded additive vocabulary unfreeze):** `reasoning` joins the operation
+  vocabulary (eighth value), on the same terms as `image_generation` — a provider's declared
+  reasoning capability (e.g. claude-code's official `capabilities.reasoning`) is recognized and
+  certifiable, but **reserved for future scope**, not routed by any V1 tier; see
+  [05 §9](05-tier-engine.md#9-future-scope-non-v1).
 
 Lifecycle of an offering-operation's certification (**the canonical state machine** — every other
 document defers to this section):

@@ -271,6 +271,10 @@ above). Every axis change emits an `audit_event`.
   context_window; `image_generation` is a recognized operation **reserved for future scope** —
   certifiable but not routed by any V1 tier, see [05 §9](05-tier-engine.md#9-future-scope-non-v1)):
   an independent **certification** record and evidence.
+  **Amendment (2026-08-05, bounded additive vocabulary unfreeze):** `reasoning` joins the operation
+  vocabulary (eighth value) on the same terms as `image_generation` — recognized and certifiable
+  (a provider may declare it, e.g. claude-code's official `capabilities.reasoning`), but **reserved
+  for future scope**, not routed by any V1 tier; see [05 §9](05-tier-engine.md#9-future-scope-non-v1).
   This 4-tuple is the only routable and certifiable unit; chat and vision on one offering are two
   offering-operations.
 
