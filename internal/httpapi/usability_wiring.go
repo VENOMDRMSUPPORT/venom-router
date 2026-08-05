@@ -145,11 +145,8 @@ func BuildUsabilityTick(db *storage.DB, kr *secrets.Keyring, now func() time.Tim
 		},
 	}
 
-	// Bound each sweep so a run of timing-out probes can never overrun the
-	// scheduler's interval and starve the other (sequential) ticks.
-	return func(ctx context.Context) error {
-		ctx, cancel := context.WithTimeout(ctx, usabilitySweepBudget)
-		defer cancel()
-		return tick.Run(ctx)
-	}, nil
+	// The sweep budget is applied PER PROVIDER LANE inside tick.Run, not once
+	// around the whole sweep: the lanes run in parallel, so a provider whose
+	// probes all time out burns its own 25s and nobody else's.
+	return tick.Run, nil
 }
