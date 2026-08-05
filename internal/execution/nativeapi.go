@@ -221,11 +221,13 @@ func (t *NativeAPITransport) Failure(err error, _ ResolvedRoute) TypedFailure {
 }
 
 // SupportedCapabilities reports chat, streaming, tools and vision — the
-// operations buildGeminiRequest genuinely serializes. Structured output is
-// deliberately absent: buildGeminiRequest fails CLOSED
-// (ErrRequestFeatureUnsupported) on a set ResponseFormat, as does any other
-// request feature it cannot express (a URL-only image, a tool_choice
-// directive) — never silently dropped.
+// operations buildGeminiRequest genuinely serializes. Vision is expressible
+// only in the inline base64 + media-type form: buildGeminiRequest (via
+// geminiPartsFor) requires ImageBase64 and MediaType and fails closed with
+// ErrRequestFeatureUnsupported on a URL-only image part. Structured output
+// is deliberately absent too: buildGeminiRequest fails CLOSED on a set
+// ResponseFormat, as it does on any other request feature it cannot express
+// (a tool_choice directive) — never silently dropped.
 func (t *NativeAPITransport) SupportedCapabilities(_ ResolvedRoute) []Operation {
 	return []Operation{OperationChat, OperationStreaming, OperationTools, OperationVision}
 }

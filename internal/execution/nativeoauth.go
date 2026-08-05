@@ -275,9 +275,12 @@ func (googleGenerateContentCodec) runSSE(streamCtx context.Context, cancel conte
 	runGeminiSSE(streamCtx, cancel, resp, requestID, ch, inflights, firstByteTimeout, idleGapTimeout)
 }
 
-// capabilities reports tools and vision alongside chat/streaming — both are
-// genuinely serialized by buildGeminiRequest — but not structured output:
-// buildGeminiRequest fails closed on a set ResponseFormat.
+// capabilities reports tools and vision alongside chat/streaming. Vision is
+// expressible only in the inline base64 + media-type form: buildGeminiRequest
+// (via geminiPartsFor) requires ImageBase64 and MediaType and fails closed
+// with ErrRequestFeatureUnsupported on a URL-only image part. Structured
+// output is not reported: buildGeminiRequest fails closed on a set
+// ResponseFormat too.
 func (googleGenerateContentCodec) capabilities() []Operation {
 	return []Operation{OperationChat, OperationStreaming, OperationTools, OperationVision}
 }
@@ -321,9 +324,12 @@ func (anthropicMessagesCodec) runSSE(streamCtx context.Context, cancel context.C
 	runAnthropicSSE(streamCtx, cancel, resp, requestID, ch, inflights, firstByteTimeout, idleGapTimeout)
 }
 
-// capabilities reports tools and vision alongside chat/streaming — both are
-// genuinely serialized by buildAnthropicRequest — but not structured output:
-// buildAnthropicRequest fails closed on a set ResponseFormat.
+// capabilities reports tools and vision alongside chat/streaming. Vision is
+// expressible only in the inline base64 + media-type form: buildAnthropicRequest
+// (via anthropicContentFor) requires ImageBase64 and MediaType and fails closed
+// with ErrRequestFeatureUnsupported on a URL-only image part. Structured
+// output is not reported: buildAnthropicRequest fails closed on a set
+// ResponseFormat too.
 func (anthropicMessagesCodec) capabilities() []Operation {
 	return []Operation{OperationChat, OperationStreaming, OperationTools, OperationVision}
 }
