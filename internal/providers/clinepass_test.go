@@ -407,10 +407,16 @@ func TestClinePass_DiscoveryIsPassOnly(t *testing.T) {
 // TestClinePass_DiscoveryDeclaresChatOnlyWithToolsAndStructuredOutputAsCandidates
 // proves clinepass never fabricates a declaration it has no wire evidence
 // for (the wire returns {id, name} only — no capability metadata, no
-// models.dev entry) while still making "tools"/"structured_output" reachable
-// for a REAL runtime probe: Capabilities carries only "chat";
-// CandidateOperations carries the two unverified operations instead of
-// silently having no offering_operations row at all (Task 3).
+// models.dev entry) while still making "tools"/"structured_output"/
+// "context_window" reachable for a REAL runtime probe: Capabilities carries
+// only "chat"; CandidateOperations carries the three unverified operations
+// instead of silently having no offering_operations row at all (Task 3).
+//
+// context_window is included alongside tools/structured_output because the
+// context probe (internal/intelligence's probeTarget) requires an
+// offering_operations row to probe against — without a context_window
+// candidate row, "ctx unknown" for clinepass has no path to ever become
+// verified, no matter how many times the probe runs.
 func TestClinePass_DiscoveryDeclaresChatOnlyWithToolsAndStructuredOutputAsCandidates(t *testing.T) {
 	get := clineGet(map[string]struct {
 		status int
@@ -431,8 +437,11 @@ func TestClinePass_DiscoveryDeclaresChatOnlyWithToolsAndStructuredOutputAsCandid
 	if len(m.Capabilities) != 1 || m.Capabilities[0] != "chat" {
 		t.Fatalf("Capabilities = %v, want exactly [chat] — clinepass's wire declares nothing else", m.Capabilities)
 	}
-	if len(m.CandidateOperations) != 2 || m.CandidateOperations[0] != "tools" || m.CandidateOperations[1] != "structured_output" {
-		t.Fatalf("CandidateOperations = %v, want [tools, structured_output]", m.CandidateOperations)
+	if len(m.CandidateOperations) != 3 ||
+		m.CandidateOperations[0] != "tools" ||
+		m.CandidateOperations[1] != "structured_output" ||
+		m.CandidateOperations[2] != "context_window" {
+		t.Fatalf("CandidateOperations = %v, want [tools, structured_output, context_window]", m.CandidateOperations)
 	}
 }
 
