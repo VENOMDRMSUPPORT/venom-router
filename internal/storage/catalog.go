@@ -63,7 +63,10 @@ type CatalogOfferingRow struct {
 // CatalogListParams is ListOfferings' input. AccountID = "" lists every
 // account's offerings; a non-empty value restricts to that one account.
 // LiveOnly applies the operational owner-console contract: the offering is
-// available and its account is connected, healthy and not reauthenticating.
+// available, its account is connected, healthy and not reauthenticating, AND
+// the offering has a certified+supported chat offering_operation (the honest
+// gate, universal-probes-and-honest-gate Task 9 — an unverified model's chat
+// capability is not "live" just because discovery observed it).
 type CatalogListParams struct {
 	AccountID string
 	LiveOnly  bool
@@ -120,6 +123,16 @@ func (r *CatalogRepo) ListOfferings(ctx context.Context, params CatalogListParam
 				  AND a.connection_state = 'connected'
 				  AND a.health_state = 'healthy'
 				  AND a.reauth_in_progress = 0
+			)
+			AND EXISTS (
+				SELECT 1
+				FROM offering_operations oo
+				JOIN certifications c ON c.offering_operation_id = oo.id
+				WHERE oo.account_id = amo.account_id
+				  AND oo.provider_model_id = amo.provider_model_id
+				  AND oo.operation = 'chat'
+				  AND c.status = 'certified'
+				  AND c.capability_truth = 'supported'
 			)`)
 	}
 	if params.Cursor != "" {

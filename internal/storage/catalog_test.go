@@ -321,6 +321,12 @@ func TestCatalogRepo_ListOfferings_LiveOnlyFiltersOperationallyDeadRows(t *testi
 		providerModelID := state.accountID + "-model"
 		insertOfferingFull(t, db, state.accountID, "prov-live-only", providerModelID, "model-live-only", nil, nil, nil, nil, nil, 0, 0)
 		mustExec(t, db, `UPDATE account_model_offerings SET availability = ? WHERE account_id = ?`, state.availability, state.accountID)
+		// Every state gets a certified+supported chat op so this test keeps
+		// isolating the account-health/availability filters it names — the
+		// separate chat-certification gate is TestCatalogRepo_ListOfferings_LiveOnlyRequiresCertifiedChat's
+		// job, not this one's.
+		insertOfferingOperationFull(t, db, "op-"+state.accountID+"-chat", state.accountID, "prov-live-only", providerModelID, "chat",
+			"certified", "supported", 1, nil, "")
 	}
 
 	repo := NewCatalogRepo(db)
@@ -341,6 +347,68 @@ func TestCatalogRepo_ListOfferings_LiveOnlyFiltersOperationallyDeadRows(t *testi
 	}
 	if len(live) != 1 || live[0].AccountID != "acct-live" {
 		t.Fatalf("live rows = %+v, want only acct-live", live)
+	}
+}
+
+// TestCatalogRepo_ListOfferings_LiveOnlyRequiresCertifiedChat is the honest
+// gate (universal-probes-and-honest-gate Task 9): LiveOnly must require a
+// certified+supported CHAT offering_operation, not merely an available
+// offering on a healthy account. Before this gate, an offering whose chat
+// capability was never verified (still at the seeded discovered/unknown
+// default) leaked onto the Live Models surface.
+//
+// Three cases:
+//
+//	A — certified+supported chat, healthy connected account -> IN.
+//	B — chat op left at the seeded default (no certifications row at all,
+//	    so the LEFT JOIN fallback is discovered/unknown), same healthy
+//	    account -> OUT. This is the leak the gate closes.
+//	C — certified+supported chat, but the account is unhealthy -> OUT. The
+//	    pre-existing account-health clause must still apply; the new EXISTS
+//	    clause is additive, not a replacement.
+func TestCatalogRepo_ListOfferings_LiveOnlyRequiresCertifiedChat(t *testing.T) {
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-honest")
+	insertModelFull(t, db, "model-honest", "ck-honest", "Honest Model", nil, nil, nil)
+
+	// A and B share one healthy, connected account.
+	insertAccount(t, db, "acct-honest", "prov-honest")
+	mustExec(t, db, `UPDATE accounts SET connection_state = 'connected', health_state = 'healthy', reauth_in_progress = 0 WHERE id = ?`, "acct-honest")
+
+	insertOfferingFull(t, db, "acct-honest", "prov-honest", "model-a", "model-honest", nil, nil, nil, nil, nil, 0, 0)
+	insertOfferingOperationFull(t, db, "op-a-chat", "acct-honest", "prov-honest", "model-a", "chat",
+		"certified", "supported", 1, nil, "")
+
+	insertOfferingFull(t, db, "acct-honest", "prov-honest", "model-b", "model-honest", nil, nil, nil, nil, nil, 0, 0)
+	if err := insertOfferingOperation(db, "op-b-chat", "acct-honest", "prov-honest", "model-b", "chat"); err != nil {
+		t.Fatalf("insert offering_operation op-b-chat: %v", err)
+	}
+
+	// C is certified+supported but sits on an unhealthy account.
+	insertAccount(t, db, "acct-unhealthy", "prov-honest")
+	mustExec(t, db, `UPDATE accounts SET connection_state = 'connected', health_state = 'degraded', reauth_in_progress = 0 WHERE id = ?`, "acct-unhealthy")
+	insertOfferingFull(t, db, "acct-unhealthy", "prov-honest", "model-c", "model-honest", nil, nil, nil, nil, nil, 0, 0)
+	insertOfferingOperationFull(t, db, "op-c-chat", "acct-unhealthy", "prov-honest", "model-c", "chat",
+		"certified", "supported", 1, nil, "")
+
+	repo := NewCatalogRepo(db)
+
+	// Sanity: the unfiltered read sees all three, proving the fixture (not
+	// missing data) is what LiveOnly narrows.
+	raw, _, err := repo.ListOfferings(context.Background(), CatalogListParams{Limit: 20})
+	if err != nil {
+		t.Fatalf("raw ListOfferings: %v", err)
+	}
+	if len(raw) != 3 {
+		t.Fatalf("raw rows = %d, want 3 so the fixture proves filtering rather than missing data", len(raw))
+	}
+
+	live, _, err := repo.ListOfferings(context.Background(), CatalogListParams{LiveOnly: true, Limit: 20})
+	if err != nil {
+		t.Fatalf("live ListOfferings: %v", err)
+	}
+	if len(live) != 1 || live[0].ProviderModelID != "model-a" {
+		t.Fatalf("live rows = %+v, want only model-a (certified+supported chat on a healthy account)", live)
 	}
 }
 

@@ -136,6 +136,12 @@ func TestModelsHandler_ServesOnlyHealthyConnectedOfferings(t *testing.T) {
 	modelsSeedOffering(t, db, offeringSeed{
 		AccountID: "acct-model-live", ProviderID: "prov-model-live",
 		ProviderModelID: "pm-live", ModelID: "canonical-live", ModelDisplayName: "Live Model",
+		// The honest gate (universal-probes-and-honest-gate Task 9) requires a
+		// certified+supported chat offering-operation before LiveOnly admits a
+		// row — without this, "canonical-live" would now be excluded for the
+		// same reason "canonical-dead" is, defeating this test's intent of
+		// isolating account health as the discriminator.
+		Operations: []offeringOpSeed{{Operation: "chat", Status: "certified", Truth: "supported"}},
 	})
 	modelsSeedOffering(t, db, offeringSeed{
 		AccountID: "acct-model-expired", ProviderID: "prov-model-dead",
