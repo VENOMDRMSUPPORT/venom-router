@@ -210,19 +210,55 @@ func modelIDsFrom(list openAICompatModelList) []string {
 	return ids
 }
 
+// OperationsFromFacts derives the operation strings a models.dev entry
+// DECLARES, in models.Operations() order. Every value is grounded in an
+// explicit dataset field; nothing is inferred from the model id.
+//
+// "chat" is unconditional: these are chat-completions catalogs, and an entry
+// existing in one is the declaration. "streaming" is deliberately ABSENT —
+// models.dev carries no streaming field, and streaming is a property of the
+// transport we send with, not of the model (see the transport's
+// SupportedCapabilities). "context_window" is emitted when the entry declares
+// a context limit, which is what makes the number itself a catalog-backed
+// fact.
+func OperationsFromFacts(f ModelsDevFacts) []string {
+	ops := []string{"chat"}
+	if f.ToolCall {
+		ops = append(ops, "tools")
+	}
+	if f.StructuredOutput {
+		ops = append(ops, "structured_output")
+	}
+	if f.ImageInput {
+		ops = append(ops, "vision")
+	}
+	if f.Context != nil {
+		ops = append(ops, "context_window")
+	}
+	if f.ImageOutput {
+		ops = append(ops, "image_generation")
+	}
+	if f.Reasoning {
+		ops = append(ops, "reasoning")
+	}
+	return ops
+}
+
 // modelsFromLiveIDs is the SHARED discovery rule for the evidence-required
 // OpenAI-compatible providers whose own listing carries no metadata: the live
 // ids are the source of truth for WHICH models exist, and models.dev supplies
 // the facts. All grounding is explicit (03 §1: capabilities only from explicit
 // provider fields):
 //
-//   - a live id with a models.dev entry that is deprecated, or whose declared
-//     output modalities are not all text (it cannot answer a chat-completions
-//     request), is DROPPED;
+//   - a live id with a models.dev entry that is deprecated is DROPPED. An
+//     image-output entry is NOT dropped: image_generation is a recognized
+//     operation, so hiding the model would hide a real catalog-backed
+//     capability instead of classifying it (internal/intelligence's
+//     classification layer is what keeps a media-only offering out of chat
+//     routing, using OutputAllText);
 //   - "chat" is asserted for every surviving model (the endpoint is a
-//     chat-completions gateway); "tools"/"structured_output"/"vision" only
-//     when the entry explicitly declares tool_call / structured_output /
-//     image input; NOTHING else;
+//     chat-completions gateway); every other operation comes from
+//     OperationsFromFacts, which reads only explicit dataset fields;
 //   - limits come from limit.context / limit.output, nil when absent;
 //   - DisplayName is the entry's name when present, else the raw id;
 //   - a live id with NO models.dev entry (uncatalogued, or the whole dataset
@@ -232,20 +268,12 @@ func modelsFromLiveIDs(liveIDs []string, facts map[string]ModelsDevFacts) []Disc
 	out := make([]DiscoveredModel, 0, len(liveIDs))
 	for _, id := range liveIDs {
 		f, known := facts[id]
-		if known && (f.Deprecated || !f.OutputAllText) {
+		if known && f.Deprecated {
 			continue
 		}
 		caps := []string{"chat"}
 		if known {
-			if f.ToolCall {
-				caps = append(caps, "tools")
-			}
-			if f.StructuredOutput {
-				caps = append(caps, "structured_output")
-			}
-			if f.ImageInput {
-				caps = append(caps, "vision")
-			}
+			caps = OperationsFromFacts(f)
 		}
 		displayName := id
 		if known && f.DisplayName != "" {

@@ -4,6 +4,8 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -176,5 +178,56 @@ func TestParseModelsDevFacts_ReadsReasoningImageOutputAndMaxInput(t *testing.T) 
 	glm := ollama["glm-5.1"]
 	if glm.MaxInput == nil || *glm.MaxInput != 190000 {
 		t.Fatalf("glm-5.1 MaxInput = %v, want 190000", glm.MaxInput)
+	}
+}
+
+// TestOperationsFromFacts_DerivesEveryCatalogBackedOperation proves
+// OperationsFromFacts is the single derivation from ModelsDevFacts to
+// operation strings, in models.Operations() order, grounded only in explicit
+// dataset fields.
+func TestOperationsFromFacts_DerivesEveryCatalogBackedOperation(t *testing.T) {
+	facts, err := parseModelsDevFacts(modelsDevFixture, "cline-pass")
+	if err != nil {
+		t.Fatalf("parseModelsDevFacts: %v", err)
+	}
+
+	got := OperationsFromFacts(facts["cline-pass/kimi-k3"])
+	want := []string{"chat", "tools", "structured_output", "vision", "context_window", "reasoning"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("OperationsFromFacts(kimi-k3) = %v, want %v", got, want)
+	}
+
+	img := OperationsFromFacts(facts["cline-pass/image-out-example"])
+	if !slices.Contains(img, "image_generation") {
+		t.Fatalf("OperationsFromFacts(image-out-example) = %v, want image_generation present", img)
+	}
+
+	// An entry with no facts at all still supports chat: the endpoint is a
+	// chat-completions gateway. It must claim nothing else.
+	bare := OperationsFromFacts(ModelsDevFacts{})
+	if !reflect.DeepEqual(bare, []string{"chat"}) {
+		t.Fatalf("OperationsFromFacts(zero) = %v, want [chat] only", bare)
+	}
+}
+
+// TestModelsFromLiveIDs_KeepsImageOutputModelsAndDropsDeprecated proves the
+// drop condition narrowed to deprecation only: an image-output entry is no
+// longer hidden now that image_generation is in the operation vocabulary,
+// while a deprecated entry is still dropped.
+func TestModelsFromLiveIDs_KeepsImageOutputModelsAndDropsDeprecated(t *testing.T) {
+	facts, err := parseModelsDevFacts(modelsDevFixture, "cline-pass")
+	if err != nil {
+		t.Fatalf("parseModelsDevFacts: %v", err)
+	}
+	out := modelsFromLiveIDs([]string{"cline-pass/image-out-example", "cline-pass/deprecated-example"}, facts)
+
+	if len(out) != 1 {
+		t.Fatalf("got %d models, want 1 — the deprecated entry is dropped and the image-output entry is kept", len(out))
+	}
+	if out[0].ProviderModelID != "cline-pass/image-out-example" {
+		t.Fatalf("kept %q, want the image-output model", out[0].ProviderModelID)
+	}
+	if !slices.Contains(out[0].Capabilities, "image_generation") {
+		t.Fatalf("capabilities = %v, want image_generation", out[0].Capabilities)
 	}
 }

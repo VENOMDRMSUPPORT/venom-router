@@ -78,8 +78,10 @@ func TestNvidiaNIM_FundingStaysEmpty(t *testing.T) {
 
 // TestNvidiaNIM_DiscoveryExactIDs is mutations row 1 (no hardcoded additions)
 // and row 3 (facts read from the "nvidia" key): the surviving ids and count are
-// EXACTLY the fixture's, deprecated/non-text-output are dropped, the kept model
-// is enriched, and an uncatalogued id is chat-only with nil limits.
+// EXACTLY the fixture's, only the deprecated entry is dropped (an image-output
+// entry is now classified via image_generation instead of hidden — Task 5),
+// the kept models are enriched, and an uncatalogued id is chat-only with nil
+// limits.
 func TestNvidiaNIM_DiscoveryExactIDs(t *testing.T) {
 	a := newNvidiaAdapter(&fakeChatProbe{status: 200}, &fakeModelsProbe{body: nvidiaModelsList}, staticModelsDevProbe(nvidiaDataset, nil))
 	models, err := a.DiscoverModels(context.Background(), StoredCredentials{Value: "k"})
@@ -90,11 +92,14 @@ func TestNvidiaNIM_DiscoveryExactIDs(t *testing.T) {
 	for _, m := range models {
 		byID[m.ProviderModelID] = m
 	}
-	if len(models) != 2 {
-		t.Fatalf("survivors = %d (%v), want EXACTLY 2 (meta/llama-keep, meta/uncatalogued)", len(models), byID)
+	if len(models) != 3 {
+		t.Fatalf("survivors = %d (%v), want EXACTLY 3 (meta/llama-keep, img/gen, meta/uncatalogued)", len(models), byID)
 	}
 	if _, ok := byID["meta/llama-keep"]; !ok {
 		t.Fatal("meta/llama-keep must survive")
+	}
+	if _, ok := byID["img/gen"]; !ok {
+		t.Fatal("img/gen must survive — an image-output entry is classified, not hidden")
 	}
 	if _, ok := byID["meta/uncatalogued"]; !ok {
 		t.Fatal("meta/uncatalogued must survive (chat-only)")
@@ -105,6 +110,10 @@ func TestNvidiaNIM_DiscoveryExactIDs(t *testing.T) {
 	}
 	if keep.ContextLength == nil || *keep.ContextLength != 4096 {
 		t.Fatalf("meta/llama-keep ctx = %v, want 4096 (facts enrichment from the nvidia key)", keep.ContextLength)
+	}
+	imgGen := byID["img/gen"]
+	if !hasAll(imgGen.Capabilities, "chat", "image_generation") {
+		t.Fatalf("img/gen caps = %v, want chat/image_generation (modalities.output = [\"image\"])", imgGen.Capabilities)
 	}
 	uncat := byID["meta/uncatalogued"]
 	if len(uncat.Capabilities) != 1 || uncat.Capabilities[0] != "chat" || uncat.ContextLength != nil {

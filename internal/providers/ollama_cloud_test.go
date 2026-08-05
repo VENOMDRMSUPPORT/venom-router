@@ -179,7 +179,8 @@ func TestOllamaCloud_NoPlanEvidenceLeavesFundingEmpty(t *testing.T) {
 // --- discovery ------------------------------------------------------------
 
 // TestOllamaCloud_Discovery is mutations row 5 (capability grounding) and row 6
-// (non-text-output drop): deprecated dropped, image-output dropped,
+// (deprecated-only drop, Task 5): deprecated is dropped, an image-output entry
+// is now KEPT and classified via image_generation instead of hidden,
 // tool_call/structured_output/image-input mapped, absent limits nil,
 // uncatalogued id chat-only.
 func TestOllamaCloud_Discovery(t *testing.T) {
@@ -197,11 +198,11 @@ func TestOllamaCloud_Discovery(t *testing.T) {
 	if _, dropped := byID["dep:1b"]; dropped {
 		t.Fatal("deprecated model dep:1b must be dropped")
 	}
-	if _, dropped := byID["imgout:1b"]; dropped {
-		t.Fatal("non-text-output model imgout:1b must be dropped")
+	if _, ok := byID["imgout:1b"]; !ok {
+		t.Fatal("image-output model imgout:1b must be kept — classified via image_generation, not hidden")
 	}
-	if len(models) != 3 {
-		t.Fatalf("survivors = %d (%v), want 3 (keeper, plain, uncatalogued)", len(models), byID)
+	if len(models) != 4 {
+		t.Fatalf("survivors = %d (%v), want 4 (keeper, imgout, plain, uncatalogued)", len(models), byID)
 	}
 
 	keeper := byID["keeper:1b"]
@@ -213,6 +214,11 @@ func TestOllamaCloud_Discovery(t *testing.T) {
 	}
 	if keeper.ContextLength == nil || *keeper.ContextLength != 1000 || keeper.MaxOutputTokens == nil || *keeper.MaxOutputTokens != 100 {
 		t.Fatalf("keeper limits = ctx %v out %v, want 1000/100", keeper.ContextLength, keeper.MaxOutputTokens)
+	}
+
+	imgout := byID["imgout:1b"]
+	if !hasAll(imgout.Capabilities, "chat", "image_generation") {
+		t.Fatalf("imgout caps = %v, want chat/image_generation (modalities.output = [\"image\"])", imgout.Capabilities)
 	}
 
 	plain := byID["plain:1b"]
