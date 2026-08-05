@@ -39,6 +39,9 @@ type ModelsDevFacts struct {
 	Deprecated       bool   // `status == "deprecated"`
 	Context          *int   // `limit.context`; nil when absent
 	Output           *int   // `limit.output`; nil when absent
+	Reasoning        bool   // explicit `reasoning`
+	ImageOutput      bool   // `modalities.output` explicitly contains "image"
+	MaxInput         *int   // `limit.input`; nil when absent
 }
 
 // modelsDevRawEntry is the subset of one models.dev model entry this parse
@@ -49,6 +52,7 @@ type modelsDevRawEntry struct {
 	ToolCall         bool   `json:"tool_call"`
 	StructuredOutput bool   `json:"structured_output"`
 	Status           string `json:"status"`
+	Reasoning        bool   `json:"reasoning"`
 	Modalities       struct {
 		Input  []string `json:"input"`
 		Output []string `json:"output"`
@@ -56,6 +60,7 @@ type modelsDevRawEntry struct {
 	Limit struct {
 		Context *int `json:"context"`
 		Output  *int `json:"output"`
+		Input   *int `json:"input"`
 	} `json:"limit"`
 }
 
@@ -150,6 +155,9 @@ func parseModelsDevFacts(body []byte, providerKey string) (map[string]ModelsDevF
 			Deprecated:       e.Status == "deprecated",
 			Context:          e.Limit.Context,
 			Output:           e.Limit.Output,
+			Reasoning:        e.Reasoning,
+			ImageOutput:      containsImageModality(e.Modalities.Output),
+			MaxInput:         e.Limit.Input,
 		}
 	}
 	return facts, nil

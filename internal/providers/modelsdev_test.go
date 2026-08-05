@@ -2,10 +2,14 @@ package providers
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"testing"
 	"time"
 )
+
+//go:embed testdata/modelsdev-fixture.json
+var modelsDevFixture []byte
 
 // countingModelsDevProbe returns a fixed body and counts how many times it was
 // called, so the cache-TTL test can prove a second call within the window does
@@ -130,5 +134,47 @@ func TestModelsDevSource_ParsesExplicitFieldsOnly(t *testing.T) {
 	}
 	if lean.Context != nil || lean.Output != nil {
 		t.Fatalf("lean limits = ctx %v out %v, want nil/nil (absent limits are nil, never 0)", lean.Context, lean.Output)
+	}
+}
+
+// TestParseModelsDevFacts_ReadsReasoningImageOutputAndMaxInput proves
+// Reasoning, ImageOutput and MaxInput are parsed from the real vendored
+// fixture (models.dev/api.json, captured 2026-08-05): reasoning: true/false,
+// an image-only output modality list, and limit.input where declared.
+func TestParseModelsDevFacts_ReadsReasoningImageOutputAndMaxInput(t *testing.T) {
+	facts, err := parseModelsDevFacts(modelsDevFixture, "cline-pass")
+	if err != nil {
+		t.Fatalf("parseModelsDevFacts: %v", err)
+	}
+
+	k3, ok := facts["cline-pass/kimi-k3"]
+	if !ok {
+		t.Fatalf("facts = %v, want an entry for cline-pass/kimi-k3", facts)
+	}
+	if !k3.Reasoning {
+		t.Fatal("kimi-k3 Reasoning = false, want true (the dataset declares reasoning: true)")
+	}
+	if k3.ImageOutput {
+		t.Fatal("kimi-k3 ImageOutput = true, want false (its output modality is text only)")
+	}
+	if k3.Context == nil || *k3.Context != 1048576 {
+		t.Fatalf("kimi-k3 Context = %v, want 1048576", k3.Context)
+	}
+	if k3.MaxInput != nil {
+		t.Fatalf("kimi-k3 MaxInput = %v, want nil (the entry declares no limit.input)", *k3.MaxInput)
+	}
+
+	img := facts["cline-pass/image-out-example"]
+	if !img.ImageOutput {
+		t.Fatal("image-out-example ImageOutput = false, want true")
+	}
+
+	ollama, err := parseModelsDevFacts(modelsDevFixture, "ollama-cloud")
+	if err != nil {
+		t.Fatalf("parseModelsDevFacts(ollama-cloud): %v", err)
+	}
+	glm := ollama["glm-5.1"]
+	if glm.MaxInput == nil || *glm.MaxInput != 190000 {
+		t.Fatalf("glm-5.1 MaxInput = %v, want 190000", glm.MaxInput)
 	}
 }
