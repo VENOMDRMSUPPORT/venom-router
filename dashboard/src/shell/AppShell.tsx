@@ -7,6 +7,7 @@ import {
   PlannedSurface,
   SectionDeck,
   Spinner,
+  ToastProvider,
 } from "@venom/design-system/primitives";
 import { Icon } from "@venom/design-system/icons";
 import {
@@ -293,143 +294,145 @@ export default function AppShell(props: AppShellProps) {
   const activeItem = navItemByKey(activeNav) ?? NAV[0];
 
   return (
-    <div className="vn-shell">
-      <nav className="vn-shell-nav vn-scroll" aria-label="Primary">
-        <BrandHeader onNavigate={(key) => handleNavigate(key)} />
-        {NAV_GROUPS.map((group) => (
-          <div key={group}>
-            <div className="vn-nav-group vn-overline">{group}</div>
-            {NAV.filter((item) => item.group === group).map((item) => (
-              <a
-                key={item.key}
-                className="vn-nav-item"
-                href={pathForRoute(item.key)}
-                aria-current={activeNav === item.key ? "page" : undefined}
-                onClick={(e) => {
-                  e.preventDefault();
-                  handleNavigate(item.key);
-                }}
-              >
-                <Icon name={item.icon} size={15} />
-                {item.label}
-              </a>
-            ))}
-          </div>
-        ))}
-      </nav>
+    <ToastProvider position="bottom-right">
+      <div className="vn-shell">
+        <nav className="vn-shell-nav vn-scroll" aria-label="Primary">
+          <BrandHeader onNavigate={(key) => handleNavigate(key)} />
+          {NAV_GROUPS.map((group) => (
+            <div key={group}>
+              <div className="vn-nav-group vn-overline">{group}</div>
+              {NAV.filter((item) => item.group === group).map((item) => (
+                <a
+                  key={item.key}
+                  className="vn-nav-item"
+                  href={pathForRoute(item.key)}
+                  aria-current={activeNav === item.key ? "page" : undefined}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleNavigate(item.key);
+                  }}
+                >
+                  <Icon name={item.icon} size={15} />
+                  {item.label}
+                </a>
+              ))}
+            </div>
+          ))}
+        </nav>
 
-      <ChromeHeader
-        title={activeItem.label}
-        subtitle={activeItem.description}
-        icon={activeItem.icon}
-      >
-        <SearchBar onNavigate={handleNavigate} />
-        <span className="vn-desktop-theme-toggle">
-          <ThemeToggle theme={appearance.theme} onChange={handleThemeChange} />
-        </span>
-        <NotificationBell />
-        <OwnerMenu
-          session={session}
-          onSignOut={handleSignOut}
+        <ChromeHeader
+          title={activeItem.label}
+          subtitle={activeItem.description}
+          icon={activeItem.icon}
+        >
+          <SearchBar onNavigate={handleNavigate} />
+          <span className="vn-desktop-theme-toggle">
+            <ThemeToggle theme={appearance.theme} onChange={handleThemeChange} />
+          </span>
+          <NotificationBell />
+          <OwnerMenu
+            session={session}
+            onSignOut={handleSignOut}
+            onNavigate={handleNavigate}
+          />
+          <EnterpriseCustomizer
+            value={{
+              theme: appearance.theme,
+              accent: appearance.accent,
+              radiusPx: appearance.radiusPx,
+              spacingScale: appearance.spacingScale,
+            }}
+            onApply={handleCustomizerApply}
+            onPersist={handleCustomizerPersist}
+          />
+        </ChromeHeader>
+
+        <main className="vn-shell-main vn-scroll">
+          <div className="vn-shell-content">
+            {appearanceNotice ? (
+              <Banner
+                tone="warning"
+                actions={
+                  <IconButton
+                    icon="x"
+                    label="Dismiss notice"
+                    variant="ghost"
+                    onClick={() => setAppearanceNotice(null)}
+                  />
+                }
+              >
+                {appearanceNotice}
+              </Banner>
+            ) : null}
+
+            {/* The global breadcrumb row (legacy parity): trail chip on the
+                left (its third segment mirrors the providers page's live
+                auth filter) plus the Debug chip there; on the Providers
+                page, the fleet's Active/All chips on the right once the
+                live counts have loaded. */}
+            <PageContextBar
+              leading={
+                <span className="flex items-center gap-2">
+                  <BreadcrumbBar
+                    item={activeItem}
+                    trail={activeNav === "providers" ? ["Dashboard", "Providers", FLEET_CATEGORY_CRUMB[fleetCategory]] : undefined}
+                    onNavigateHome={() => handleNavigate(DEFAULT_NAV_KEY)}
+                  />
+                  {activeNav === "providers" ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon="terminal"
+                      aria-pressed={debugOpen}
+                      onClick={() => setDebugOpen((open) => !open)}
+                    >
+                      Debug
+                    </Button>
+                  ) : null}
+                </span>
+              }
+              secondary={activeNav === "providers" && fleetCounts ? (
+                <FleetBreadcrumbChips
+                  activeCount={fleetCounts.active}
+                  totalCount={fleetCounts.total}
+                  view={fleetView}
+                  onViewChange={setFleetView}
+                />
+              ) : undefined}
+              actions={activeNav === "api-keys" ? (
+                <Button variant="primary" icon="plus" onClick={() => setApiKeyCreateOpen(true)}>
+                  <span className="vn-api-key-action-wide">New API key</span>
+                  <span className="vn-api-key-action-compact">New key</span>
+                </Button>
+              ) : undefined}
+            />
+
+            {renderSurface(
+              activeNav,
+              csrfToken,
+              onSessionExpired,
+              setFleetCounts,
+              fleetView,
+              setFleetView,
+              fleetCategory,
+              setFleetCategory,
+              apiKeyCreateOpen,
+              setApiKeyCreateOpen,
+              handleNavigate,
+              deepLinkRequestID,
+            )}
+
+            <DebugLogPanel open={debugOpen} onClose={() => setDebugOpen(false)} />
+          </div>
+        </main>
+
+        <SectionDeck
+          sections={NAV_SECTIONS}
+          activeKey={activeNav}
           onNavigate={handleNavigate}
         />
-        <EnterpriseCustomizer
-          value={{
-            theme: appearance.theme,
-            accent: appearance.accent,
-            radiusPx: appearance.radiusPx,
-            spacingScale: appearance.spacingScale,
-          }}
-          onApply={handleCustomizerApply}
-          onPersist={handleCustomizerPersist}
-        />
-      </ChromeHeader>
-
-      <main className="vn-shell-main vn-scroll">
-        <div className="vn-shell-content">
-          {appearanceNotice ? (
-            <Banner
-              tone="warning"
-              actions={
-                <IconButton
-                  icon="x"
-                  label="Dismiss notice"
-                  variant="ghost"
-                  onClick={() => setAppearanceNotice(null)}
-                />
-              }
-            >
-              {appearanceNotice}
-            </Banner>
-          ) : null}
-
-          {/* The global breadcrumb row (legacy parity): trail chip on the
-              left (its third segment mirrors the providers page's live
-              auth filter) plus the Debug chip there; on the Providers
-              page, the fleet's Active/All chips on the right once the
-              live counts have loaded. */}
-          <PageContextBar
-            leading={
-              <span className="flex items-center gap-2">
-                <BreadcrumbBar
-                  item={activeItem}
-                  trail={activeNav === "providers" ? ["Dashboard", "Providers", FLEET_CATEGORY_CRUMB[fleetCategory]] : undefined}
-                  onNavigateHome={() => handleNavigate(DEFAULT_NAV_KEY)}
-                />
-                {activeNav === "providers" ? (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    icon="terminal"
-                    aria-pressed={debugOpen}
-                    onClick={() => setDebugOpen((open) => !open)}
-                  >
-                    Debug
-                  </Button>
-                ) : null}
-              </span>
-            }
-            secondary={activeNav === "providers" && fleetCounts ? (
-              <FleetBreadcrumbChips
-                activeCount={fleetCounts.active}
-                totalCount={fleetCounts.total}
-                view={fleetView}
-                onViewChange={setFleetView}
-              />
-            ) : undefined}
-            actions={activeNav === "api-keys" ? (
-              <Button variant="primary" icon="plus" onClick={() => setApiKeyCreateOpen(true)}>
-                <span className="vn-api-key-action-wide">New API key</span>
-                <span className="vn-api-key-action-compact">New key</span>
-              </Button>
-            ) : undefined}
-          />
-
-          {renderSurface(
-            activeNav,
-            csrfToken,
-            onSessionExpired,
-            setFleetCounts,
-            fleetView,
-            setFleetView,
-            fleetCategory,
-            setFleetCategory,
-            apiKeyCreateOpen,
-            setApiKeyCreateOpen,
-            handleNavigate,
-            deepLinkRequestID,
-          )}
-
-          <DebugLogPanel open={debugOpen} onClose={() => setDebugOpen(false)} />
-        </div>
-      </main>
-
-      <SectionDeck
-        sections={NAV_SECTIONS}
-        activeKey={activeNav}
-        onNavigate={handleNavigate}
-      />
-    </div>
+      </div>
+    </ToastProvider>
   );
 }
 
