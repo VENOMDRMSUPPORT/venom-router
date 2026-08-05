@@ -220,12 +220,14 @@ func (t *NativeAPITransport) Failure(err error, _ ResolvedRoute) TypedFailure {
 	return TypedFailure{FailureClass: FailureClassServer, SafeMessage: "an internal error occurred"}
 }
 
-// SupportedCapabilities reports chat and streaming — the operations this
-// transport can genuinely express. A request feature it cannot express (a
-// URL-only image, a tool_choice directive) is failed CLOSED by
-// buildGeminiRequest with ErrRequestFeatureUnsupported, never silently dropped.
+// SupportedCapabilities reports chat, streaming, tools and vision — the
+// operations buildGeminiRequest genuinely serializes. Structured output is
+// deliberately absent: buildGeminiRequest fails CLOSED
+// (ErrRequestFeatureUnsupported) on a set ResponseFormat, as does any other
+// request feature it cannot express (a URL-only image, a tool_choice
+// directive) — never silently dropped.
 func (t *NativeAPITransport) SupportedCapabilities(_ ResolvedRoute) []Operation {
-	return []Operation{OperationChat, OperationStreaming}
+	return []Operation{OperationChat, OperationStreaming, OperationTools, OperationVision}
 }
 
 // Compile-time proof NativeAPITransport satisfies InferenceTransport.

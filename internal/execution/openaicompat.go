@@ -557,7 +557,12 @@ func (t *OpenAICompatibleTransport) Failure(err error, _ ResolvedRoute) TypedFai
 	return TypedFailure{FailureClass: FailureClassServer, SafeMessage: "an internal error occurred"}
 }
 
-// SupportedCapabilities reports chat and streaming.
+// SupportedCapabilities reports every operation this transport's request
+// builder genuinely serializes: chat and streaming, plus tools
+// (buildChatTools), vision (image content parts) and structured output
+// (response_format). It must never claim an operation the builder answers
+// with ErrRequestFeatureUnsupported — TestDeclaredCapabilitiesAreExpressible
+// pins that.
 func (t *OpenAICompatibleTransport) SupportedCapabilities(_ ResolvedRoute) []Operation {
-	return []Operation{OperationChat, OperationStreaming}
+	return []Operation{OperationChat, OperationStreaming, OperationTools, OperationVision, OperationStructuredOutput}
 }

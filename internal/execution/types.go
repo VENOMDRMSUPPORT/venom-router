@@ -52,10 +52,11 @@ type ResolvedRoute struct {
 type Operation string
 
 const (
-	OperationChat      Operation = "chat"
-	OperationStreaming Operation = "streaming"
-	OperationTools     Operation = "tools"
-	OperationVision    Operation = "vision"
+	OperationChat             Operation = "chat"
+	OperationStreaming        Operation = "streaming"
+	OperationTools            Operation = "tools"
+	OperationVision           Operation = "vision"
+	OperationStructuredOutput Operation = "structured_output"
 )
 
 // ContentPartKind is the closed vocabulary of multimodal content-part kinds

@@ -274,8 +274,12 @@ func (googleGenerateContentCodec) newHTTPError(status int, rawBody []byte, heade
 func (googleGenerateContentCodec) runSSE(streamCtx context.Context, cancel context.CancelFunc, resp *http.Response, requestID string, ch chan<- Chunk, inflights *inflightRegistry, firstByteTimeout, idleGapTimeout time.Duration) {
 	runGeminiSSE(streamCtx, cancel, resp, requestID, ch, inflights, firstByteTimeout, idleGapTimeout)
 }
+
+// capabilities reports tools and vision alongside chat/streaming — both are
+// genuinely serialized by buildGeminiRequest — but not structured output:
+// buildGeminiRequest fails closed on a set ResponseFormat.
 func (googleGenerateContentCodec) capabilities() []Operation {
-	return []Operation{OperationChat, OperationStreaming}
+	return []Operation{OperationChat, OperationStreaming, OperationTools, OperationVision}
 }
 
 // --- anthropic_messages codec (claude-code) -------------------------------
@@ -316,8 +320,12 @@ func (anthropicMessagesCodec) newHTTPError(status int, rawBody []byte, headers h
 func (anthropicMessagesCodec) runSSE(streamCtx context.Context, cancel context.CancelFunc, resp *http.Response, requestID string, ch chan<- Chunk, inflights *inflightRegistry, firstByteTimeout, idleGapTimeout time.Duration) {
 	runAnthropicSSE(streamCtx, cancel, resp, requestID, ch, inflights, firstByteTimeout, idleGapTimeout)
 }
+
+// capabilities reports tools and vision alongside chat/streaming — both are
+// genuinely serialized by buildAnthropicRequest — but not structured output:
+// buildAnthropicRequest fails closed on a set ResponseFormat.
 func (anthropicMessagesCodec) capabilities() []Operation {
-	return []Operation{OperationChat, OperationStreaming}
+	return []Operation{OperationChat, OperationStreaming, OperationTools, OperationVision}
 }
 
 // --- openai_chat codec (clinepass) ----------------------------------------
@@ -439,8 +447,11 @@ func (openAIChatCodec) newHTTPError(status int, rawBody []byte, headers http.Hea
 func (openAIChatCodec) runSSE(streamCtx context.Context, cancel context.CancelFunc, resp *http.Response, requestID string, ch chan<- Chunk, inflights *inflightRegistry, firstByteTimeout, idleGapTimeout time.Duration) {
 	runOpenAIChatOAuthSSE(streamCtx, cancel, resp, requestID, ch, inflights, firstByteTimeout, idleGapTimeout)
 }
+
+// capabilities is identical to OpenAICompatibleTransport's, since this codec
+// shares buildChatMessages/buildChatTools/buildChatResponseFormat with it.
 func (openAIChatCodec) capabilities() []Operation {
-	return []Operation{OperationChat, OperationStreaming}
+	return []Operation{OperationChat, OperationStreaming, OperationTools, OperationVision, OperationStructuredOutput}
 }
 
 // runOpenAIChatOAuthSSE drives an OpenAI-compatible SSE stream over the
