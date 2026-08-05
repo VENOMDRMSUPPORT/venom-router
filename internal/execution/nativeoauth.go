@@ -345,13 +345,18 @@ func (openAIChatCodec) buildPayload(route ResolvedRoute, req NormalizedRequest, 
 	if err != nil {
 		return nil, err
 	}
+	responseFormat, err := buildChatResponseFormat(req.ResponseFormat)
+	if err != nil {
+		return nil, err
+	}
 	return json.Marshal(chatCompletionRequestBody{
-		Model:      route.ModelID,
-		Messages:   messages,
-		MaxTokens:  req.MaxTokens,
-		Stream:     stream,
-		Tools:      buildChatTools(req.Tools),
-		ToolChoice: req.ToolChoice,
+		Model:          route.ModelID,
+		Messages:       messages,
+		MaxTokens:      req.MaxTokens,
+		Stream:         stream,
+		Tools:          buildChatTools(req.Tools),
+		ToolChoice:     req.ToolChoice,
+		ResponseFormat: responseFormat,
 	})
 }
 

@@ -85,6 +85,51 @@ func TestOpenAICompatible_OmitsItWhenNil(t *testing.T) {
 	}
 }
 
+// TestOpenAICompatible_ResponseFormatIsSerialized proves a "json_object"
+// NormalizedRequest.ResponseFormat is sent as the OpenAI response_format
+// object.
+func TestOpenAICompatible_ResponseFormatIsSerialized(t *testing.T) {
+	var got map[string]any
+	srv := decodedRequestServer(t, &got)
+
+	transport := NewOpenAICompatibleTransport(&http.Client{}, 5*time.Second)
+	_, err := transport.Execute(context.Background(), newOpenAICompatTestRoute(srv.URL), NormalizedRequest{
+		Messages:       []Message{{Role: "user", Content: "hi"}},
+		ResponseFormat: "json_object",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	rf, ok := got["response_format"].(map[string]any)
+	if !ok {
+		t.Fatalf("request body has no response_format object; body = %+v", got)
+	}
+	if rf["type"] != "json_object" {
+		t.Fatalf("response_format.type = %v, want \"json_object\"", rf["type"])
+	}
+}
+
+// TestOpenAICompatible_NoResponseFormatKeyWhenUnset is the byte-identical
+// pinning test: an empty NormalizedRequest.ResponseFormat must leave the
+// response_format key absent from the wire body entirely.
+func TestOpenAICompatible_NoResponseFormatKeyWhenUnset(t *testing.T) {
+	var got map[string]any
+	srv := decodedRequestServer(t, &got)
+
+	transport := NewOpenAICompatibleTransport(&http.Client{}, 5*time.Second)
+	_, err := transport.Execute(context.Background(), newOpenAICompatTestRoute(srv.URL), NormalizedRequest{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if v, ok := got["response_format"]; ok {
+		t.Fatalf("request body has response_format = %v, want the key absent entirely", v)
+	}
+}
+
 func newFixedChatResponseServer(t *testing.T, message map[string]any) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

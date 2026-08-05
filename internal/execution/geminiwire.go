@@ -117,6 +117,9 @@ func buildGeminiRequest(req NormalizedRequest) (geminiGenerateReq, error) {
 	if req.ToolChoice != "" {
 		return geminiGenerateReq{}, fmt.Errorf("%w: tool_choice", ErrRequestFeatureUnsupported)
 	}
+	if req.ResponseFormat != "" {
+		return geminiGenerateReq{}, fmt.Errorf("%w: response_format", ErrRequestFeatureUnsupported)
+	}
 	contents := make([]geminiContent, 0, len(req.Messages))
 	var systemParts []geminiPart
 	for _, m := range req.Messages {

@@ -124,6 +124,13 @@ type NormalizedRequest struct {
 	// ToolChoice is the OpenAI tool_choice directive (P5-EXEC-004). Empty =
 	// unset (omitted from the wire body).
 	ToolChoice string
+	// ResponseFormat asks the provider to constrain the reply's shape
+	// (OpenAI `response_format`). Empty = unset, so the serialized body is
+	// byte-identical to a request that never set it. The only value this
+	// seam recognizes is "json_object"; a transport that cannot express it
+	// returns ErrRequestFeatureUnsupported rather than dropping it, because
+	// silently ignoring it would return prose to a caller that requires JSON.
+	ResponseFormat string
 }
 
 // ErrRequestFeatureUnsupported is the typed sentinel a transport returns when

@@ -78,16 +78,36 @@ type chatReqToolFunc struct {
 }
 
 // chatCompletionRequestBody is the OpenAI-compatible chat completion
-// request this transport sends. Stream, MaxTokens, Tools, and ToolChoice use
-// omitempty so they are absent from the wire body when zero/nil/empty — a
-// text-only request therefore serializes exactly as it did before P5-EXEC-004.
+// request this transport sends. Stream, MaxTokens, Tools, ToolChoice, and
+// ResponseFormat use omitempty so they are absent from the wire body when
+// zero/nil/empty — a text-only request therefore serializes exactly as it
+// did before P5-EXEC-004.
 type chatCompletionRequestBody struct {
-	Model      string           `json:"model"`
-	Messages   []chatReqMessage `json:"messages"`
-	MaxTokens  *int             `json:"max_tokens,omitempty"`
-	Stream     bool             `json:"stream,omitempty"`
-	Tools      []chatReqTool    `json:"tools,omitempty"`
-	ToolChoice string           `json:"tool_choice,omitempty"`
+	Model          string              `json:"model"`
+	Messages       []chatReqMessage    `json:"messages"`
+	MaxTokens      *int                `json:"max_tokens,omitempty"`
+	Stream         bool                `json:"stream,omitempty"`
+	Tools          []chatReqTool       `json:"tools,omitempty"`
+	ToolChoice     string              `json:"tool_choice,omitempty"`
+	ResponseFormat *chatResponseFormat `json:"response_format,omitempty"`
+}
+
+// chatResponseFormat is OpenAI's response_format object. Only the type
+// discriminator is expressed; a JSON Schema variant is not part of this seam.
+type chatResponseFormat struct {
+	Type string `json:"type"`
+}
+
+// buildChatResponseFormat maps the normalized value onto the wire object.
+// Empty yields nil so the key is omitted entirely.
+func buildChatResponseFormat(v string) (*chatResponseFormat, error) {
+	if v == "" {
+		return nil, nil
+	}
+	if v != "json_object" {
+		return nil, fmt.Errorf("%w: response_format %q", ErrRequestFeatureUnsupported, v)
+	}
+	return &chatResponseFormat{Type: v}, nil
 }
 
 type chatCompletionToolCall struct {
@@ -250,12 +270,17 @@ func (t *OpenAICompatibleTransport) Execute(ctx context.Context, route ResolvedR
 	if err != nil {
 		return nil, err
 	}
+	responseFormat, err := buildChatResponseFormat(req.ResponseFormat)
+	if err != nil {
+		return nil, err
+	}
 	payload, err := json.Marshal(chatCompletionRequestBody{
-		Model:      route.ModelID,
-		Messages:   messages,
-		MaxTokens:  req.MaxTokens,
-		Tools:      buildChatTools(req.Tools),
-		ToolChoice: req.ToolChoice,
+		Model:          route.ModelID,
+		Messages:       messages,
+		MaxTokens:      req.MaxTokens,
+		Tools:          buildChatTools(req.Tools),
+		ToolChoice:     req.ToolChoice,
+		ResponseFormat: responseFormat,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("execution: openai-compatible transport: encode request: %w", err)
@@ -327,13 +352,19 @@ func (t *OpenAICompatibleTransport) Stream(ctx context.Context, route ResolvedRo
 		cancel()
 		return nil, err
 	}
+	responseFormat, err := buildChatResponseFormat(req.ResponseFormat)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
 	payload, err := json.Marshal(chatCompletionRequestBody{
-		Model:      route.ModelID,
-		Messages:   messages,
-		MaxTokens:  req.MaxTokens,
-		Stream:     true,
-		Tools:      buildChatTools(req.Tools),
-		ToolChoice: req.ToolChoice,
+		Model:          route.ModelID,
+		Messages:       messages,
+		MaxTokens:      req.MaxTokens,
+		Stream:         true,
+		Tools:          buildChatTools(req.Tools),
+		ToolChoice:     req.ToolChoice,
+		ResponseFormat: responseFormat,
 	})
 	if err != nil {
 		cancel()

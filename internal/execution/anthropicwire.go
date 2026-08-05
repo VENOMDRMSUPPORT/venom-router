@@ -85,6 +85,9 @@ func buildAnthropicRequest(req NormalizedRequest, model string, stream bool) (an
 	if req.ToolChoice != "" {
 		return anthropicMessagesRequest{}, fmt.Errorf("%w: tool_choice", ErrRequestFeatureUnsupported)
 	}
+	if req.ResponseFormat != "" {
+		return anthropicMessagesRequest{}, fmt.Errorf("%w: response_format", ErrRequestFeatureUnsupported)
+	}
 	out := anthropicMessagesRequest{Model: model, Stream: stream}
 	var systemParts []string
 	for _, m := range req.Messages {

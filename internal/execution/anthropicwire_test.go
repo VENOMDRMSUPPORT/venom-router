@@ -146,6 +146,19 @@ func TestAnthropic_RequestMapping(t *testing.T) {
 	})
 }
 
+// TestAnthropicWire_ResponseFormatFailsClosed proves buildAnthropicRequest
+// fails closed on ResponseFormat rather than silently dropping it — silently
+// dropping it would return prose to a caller that requires JSON.
+func TestAnthropicWire_ResponseFormatFailsClosed(t *testing.T) {
+	_, err := buildAnthropicRequest(NormalizedRequest{
+		Messages:       []Message{{Role: "user", Content: "hi"}},
+		ResponseFormat: "json_object",
+	}, "m", false)
+	if !errors.Is(err, ErrRequestFeatureUnsupported) {
+		t.Fatalf("err = %v, want ErrRequestFeatureUnsupported — silently dropping response_format would return prose to a caller that requires JSON", err)
+	}
+}
+
 // TestAnthropic_URLImageFailsClosed proves a URL-only image is rejected with
 // the typed error and NO request is sent.
 func TestAnthropic_URLImageFailsClosed(t *testing.T) {
