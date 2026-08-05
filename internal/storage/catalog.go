@@ -254,6 +254,30 @@ func (r *CatalogRepo) GetOperationCertification(ctx context.Context, offeringOpe
 	return op, true, nil
 }
 
+// ModelIDForOffering resolves the canonical models.id for one
+// (accountID, providerModelID) offering via account_model_offerings.model_id
+// (04 §3's canonical-vs-offering split: every offering row already carries
+// its parent model's id). This lets a caller that only knows an offering's
+// own identity — e.g. the probe handler, which knows accountID and
+// providerModelID but not the canonical model behind them — reach the
+// canonical row without duplicating the join. Returns (_, false, nil) when
+// no such offering exists, never an error, mirroring GetOperationCertification's
+// not-found convention.
+func (r *CatalogRepo) ModelIDForOffering(ctx context.Context, accountID, providerModelID string) (string, bool, error) {
+	var modelID string
+	err := r.db.Conn().QueryRowContext(ctx,
+		`SELECT model_id FROM account_model_offerings WHERE account_id = ? AND provider_model_id = ?`,
+		accountID, providerModelID,
+	).Scan(&modelID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("storage: model id for offering (%q,%q): %w", accountID, providerModelID, err)
+	}
+	return modelID, true, nil
+}
+
 // ChatOfferingToVerify is one free chat offering-operation awaiting a
 // usability probe: the certification row id to drive and the provider model id
 // to probe. It is the storage-side shape the per-account usability run consumes.

@@ -371,7 +371,7 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	probeTransportAdapterInstance := newProbeTransportAdapter(probeTransports, probeBaseURLs, credentialRepo, credentialService)
 	probeHandler := buildProbeHandler(
 		accountRepo, credentialRepo, catalogRepo, jobRepo, certRepo, probeRunRepo,
-		probeReserver, probeTransportAdapterInstance, certDriver, ops, audit, idem,
+		probeReserver, probeTransportAdapterInstance, certDriver, discoveryRepo, ops, audit, idem,
 	)
 	mux.Handle("/api/control/v1/offerings/{id}/probe", gated(probeHandler.ServeProbe))
 
@@ -483,13 +483,14 @@ func buildProbeHandler(
 	reserver intelligence.ProbeReserver,
 	transport probeTransport,
 	driver *intelligence.CertificationDriver,
+	discovery nativeContextWriter,
 	ops *operationalSettings,
 	audit *auditEmitter,
 	idem *idempotencyStore,
 ) *ProbeHandler {
 	return NewProbeHandler(
 		accounts, credentials, catalog, jobs, certs, probeRuns,
-		reserver, transport, driver, ops.probePolicy,
-		audit, idem, newOAuthTransactionID, nil,
+		reserver, transport, driver, discovery, ops.probePolicy,
+		audit, idem, newOAuthTransactionID, nil, nil,
 	)
 }

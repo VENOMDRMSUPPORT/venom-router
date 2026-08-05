@@ -12,6 +12,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -108,11 +109,13 @@ type probeFixture struct {
 	jobs       *storage.JobRepo
 	certs      *storage.CertificationRepo
 	probeRuns  *storage.ProbeRunRepo
+	discovery  *storage.DiscoveryRepo
 	transport  *fakeProbeTransport
 	audit      *auditEmitter
 	accountID  string
 	providerID string
 	opID       string
+	modelID    string
 	clockNow   time.Time
 }
 
@@ -177,6 +180,7 @@ func newProbeFixture(t *testing.T, opts probeFixtureOpts) *probeFixture {
 	jobRepo := storage.NewJobRepo(db)
 	certRepo := storage.NewCertificationRepo(db, clock)
 	probeRunRepo := storage.NewProbeRunRepo(db, clock, 7*24*time.Hour)
+	discoveryRepo := storage.NewDiscoveryRepo(db, probeIDCounter())
 	reservationRepo := storage.NewQuotaReservationRepo(db, clock)
 	reserver := newProbeReserverAdapter(reservationRepo)
 
@@ -196,13 +200,13 @@ func newProbeFixture(t *testing.T, opts probeFixtureOpts) *probeFixture {
 	idem := newIdempotencyStore()
 	handler := NewProbeHandler(
 		accountRepo, credentialRepo, catalogRepo, jobRepo, certRepo, probeRunRepo,
-		reserver, transport, driver, staticProbePolicy(policy), audit, idem, probeIDCounter(), clock,
+		reserver, transport, driver, discoveryRepo, staticProbePolicy(policy), audit, idem, probeIDCounter(), clock, nil,
 	)
 
 	return &probeFixture{
 		db: db, handler: handler, jobs: jobRepo, certs: certRepo, probeRuns: probeRunRepo,
-		transport: transport, audit: audit, accountID: accountID, providerID: providerID,
-		opID: opID, clockNow: now,
+		discovery: discoveryRepo, transport: transport, audit: audit, accountID: accountID,
+		providerID: providerID, opID: opID, modelID: "model-probe", clockNow: now,
 	}
 }
 
@@ -439,6 +443,97 @@ func TestProbe_Returns202WithJobAndStatusURL(t *testing.T) {
 	}
 	if row.Kind != "probe" {
 		t.Fatalf("job Kind = %q, want probe", row.Kind)
+	}
+}
+
+// --- TestProbe_ContextWindowWriteBack (Task 4) ---
+
+// queryNativeContextTokens reads models.native_context_tokens for modelID,
+// returning nil for SQL NULL.
+func queryNativeContextTokens(t *testing.T, db *storage.DB, modelID string) *int {
+	t.Helper()
+	var v sql.NullInt64
+	if err := db.Conn().QueryRow(`SELECT native_context_tokens FROM models WHERE id = ?`, modelID).Scan(&v); err != nil {
+		t.Fatalf("query native_context_tokens for %q: %v", modelID, err)
+	}
+	if !v.Valid {
+		return nil
+	}
+	n := int(v.Int64)
+	return &n
+}
+
+// TestProbe_ContextWindowWriteBack_ExtractedLimitPersisted drives the
+// PRODUCTION probe job path (POST /offerings/{id}/probe -> runProbe ->
+// ContextProbe.Run -> RecordAttempt) end to end with a fake transport
+// whose rejection carries a structured, extractable context limit. Task 4's
+// whole point: that extracted number must now be durably written onto the
+// offering's canonical model row, not thrown away.
+// MUTATION: deleting the write-back call in runProbe (Step 5's proof)
+// leaves this test's final assertion RED while every other assertion in
+// this file stays green.
+func TestProbe_ContextWindowWriteBack_ExtractedLimitPersisted(t *testing.T) {
+	policy := intelligence.DefaultProbeSafetyPolicy()
+	policy.ExpensiveProbesEnabled = true
+	f := newProbeFixture(t, probeFixtureOpts{Operation: "context_window", CertState: "probing", TransportAvailable: true, Policy: &policy})
+	mux := newTestProbeMux(f.handler)
+
+	if got := queryNativeContextTokens(t, f.db, f.modelID); got != nil {
+		t.Fatalf("native_context_tokens before the probe = %v, want NULL", *got)
+	}
+
+	limit := 128000
+	f.transport.result = intelligence.ProbeResult{HTTPStatus: 400, StructuredContextLimit: &limit}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, probeRequest(http.MethodPost, "/api/control/v1/offerings/"+f.opID+"/probe", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %q", rec.Code, rec.Body.String())
+	}
+	data := decodeProbeResponse(t, rec.Body.Bytes())
+	row := waitForJobTerminal(t, f.jobs, data.JobID, 2*time.Second)
+	if row.Status != storage.JobCompleted {
+		t.Fatalf("job Status = %q, want completed (error = %+v)", row.Status, row.Error)
+	}
+
+	got := queryNativeContextTokens(t, f.db, f.modelID)
+	if got == nil || *got != limit {
+		t.Fatalf("native_context_tokens after the probe = %v, want %d", got, limit)
+	}
+}
+
+// TestProbe_ContextWindowWriteBack_NoSignalNotWritten is the negative
+// control: a rejection the extraction ladder cannot read anything out of
+// (RungNoSignal) must leave native_context_tokens untouched — the ladder
+// itself already guarantees it never hands back a positive value here, but
+// this proves the handler honors that rather than writing a zero/garbage
+// value or writing on every completed job regardless of extraction.
+func TestProbe_ContextWindowWriteBack_NoSignalNotWritten(t *testing.T) {
+	policy := intelligence.DefaultProbeSafetyPolicy()
+	policy.ExpensiveProbesEnabled = true
+	f := newProbeFixture(t, probeFixtureOpts{Operation: "context_window", CertState: "probing", TransportAvailable: true, Policy: &policy})
+	mux := newTestProbeMux(f.handler)
+
+	// No structured field, no context_length_exceeded provider code, and a
+	// message containing none of the rung-4 generic keywords ("context
+	// length", "context window", "maximum context", "token limit",
+	// "context") — every rung misses, so classifyContextProbeResult reports
+	// RungNoSignal.
+	f.transport.result = intelligence.ProbeResult{HTTPStatus: 400, ProviderCode: "bad_request", Message: "the request body could not be parsed"}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, probeRequest(http.MethodPost, "/api/control/v1/offerings/"+f.opID+"/probe", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %q", rec.Code, rec.Body.String())
+	}
+	data := decodeProbeResponse(t, rec.Body.Bytes())
+	row := waitForJobTerminal(t, f.jobs, data.JobID, 2*time.Second)
+	if row.Status != storage.JobCompleted {
+		t.Fatalf("job Status = %q, want completed (error = %+v)", row.Status, row.Error)
+	}
+
+	if got := queryNativeContextTokens(t, f.db, f.modelID); got != nil {
+		t.Fatalf("native_context_tokens after a no-signal rejection = %v, want NULL — nothing was extracted, so nothing must be written", *got)
 	}
 }
 

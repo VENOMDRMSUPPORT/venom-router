@@ -12,6 +12,7 @@ import (
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
@@ -122,6 +123,20 @@ func (f inFlightExcluding) InFlightProbes(ctx context.Context, providerID string
 	return f.runs.InFlightProbesExcluding(ctx, providerID, f.excludeRun)
 }
 
+// nativeContextWriter is the local port ProbeHandler consults to persist a
+// context probe's extracted native context-window limit onto the model's
+// canonical row (Task 4: context write-back — the probe's extracted limit
+// used to be computed and then thrown away). Kept as a narrow interface,
+// like probeTransport/intelligence.ProbeReserver above, rather than the
+// concrete *storage.DiscoveryRepo type most of this handler's other repos
+// use directly, so the Step-5 mutation proof and any test that only cares
+// about "was this called" are not forced to stand up a full repo. ControlMux
+// wires the real *storage.DiscoveryRepo, which already implements this
+// method (internal/storage/discovery.go).
+type nativeContextWriter interface {
+	SetNativeContextTokens(ctx context.Context, modelID string, tokens int) error
+}
+
 // ProbeHandler serves the P3c-CAPI-001 probe-trigger surface: POST
 // /offerings/{id}/probe (async, 202 + job). Owner-session + CSRF gated
 // via ControlMux's `gated`.
@@ -135,6 +150,10 @@ type ProbeHandler struct {
 	reserver    intelligence.ProbeReserver
 	transport   probeTransport
 	driver      *intelligence.CertificationDriver
+	// discovery is consulted ONLY by the context-window write-back
+	// (runProbe, after RecordAttempt succeeds) — every other probe
+	// operation never touches it.
+	discovery nativeContextWriter
 	// policyFor resolves the owner's CURRENT probe-safety policy. It is a
 	// function, not a value, because the caps are owner-configurable at
 	// runtime (P6-CAPI-001): a policy snapshotted at boot would ignore every
@@ -145,6 +164,7 @@ type ProbeHandler struct {
 	idem      *idempotencyStore
 	newID     func() string
 	now       func() time.Time
+	log       *observability.Logger
 }
 
 // NewProbeHandler builds the handler over every repo/service it needs.
@@ -161,11 +181,13 @@ func NewProbeHandler(
 	reserver intelligence.ProbeReserver,
 	transport probeTransport,
 	driver *intelligence.CertificationDriver,
+	discovery nativeContextWriter,
 	policyFor func(context.Context) intelligence.ProbeSafetyPolicy,
 	audit *auditEmitter,
 	idem *idempotencyStore,
 	newID func() string,
 	now func() time.Time,
+	log *observability.Logger,
 ) *ProbeHandler {
 	if newID == nil {
 		newID = newOAuthTransactionID
@@ -180,10 +202,14 @@ func NewProbeHandler(
 			return intelligence.DefaultProbeSafetyPolicy()
 		}
 	}
+	if log == nil {
+		log = observability.Default()
+	}
 	return &ProbeHandler{
 		accounts: accounts, credentials: credentials, catalog: catalog, jobs: jobs,
 		certs: certs, probeRuns: probeRuns, reserver: reserver, transport: transport,
-		driver: driver, policyFor: policyFor, audit: audit, idem: idem, newID: newID, now: now,
+		driver: driver, discovery: discovery, policyFor: policyFor, audit: audit, idem: idem,
+		newID: newID, now: now, log: log,
 	}
 }
 
@@ -487,6 +513,13 @@ func (h *ProbeHandler) runProbe(ctx context.Context, jobID, offeringOperationID,
 	var outcome intelligence.ProbeOutcome
 	var reservationID string
 	var runErr error
+	// contextLimit is non-nil only for a context-window probe whose
+	// extraction ladder actually hit a rung (report.Rung != RungNoSignal —
+	// ContextProbe.Run only ever sets report.Limit in that case). It is
+	// used below, AFTER RecordAttempt succeeds, to write the probe's
+	// extracted number back onto the model's canonical row instead of
+	// discarding it.
+	var contextLimit *int
 
 	if op == models.OperationContextWindow {
 		cp, cpErr := intelligence.NewContextProbe(h.transport, guard, nil, h.now)
@@ -496,6 +529,7 @@ func (h *ProbeHandler) runProbe(ctx context.Context, jobID, offeringOperationID,
 		}
 		report, rerr := cp.Run(ctx, req)
 		outcome, reservationID, runErr = report.Outcome, report.ReservationID, rerr
+		contextLimit = report.Limit
 	} else {
 		cp, cpErr := intelligence.NewCapabilityProbe(h.transport, guard, h.now)
 		if cpErr != nil {
@@ -524,6 +558,47 @@ func (h *ProbeHandler) runProbe(ctx context.Context, jobID, offeringOperationID,
 		return
 	}
 
+	// Write-back (Task 4): ONLY after the certification transition above has
+	// already recorded the outcome truthfully, and ONLY when the context
+	// probe actually extracted a positive limit, persist it onto the
+	// model's canonical row. A write failure here is logged and swallowed,
+	// never turned into a job failure — the certification already recorded
+	// the truth of what happened; this is a best-effort enrichment of a
+	// different fact entirely.
+	if contextLimit != nil {
+		h.writeBackNativeContextTokens(ctx, offeringOperationID, accountID, providerModelID, *contextLimit)
+	}
+
 	_ = h.jobs.MarkTerminal(context.Background(), jobID, storage.JobCompleted, h.now(),
 		certificationResultRef(offeringOperationID), nil, storage.DefaultJobRetention)
+}
+
+// writeBackNativeContextTokens persists a context probe's extracted,
+// verified limit onto models.native_context_tokens for the offering's
+// canonical model (Task 4). It resolves providerModelID -> the canonical
+// models.id via the same account_model_offerings row discovery already
+// populated, then calls the DiscoveryRepo write-back. Any failure along
+// the way (lookup or write) is logged and swallowed — this is a best-
+// effort enrichment, never a reason to fail an already-completed probe job.
+func (h *ProbeHandler) writeBackNativeContextTokens(ctx context.Context, offeringOperationID, accountID, providerModelID string, tokens int) {
+	modelID, ok, err := h.catalog.ModelIDForOffering(ctx, accountID, providerModelID)
+	if err != nil {
+		h.log.Error("context probe write-back: model id lookup failed",
+			observability.Err(err),
+			observability.String("offering_operation_id", offeringOperationID),
+			observability.String("account_id", accountID))
+		return
+	}
+	if !ok {
+		h.log.Error("context probe write-back: no canonical model found for offering",
+			observability.String("offering_operation_id", offeringOperationID),
+			observability.String("account_id", accountID))
+		return
+	}
+	if err := h.discovery.SetNativeContextTokens(ctx, modelID, tokens); err != nil {
+		h.log.Error("context probe write-back: SetNativeContextTokens failed",
+			observability.Err(err),
+			observability.String("offering_operation_id", offeringOperationID),
+			observability.String("model_id", modelID))
+	}
 }

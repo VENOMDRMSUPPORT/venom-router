@@ -651,6 +651,7 @@ func TestSettings_ProbeHandlerWiringUsesTheOwnerPolicy(t *testing.T) {
 		newProbeReserverAdapter(storage.NewQuotaReservationRepo(db, nil)),
 		newProbeTransportAdapter(nil, nil, credentialRepo, nil),
 		driver,
+		storage.NewDiscoveryRepo(db, nil),
 		newOperationalSettings(repo),
 		newAuditEmitter(db, nil), newIdempotencyStore(),
 	)

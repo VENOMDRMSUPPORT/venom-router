@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -741,6 +742,75 @@ func TestDiscoveryApply_NoSecondConnection(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("second Apply did not complete within the timeout — a second connection against the single-connection pool deadlocked")
+	}
+}
+
+// TestDiscoveryRepo_SetNativeContextTokens_RoundTrip proves a positive
+// probed limit is durably written onto the model's canonical row (this
+// batch's whole point: the context probe's extracted number no longer gets
+// thrown away). MUTATION: returning nil without executing the UPDATE turns
+// this RED.
+func TestDiscoveryRepo_SetNativeContextTokens_RoundTrip(t *testing.T) {
+	db := migratedCatalogDB(t)
+	insertModel(t, db, "model-a", "key-a")
+	repo := NewDiscoveryRepo(db, sequentialTestIDs())
+	ctx := context.Background()
+
+	assertNativeContextTokens(t, db, "model-a", nil)
+
+	if err := repo.SetNativeContextTokens(ctx, "model-a", 128000); err != nil {
+		t.Fatalf("SetNativeContextTokens(128000) error = %v, want nil", err)
+	}
+
+	assertNativeContextTokens(t, db, "model-a", intPtr(128000))
+}
+
+// TestDiscoveryRepo_SetNativeContextTokens_NonPositiveRejected proves a
+// non-positive limit is never written as if it were a real fact (04 §2: "a
+// zero/negative declared limit fails the record rather than being
+// stored") — the row is left exactly as it was. MUTATION: dropping the
+// `tokens <= 0` guard turns this RED (0 would round-trip as a "fact").
+func TestDiscoveryRepo_SetNativeContextTokens_NonPositiveRejected(t *testing.T) {
+	db := migratedCatalogDB(t)
+	insertModel(t, db, "model-a", "key-a")
+	repo := NewDiscoveryRepo(db, sequentialTestIDs())
+	ctx := context.Background()
+
+	if err := repo.SetNativeContextTokens(ctx, "model-a", 0); err == nil {
+		t.Fatalf("SetNativeContextTokens(0) error = nil, want an error — a non-positive limit is never a fact")
+	}
+
+	assertNativeContextTokens(t, db, "model-a", nil)
+}
+
+// TestDiscoveryRepo_SetNativeContextTokens_UnknownModelErrors proves a
+// write against a modelID that matches no row is a typed error, not a
+// silent no-op (mirrors CatalogRepo.SetQualityRating's identical
+// ErrModelNotFound contract for a vanished-model write).
+func TestDiscoveryRepo_SetNativeContextTokens_UnknownModelErrors(t *testing.T) {
+	db := migratedCatalogDB(t)
+	repo := NewDiscoveryRepo(db, sequentialTestIDs())
+	ctx := context.Background()
+
+	err := repo.SetNativeContextTokens(ctx, "does-not-exist", 128000)
+	if !errors.Is(err, ErrModelNotFound) {
+		t.Fatalf("SetNativeContextTokens(unknown model) error = %v, want ErrModelNotFound", err)
+	}
+}
+
+func assertNativeContextTokens(t *testing.T, db *DB, modelID string, want *int) {
+	t.Helper()
+	var got sql.NullInt64
+	if err := db.Conn().QueryRow(`SELECT native_context_tokens FROM models WHERE id = ?`, modelID).Scan(&got); err != nil {
+		t.Fatalf("query native_context_tokens for %q: %v", modelID, err)
+	}
+	switch {
+	case want == nil && got.Valid:
+		t.Fatalf("models(%q).native_context_tokens = %d, want NULL", modelID, got.Int64)
+	case want != nil && !got.Valid:
+		t.Fatalf("models(%q).native_context_tokens = NULL, want %d", modelID, *want)
+	case want != nil && got.Valid && got.Int64 != int64(*want):
+		t.Fatalf("models(%q).native_context_tokens = %d, want %d", modelID, got.Int64, *want)
 	}
 }
 

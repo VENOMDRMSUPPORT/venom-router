@@ -141,6 +141,7 @@ func newP3cGateFixtureWithDB(t *testing.T, db *storage.DB, opts p3cGateFixtureOp
 	jobRepo := storage.NewJobRepo(db)
 	certRepo := storage.NewCertificationRepo(db, clock)
 	probeRunRepo := storage.NewProbeRunRepo(db, clock, 7*24*time.Hour)
+	discoveryRepo := storage.NewDiscoveryRepo(db, probeIDCounter())
 	reserver := newProbeReserverAdapter(storage.NewQuotaReservationRepo(db, clock))
 
 	audit := newAuditEmitter(db, nil)
@@ -168,7 +169,7 @@ func newP3cGateFixtureWithDB(t *testing.T, db *storage.DB, opts p3cGateFixtureOp
 	idem := newIdempotencyStore()
 	handler := NewProbeHandler(
 		accountRepo, credRepo, catalogRepo, jobRepo, certRepo, probeRunRepo,
-		reserver, transportAdapter, driver, staticProbePolicy(policy), audit, idem, probeIDCounter(), clock,
+		reserver, transportAdapter, driver, discoveryRepo, staticProbePolicy(policy), audit, idem, probeIDCounter(), clock, nil,
 	)
 
 	return &p3cGateFixture{

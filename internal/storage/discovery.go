@@ -420,6 +420,44 @@ func (r *DiscoveryRepo) recordEvidenceObserved(ctx context.Context, tx *sql.Tx, 
 	return nil
 }
 
+// SetNativeContextTokens persists a VERIFIED native context-window limit
+// (04 §2/§3) onto modelID's canonical models row, stamping updated_at. This
+// is the write-back that flips models.EffectiveContext's provenance to
+// `native` for a probed model: the context probe already extracts the real
+// limit from a provider's rejection (contextprobe.go's ExtractContextLimit
+// ladder), and until this method existed nothing ever persisted it.
+//
+// tokens must be strictly positive: a non-positive limit is never a fact
+// (04 §2: "a zero/negative declared limit fails the record rather than
+// being stored"), so this method rejects it and leaves the row completely
+// untouched — the ExtractContextLimit ladder already guarantees it never
+// hands back a non-positive value, but this guard holds regardless of what
+// a caller passes.
+//
+// A modelID matching no row is ErrModelNotFound, not a silent no-op — the
+// same typed-error contract CatalogRepo.SetQualityRating already uses for
+// an identical "write against a vanished model" case.
+func (r *DiscoveryRepo) SetNativeContextTokens(ctx context.Context, modelID string, tokens int) error {
+	if tokens <= 0 {
+		return fmt.Errorf("storage: native context tokens must be positive, got %d", tokens)
+	}
+	res, err := r.db.Conn().ExecContext(ctx,
+		`UPDATE models SET native_context_tokens = ?, updated_at = ? WHERE id = ?`,
+		tokens, time.Now().Unix(), modelID,
+	)
+	if err != nil {
+		return fmt.Errorf("storage: set native context tokens: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("storage: set native context tokens: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: %q", ErrModelNotFound, modelID)
+	}
+	return nil
+}
+
 // marshalJSONColumn marshals v (either []string or map[string]any) into a
 // nullable TEXT column value: a nil slice/map yields SQL NULL, anything
 // else (including an empty-but-non-nil slice/map) yields its JSON text.
