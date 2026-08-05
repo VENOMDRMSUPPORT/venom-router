@@ -31,6 +31,7 @@ import {
 } from "../api/controlClient";
 import ReviewQueueBanner from "./ReviewQueueBanner";
 import ProviderLogo from "../fleet/ProviderLogo";
+import CapabilityChips from "../fleet/CapabilityChips";
 
 export interface ModelsSurfaceProps {
   csrfToken: string;
@@ -125,6 +126,44 @@ function groupContext(g: ModelGroup): { tokens: number | null; provenance?: stri
     : { tokens: null };
 }
 
+/** The provenance-derived prefix mark on a context-window badge (owner
+ * requirement, 2026-08-05c): "≈" when the shown token count came from the
+ * provider's own declared cap (`models.ContextProviderCap`, i.e. NOT
+ * probe-verified), "✓" when it came from the canonical native fact a context
+ * probe wrote back (`models.ContextNative`), and no mark at all when there is
+ * no token count to qualify — `ContextWindowDisplay` already renders that case
+ * as the word "ctx unknown" on its own, and a ≈/✓ beside it would be a claim
+ * about a number that was never shown.
+ *
+ * This reuses the SAME `tokens`/`provenance` inputs `ContextWindowDisplay`
+ * already receives; it never re-implements that component's "200K" token
+ * formatting — it only prepends a small marker in front of it. */
+function ContextProvenanceMark(props: { tokens: number | null; provenance?: string }) {
+  const { tokens, provenance } = props;
+  if (tokens == null) return null;
+
+  const title = "≈ declared by provider (not probe-verified) · ✓ verified by a context probe";
+  if (provenance === "provider_cap") {
+    return (
+      <span
+        className="vn-caption"
+        title={title}
+        aria-label="context declared by provider, not probe-verified"
+      >
+        ≈
+      </span>
+    );
+  }
+  if (provenance === "native") {
+    return (
+      <span className="vn-caption" title={title} aria-label="context verified by context probe">
+        ✓
+      </span>
+    );
+  }
+  return null;
+}
+
 /** The in-flight/finished outcome of an async trigger. `note` carries the
  * honesty caveat a bare status cannot (see benchmarkNote). */
 interface JobOutcome {
@@ -145,7 +184,10 @@ function CapabilityCell(props: { offeringKey: string; capability: OfferingCapabi
       className="flex flex-wrap items-center gap-2"
       data-testid={`capability-${offeringKey}-${capability.operation}`}
     >
-      <span className="vn-caption">{capability.operation}</span>
+      {/* Owner requirement (2026-08-05a): capabilities are ALWAYS icon chips
+          with tooltips here too, never bare operation words — reuse the ONE
+          shared chip renderer rather than a second implementation. */}
+      <CapabilityChips capabilities={[capability]} cap={1} />
       <CertificationStateBadge state={capability.state as DSCertState} />
       <CapabilityTruthBadge truth={capability.truth as DSCapabilityTruth} />
       <span data-testid={`capability-routable-${offeringKey}-${capability.operation}`}>
@@ -227,12 +269,16 @@ function OfferingRow(props: {
             <span className="vn-caption">Context</span>
             {/* tokens={null} renders the DS "ctx unknown" badge. An unknown
                 context is ineligible for every tier (05 §1 fail-closed) — it is
-                never 0 and never a blank cell. */}
+                never 0 and never a blank cell. `verified` is true ONLY for
+                "native" (a context probe wrote this back) — "provider_cap" is
+                the provider's own say-so, declared but unverified. */}
+            <ContextProvenanceMark
+              tokens={o.effective_context_tokens}
+              provenance={o.context_provenance}
+            />
             <ContextWindowDisplay
               tokens={o.effective_context_tokens}
-              verified={
-                o.context_provenance === "probe" || o.context_provenance === "owner_override"
-              }
+              verified={o.context_provenance === "native"}
               source={o.context_provenance || undefined}
             />
           </span>
@@ -536,6 +582,27 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
               <div className="flex flex-col gap-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
+                    {/* Owner requirement (2026-08-05b): every provider's model
+                        is its own row/group, never merged — so the group
+                        header carries THAT provider's logo + name. This is
+                        safe to read off the first offering because the
+                        canonical model_id is a provider-scoped hash
+                        (models.CanonicalKey(providerID, providerModelID)):
+                        every offering inside one group already shares the
+                        same provider by construction. */}
+                    {firstOffering ? (
+                      <div
+                        className="vnd-model-name-group"
+                        data-testid={`model-group-provider-${g.model_id}`}
+                      >
+                        <ProviderLogo
+                          slug={firstOffering.provider_id}
+                          name={firstOffering.provider_id}
+                          size="sm"
+                        />
+                        <span className="vn-caption">{firstOffering.provider_id}</span>
+                      </div>
+                    ) : null}
                     <Button
                       size="sm"
                       variant="ghost"
@@ -578,11 +645,25 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-4">
-                  <span className="flex items-center gap-2">
+                  <span
+                    className="flex items-center gap-2"
+                    data-testid={`model-group-context-${g.model_id}`}
+                  >
                     <span className="vn-caption">Context</span>
+                    {/* groupContext() picks the single offering with the
+                        LARGEST effective context and returns THAT offering's
+                        own provenance — not some optimistic blend across the
+                        group. So marking ✓ here is honest exactly when the
+                        offering behind the shown number is itself
+                        native/probe-verified; a larger but merely
+                        provider-declared number still marks ≈, even if a
+                        smaller native-verified offering also exists in this
+                        same group (see the "derives the group header's
+                        marker from the source offering" test). */}
+                    <ContextProvenanceMark tokens={ctx.tokens} provenance={ctx.provenance} />
                     <ContextWindowDisplay
                       tokens={ctx.tokens}
-                      verified={ctx.provenance === "probe" || ctx.provenance === "owner_override"}
+                      verified={ctx.provenance === "native"}
                       source={ctx.provenance}
                     />
                   </span>

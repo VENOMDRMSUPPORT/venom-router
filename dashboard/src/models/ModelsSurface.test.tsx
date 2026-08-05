@@ -29,7 +29,13 @@ function offering(overrides: Partial<EffectiveOffering> = {}): EffectiveOffering
     display_name: "Zen Chat 1",
     availability: "available",
     effective_context_tokens: 262144,
-    context_provenance: "probe",
+    // A real, valid ContextProvenance value (internal/models.ContextNative) —
+    // the OLD default here was "probe", which the backend never actually
+    // serializes (the enum is unknown/native/provider_cap). That fictional
+    // value happened to match an equally fictional check in ModelsSurface
+    // (`=== "probe"`), so the two masked each other and "verified" was never
+    // exercised against a value the API can really send.
+    context_provenance: "native",
     capabilities: [capability()],
     quality_score: 0.82,
     quality_known: true,
@@ -235,6 +241,185 @@ describe("ModelsSurface — the certification conjunction", () => {
     expect(screen.getByTestId("capability-contra-1-chat").textContent ?? "").toMatch(
       /inconsistent/i,
     );
+  });
+});
+
+describe("ModelsSurface — provider identity per row/group (owner requirement 2026-08-05b)", () => {
+  // The canonical model_id is derived from a provider-scoped hash
+  // (models.CanonicalKey(providerID, providerModelID)), so two providers can
+  // never land in the SAME group by construction — but that guarantee is only
+  // as good as the VISUAL identity on top of it. This test pins that a
+  // display-name collision across two providers renders as two separate,
+  // fully-identified rows: never merged, never silently deduplicated.
+  it("renders two providers offering the same display name as two separate group rows, each carrying that provider's own logo and name", async () => {
+    mockModels([
+      group({
+        model_id: "model-shared-zen",
+        display_name: "Shared Model",
+        offerings: [
+          offering({
+            provider_id: "opencode-zen",
+            account_id: "acct-1",
+            provider_model_id: "shared-zen-1",
+          }),
+        ],
+      }),
+      group({
+        model_id: "model-shared-claude",
+        display_name: "Shared Model",
+        offerings: [
+          offering({
+            provider_id: "claude-code",
+            account_id: "acct-2",
+            provider_model_id: "shared-claude-1",
+          }),
+        ],
+      }),
+    ]);
+    renderSurface();
+
+    const cardA = await screen.findByTestId("model-group-model-shared-zen");
+    const cardB = screen.getByTestId("model-group-model-shared-claude");
+
+    // Never merged and never skipped: the same display name shows up on BOTH
+    // cards, not collapsed into one.
+    expect(within(cardA).getByText("Shared Model")).toBeTruthy();
+    expect(within(cardB).getByText("Shared Model")).toBeTruthy();
+
+    // Each row/group is identifiable by ITS OWN provider's logo + name — never
+    // the other provider's.
+    expect(within(cardA).getByRole("img", { name: "opencode-zen" })).toBeTruthy();
+    expect(within(cardB).getByRole("img", { name: "claude-code" })).toBeTruthy();
+    expect(within(cardA).queryByRole("img", { name: "claude-code" })).toBeNull();
+    expect(within(cardB).queryByRole("img", { name: "opencode-zen" })).toBeNull();
+  });
+});
+
+describe("ModelsSurface — capabilities as icon chips, never bare words (owner requirement 2026-08-05a)", () => {
+  it("renders a capability as the shared icon-chip component, not its bare operation name as text", async () => {
+    mockModels([
+      group({
+        offerings: [
+          offering({
+            provider_model_id: "vision-1",
+            capabilities: [capability({ operation: "vision", provenance: "declared" })],
+          }),
+        ],
+      }),
+    ]);
+    renderSurface();
+    await expandGroup("model-zen-chat");
+
+    const cell = screen.getByTestId("capability-vision-1-vision");
+    // The shared CapabilityChips renderer: an accessible icon box labelled by
+    // the operation, carrying a tooltip — never a plain visible text node
+    // reading the operation name on its own.
+    const chip = within(cell).getByRole("img", { name: "vision" });
+    expect(chip.className).toMatch(/vnd-capability-icon-box/);
+    expect(chip.getAttribute("title") ?? "").toMatch(/VISION/);
+    expect(within(cell).queryByText("vision")).toBeNull();
+  });
+});
+
+describe("ModelsSurface — honest context-provenance markers (owner requirement 2026-08-05c)", () => {
+  it("marks a provider-declared (unverified) context with ≈, never ✓", async () => {
+    mockModels([
+      group({
+        model_id: "model-ctx-cap",
+        offerings: [
+          offering({
+            provider_model_id: "ctx-cap-1",
+            effective_context_tokens: 200_000,
+            context_provenance: "provider_cap",
+          }),
+        ],
+      }),
+    ]);
+    renderSurface();
+    await expandGroup("model-ctx-cap");
+
+    const cell = screen.getByTestId("offering-context-ctx-cap-1");
+    expect(cell.textContent ?? "").toMatch(/≈/);
+    expect(cell.textContent ?? "").toMatch(/200K/);
+    expect(cell.textContent ?? "").not.toMatch(/✓/);
+
+    const mark = cell.querySelector('[title*="declared by provider"]');
+    expect(mark).toBeTruthy();
+    expect(mark?.getAttribute("title") ?? "").toMatch(/verified by.*context probe/i);
+  });
+
+  it("marks a native, probe-verified context with ✓, never ≈", async () => {
+    mockModels([
+      group({
+        model_id: "model-ctx-native",
+        offerings: [
+          offering({
+            provider_model_id: "ctx-native-1",
+            effective_context_tokens: 131072,
+            context_provenance: "native",
+          }),
+        ],
+      }),
+    ]);
+    renderSurface();
+    await expandGroup("model-ctx-native");
+
+    const cell = screen.getByTestId("offering-context-ctx-native-1");
+    expect(cell.textContent ?? "").toMatch(/✓/);
+    expect(cell.textContent ?? "").not.toMatch(/≈/);
+  });
+
+  it("renders plain 'ctx unknown' with no ≈/✓ mark when context is unknown", async () => {
+    mockModels([
+      group({
+        model_id: "model-ctx-unknown",
+        offerings: [
+          offering({
+            provider_model_id: "ctx-unk-1",
+            effective_context_tokens: null,
+            context_provenance: "unknown",
+          }),
+        ],
+      }),
+    ]);
+    renderSurface();
+    await expandGroup("model-ctx-unknown");
+
+    const cell = screen.getByTestId("offering-context-ctx-unk-1");
+    expect(cell.textContent ?? "").toMatch(/ctx unknown/i);
+    expect(cell.textContent ?? "").not.toMatch(/≈|✓/);
+  });
+
+  // The group header shows the MAX effective context across offerings
+  // (groupContext). Honesty requires the marker to describe the SOURCE
+  // offering of that max, not an optimistic blend — so when the larger value
+  // is only provider-declared, the header must say ≈ even though a smaller,
+  // native-verified offering also exists underneath it.
+  it("derives the group header's marker from the source offering of the shown max, not the best provenance available anywhere in the group", async () => {
+    mockModels([
+      group({
+        model_id: "model-ctx-group",
+        offerings: [
+          offering({
+            provider_model_id: "ctx-group-native",
+            effective_context_tokens: 100_000,
+            context_provenance: "native",
+          }),
+          offering({
+            provider_model_id: "ctx-group-cap",
+            account_id: "acct-2",
+            effective_context_tokens: 200_000,
+            context_provenance: "provider_cap",
+          }),
+        ],
+      }),
+    ]);
+    renderSurface();
+
+    const header = await screen.findByTestId("model-group-context-model-ctx-group");
+    expect(header.textContent ?? "").toMatch(/≈/);
+    expect(header.textContent ?? "").toMatch(/200K/);
+    expect(header.textContent ?? "").not.toMatch(/✓/);
   });
 });
 

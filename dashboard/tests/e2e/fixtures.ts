@@ -199,7 +199,11 @@ const OFFERING = {
   display_name: "Grok Code",
   availability: "available",
   effective_context_tokens: 128_000,
-  context_provenance: "provider_evidence",
+  // A real ContextProvenance value (internal/models.ContextNative) — the
+  // matching native_context_tokens below on the group makes "native" the
+  // honest choice; "provider_evidence" is not a value the backend ever
+  // serializes (see internal/models/effective.go).
+  context_provenance: "native",
   capabilities: [CAPABILITY],
   quality_score: 0.82,
   quality_known: true,
