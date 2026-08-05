@@ -518,8 +518,57 @@ Each phase ships green on its own.
 | **4** | Deletion and unification; Live Models becomes display-only; cost chip removed; score renamed and unified | Cards are clean, consistent and honest |
 | **5** | Documentation: the corrected rule, the false-premise correction, the removal decisions | No future reader is misled |
 
+**Phases 1 and 2 ship together as one unit of work.** An earlier draft of this
+document claimed they were independent; reading `intelligence.Project`
+(`readmodel.go:190-193`) while writing the implementation plan disproved that:
+
+```go
+effective := native != nil && transport != nil &&
+    containsOperation(native, op) &&
+    containsOperation(providerExposed, op) &&
+    containsOperation(transport, op)
+```
+
+`effective` requires a non-nil `NativeCapabilities`, and the only source for it
+is catalog resolution. Wiring `TransportOperations` alone would leave `routable`
+false and Phase 1 would deliver nothing visible. Catalog resolution therefore
+lands first, and the routability wiring lands on top of it.
+
 Phase 3 depends on Phase 2 only for knowing which models need a context
-measurement. Phases 1 and 2 are independent of each other.
+measurement.
+
+### 8.1 The capability axes, resolved
+
+The three-way intersection is only meaningful if each axis means something
+distinct. As implemented they are:
+
+| Axis | Meaning | Source after this work |
+|---|---|---|
+| `NativeCapabilities` | what the canonical model can do | the resolved set — see below |
+| `Offering.Capabilities` | what **this provider account** exposes of it | provider wire declarations **∪** catalog declarations for that provider key |
+| `TransportOperations` | what **our code** can actually carry | `execution.InferenceTransport.SupportedOperations()` |
+
+**The native axis is deliberately collapsed onto the offering axis, and no new
+column is added.** A canonical model id is `models.CanonicalKey(providerID,
+providerModelID)` — it is already provider-scoped. There is therefore no
+model-level capability fact that differs from the resolved offering-level fact,
+and a `native_capabilities_json` column would be ceremony: a second store of the
+same list, with a second writer to keep in sync and a second way to drift.
+`NativeCapabilities` is passed the resolved capability set, making `effective`
+evaluate to `resolved ∩ transport`, which is the correct semantics.
+
+The `native != nil` guard keeps its meaning: it still fails closed when nothing
+has been resolved. What changes is that resolution now actually happens, so the
+guard stops being permanently tripped.
+
+The union in the middle row is the load-bearing decision. A thin wire that
+returns `{id, name}` is **silence, not denial** — and models.dev's `cline-pass`
+key is provider-scoped evidence about that provider's own offerings, not generic
+information about a model elsewhere. Treating the wire's silence as absence is
+what produces today's chat-only ClinePass fleet.
+
+A capability the transport cannot express is correctly not effective, even when
+both the model and the provider support it: we cannot route what we cannot send.
 
 ---
 
