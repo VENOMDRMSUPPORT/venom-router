@@ -169,6 +169,17 @@ func projectCapabilities(native, providerExposed, transport []models.Operation, 
 	for _, op := range transport {
 		union[op] = true
 	}
+	// A CANDIDATE operation (discovery.go's DiscoveredModel.CandidateOperations)
+	// has a real offering_operations row and certification entry but was
+	// deliberately left out of providerExposed/native/transport — the adapter
+	// never declared it. It must still surface here: the row is what makes it
+	// probeable at all, and Effective/Provenance below are computed from
+	// providerExposed/native/transport and state+truth exactly as for any
+	// other operation, so a candidate's discovered/unknown row is emitted
+	// without being fabricated as declared or effective.
+	for op := range certs {
+		union[op] = true
+	}
 
 	var out []EffectiveCapability
 	for _, op := range models.Operations() {

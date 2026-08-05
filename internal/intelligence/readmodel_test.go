@@ -398,6 +398,67 @@ func TestProject_CapabilityWithoutCertificationHasNoOfferingOperationID(t *testi
 	}
 }
 
+// TestProject_CandidateOperationSurfacesUnprobedButUndeclared proves a
+// CANDIDATE operation (discovery.go's DiscoveredModel.CandidateOperations:
+// one the adapter did not declare, e.g. clinepass's wire returns {id, name}
+// only, but that still gets an offering_operations row so it has something
+// to probe — see discovery_test.go's
+// TestDiscoveryRepo_Apply_CandidateOperationsCreateRowsButStayUndeclared)
+// reaches the projection's output.
+//
+// Before this test, `union` (the set of operations Project emits) was built
+// only from native ∪ providerExposed ∪ transport — never from the
+// Certifications map's own keys. A candidate's certification row (real
+// OfferingOperationID, state=discovered, truth=unknown) exists in
+// Certifications but its operation is absent from all three of those sets,
+// so it was silently dropped: the id every client needs for
+// `POST /offerings/{id}/probe` never reached the API response at all,
+// making every candidate operation permanently unprobeable regardless of
+// what the storage layer had already made possible.
+//
+// The operation must surface WITHOUT being fabricated as provider-exposed:
+// Effective stays false (providerExposed excludes it) and Provenance stays
+// "" (state=discovered/truth=unknown is never Routable) — only its
+// OfferingOperationID becomes reachable. MUTATION: reverting `union` to
+// native ∪ providerExposed ∪ transport only turns this RED; unioning in a
+// declared-capabilities-shaped set instead of Certifications' keys, or
+// marking the candidate Effective/declared, would falsely claim the
+// provider exposed it.
+func TestProject_CandidateOperationSurfacesUnprobedButUndeclared(t *testing.T) {
+	in := baseInput()
+	// Tools is a CANDIDATE here: absent from native/providerExposed/transport
+	// (baseInput's Offering.Capabilities is chat-only), present only in
+	// Certifications — exactly discovery.go's candidate shape.
+	in.Certifications = map[models.Operation]models.Certification{
+		models.OperationTools: {
+			OfferingOperationID: "oo-tools-candidate-1",
+			State:               models.CertDiscovered,
+			Truth:               models.TruthUnknown,
+		},
+	}
+
+	out := Project(in)
+
+	var found *EffectiveCapability
+	for i := range out.Capabilities {
+		if out.Capabilities[i].Operation == models.OperationTools {
+			found = &out.Capabilities[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("candidate operation %q missing from Capabilities — its offering_operation_id can never reach a client, so it can never be probed", models.OperationTools)
+	}
+	if found.OfferingOperationID != "oo-tools-candidate-1" {
+		t.Errorf("OfferingOperationID = %q, want %q", found.OfferingOperationID, "oo-tools-candidate-1")
+	}
+	if found.Effective {
+		t.Errorf("Effective = true, want false (the provider never exposed this operation — only a candidate row exists)")
+	}
+	if found.Provenance != "" {
+		t.Errorf("Provenance = %q, want \"\" (discovered/unknown is never Routable, so it earns no provenance)", found.Provenance)
+	}
+}
+
 // TestProject_CapabilityProvenance proves the derivation rule (task-5): chat
 // is ALWAYS "probed" when certified+supported (no declared path exists for
 // chat by construction — it is only ever certified by the runtime usability

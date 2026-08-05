@@ -348,6 +348,67 @@ describe("AuthGate — session expiry via an authenticated mutating call", () =>
   });
 });
 
+describe("AuthGate — csrf_failed self-heal via an authenticated mutating call", () => {
+  // Proves the registration wiring (AuthGate calls setCsrfRefreshHandler,
+  // http.ts's request() calls it back on csrf_failed) actually works
+  // end-to-end: a stale token from a rotated backend csrfKey (server
+  // restart) heals itself via a fresh GET /auth/session, with no redirect
+  // to Login and no manual reload — unlike a real session_expired, which
+  // does redirect (proven by the sibling describe block above).
+  it("recovers from a stale CSRF token without redirecting to Login, and retries with the freshly-fetched token", async () => {
+    let sessionCalls = 0;
+    let putCalls = 0;
+    const fetchMock = createFetchMock({
+      "GET /api/control/v1/auth/status": () =>
+        jsonResponse(200, { data: { setup_complete: true } }),
+      "GET /api/control/v1/auth/session": () => {
+        sessionCalls += 1;
+        return jsonResponse(200, {
+          data: { session: SESSION_TIMES },
+          csrf_token: sessionCalls === 1 ? "csrf-live-token" : "csrf-refreshed-token",
+        });
+      },
+      "GET /api/control/v1/settings": () =>
+        jsonResponse(200, { data: { theme: "venom-dark", density: "comfortable" } }),
+      "PUT /api/control/v1/settings": () => {
+        putCalls += 1;
+        if (putCalls === 1) {
+          return jsonResponse(403, {
+            error: {
+              code: "csrf_failed",
+              message: "csrf validation failed",
+              request_id: "r5",
+              retryable: false,
+            },
+          });
+        }
+        return jsonResponse(200, { data: { theme: "venom-light", density: "comfortable" } });
+      },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AuthGate />);
+    await screen.findByRole("button", { name: /owner menu/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /switch to light mode/i }));
+
+    await waitFor(() => expect(putCalls).toBe(2));
+    // Still authenticated — the self-heal did not route back to Login the
+    // way a real session_expired would.
+    expect(screen.getByRole("button", { name: /owner menu/i })).toBeTruthy();
+    // The bootstrap session fetch, plus exactly one more from the self-heal
+    // refresh triggered by the first PUT's csrf_failed.
+    expect(sessionCalls).toBe(2);
+
+    const putCallInits = fetchMock.mock.calls
+      .filter(([, init]) => (init as RequestInit | undefined)?.method === "PUT")
+      .map(([, init]) => init as RequestInit & { headers: Record<string, string> });
+    expect(putCallInits).toHaveLength(2);
+    expect(putCallInits[0].headers["X-CSRF-Token"]).toBe("csrf-live-token");
+    expect(putCallInits[1].headers["X-CSRF-Token"]).toBe("csrf-refreshed-token");
+  });
+});
+
 describe("AuthGate — no secret ever reaches console output", () => {
   it("never logs any password across setup, sign-out, login, and reverify", async () => {
     const consoleMethods = ["log", "info", "warn", "error", "debug"] as const;

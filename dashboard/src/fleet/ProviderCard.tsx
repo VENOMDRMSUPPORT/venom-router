@@ -47,7 +47,38 @@ export default function ProviderCard(props: ProviderCardProps) {
     >
       <div className="vn-provider-card-head">
         <div className="vn-provider-card-identity">
-          <ProviderLogo slug={provider.id} name={name} size="lg" />
+          <ProviderLogo slug={provider.id} name={name} size="md" />
+          <div className="vn-provider-card-title">
+            <div className="vnd-card-name-row">
+              <h3 role="heading" aria-level={2}>{name}</h3>
+              {meta ? (
+                <a
+                  className="vnd-icon-link"
+                  href={meta.siteUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  aria-label={`Open ${meta.siteLabel} in a new tab`}
+                  title={`Open ${meta.siteLabel} in a new tab`}
+                >
+                  <Icon name="external-link" size={12} />
+                </a>
+              ) : null}
+            </div>
+            {meta ? <span className="vnd-card-domain">{meta.siteLabel}</span> : null}
+            <div className="vn-provider-card-status-row">
+              {connected ? (
+                <span className="vn-provider-card-linked">
+                  <span className="vnd-status-dot vnd-status-dot--healthy" />
+                  {accountCount} account{accountCount === 1 ? "" : "s"} linked
+                </span>
+              ) : (
+                <span className="vn-provider-card-linked vn-provider-card-linked--idle">
+                  <span className="vnd-status-dot vnd-status-dot--idle" />
+                  No connections
+                </span>
+              )}
+            </div>
+          </div>
         </div>
         <div className="vn-provider-card-meta">
           <div className="vn-provider-card-badges">
@@ -61,39 +92,6 @@ export default function ProviderCard(props: ProviderCardProps) {
             </Badge>
           </div>
         </div>
-      </div>
-
-      <div className="vn-provider-card-title">
-        <div className="vnd-card-name-row">
-          {/* Level 2, not 3: the shell's ChromeHeader owns the page's only
-              h1, so a card title is the next level down and axe's
-              heading-order rule (rightly) rejects a jump to h3.
-              The ELEMENT stays <h3> because @venom/design-system styles this
-              title through the element selector `.vn-provider-card-title h3`
-              (css/components-core.css) — that package is frozen, so changing
-              the tag here would silently drop the card title's typography.
-              aria-level is what assistive tech and axe actually read, so this
-              corrects the semantics with zero visual change. */}
-          <h3 role="heading" aria-level={2}>{name}</h3>
-          {meta ? (
-            <a
-              className="vnd-icon-link"
-              href={meta.siteUrl}
-              target="_blank"
-              rel="noreferrer noopener"
-              aria-label={`Open ${meta.siteLabel} in a new tab`}
-              title={`Open ${meta.siteLabel} in a new tab`}
-            >
-              <Icon name="external-link" size={13} />
-            </a>
-          ) : null}
-        </div>
-        {meta ? <span className="vnd-card-domain">{meta.siteLabel}</span> : null}
-        {connected ? (
-          <span className="vn-provider-card-linked">
-            {accountCount} account{accountCount === 1 ? "" : "s"} linked
-          </span>
-        ) : null}
       </div>
 
       {description ? <p className="vn-provider-card-description">{description}</p> : null}

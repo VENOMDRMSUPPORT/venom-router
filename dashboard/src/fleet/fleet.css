@@ -664,6 +664,14 @@ body,
   padding: var(--space-1) var(--space-2) !important;
   height: 24px;
   box-sizing: border-box;
+  max-width: 260px;
+  overflow: hidden;
+}
+
+.vnd-account-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* --- Compact quota meters -------------------------------------------------- */
@@ -869,7 +877,7 @@ body,
 
 .vnd-report-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-3);
   border: var(--border-hairline) solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -881,9 +889,20 @@ body,
 .vnd-report-row-body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
   min-width: 0;
   flex: 1;
+}
+
+/* Second line of a report row (2026-08-05, Model Test Report redesign):
+   context, quality, cost, and capability chips together — everything that
+   was previously either missing (context/quality/cost) or squeezed onto the
+   first line (chips). */
+.vnd-report-row-facts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
 .vnd-report-chips {
@@ -1154,5 +1173,56 @@ textarea:focus-visible,
    keep the plain solid border from .vnd-capability-icon-box above. */
 .vnd-capability-icon-box--declared {
   border-style: dashed;
+}
+
+/* Truth-based tint (2026-08-05, Model Test Report redesign): overrides the
+   operation's own categorical color — a real negative (--failed) or an
+   unproven (--untested) result matters more here than which operation it
+   is. The icon glyph itself stays operation-specific; only the box's
+   border/background/icon color are retinted. */
+.vnd-capability-icon-box--failed {
+  --cap-border-color: var(--status-critical-border);
+  --cap-bg-color: var(--status-critical-bg);
+}
+.vnd-capability-icon-box--failed .vn-icon {
+  color: var(--status-critical-fg) !important;
+}
+.vnd-capability-icon-box--untested {
+  border-style: dashed;
+  --cap-border-color: var(--border-default);
+  --cap-bg-color: var(--surface-sunken);
+}
+.vnd-capability-icon-box--untested .vn-icon {
+  color: var(--text-muted) !important;
+}
+
+/* A <button> chip (CapabilityChips' onTest path) is otherwise identical to
+   the static <span> chip — reset the browser's default button chrome so it
+   still reads as the same icon box, just clickable. */
+button.vnd-capability-icon-box {
+  padding: 0;
+  border-style: solid;
+  font: inherit;
+  cursor: pointer;
+}
+button.vnd-capability-icon-box--untested {
+  border-style: dashed;
+}
+button.vnd-capability-icon-box:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.vnd-capability-icon-box__spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-default);
+  border-top-color: var(--text-secondary);
+  border-radius: 50%;
+  animation: vnd-capability-spin 0.6s linear infinite;
+}
+@keyframes vnd-capability-spin {
+  to { transform: rotate(360deg); }
 }
 

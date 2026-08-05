@@ -1,8 +1,9 @@
-import { useState, type ChangeEvent, type FormEvent } from "react";
+import { useState, type AnimationEvent, type ChangeEvent, type FormEvent } from "react";
 import { Button, FormField, Input } from "@venom/design-system/primitives";
 import { OwnerSessionStatus, TypedErrorDisplay } from "@venom/design-system/domain";
 import { AuthApiError, isLockedOut, login, type LiveSession } from "./authClient";
 import { formatRetryAfter, useRetryCountdown } from "./useRetryCountdown";
+import { autofillValueFromAnimation } from "./autofill";
 
 export interface LoginScreenProps {
   /** Called once with the newly-created session + CSRF token on success. */
@@ -22,6 +23,11 @@ export default function LoginScreen(props: LoginScreenProps) {
   const [lockoutSeconds, setLockoutSeconds] = useState<number | null>(null);
   const remainingLockout = useRetryCountdown(lockoutSeconds);
   const locked = lockoutSeconds != null && remainingLockout > 0;
+
+  function handleAutofillStart(e: AnimationEvent<HTMLInputElement>) {
+    const value = autofillValueFromAnimation(e.animationName, e.currentTarget.value);
+    if (value !== null) setPassword(value);
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -66,6 +72,7 @@ export default function LoginScreen(props: LoginScreenProps) {
               value={password}
               disabled={submitting || locked}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
+              onAnimationStart={handleAutofillStart}
             />
           </FormField>
 

@@ -113,18 +113,22 @@ export const PROBEABLE_OPERATIONS: ReadonlySet<string> = new Set([
   "vision",
 ]);
 
-/** The offering-operation id a probe should target for this model: the id
- * of the first capability whose operation is in PROBEABLE_OPERATIONS
- * (iterated in its declared preference order — tools first) AND that
- * carries an offering_operation_id. Never chat — the server rejects it 422.
- * `undefined` means NOT PROBEABLE (native/transport-only operations have no
- * offering_operations row, and chat-only models have nothing the probe
- * endpoint accepts) — the control stays disabled with the reason stated,
- * never a composed id. */
-export function probeTarget(offering: Pick<EffectiveOffering, "capabilities">): string | undefined {
+/** Every offering-operation id this model can be individually re-tested on:
+ * one entry per capability whose operation is in PROBEABLE_OPERATIONS and
+ * that carries an offering_operation_id, in PROBEABLE_OPERATIONS' declared
+ * preference order (tools first). Never chat/streaming — the server rejects
+ * them 422. Truth is NOT filtered on: an untested candidate, an already
+ * failed capability, and an already-proven one are all legitimately
+ * re-testable, matching each capability chip's own individual test action.
+ * `[]` means nothing here is probeable (native/transport-only operations
+ * have no offering_operations row, and a chat-only model has nothing the
+ * probe endpoint accepts) — never a composed id. */
+export function probeTargets(offering: Pick<EffectiveOffering, "capabilities">): string[] {
+  const ids: string[] = [];
   for (const operation of PROBEABLE_OPERATIONS) {
-    const match = offering.capabilities.find((c) => c.operation === operation && c.offering_operation_id);
-    if (match) return match.offering_operation_id;
+    for (const c of offering.capabilities) {
+      if (c.operation === operation && c.offering_operation_id) ids.push(c.offering_operation_id);
+    }
   }
-  return undefined;
+  return ids;
 }

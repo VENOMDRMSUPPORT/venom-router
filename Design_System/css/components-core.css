@@ -72,6 +72,19 @@
   border-color: var(--input-border-invalid);
 }
 .vn-input[aria-invalid="true"]:focus-visible { box-shadow: 0 0 0 1px var(--input-border-invalid); }
+/* Browser-autofill detection: this animation only plays while the input
+   matches :-webkit-autofill, giving React a hook (onAnimationStart) to
+   notice a password-manager fill that writes the DOM value without firing
+   a change event controlled inputs rely on. Purely a detection signal, no
+   visible effect. */
+@keyframes vn-autofill-start {
+  from {}
+  to {}
+}
+.vn-input:-webkit-autofill {
+  animation-name: vn-autofill-start;
+  animation-duration: 0.1ms;
+}
 .vn-input--mono { font-family: var(--font-family-mono); }
 .vn-select { position: relative; display: block; }
 .vn-select select { appearance: none; padding-right: calc(var(--density-control-pad-x) + 18px); cursor: pointer; }
@@ -737,26 +750,30 @@
 }
 .vn-provider-view-chip[aria-pressed="true"] .vn-provider-view-count { background: var(--surface-primary); color: var(--accent-text); }
 .vn-provider-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); min-width: 0; }
-.vn-provider-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); min-width: 0; }
+.vn-provider-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--space-3); min-width: 0; }
 .vn-provider-card {
-  position: relative; display: flex; flex-direction: column; min-width: 0;
-  gap: var(--space-4); padding: var(--space-5); overflow: hidden;
+  position: relative; display: flex; flex-direction: column; justify-content: space-between; min-width: 0;
+  gap: var(--space-3); padding: var(--space-4); border-radius: var(--radius-lg); overflow: hidden;
   transition: transform var(--duration-fast) var(--easing-standard), border-color var(--duration-fast) var(--easing-standard), box-shadow var(--duration-fast) var(--easing-standard);
 }
 .vn-provider-card--connected { box-shadow: inset 3px 0 0 var(--status-healthy-border), var(--card-shadow); }
 .vn-provider-card--expanded { grid-column: 1 / -1; }
-.vn-provider-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); min-width: 0; }
-.vn-provider-card-identity { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.vn-provider-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); min-width: 0; }
+.vn-provider-card-identity { display: flex; align-items: center; gap: var(--space-3); min-width: 0; flex: 1; }
 .vn-provider-card-title { min-width: 0; }
-.vn-provider-card-title h3 { margin: 0; overflow-wrap: anywhere; color: var(--text-primary); font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); line-height: var(--font-line-height-snug); }
-.vn-provider-card-linked { display: block; margin-top: var(--space-1); color: var(--status-healthy-fg); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
+.vn-provider-card-title h3 { margin: 0; overflow-wrap: anywhere; color: var(--text-primary); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); line-height: var(--font-line-height-snug); }
+.vn-provider-card-status-row { display: flex; align-items: center; gap: var(--space-1); margin-top: 2px; }
+.vn-provider-card-linked { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--status-healthy-fg); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
 .vn-provider-card-linked--idle { color: var(--text-muted); font-weight: var(--font-weight-normal); }
+.vnd-status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
+.vnd-status-dot--healthy { background: var(--status-healthy-fg); }
+.vnd-status-dot--idle { background: var(--text-muted); opacity: 0.6; }
 .vn-provider-card-meta { display: flex; align-items: flex-start; gap: var(--space-1); flex: none; }
 .vn-provider-card-badges { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); }
-.vn-provider-card-description { flex: 1; min-height: 2.8em; margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); line-height: var(--font-line-height-normal); }
+.vn-provider-card-description { flex: 1; margin: 0; color: var(--text-secondary); font-size: var(--font-size-xs); line-height: var(--font-line-height-normal); }
 .vn-provider-card-setup { margin: 0; color: var(--status-warning-fg); font-size: var(--font-size-xs); line-height: var(--font-line-height-relaxed); }
 .vn-provider-card-accounts { overflow-x: auto; border: var(--border-hairline) solid var(--border-default); border-radius: var(--radius-md); }
-.vn-provider-card-actions { padding-top: var(--space-3); border-top: var(--border-hairline) solid var(--border-default); }
+.vn-provider-card-actions { padding-top: var(--space-2); border-top: var(--border-hairline) solid var(--border-default); }
 @media (hover: hover) and (pointer: fine) {
   .vn-provider-card:hover { transform: translateY(-2px); border-color: var(--border-strong); box-shadow: var(--elevation-overlay); }
   .vn-provider-card--connected:hover { box-shadow: inset 3px 0 0 var(--status-healthy-border), var(--elevation-overlay); }

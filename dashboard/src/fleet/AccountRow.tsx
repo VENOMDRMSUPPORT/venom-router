@@ -179,14 +179,13 @@ export default function AccountRow(props: AccountRowProps) {
           if (status.status === "completed") {
             stopReauthPolling();
             setActionPending(false);
-            setActionNote("Account reauthenticated. Refreshing live status…");
+            toast.success("Account reauthenticated");
             setReauthAuthorizeUrl(null);
             onChanged();
             return;
           }
           stopReauthPolling();
           setActionPending(false);
-          setActionNote(null);
           setActionError(
             new AuthApiError(0, {
               code: status.error ?? "oauth_failed",
@@ -211,7 +210,6 @@ export default function AccountRow(props: AccountRowProps) {
     onDenied: (error) => {
       stopReauthPolling();
       setActionPending(false);
-      setActionNote(null);
       setActionError(
         new AuthApiError(0, {
           code: error || "oauth_denied",
@@ -224,12 +222,11 @@ export default function AccountRow(props: AccountRowProps) {
   });
 
   async function handleReauthenticate() {
-    // Reserve the popup synchronously inside the click gesture; navigating a
+    // reserve the popup synchronously inside the click gesture; navigating a
     // popup only after the POST resolves is routinely blocked by browsers.
     const popup = window.open("", `venom-reauth-${account.id}`, "popup,width=760,height=820");
     setActionPending(true);
     setActionError(null);
-    setActionNote("Starting secure sign-in…");
     setReauthAuthorizeUrl(null);
     stopReauthPolling();
     try {
@@ -239,11 +236,11 @@ export default function AccountRow(props: AccountRowProps) {
       } else {
         setReauthAuthorizeUrl(begin.authorize_url);
       }
-      setActionNote("Complete sign-in to restore this account.");
       // Arm the relay leg: for a provider that omits `state` the backend
       // cannot finish the callback itself, so this id is the only way the
       // relayed code can be spent (see useOAuthRelay).
       setReauthTransactionId(begin.transaction_id);
+      setActionNote("Complete sign-in to restore this account.");
       const expiresAt = Date.parse(begin.expires_at);
       if (Number.isNaN(expiresAt)) throw new Error("OAuth transaction returned an invalid expiry");
       reauthPollRef.current = window.setInterval(() => {
@@ -252,7 +249,6 @@ export default function AccountRow(props: AccountRowProps) {
           if (Date.now() >= expiresAt) {
             stopReauthPolling();
             setActionPending(false);
-            setActionNote(null);
             setActionError(
               new AuthApiError(0, {
                 code: "oauth_expired",
@@ -269,13 +265,12 @@ export default function AccountRow(props: AccountRowProps) {
             if (status.status === "completed") {
               stopReauthPolling();
               setActionPending(false);
-              setActionNote("Account reauthenticated. Refreshing live status…");
+              toast.success("Account reauthenticated");
               setReauthAuthorizeUrl(null);
               onChanged();
             } else if (status.status === "failed" || status.status === "expired") {
               stopReauthPolling();
               setActionPending(false);
-              setActionNote(null);
               setActionError(
                 new AuthApiError(0, {
                   code: status.error ?? `oauth_${status.status}`,
@@ -301,7 +296,6 @@ export default function AccountRow(props: AccountRowProps) {
     } catch (err) {
       popup?.close();
       setActionPending(false);
-      setActionNote(null);
       if (isSessionExpired(err)) {
         onSessionExpired();
         return;
@@ -362,7 +356,6 @@ export default function AccountRow(props: AccountRowProps) {
   async function runLifecycleAction(action: () => Promise<unknown>): Promise<boolean> {
     setActionPending(true);
     setActionError(null);
-    setActionNote(null);
     try {
       await action();
       onChanged();
@@ -372,7 +365,11 @@ export default function AccountRow(props: AccountRowProps) {
         onSessionExpired();
         return false;
       }
-      setActionError(toApiError(err));
+      const apiErr = toApiError(err);
+      setActionError(apiErr);
+      toast.danger("Account action failed", {
+        detail: apiErr.message || (err instanceof Error ? err.message : String(err)),
+      });
       return false;
     } finally {
       setActionPending(false);
@@ -402,18 +399,29 @@ export default function AccountRow(props: AccountRowProps) {
         }
       } catch (err) {
         if (err instanceof AuthApiError && err.code === "quota_unsupported") {
-          setActionNote(
-            "Quota sync skipped — this provider has no quota capability. Health was refreshed.",
-          );
+          const note = "Quota sync skipped — this provider has no quota capability. Health was refreshed.";
+          setActionNote(note);
           return;
         }
         throw err;
       }
     }).then((success) => {
       setSyncState(success ? "success" : "failure");
-      setTimeout(() => setSyncState("idle"), 2000);
-      if (success && (modelCount === 0 || modelCount == null)) {
-        handleFetchModels();
+      setTimeout(() => {
+        try {
+          setSyncState("idle");
+        } catch {
+          // The component may have unmounted before the 2s reset fired;
+          // a late setState throw is expected noise, not a failure.
+        }
+      }, 2000);
+      if (success) {
+        toast.success("Health and quota refreshed", {
+          detail: `Account: ${account.label || defaultName}`,
+        });
+        if (modelCount === 0 || modelCount == null) {
+          handleFetchModels();
+        }
       }
     });
   }
@@ -436,22 +444,38 @@ export default function AccountRow(props: AccountRowProps) {
     }).then((success) => {
       setFetchState(success ? "success" : "failure");
       setTimeout(() => setFetchState("idle"), 2000);
+      if (success) {
+        toast.success("Models discovered successfully", {
+          detail: `Discovered models for ${account.label || defaultName}`,
+        });
+      }
     });
   }
 
   function handleStop() {
-    void runLifecycleAction(() => stopAccount(account.id, csrfToken));
+    void runLifecycleAction(() => stopAccount(account.id, csrfToken)).then((success) => {
+      if (success) {
+        toast.success("Account paused", {
+          detail: `Paused account "${account.label || defaultName}"`,
+        });
+      }
+    });
   }
 
   function handleResume() {
-    void runLifecycleAction(() => resumeAccount(account.id, csrfToken));
+    void runLifecycleAction(() => resumeAccount(account.id, csrfToken)).then((success) => {
+      if (success) {
+        toast.success("Account resumed", {
+          detail: `Resumed account "${account.label || defaultName}"`,
+        });
+      }
+    });
   }
 
   async function handleDisconnectConfirmed() {
     setDisconnectOpen(false);
     setActionPending(true);
     setActionError(null);
-    setActionNote(null);
     try {
       await disconnectAccount(account.id, csrfToken);
       toast.success("Account disconnected", {
@@ -982,7 +1006,7 @@ export default function AccountRow(props: AccountRowProps) {
                 className={`vnd-health-dot vnd-health-dot--${dotTone}`}
                 title={`display_status: ${account.display_status}`}
               />
-              <span>{actionNote ? actionNote : (isClinePassOAuth ? statusConfig.meta : metaLabel)}</span>
+              <span title={actionNote || undefined}>{actionNote ? actionNote : (isClinePassOAuth ? statusConfig.meta : metaLabel)}</span>
             </div>
           </div>
         </div>

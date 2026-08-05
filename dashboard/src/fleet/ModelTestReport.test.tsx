@@ -54,12 +54,14 @@ function offering(overrides: Partial<EffectiveOffering>): EffectiveOffering {
   } as EffectiveOffering;
 }
 
-// model-a: WORKING + routable (enabled) via chat, probeable via its tools op
-// (chat is NOT probeable — the server accepts only the four probeable
-// operations, so the probe target must come from one of those).
+// model-a: WORKING + routable (enabled) via chat, with TWO probeable-and-
+// untested candidates (tools, context_window — chat is NOT probeable, the
+// server accepts only the four probeable operations) to prove Test All (and
+// per-chip testing) reaches every candidate on a model, not just the first.
 // model-b: UNTESTED, NO probeable operation (chat-only — a chat op id would
 // still not be probeable).
-// model-c: FAILED, probeable via its tools op.
+// model-c: FAILED, probeable via its tools op — a failed capability remains
+// individually re-testable.
 const OFFERINGS: EffectiveOffering[] = [
   offering({
     provider_model_id: "zen/model-a",
@@ -67,12 +69,12 @@ const OFFERINGS: EffectiveOffering[] = [
     capabilities: [
       capability({ truth: "supported", state: "certified", routable: true }),
       capability({ operation: "tools", offering_operation_id: "op-a" }),
+      capability({ operation: "context_window", offering_operation_id: "op-a2" }),
       capability({ operation: "vision" }),
       capability({ operation: "reasoning" }),
       capability({ operation: "coding" }),
       capability({ operation: "structured_output" }),
       capability({ operation: "streaming" }),
-      capability({ operation: "context_window" }),
     ],
   }),
   offering({
@@ -97,6 +99,8 @@ function renderReport(overrides: Record<string, () => Response> = {}, onRefetch 
   const fetchMock = createFetchMock({
     "POST /api/control/v1/accounts/acct-1/discover": () => jsonResponse(202, { data: { job_id: "job-d" } }),
     "POST /api/control/v1/offerings/op-a/probe": () =>
+      jsonResponse(202, { data: { job_id: "job-p", status_url: "/api/control/v1/jobs/job-p" } }),
+    "POST /api/control/v1/offerings/op-a2/probe": () =>
       jsonResponse(202, { data: { job_id: "job-p", status_url: "/api/control/v1/jobs/job-p" } }),
     "POST /api/control/v1/offerings/op-c/probe": () =>
       jsonResponse(202, { data: { job_id: "job-p", status_url: "/api/control/v1/jobs/job-p" } }),
@@ -206,7 +210,7 @@ describe("ModelTestReport — actions", () => {
     });
   });
 
-  it("Test All probes ONLY the models with a probeable operation, then refetches", async () => {
+  it("Test All probes EVERY probeable capability across every listed model — not just the first one per model", async () => {
     const { fetchMock, onRefetch } = renderReport();
     await screen.findByRole("dialog");
 
@@ -214,33 +218,53 @@ describe("ModelTestReport — actions", () => {
 
     await waitFor(() => expect(onRefetch).toHaveBeenCalled());
     const probeCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("/probe"));
+    // model-a has TWO probeable capabilities (tools, context_window) — both
+    // must be probed, proving Test All no longer stops at the first match.
     expect(probeCalls.map(([input]) => String(input)).sort()).toEqual([
       "/api/control/v1/offerings/op-a/probe",
+      "/api/control/v1/offerings/op-a2/probe",
       "/api/control/v1/offerings/op-c/probe",
     ]);
   });
 
-  it("disables the per-model Test action when there is no probeable operation, with the reason in the title", async () => {
+  it("renders no clickable capability chip for a model with no probeable operation (chat-only)", async () => {
     renderReport();
     await screen.findByRole("dialog");
 
-    const testB = within(screen.getByTestId("report-row-zen/model-b")).getByRole("button", { name: /test model b/i });
-    expect((testB as HTMLButtonElement).disabled).toBe(true);
-    expect(testB.getAttribute("title")).toBe("This model has no probeable operation");
-
-    const testA = within(screen.getByTestId("report-row-zen/model-a")).getByRole("button", { name: /test model a/i });
-    expect((testA as HTMLButtonElement).disabled).toBe(false);
+    const rowB = screen.getByTestId("report-row-zen/model-b");
+    expect(within(rowB).queryByRole("button")).toBeNull();
+    within(rowB).getByRole("img", { name: "chat" });
   });
 
-  it("probes a single model from its row action", async () => {
+  it("renders one clickable capability chip PER probeable capability on a model, not just one for the whole row", async () => {
+    renderReport();
+    await screen.findByRole("dialog");
+
+    const rowA = screen.getByTestId("report-row-zen/model-a");
+    within(rowA).getByRole("button", { name: /test tools/i });
+    within(rowA).getByRole("button", { name: /test context_window/i });
+  });
+
+  it("probes exactly the capability whose chip was clicked, on a failed (retestable) capability", async () => {
     const { fetchMock, onRefetch } = renderReport();
     await screen.findByRole("dialog");
 
-    fireEvent.click(within(screen.getByTestId("report-row-zen/model-c")).getByRole("button", { name: /test model c/i }));
+    fireEvent.click(within(screen.getByTestId("report-row-zen/model-c")).getByRole("button", { name: /test tools/i }));
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/offerings/op-c/probe"))).toBe(true);
       expect(onRefetch).toHaveBeenCalled();
     });
+  });
+
+  it("probes only the ONE capability clicked, leaving the model's other probeable capability untouched", async () => {
+    const { fetchMock, onRefetch } = renderReport();
+    await screen.findByRole("dialog");
+
+    fireEvent.click(within(screen.getByTestId("report-row-zen/model-a")).getByRole("button", { name: /test tools/i }));
+
+    await waitFor(() => expect(onRefetch).toHaveBeenCalled());
+    const probeCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("/probe"));
+    expect(probeCalls.map(([input]) => String(input))).toEqual(["/api/control/v1/offerings/op-a/probe"]);
   });
 });

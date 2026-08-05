@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { OfferingCapability } from "../api/controlClient";
 import CapabilityChips from "./CapabilityChips";
 
@@ -92,5 +92,83 @@ describe("CapabilityChips", () => {
     render(<CapabilityChips capabilities={[]} cap={6} />);
     expect(screen.queryAllByRole("img")).toHaveLength(0);
     screen.getByText(/no capability observed/i);
+  });
+
+  it("marks an unsupported (failed) capability with the --failed modifier class", () => {
+    render(<CapabilityChips capabilities={[capability({ operation: "tools", truth: "unsupported", state: "certified" })]} cap={6} />);
+    expect(screen.getByRole("img", { name: "tools" }).className).toContain("vnd-capability-icon-box--failed");
+  });
+
+  it("marks an unknown-truth capability with the --untested modifier class", () => {
+    render(<CapabilityChips capabilities={[capability({ operation: "vision", truth: "unknown" })]} cap={6} />);
+    expect(screen.getByRole("img", { name: "vision" }).className).toContain("vnd-capability-icon-box--untested");
+  });
+});
+
+describe("CapabilityChips — per-chip test action (onTest)", () => {
+  it("without onTest, every chip stays a static non-interactive span (backward compatible with read-only callers like ModelsSurface)", () => {
+    render(<CapabilityChips capabilities={[capability({ operation: "tools", offering_operation_id: "op-tools" })]} cap={6} />);
+    expect(screen.queryByRole("button")).toBeNull();
+    screen.getByRole("img", { name: "tools" });
+  });
+
+  it("a probeable capability with an offering_operation_id becomes a clickable button when onTest is provided", () => {
+    const onTest = vi.fn();
+    render(
+      <CapabilityChips
+        capabilities={[capability({ operation: "tools", offering_operation_id: "op-tools" })]}
+        cap={6}
+        onTest={onTest}
+      />,
+    );
+    const button = screen.getByRole("button", { name: /tools/i });
+    fireEvent.click(button);
+    expect(onTest).toHaveBeenCalledWith("op-tools", "tools");
+  });
+
+  it("chat stays a static span even with onTest provided — the server has nothing to probe for it", () => {
+    render(
+      <CapabilityChips
+        capabilities={[capability({ operation: "chat", offering_operation_id: "op-chat" })]}
+        cap={6}
+        onTest={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button")).toBeNull();
+    screen.getByRole("img", { name: "chat" });
+  });
+
+  it("a probeable capability with no offering_operation_id stays a static span even with onTest provided", () => {
+    render(<CapabilityChips capabilities={[capability({ operation: "tools" })]} cap={6} onTest={vi.fn()} />);
+    expect(screen.queryByRole("button")).toBeNull();
+    screen.getByRole("img", { name: "tools" });
+  });
+
+  it("disables the button for the capability currently probing, without disabling a different probeable chip", () => {
+    render(
+      <CapabilityChips
+        capabilities={[
+          capability({ operation: "tools", offering_operation_id: "op-tools" }),
+          capability({ operation: "vision", offering_operation_id: "op-vision" }),
+        ]}
+        cap={6}
+        onTest={vi.fn()}
+        probingOperationId="op-tools"
+      />,
+    );
+    expect((screen.getByRole("button", { name: /tools/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /vision/i }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("disables every test button when disabled is passed, regardless of probingOperationId", () => {
+    render(
+      <CapabilityChips
+        capabilities={[capability({ operation: "tools", offering_operation_id: "op-tools" })]}
+        cap={6}
+        onTest={vi.fn()}
+        disabled
+      />,
+    );
+    expect((screen.getByRole("button", { name: /tools/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

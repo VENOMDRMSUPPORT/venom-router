@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Spinner } from "@venom/design-system/primitives";
 import { TypedErrorDisplay } from "@venom/design-system/domain";
+import { setCsrfRefreshHandler } from "../api/http";
 import AppShell from "../shell/AppShell";
 import { AuthApiError, fetchAuthSession, fetchAuthStatus, type LiveSession, type SessionTimes } from "./authClient";
 import FirstRunSetup from "./FirstRunSetup";
@@ -103,6 +104,30 @@ export default function AuthGate() {
       cancelled = true;
     };
   }, [bootstrapAttempt]);
+
+  // Registers the CSRF self-heal handler http.ts's shared `request()` calls
+  // when any mutating call comes back `csrf_failed` — the backend's csrfKey
+  // (internal/httpapi/auth.go) is process-lifetime only, so any process
+  // restart (an `air` rebuild, a tray restart) rotates it out from under an
+  // already-open tab even though the session cookie is still valid. This
+  // component is the single owner of csrfToken state, so it is also the
+  // only place that can supply a fresh one: re-fetch the live session and
+  // fold the new token into state (so later calls elsewhere don't need to
+  // heal again), returning it for the caller in http.ts to retry with
+  // immediately. Runs once for the component's lifetime, independent of
+  // `state.kind` — a functional setState update avoids acting on a stale
+  // `state` closure if this fires before/after the "authenticated" state.
+  // If fetchAuthSession itself throws (no live session left, e.g.
+  // session_expired), that rejection propagates to http.ts as-is, which is
+  // the more actionable error than the original csrf_failed.
+  useEffect(() => {
+    setCsrfRefreshHandler(async () => {
+      const live = await fetchAuthSession();
+      setState((prev) => (prev.kind === "authenticated" ? { ...prev, csrfToken: live.csrfToken } : prev));
+      return live.csrfToken;
+    });
+    return () => setCsrfRefreshHandler(null);
+  }, []);
 
   function handleAuthenticated(live: LiveSession) {
     setState({ kind: "authenticated", session: live.session, csrfToken: live.csrfToken });

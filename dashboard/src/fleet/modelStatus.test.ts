@@ -6,7 +6,7 @@ import {
   hasVerifiedChat,
   isOfferingEnabled,
   PROBEABLE_OPERATIONS,
-  probeTarget,
+  probeTargets,
 } from "./modelStatus";
 
 function capability(overrides: Partial<OfferingCapability> = {}): OfferingCapability {
@@ -203,69 +203,69 @@ describe("distinctModelStats — distinct provider_model_id, working = proven CH
   });
 });
 
-describe("probeTarget — only the server's four probeable operations, never chat", () => {
+describe("probeTargets — every one of the server's four probeable operations this offering has a row for, never chat", () => {
   it("mirrors the server's probeableOperations contract exactly (internal/httpapi/probe.go)", () => {
     expect([...PROBEABLE_OPERATIONS].sort()).toEqual(["context_window", "structured_output", "tools", "vision"]);
   });
 
-  it("returns undefined for a chat-only model — chat is certified by use, the probe endpoint rejects it 422", () => {
-    expect(probeTarget(offering([capability({ offering_operation_id: "op-chat" })]))).toBeUndefined();
+  it("returns [] for a chat-only model — chat is certified by use, the probe endpoint rejects it 422", () => {
+    expect(probeTargets(offering([capability({ offering_operation_id: "op-chat" })]))).toEqual([]);
   });
 
   it("targets the tools op id for a chat+tools model, ignoring chat's own id", () => {
     expect(
-      probeTarget(
+      probeTargets(
         offering([
           capability({ offering_operation_id: "op-chat" }),
           capability({ operation: "tools", offering_operation_id: "op-tools" }),
         ]),
       ),
-    ).toBe("op-tools");
+    ).toEqual(["op-tools"]);
   });
 
-  it("targets the vision op id for a chat+vision model with no tools", () => {
+  it("targets EVERY probeable operation's own id at once, not just the first — a model can have several candidates worth testing", () => {
     expect(
-      probeTarget(
-        offering([
-          capability({ offering_operation_id: "op-chat" }),
-          capability({ operation: "vision", offering_operation_id: "op-vision" }),
-        ]),
-      ),
-    ).toBe("op-vision");
-  });
-
-  it("prefers tools over the other probeable operations regardless of listing order", () => {
-    expect(
-      probeTarget(
+      probeTargets(
         offering([
           capability({ operation: "vision", offering_operation_id: "op-vision" }),
           capability({ operation: "context_window", offering_operation_id: "op-ctx" }),
           capability({ operation: "tools", offering_operation_id: "op-tools" }),
         ]),
       ),
-    ).toBe("op-tools");
+    ).toEqual(["op-tools", "op-ctx", "op-vision"]);
+  });
+
+  it("includes a probeable operation regardless of its truth — an already-supported or a failed capability remains re-testable", () => {
+    expect(
+      probeTargets(
+        offering([
+          capability({ operation: "tools", truth: "supported", state: "certified", offering_operation_id: "op-tools" }),
+          capability({ operation: "vision", truth: "unsupported", state: "certified", offering_operation_id: "op-vision" }),
+        ]),
+      ),
+    ).toEqual(["op-tools", "op-vision"]);
   });
 
   it("skips a probeable operation without an offering_operation_id — never a composed id", () => {
     expect(
-      probeTarget(
+      probeTargets(
         offering([
           capability({ operation: "tools" }),
           capability({ operation: "structured_output", offering_operation_id: "op-so" }),
         ]),
       ),
-    ).toBe("op-so");
+    ).toEqual(["op-so"]);
   });
 
-  it("returns undefined when the only ids belong to operations outside the set", () => {
+  it("returns [] when the only ids belong to operations outside the set", () => {
     expect(
-      probeTarget(
+      probeTargets(
         offering([
           capability({ offering_operation_id: "op-chat" }),
           capability({ operation: "streaming", offering_operation_id: "op-stream" }),
           capability({ operation: "tools" }),
         ]),
       ),
-    ).toBeUndefined();
+    ).toEqual([]);
   });
 });

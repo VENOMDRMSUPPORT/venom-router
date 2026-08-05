@@ -100,6 +100,74 @@ export interface RequestObservation {
   ok: boolean;
 }
 
+/** The header name every mutating call attaches its CSRF token under
+ * (mirrors CSRF_HEADER in authClient.ts/controlClient.ts — kept private
+ * here since only the self-heal retry below needs to read/replace it). */
+const CSRF_HEADER = "X-CSRF-Token";
+
+/** Registered by AuthGate (the sole owner of CSRF-token state) so this
+ * module can recover from a `csrf_failed` response without any calling
+ * component knowing it happened. Returns a *fresh* token for the live
+ * session, or rejects if there is no live session to refresh (in practice,
+ * `fetchAuthSession()` rejecting with `session_expired`). */
+export type CsrfRefreshHandler = () => Promise<string>;
+
+let csrfRefreshHandler: CsrfRefreshHandler | null = null;
+
+/** Registers (or, passed `null`, clears) the CSRF refresh handler. Exactly
+ * one handler is meaningful at a time — AuthGate is the only component
+ * that ever calls this. */
+export function setCsrfRefreshHandler(handler: CsrfRefreshHandler | null): void {
+  csrfRefreshHandler = handler;
+}
+
+function buildInit(init: RequestInit): RequestInit {
+  return {
+    ...init,
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      ...(init.headers ?? {}),
+    },
+  };
+}
+
+async function doFetch(
+  base: string,
+  path: string,
+  init: RequestInit,
+  observe?: (o: RequestObservation) => void,
+): Promise<Response> {
+  const response = await fetch(base + path, buildInit(init));
+  observe?.({ status: response.status, ok: response.ok });
+  return response;
+}
+
+/** Reads a response's `{error: {code}}` without consuming it for the
+ * caller — used only to decide whether the self-heal retry below applies;
+ * the original `response` is still intact for `throwApiError` afterwards. */
+async function peekErrorCode(response: Response): Promise<string | null> {
+  const body: unknown = await response
+    .clone()
+    .json()
+    .catch(() => null);
+  if (body && typeof body === "object" && "error" in body) {
+    return (body as { error: ApiErrorBody }).error.code;
+  }
+  return null;
+}
+
+/** Builds a copy of `init` with a fresh CSRF token in place of whatever
+ * `X-CSRF-Token` it already carried. A GET (or any call that never had the
+ * header) is returned unchanged — there is nothing to refresh. */
+function withRefreshedCsrfToken(init: RequestInit, freshToken: string): RequestInit {
+  const headers = init.headers;
+  if (!headers || typeof headers !== "object" || Array.isArray(headers) || !(CSRF_HEADER in headers)) {
+    return init;
+  }
+  return { ...init, headers: { ...(headers as Record<string, string>), [CSRF_HEADER]: freshToken } };
+}
+
 /** Envelope-aware fetch wrapper shared by every control-plane client
  * module: always `credentials: "same-origin"`, always JSON request/response
  * bodies, unwraps `{data: ...}` on success and throws AuthApiError on
@@ -110,25 +178,35 @@ export interface RequestObservation {
  * `observe` (optional) is called once with {status, ok} as soon as the
  * response arrives — never with any body or header content. A fetch-level
  * rejection (offline/DNS) propagates without an observation; the caller's
- * own error handling records that case. */
+ * own error handling records that case.
+ *
+ * Self-heal: a `csrf_failed` response (backend's csrfKey rotated under an
+ * already-open tab — see AuthGate's registration of setCsrfRefreshHandler)
+ * is not surfaced directly. If a refresh handler is registered, it is
+ * called for a fresh token and the ORIGINAL request is retried exactly
+ * once with that token in place of the stale one. A handler rejection
+ * (no live session left to refresh) propagates as-is instead of the
+ * original csrf_failed — it's the more actionable error. With no handler
+ * registered, or a `csrf_failed` on the retry too, this falls through to
+ * the ordinary throwApiError behavior — no more than one retry, ever. */
 export async function request<T>(
   base: string,
   path: string,
   init: RequestInit,
   observe?: (o: RequestObservation) => void,
 ): Promise<T> {
-  const response = await fetch(base + path, {
-    ...init,
-    credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      ...(init.headers ?? {}),
-    },
-  });
-
-  observe?.({ status: response.status, ok: response.ok });
+  const response = await doFetch(base, path, init, observe);
 
   if (!response.ok) {
+    if (csrfRefreshHandler && (await peekErrorCode(response)) === "csrf_failed") {
+      const freshToken = await csrfRefreshHandler();
+      const retryResponse = await doFetch(base, path, withRefreshedCsrfToken(init, freshToken), observe);
+      if (!retryResponse.ok) {
+        await throwApiError(retryResponse);
+      }
+      const retryBody: unknown = await retryResponse.json().catch(() => null);
+      return retryBody as T;
+    }
     await throwApiError(response);
   }
 

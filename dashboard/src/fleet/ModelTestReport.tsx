@@ -1,7 +1,7 @@
 import { useMemo, useState, type ChangeEvent } from "react";
 import { toast } from "@venom/design-system";
-import { Badge, Button, Dialog, EmptyState, IconButton, Input, Select } from "@venom/design-system/primitives";
-import { TypedErrorDisplay } from "@venom/design-system/domain";
+import { Badge, Button, Dialog, EmptyState, Input, Select } from "@venom/design-system/primitives";
+import { ContextWindowDisplay, TypedErrorDisplay } from "@venom/design-system/domain";
 import {
   AuthApiError,
   isSessionExpired,
@@ -13,8 +13,37 @@ import {
 } from "../api/controlClient";
 import CapabilityChips from "./CapabilityChips";
 import { pollJobToTerminal, runWithConcurrency } from "./jobs";
-import { deriveModelStatus, isOfferingEnabled, probeTarget, type ModelStatus } from "./modelStatus";
+import { deriveModelStatus, isOfferingEnabled, probeTargets, type ModelStatus } from "./modelStatus";
 import ProviderLogo from "./ProviderLogo";
+
+/** The provenance-derived prefix mark on a context-window badge: "≈" when
+ * the shown token count came from the provider's own declared cap (not
+ * probe-verified), "✓" when a context probe verified it, nothing when there
+ * is no token count to qualify — ContextWindowDisplay already renders that
+ * case as "ctx unknown" on its own. Mirrors ModelsSurface's own
+ * ContextProvenanceMark (same inputs, same two marks); duplicated locally
+ * rather than shared since it is a small, page-local presentation detail on
+ * both sides. */
+function ContextProvenanceMark(props: { tokens: number | null; provenance?: string }) {
+  const { tokens, provenance } = props;
+  if (tokens == null) return null;
+  const title = "≈ declared by provider (not probe-verified) · ✓ verified by a context probe";
+  if (provenance === "provider_cap") {
+    return (
+      <span className="vn-caption" title={title} aria-label="context declared by provider, not probe-verified">
+        ≈
+      </span>
+    );
+  }
+  if (provenance === "native") {
+    return (
+      <span className="vn-caption" title={title} aria-label="context verified by context probe">
+        ✓
+      </span>
+    );
+  }
+  return null;
+}
 
 export interface ModelTestReportProps {
   open: boolean;
@@ -56,10 +85,17 @@ const CAPABILITY_CHIP_CAP = 6;
 /**
  * The per-account Model Test Report (image 3): four derived stat tiles
  * (WORKING / FAILED / UNTESTED / ENABLED), Refresh Models (discovery job
- * polled to terminal), Test All (bounded-concurrency probes over every
- * listed model with a probeable operation), search + status filter, and
- * one row per model with capability chips, the derived status badge, and
- * a single-model Test action.
+ * polled to terminal), Test All (bounded-concurrency probes over EVERY
+ * probeable capability across every listed model — not just one per model),
+ * search + status filter, and one row per model with context/quality/cost
+ * facts, capability chips, and the derived status badge.
+ *
+ * Chat is certified automatically the next time it succeeds in real use —
+ * the server rejects a manual probe of it 422 — so it is never a clickable
+ * chip; every OTHER capability chip (tools/context_window/structured_output/
+ * vision) IS individually clickable to test just that one operation,
+ * regardless of its current truth (untested, failed, or already-proven are
+ * all legitimately re-testable) — see CapabilityChips' onTest.
  *
  * DELIBERATE DEVIATION from the documented UI: no per-model checkboxes,
  * no Enable All / Disable All, no "Save selection" — the backend has no
@@ -75,6 +111,12 @@ export default function ModelTestReport(props: ModelTestReportProps) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [actionError, setActionError] = useState<AuthApiError | null>(null);
+  /** The offering_operation_id a single capability chip is currently
+   * probing (Test All uses `progress` instead) — lets CapabilityChips show
+   * a spinner on exactly that chip. Reset unconditionally in runAction's
+   * finally, alongside busy/progress, since it is always null already for
+   * Refresh Models/Test All. */
+  const [probingOperationId, setProbingOperationId] = useState<string | null>(null);
 
   const stats = useMemo(() => {
     const counts = { working: 0, failed: 0, untested: 0, enabled: 0 };
@@ -112,6 +154,7 @@ export default function ModelTestReport(props: ModelTestReportProps) {
     } finally {
       setBusy(false);
       setProgress(null);
+      setProbingOperationId(null);
     }
   }
 
@@ -141,9 +184,7 @@ export default function ModelTestReport(props: ModelTestReportProps) {
   }
 
   function handleTestAll() {
-    const targets = listed
-      .map((o) => probeTarget(o))
-      .filter((id): id is string => id !== undefined);
+    const targets = listed.flatMap((o) => probeTargets(o));
     if (targets.length === 0) return;
     setProgress({ done: 0, total: targets.length });
     void runAction(async () => {
@@ -175,7 +216,7 @@ export default function ModelTestReport(props: ModelTestReportProps) {
           });
         }
         toast.success("Model probe completed", {
-          detail: `Probe for all ${targets.length} models passed`,
+          detail: `Probe for all ${targets.length} capabilities passed`,
         });
       } catch (err) {
         if (!(err instanceof AuthApiError && err.code === "probe_batch_partial")) {
@@ -188,13 +229,18 @@ export default function ModelTestReport(props: ModelTestReportProps) {
     });
   }
 
-  function handleTestOne(offeringOperationID: string, modelId?: string) {
+  /** One capability chip's own test action (CapabilityChips' onTest) —
+   * probes exactly the operation the user clicked, not "the first
+   * probeable one for this model" (the old single-button-per-row
+   * behavior). */
+  function handleTestCapability(offeringOperationId: string, operation: string) {
+    setProbingOperationId(offeringOperationId);
     void runAction(async () => {
       try {
-        const handle = await startProbe(offeringOperationID, csrfToken);
+        const handle = await startProbe(offeringOperationId, csrfToken);
         await pollJobToTerminal(handle.job_id);
         toast.success("Model probe completed", {
-          detail: `Probe for ${modelId || offeringOperationID} passed`,
+          detail: `Probe for ${operation} passed`,
         });
       } catch (err) {
         toast.danger("Model probe failed", {
@@ -204,8 +250,6 @@ export default function ModelTestReport(props: ModelTestReportProps) {
       }
     });
   }
-
-
 
   return (
     <Dialog
@@ -221,6 +265,12 @@ export default function ModelTestReport(props: ModelTestReportProps) {
       }
     >
       <div className="flex flex-col gap-3">
+        <p className="vn-caption">
+          Chat certifies itself automatically the next time it succeeds in real use — it can&apos;t be tested here.
+          Every other capability icon below (tools, vision, context window, structured output) is clickable: click
+          one to run a test for just that capability.
+        </p>
+
         <div className="vnd-report-tiles">
           <div className="vnd-report-tile">
             <span className="vnd-report-tile-label">Working</span>
@@ -290,7 +340,6 @@ export default function ModelTestReport(props: ModelTestReportProps) {
             {listed.map((offering) => {
               const status = deriveModelStatus(offering);
               const badge = STATUS_BADGE[status];
-              const target = probeTarget(offering);
               return (
                 <div key={offering.provider_model_id} className="vnd-report-row" data-testid={`report-row-${offering.provider_model_id}`}>
                   <div className="vnd-report-row-body">
@@ -301,22 +350,49 @@ export default function ModelTestReport(props: ModelTestReportProps) {
                         <span className="vn-caption vn-mono-xs">{offering.provider_model_id}</span>
                       </div>
                     </div>
-                    <CapabilityChips capabilities={offering.capabilities} cap={CAPABILITY_CHIP_CAP} />
+                    <div className="vnd-report-row-facts" data-testid={`report-facts-${offering.provider_model_id}`}>
+                      <ContextProvenanceMark tokens={offering.effective_context_tokens} provenance={offering.context_provenance} />
+                      <ContextWindowDisplay
+                        tokens={offering.effective_context_tokens}
+                        verified={offering.context_provenance === "native"}
+                        source={offering.context_provenance || undefined}
+                      />
+                      {offering.quality_known ? (
+                        <Badge tone="info" mono icon="gauge" title="Local benchmark">
+                          {offering.quality_score.toFixed(2)}
+                        </Badge>
+                      ) : (
+                        <Badge tone="unknown" icon="circle-help">
+                          Not rated
+                        </Badge>
+                      )}
+                      {offering.cost.is_free === true ? (
+                        <Badge tone="healthy" icon="hand-coins">
+                          Free
+                        </Badge>
+                      ) : offering.cost.is_free === false ? (
+                        <Badge tone="unknown" icon="credit-card">
+                          Paid
+                        </Badge>
+                      ) : (
+                        <Badge tone="unknown" icon="circle-help">
+                          Cost unknown
+                        </Badge>
+                      )}
+                      <CapabilityChips
+                        capabilities={offering.capabilities}
+                        cap={CAPABILITY_CHIP_CAP}
+                        onTest={handleTestCapability}
+                        disabled={busy}
+                        probingOperationId={probingOperationId}
+                      />
+                    </div>
                   </div>
                   <span data-testid={`report-status-${offering.provider_model_id}`}>
                     <Badge tone={badge.tone} mono>
                       {badge.label}
                     </Badge>
                   </span>
-                  <IconButton
-                    icon="play"
-                    label={`Test ${offering.display_name || offering.provider_model_id}`}
-                    title={target ? "Test this model" : "This model has no probeable operation"}
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy || !target}
-                    onClick={target ? () => handleTestOne(target, offering.display_name || offering.provider_model_id) : undefined}
-                  />
                 </div>
               );
             })}
