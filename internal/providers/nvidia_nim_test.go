@@ -80,8 +80,9 @@ func TestNvidiaNIM_FundingStaysEmpty(t *testing.T) {
 // and row 3 (facts read from the "nvidia" key): the surviving ids and count are
 // EXACTLY the fixture's, only the deprecated entry is dropped (an image-output
 // entry is now classified via image_generation instead of hidden — Task 5),
-// the kept models are enriched, and an uncatalogued id is chat-only with nil
-// limits.
+// the kept models are enriched, an uncatalogued id is chat-only with nil
+// limits, and — Task 5 fix round 1 — the image-output entry gets NO "chat"
+// since its modalities.output = ["image"] declares non-text-only output.
 func TestNvidiaNIM_DiscoveryExactIDs(t *testing.T) {
 	a := newNvidiaAdapter(&fakeChatProbe{status: 200}, &fakeModelsProbe{body: nvidiaModelsList}, staticModelsDevProbe(nvidiaDataset, nil))
 	models, err := a.DiscoverModels(context.Background(), StoredCredentials{Value: "k"})
@@ -112,8 +113,11 @@ func TestNvidiaNIM_DiscoveryExactIDs(t *testing.T) {
 		t.Fatalf("meta/llama-keep ctx = %v, want 4096 (facts enrichment from the nvidia key)", keep.ContextLength)
 	}
 	imgGen := byID["img/gen"]
-	if !hasAll(imgGen.Capabilities, "chat", "image_generation") {
-		t.Fatalf("img/gen caps = %v, want chat/image_generation (modalities.output = [\"image\"])", imgGen.Capabilities)
+	if hasAll(imgGen.Capabilities, "chat") {
+		t.Fatalf("img/gen caps = %v, want NO chat — modalities.output = [\"image\"] declares non-text-only output, so chat is not grounded", imgGen.Capabilities)
+	}
+	if len(imgGen.Capabilities) != 1 || imgGen.Capabilities[0] != "image_generation" {
+		t.Fatalf("img/gen caps = %v, want exactly [image_generation] (modalities.output = [\"image\"], no other explicit fields)", imgGen.Capabilities)
 	}
 	uncat := byID["meta/uncatalogued"]
 	if len(uncat.Capabilities) != 1 || uncat.Capabilities[0] != "chat" || uncat.ContextLength != nil {

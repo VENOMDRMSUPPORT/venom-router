@@ -42,6 +42,19 @@ type ModelsDevFacts struct {
 	Reasoning        bool   // explicit `reasoning`
 	ImageOutput      bool   // `modalities.output` explicitly contains "image"
 	MaxInput         *int   // `limit.input`; nil when absent
+
+	// OutputDeclaresNonTextOnly is true only when `modalities.output` is
+	// EXPLICITLY non-empty and contains no "text" entry — the pure
+	// image/media-output case (e.g. `["image"]`). It is false both when
+	// the list is absent/empty (unknown output — vacuously assume text,
+	// same convention as OutputAllText) and when the list explicitly
+	// contains "text" (declared text output, possibly alongside other
+	// modalities). This is the signal OperationsFromFacts uses to decide
+	// whether "chat" itself is grounded, distinct from OutputAllText
+	// (which answers a different question: "is every declared output
+	// modality text") and from ImageOutput (which only answers "is image
+	// among the declared outputs, text or not").
+	OutputDeclaresNonTextOnly bool
 }
 
 // modelsDevRawEntry is the subset of one models.dev model entry this parse
@@ -161,17 +174,18 @@ func parseModelsDevFacts(body []byte, providerKey string) (map[string]ModelsDevF
 	}
 	for id, e := range entry.Models {
 		facts[id] = ModelsDevFacts{
-			DisplayName:      e.Name,
-			ToolCall:         e.ToolCall,
-			StructuredOutput: e.StructuredOutput,
-			ImageInput:       containsImageModality(e.Modalities.Input),
-			OutputAllText:    allTextModalities(e.Modalities.Output),
-			Deprecated:       e.Status == "deprecated",
-			Context:          e.Limit.Context,
-			Output:           e.Limit.Output,
-			Reasoning:        e.Reasoning,
-			ImageOutput:      containsImageModality(e.Modalities.Output),
-			MaxInput:         e.Limit.Input,
+			DisplayName:               e.Name,
+			ToolCall:                  e.ToolCall,
+			StructuredOutput:          e.StructuredOutput,
+			ImageInput:                containsImageModality(e.Modalities.Input),
+			OutputAllText:             allTextModalities(e.Modalities.Output),
+			Deprecated:                e.Status == "deprecated",
+			Context:                   e.Limit.Context,
+			Output:                    e.Limit.Output,
+			Reasoning:                 e.Reasoning,
+			ImageOutput:               containsImageModality(e.Modalities.Output),
+			MaxInput:                  e.Limit.Input,
+			OutputDeclaresNonTextOnly: declaresNonTextOnlyOutput(e.Modalities.Output),
 		}
 	}
 	return facts, nil
@@ -183,6 +197,24 @@ func parseModelsDevFacts(body []byte, providerKey string) (map[string]ModelsDevF
 func allTextModalities(outputs []string) bool {
 	for _, m := range outputs {
 		if m != "text" {
+			return false
+		}
+	}
+	return true
+}
+
+// declaresNonTextOnlyOutput reports whether modalities.output is EXPLICITLY
+// non-empty and contains no "text" entry — the pure image/media-output case.
+// An absent or empty list answers false (unknown output, vacuously assumed to
+// support text — same convention as allTextModalities); a list that includes
+// "text" (alone or alongside other modalities) also answers false, since text
+// output is then explicitly declared.
+func declaresNonTextOnlyOutput(outputs []string) bool {
+	if len(outputs) == 0 {
+		return false
+	}
+	for _, m := range outputs {
+		if m == "text" {
 			return false
 		}
 	}
@@ -214,15 +246,32 @@ func modelIDsFrom(list openAICompatModelList) []string {
 // DECLARES, in models.Operations() order. Every value is grounded in an
 // explicit dataset field; nothing is inferred from the model id.
 //
-// "chat" is unconditional: these are chat-completions catalogs, and an entry
-// existing in one is the declaration. "streaming" is deliberately ABSENT —
-// models.dev carries no streaming field, and streaming is a property of the
-// transport we send with, not of the model (see the transport's
-// SupportedCapabilities). "context_window" is emitted when the entry declares
-// a context limit, which is what makes the number itself a catalog-backed
-// fact.
+// "chat" is grounded in declared text output, NOT asserted unconditionally:
+// an entry whose modalities.output is absent/empty is vacuously assumed to
+// support text (unknown output must not cause a chat model to vanish — the
+// same convention allTextModalities/OutputAllText already uses); an entry
+// that explicitly declares "text" among its outputs gets chat; an entry
+// whose modalities.output is explicitly non-empty and excludes "text" (pure
+// image/media output) does NOT get chat — asserting chat there would be a
+// guess the dataset does not support. (Earlier, this function asserted
+// "chat" unconditionally on the theory that internal/intelligence's
+// classification layer would keep such an offering out of chat routing
+// anyway. That was wrong: Classify (internal/intelligence/classification.go)
+// returns a routing candidate the instant it sees ANY models.OperationChat
+// entry, before ever consulting native modalities, so an unconditional
+// "chat" here would have made every such offering routable. Grounding chat
+// in the dataset's own declared output, instead of relying on a downstream
+// filter that does not exist, is the actual fix.) "streaming" is
+// deliberately ABSENT — models.dev carries no streaming field, and streaming
+// is a property of the transport we send with, not of the model (see the
+// transport's SupportedCapabilities). "context_window" is emitted when the
+// entry declares a context limit, which is what makes the number itself a
+// catalog-backed fact.
 func OperationsFromFacts(f ModelsDevFacts) []string {
-	ops := []string{"chat"}
+	var ops []string
+	if !f.OutputDeclaresNonTextOnly {
+		ops = append(ops, "chat")
+	}
 	if f.ToolCall {
 		ops = append(ops, "tools")
 	}
@@ -253,12 +302,14 @@ func OperationsFromFacts(f ModelsDevFacts) []string {
 //   - a live id with a models.dev entry that is deprecated is DROPPED. An
 //     image-output entry is NOT dropped: image_generation is a recognized
 //     operation, so hiding the model would hide a real catalog-backed
-//     capability instead of classifying it (internal/intelligence's
-//     classification layer is what keeps a media-only offering out of chat
-//     routing, using OutputAllText);
-//   - "chat" is asserted for every surviving model (the endpoint is a
-//     chat-completions gateway); every other operation comes from
-//     OperationsFromFacts, which reads only explicit dataset fields;
+//     capability instead of classifying it. (It also no longer needs to be
+//     dropped to keep it out of chat routing: OperationsFromFacts now grounds
+//     "chat" itself in declared text output, so a pure image-output entry
+//     simply comes back without "chat" — see OperationsFromFacts' doc for why
+//     the earlier "classification filters it out downstream" rationale here
+//     was wrong.)
+//   - every operation, INCLUDING "chat", comes from OperationsFromFacts for a
+//     known entry, which reads only explicit dataset fields;
 //   - limits come from limit.context / limit.output, nil when absent;
 //   - DisplayName is the entry's name when present, else the raw id;
 //   - a live id with NO models.dev entry (uncatalogued, or the whole dataset

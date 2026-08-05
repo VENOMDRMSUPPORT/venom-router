@@ -202,11 +202,52 @@ func TestOperationsFromFacts_DerivesEveryCatalogBackedOperation(t *testing.T) {
 		t.Fatalf("OperationsFromFacts(image-out-example) = %v, want image_generation present", img)
 	}
 
-	// An entry with no facts at all still supports chat: the endpoint is a
-	// chat-completions gateway. It must claim nothing else.
+	// A zero-value ModelsDevFacts has no explicit output-modality evidence at
+	// all (absent, not declared non-text-only), so chat is vacuously assumed
+	// supported — the same "unknown output must not cause a drop" convention
+	// OutputAllText already uses. It must claim nothing else.
 	bare := OperationsFromFacts(ModelsDevFacts{})
 	if !reflect.DeepEqual(bare, []string{"chat"}) {
 		t.Fatalf("OperationsFromFacts(zero) = %v, want [chat] only", bare)
+	}
+}
+
+// TestOperationsFromFacts_ChatGroundedInDeclaredTextOutput is Task 5 fix
+// round 1's pin: "chat" is grounded in the entry's own declared output
+// modalities, not asserted unconditionally. An entry whose modalities.output
+// is explicitly non-empty and excludes "text" (pure image/media output) gets
+// NO "chat"; one that explicitly declares "text" gets chat; one with no
+// modalities.output at all still gets chat (unknown output is vacuously
+// assumed to support text).
+func TestOperationsFromFacts_ChatGroundedInDeclaredTextOutput(t *testing.T) {
+	const dataset = `{
+	  "chat-ground": {"models": {
+	    "image-only": {"modalities": {"output": ["image"]}},
+	    "text-only": {"modalities": {"output": ["text"]}},
+	    "no-modalities": {}
+	  }}
+	}`
+	facts, err := parseModelsDevFacts([]byte(dataset), "chat-ground")
+	if err != nil {
+		t.Fatalf("parseModelsDevFacts: %v", err)
+	}
+
+	imageOnly := OperationsFromFacts(facts["image-only"])
+	if slices.Contains(imageOnly, "chat") {
+		t.Fatalf(`OperationsFromFacts(image-only) = %v, want NO chat (modalities.output = ["image"] declares non-text-only output)`, imageOnly)
+	}
+	if !reflect.DeepEqual(imageOnly, []string{"image_generation"}) {
+		t.Fatalf(`OperationsFromFacts(image-only) = %v, want exactly [image_generation]`, imageOnly)
+	}
+
+	textOnly := OperationsFromFacts(facts["text-only"])
+	if !slices.Contains(textOnly, "chat") {
+		t.Fatalf(`OperationsFromFacts(text-only) = %v, want chat (modalities.output explicitly contains "text")`, textOnly)
+	}
+
+	noModalities := OperationsFromFacts(facts["no-modalities"])
+	if !slices.Contains(noModalities, "chat") {
+		t.Fatalf("OperationsFromFacts(no-modalities) = %v, want chat (absent modalities.output is vacuously assumed to support text)", noModalities)
 	}
 }
 

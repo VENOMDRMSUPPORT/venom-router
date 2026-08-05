@@ -179,10 +179,12 @@ func TestOllamaCloud_NoPlanEvidenceLeavesFundingEmpty(t *testing.T) {
 // --- discovery ------------------------------------------------------------
 
 // TestOllamaCloud_Discovery is mutations row 5 (capability grounding) and row 6
-// (deprecated-only drop, Task 5): deprecated is dropped, an image-output entry
-// is now KEPT and classified via image_generation instead of hidden,
-// tool_call/structured_output/image-input mapped, absent limits nil,
-// uncatalogued id chat-only.
+// (deprecated-only drop, Task 5 fix round 1): deprecated is dropped, an
+// image-output entry is now KEPT and classified via image_generation instead
+// of hidden, and — since it declares modalities.output = ["image"] with no
+// "text" entry — it gets NO "chat" (chat is grounded in declared text
+// output, not asserted unconditionally); tool_call/structured_output/
+// image-input mapped, absent limits nil, uncatalogued id chat-only.
 func TestOllamaCloud_Discovery(t *testing.T) {
 	id := &fakeOllamaIdentity{status: 200, body: ollamaMeOK}
 	a := newOllamaAdapter(id, &fakeModelsProbe{body: ollamaModelsList}, staticModelsDevProbe(ollamaDiscoveryDataset, nil))
@@ -217,8 +219,11 @@ func TestOllamaCloud_Discovery(t *testing.T) {
 	}
 
 	imgout := byID["imgout:1b"]
-	if !hasAll(imgout.Capabilities, "chat", "image_generation") {
-		t.Fatalf("imgout caps = %v, want chat/image_generation (modalities.output = [\"image\"])", imgout.Capabilities)
+	if hasAll(imgout.Capabilities, "chat") {
+		t.Fatalf("imgout caps = %v, want NO chat — modalities.output = [\"image\"] declares non-text-only output, so chat is not grounded", imgout.Capabilities)
+	}
+	if len(imgout.Capabilities) != 1 || imgout.Capabilities[0] != "image_generation" {
+		t.Fatalf("imgout caps = %v, want exactly [image_generation] (modalities.output = [\"image\"], no other explicit fields)", imgout.Capabilities)
 	}
 
 	plain := byID["plain:1b"]
