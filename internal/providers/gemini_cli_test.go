@@ -131,6 +131,49 @@ func TestGeminiCLI_PrefixStrippedAndFiltered(t *testing.T) {
 	}
 }
 
+// TestGeminiCLI_OfficialContextAndOutputLimitsMapDirectly is Task 2 of the
+// 2026-08-05 hybrid-capabilities-and-context plan, pinned with the plan's own
+// literal fixture numbers: a model whose supportedGenerationMethods contains
+// generateContent maps inputTokenLimit -> ContextLength/MaxInputTokens and
+// outputTokenLimit -> MaxOutputTokens, and carries the "chat" capability. A
+// sibling row with NO generateContent method (an embedding model) is SKIPPED
+// entirely, never emitted with an empty/no-chat capability list — see the
+// decision note on geminiModelFrom.
+func TestGeminiCLI_OfficialContextAndOutputLimitsMapDirectly(t *testing.T) {
+	page := `{"models":[
+	  {"name":"models/gemini-2.5-pro","displayName":"Gemini 2.5 Pro","supportedGenerationMethods":["generateContent"],"inputTokenLimit":1048576,"outputTokenLimit":8192},
+	  {"name":"models/text-embedding-004","displayName":"Embedding 004","supportedGenerationMethods":["embedContent"],"inputTokenLimit":2048}
+	]}`
+	a := newGeminiAdapter(&fakeGoogleProbe{status: 200, pages: map[string]string{"": page}})
+	models, err := a.DiscoverModels(context.Background(), StoredCredentials{Value: "k"})
+	if err != nil {
+		t.Fatalf("DiscoverModels() error = %v", err)
+	}
+	if len(models) != 1 {
+		ids := []string{}
+		for _, m := range models {
+			ids = append(ids, m.ProviderModelID)
+		}
+		t.Fatalf("survivors = %v, want exactly [gemini-2.5-pro] (the embedding row has no generateContent, so it is SKIPPED entirely, not declared no-chat)", ids)
+	}
+	m := models[0]
+	if m.ProviderModelID != "gemini-2.5-pro" {
+		t.Fatalf("id = %q, want gemini-2.5-pro", m.ProviderModelID)
+	}
+	if m.ContextLength == nil || *m.ContextLength != 1048576 {
+		t.Fatalf("ContextLength = %v, want 1048576 from inputTokenLimit", m.ContextLength)
+	}
+	if m.MaxInputTokens == nil || *m.MaxInputTokens != 1048576 {
+		t.Fatalf("MaxInputTokens = %v, want 1048576 from inputTokenLimit", m.MaxInputTokens)
+	}
+	if m.MaxOutputTokens == nil || *m.MaxOutputTokens != 8192 {
+		t.Fatalf("MaxOutputTokens = %v, want 8192 from outputTokenLimit", m.MaxOutputTokens)
+	}
+	if len(m.Capabilities) != 1 || m.Capabilities[0] != "chat" {
+		t.Fatalf("Capabilities = %v, want exactly [chat] (generateContent support maps to chat)", m.Capabilities)
+	}
+}
+
 // TestGeminiCLI_AbsentLimitsStayNil proves an absent input/output limit stays
 // nil (never 0).
 func TestGeminiCLI_AbsentLimitsStayNil(t *testing.T) {

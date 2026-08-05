@@ -439,6 +439,98 @@ func TestClaudeCode_DiscoveryMapsDeclaredFacts(t *testing.T) {
 	}
 }
 
+// TestClaudeCode_ReasoningCapabilityAndNoOutputLimit is Task 2 of the
+// 2026-08-05 hybrid-capabilities-and-context plan: it pins the "reasoning"
+// capability string (now real vocabulary per models.OperationReasoning,
+// added by the prior commit) through this adapter's mapping, verbatim to the
+// verified legacy reference (venom-router-legacy
+// src/lib/providers/claude-models-snapshot.ts:23-44): ANY declared
+// capabilities object yields a baseline "reasoning" entry, and
+// thinking.supported ADDS "thinking"/"agents" on top — "reasoning" is never
+// gated on the thinking flag, and never appears without SOME declared
+// capabilities object (never fabricated for a bare listing entry).
+//
+// It also pins that MaxOutputTokens stays nil for every claude-code model:
+// the official /v1/models payload this adapter reads (mirrored by the
+// legacy ClaudeApiModelEntry type, which has no max_output_tokens field)
+// carries no output-token limit, so guessing one would violate "no
+// guessing" (spec D6). And it pins the chat-always-declared invariant: a
+// reasoning-only offering must never occur for claude-code, or
+// classification.go's allImageGeneration precedent could misclassify it.
+func TestClaudeCode_ReasoningCapabilityAndNoOutputLimit(t *testing.T) {
+	list := `{"data":[
+		{"id":"claude-baseline","display_name":"Baseline","capabilities":{"structured_outputs":{"supported":true}}},
+		{"id":"claude-thinking","display_name":"Thinking","max_input_tokens":500000,"capabilities":{"thinking":{"supported":true}}},
+		{"id":"claude-bare-listing"}
+	]}`
+	get := &fakeClaudeGet{byPath: map[string]struct {
+		status int
+		body   string
+	}{"/v1/models": {200, list}}}
+	a := NewClaudeCodeAdapter((&fakeClaudeToken{}).probe, get.probe)
+	models, err := a.DiscoverModels(context.Background(), storedClaude("at"))
+	if err != nil {
+		t.Fatalf("DiscoverModels: %v", err)
+	}
+	byID := map[string]DiscoveredModel{}
+	for _, m := range models {
+		byID[m.ProviderModelID] = m
+	}
+
+	baseline := byID["claude-baseline"]
+	baselineCaps := map[string]bool{}
+	for _, c := range baseline.Capabilities {
+		baselineCaps[c] = true
+	}
+	if !baselineCaps["reasoning"] {
+		t.Fatalf("baseline capabilities = %v, want \"reasoning\" present without the thinking flag (baseline, per the legacy reference)", baseline.Capabilities)
+	}
+	if baselineCaps["thinking"] || baselineCaps["agents"] {
+		t.Fatalf("baseline capabilities = %v, want no \"thinking\"/\"agents\" without an explicit thinking flag", baseline.Capabilities)
+	}
+
+	thinking := byID["claude-thinking"]
+	thinkingCaps := map[string]bool{}
+	for _, c := range thinking.Capabilities {
+		thinkingCaps[c] = true
+	}
+	for _, want := range []string{"reasoning", "thinking", "agents"} {
+		if !thinkingCaps[want] {
+			t.Fatalf("thinking-model capabilities = %v, want %q", thinking.Capabilities, want)
+		}
+	}
+
+	bare := byID["claude-bare-listing"]
+	if len(bare.Capabilities) != 1 || bare.Capabilities[0] != "chat" {
+		t.Fatalf("bare-listing capabilities = %v, want exactly [chat] (no capabilities object declared -> no reasoning fabricated)", bare.Capabilities)
+	}
+
+	// No claude-code model in this fixture ever carries max_output_tokens —
+	// the official payload has no such field (verified against the legacy
+	// reference) — so MaxOutputTokens must stay nil everywhere.
+	for _, m := range models {
+		if m.MaxOutputTokens != nil {
+			t.Fatalf("%s MaxOutputTokens = %v, want nil (the official payload has no output-limit field; never guess one)", m.ProviderModelID, *m.MaxOutputTokens)
+		}
+	}
+
+	// The chat-always-declared invariant: every model, regardless of
+	// declared capabilities, must carry "chat" — a reasoning-only offering
+	// would risk misclassification (classification.go's allImageGeneration
+	// precedent guards the analogous image-only case).
+	for _, m := range models {
+		hasChat := false
+		for _, c := range m.Capabilities {
+			if c == "chat" {
+				hasChat = true
+			}
+		}
+		if !hasChat {
+			t.Fatalf("%s capabilities = %v, want \"chat\" always present", m.ProviderModelID, m.Capabilities)
+		}
+	}
+}
+
 // TestClaudeCode_BetaSplit pins the per-call beta split the reference makes
 // (legacy 2026-08-03): profile, usage, and health carry the SHORT beta
 // (oauth-2025-04-20) while /v1/models carries the extended list.

@@ -155,6 +155,19 @@ func (a *GeminiCLIAdapter) DiscoverModels(ctx context.Context, creds StoredCrede
 // EXPLICITLY contains generateContent (a row with no usable generation method
 // is filtered, never defaulted to chat) AND it is not one of the documented
 // non-chat generateContent families.
+//
+// 2026-08-05 hybrid-capabilities-and-context (Task 2) decision: a row without
+// generateContent (e.g. an embedContent-only embedding model) is SKIPPED
+// entirely, not emitted as a DiscoveredModel with an empty/no-chat capability
+// list. Reasoning: embeddings have no entry in the fixed Operation vocabulary
+// (models.Operations()), so such a row could never carry a real operation —
+// intelligence.Classify (internal/intelligence/classification.go) would file
+// it under ClassificationUnclassified forever, a permanent dead row with no
+// path to ever become routable or even catalog_only. Skipping it at discovery
+// keeps the catalog free of offerings that can never mean anything, which is
+// the same "declared, not fabricated, and not clutter" outcome
+// TestGeminiCLI_MethodlessRowFilteredOut and
+// TestGeminiCLI_OfficialContextAndOutputLimitsMapDirectly pin.
 func geminiModelFrom(m geminiListModel) (DiscoveredModel, bool) {
 	id := strings.TrimPrefix(m.Name, "models/")
 	if id == "" {

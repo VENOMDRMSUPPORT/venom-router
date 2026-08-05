@@ -383,6 +383,14 @@ func claudeCodeFundingForPlan(plan string) (string, float64) {
 
 // claudeCodeModelList is the subset of GET /v1/models entries this adapter
 // reads: the declared capabilities object and the input-token limit (03 §3).
+//
+// 2026-08-05 hybrid-capabilities-and-context (Task 2) finding: the official
+// payload (verified verbatim against the legacy reference's
+// ClaudeApiModelEntry type, venom-router-legacy
+// src/lib/providers/claude-models-snapshot.ts:15-21) carries NO
+// output-token-limit field — only max_input_tokens. DiscoveredModel.
+// MaxOutputTokens therefore stays nil for every claude-code model; adding a
+// field here would be guessing a number the provider never sent (spec D6).
 type claudeCodeModelList struct {
 	Data []claudeCodeModelEntry `json:"data"`
 }
@@ -411,6 +419,21 @@ type claudeCapFlag struct {
 // capabilities object yields just the base chat capability (the /v1/models
 // list is a chat-model list), never a model-name-derived guess — capability
 // names never come from the model id in this project (README §2.1).
+//
+// "reasoning" is a BASELINE label, not gated on the thinking flag: it is
+// emitted whenever a capabilities object is declared at all, mirroring the
+// verified legacy reference verbatim (venom-router-legacy
+// src/lib/providers/claude-models-snapshot.ts:23-44, mapClaudeApiCapabilities
+// — every claude-code model with a declared capabilities object is treated
+// as reasoning-capable at a basic level; thinking.supported additionally
+// unlocks "thinking"/"agents"). Before 2026-08-05's operation-vocabulary
+// unfreeze (models.OperationReasoning) this string was silently dropped by
+// ParseOperation regardless of value, so the unconditional emission was
+// inert; it is now load-bearing, pinned by
+// TestClaudeCode_ReasoningCapabilityAndNoOutputLimit. "chat" is always the
+// first element regardless of any flag combination — a reasoning-only
+// offering must never occur for claude-code, or classification.go's
+// allImageGeneration precedent could misclassify it as non-routable.
 func claudeCapabilities(caps *claudeModelCaps) []string {
 	if caps == nil {
 		return []string{"chat"}
