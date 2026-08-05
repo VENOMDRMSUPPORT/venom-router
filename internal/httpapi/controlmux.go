@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/application"
@@ -52,6 +53,19 @@ type controlMuxOptions struct {
 	omitPublicRoutes bool
 	bind             string
 	dataPlaneBind    string
+	usabilityTrigger func(ctx context.Context, providerID, accountID string)
+}
+
+// WithUsabilityTrigger supplies the fast-lane hook (design 2026-08-05): fired
+// once a discovery run completes successfully, so the account's freshly
+// observed models get verified right away instead of waiting for the next
+// scheduled sweep. Boot builds ONE UsabilityService and passes its
+// VerifyAccount both here AND to the scheduler's Tick, so the fast lane and
+// the periodic sweep always share the same composition root. Absent (nil,
+// every pre-existing four-arg ControlMux call site), the discovery handler's
+// fast lane stays disabled — exactly like a nil discoveryTrigger today.
+func WithUsabilityTrigger(fn func(ctx context.Context, providerID, accountID string)) ControlMuxOption {
+	return func(o *controlMuxOptions) { o.usabilityTrigger = fn }
 }
 
 // WithoutPublicRoutes tells ControlMux NOT to mount the vk-gated /v1/* public
@@ -301,6 +315,12 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	// DiscoveryHandler is constructed after the EnrollmentHandler above).
 	enrollmentHandler.SetDiscoveryTrigger(discoveryHandler)
 	oauthHandler.SetDiscoveryTrigger(discoveryHandler)
+	// Fast-lane usability verification (design 2026-08-05): wired only when
+	// the caller supplied one (boot always does; some tests deliberately
+	// don't, to exercise the trigger-absent no-op path).
+	if o.usabilityTrigger != nil {
+		discoveryHandler.SetUsabilityTrigger(o.usabilityTrigger)
+	}
 
 	// Probe (P3c-DB-EXTRA/CAPI-001, 09 §3.8): POST /offerings/{id}/probe,
 	// async 202 + the canonical shared job surface, exactly like

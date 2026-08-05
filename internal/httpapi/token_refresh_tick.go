@@ -92,7 +92,7 @@ func (t *tokenRefreshTick) Run(ctx context.Context) error {
 
 // BuildTokenRefreshTick constructs the OAuth token-refresh sweep the boot
 // scheduler runs. It is this package's composition root for the sweep,
-// mirroring BuildUsabilityTick: its own provider registry (built from the
+// mirroring BuildUsabilityService: its own provider registry (built from the
 // same newProviderRegistry list the request path uses), the accounts +
 // credentials repos, and the application-layer TokenRefreshService that owns
 // the actual refresh-and-rotate rules. now defaults to time.Now.

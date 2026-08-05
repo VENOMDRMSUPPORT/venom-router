@@ -399,6 +399,20 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 	// would report a fallback rather than what the process is actually
 	// listening on.
 	muxOpts = append(muxOpts, httpapi.WithEffectiveBinds(cfg.Bind, cfg.DataPlaneBind))
+	// The model-usability verification service (design 2026-08-03; extended
+	// to clinepass 2026-08-04; fast lane added 2026-08-05): built ONCE here,
+	// before the mux, so BOTH the mux's discovery-triggered fast lane
+	// (WithUsabilityTrigger below) and the scheduler's periodic sweep
+	// (registered further down) share the exact same composition root —
+	// never two independently constructed verifier sets that could drift
+	// apart.
+	usabilityService, err := httpapi.BuildUsabilityService(db, kr, time.Now)
+	if err != nil {
+		closeDB()
+		release()
+		return nil, fmt.Errorf("app: build usability service: %w", err)
+	}
+	muxOpts = append(muxOpts, httpapi.WithUsabilityTrigger(usabilityService.VerifyAccount))
 	mux := httpapi.ControlMux(cfg.Bind, spa, db, kr, muxOpts...)
 
 	// 10. Listen. The control plane must never bind off-host (01 §6a/§8,
@@ -477,25 +491,18 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		release()
 		return nil, fmt.Errorf("app: build scheduler workers: %w", err)
 	}
-	// The opencode-zen model-usability sweep (design 2026-08-03): executes the
-	// per-model chat-usability probe for chat offering-ops the drainer stranded
-	// in `probing`, so a free account's model count reflects models that
-	// actually work. Its own composition root, like BuildSchedulerWorkers.
-	usabilityRun, err := httpapi.BuildUsabilityTick(db, kr, time.Now)
-	if err != nil {
-		_ = httpServer.Close()
-		if dataHTTP != nil {
-			_ = dataHTTP.Close()
-		}
-		closeDB()
-		release()
-		return nil, fmt.Errorf("app: build usability tick: %w", err)
-	}
+	// The model-usability sweep (design 2026-08-03): executes the per-model
+	// chat-usability probe for chat offering-ops the drainer stranded in
+	// `probing`, so a free account's model count reflects models that
+	// actually work. usabilityService was already built above (before the
+	// mux) so this fast lane and the mux's discovery-triggered fast lane
+	// share one composition root — nothing new is constructed here.
+	usabilityRun := usabilityService.Tick
 	// The OAuth token-refresh sweep (the legacy proactive refresh worker's
 	// counterpart): keeps every connected OAuth account's access token alive
 	// by refreshing it ahead of expiry and persisting the rotated token, so
 	// quota/health/chat never run on a token that silently died. Its own
-	// composition root, like BuildSchedulerWorkers/BuildUsabilityTick.
+	// composition root, like BuildSchedulerWorkers/BuildUsabilityService.
 	tokenRefreshRun, err := httpapi.BuildTokenRefreshTick(db, kr, time.Now)
 	if err != nil {
 		_ = httpServer.Close()
@@ -532,7 +539,7 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		SchedulerTick{Name: "probe_drain", Run: func(ctx context.Context) error { _, err := probeWorkers.DrainTick(ctx); return err }},
 		SchedulerTick{Name: "probe_recertify", Run: func(ctx context.Context) error { _, err := probeWorkers.RecertifyTick(ctx); return err }},
 		SchedulerTick{Name: "probe_reclaim", Run: func(ctx context.Context) error { _, err := probeWorkers.ReclaimTick(ctx); return err }},
-		SchedulerTick{Name: "opencode_zen_usability", Run: usabilityRun},
+		SchedulerTick{Name: "model_usability", Run: usabilityRun},
 	)
 	logger.Info("background scheduler started", observability.String("interval", scheduler.interval.String()))
 	scheduler.Start(schedulerCtx)

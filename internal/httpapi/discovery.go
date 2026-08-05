@@ -23,6 +23,15 @@ const discoverRoute = "POST /accounts/{id}/discover"
 // context.
 const discoveryRunTimeout = 3 * time.Minute
 
+// usabilityFastLaneTimeout bounds the detached fast-lane usability
+// verification fired after a discovery run succeeds (design 2026-08-05) —
+// generous enough for one account's full model catalog to be probed (it
+// mirrors the scheduled sweep's own per-lane usabilitySweepBudget). It gets
+// its OWN context.WithoutCancel + timeout rather than reusing runDiscovery's
+// ctx: that ctx's cancel fires the instant runDiscovery returns to its
+// caller, which would otherwise abort the fast lane before it ever runs.
+const usabilityFastLaneTimeout = 30 * time.Second
+
 // discoveryResultRef is the ONE reference shape a discovery job's
 // result_ref ever takes (09 §3.12: "a reference... e.g. the affected
 // account_id + the read-model route"): the /models route filtered to the
@@ -57,6 +66,23 @@ type DiscoveryHandler struct {
 	// list), so it is wired via the WithProbeRuns method below instead;
 	// every pre-existing caller/test is completely unaffected.
 	probeRuns *storage.ProbeRunRepo
+
+	// usabilityTrigger is the fast-lane hook (design 2026-08-05): fired ONLY
+	// after a discovery run completes successfully, so the account's freshly
+	// observed models get verified immediately instead of waiting for the
+	// next scheduled sweep. UsabilityService.VerifyAccount satisfies this
+	// signature directly. nil (every pre-existing construction site) disables
+	// the fast lane — a discovery run behaves exactly as it did before this
+	// field existed.
+	usabilityTrigger func(ctx context.Context, providerID, accountID string)
+}
+
+// SetUsabilityTrigger wires the fast-lane usability-verification hook fired
+// after a successful discovery run. Optional (nil disables it, the default);
+// ControlMux sets it once the usability composition root exists, mirroring
+// SetDiscoveryTrigger's own injection pattern.
+func (h *DiscoveryHandler) SetUsabilityTrigger(fn func(ctx context.Context, providerID, accountID string)) {
+	h.usabilityTrigger = fn
 }
 
 // NewDiscoveryHandler builds the handler over every repo/service it needs.
@@ -302,6 +328,22 @@ func (h *DiscoveryHandler) runDiscovery(ctx context.Context, jobID, runID, accou
 
 	_ = h.jobs.MarkTerminal(context.Background(), jobID, storage.JobCompleted, finishedAt,
 		discoveryResultRef(accountID), nil, storage.DefaultJobRetention)
+
+	// Fast lane (design 2026-08-05): a successful discovery run's freshly
+	// observed models get verified right away rather than waiting for the
+	// next scheduled sweep. THIS is runDiscovery's one success point — both
+	// the manual (ServeDiscover) and background (TriggerBackgroundDiscovery)
+	// paths funnel through here, so both get the fast lane. Detached exactly
+	// like the discovery run itself: ctx is cancelled by the caller's
+	// deferred cancel() the instant this function returns, so the fast lane
+	// needs its own context.WithoutCancel + timeout, not ctx directly.
+	if h.usabilityTrigger != nil {
+		triggerCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), usabilityFastLaneTimeout)
+		go func() {
+			defer cancel()
+			h.usabilityTrigger(triggerCtx, providerID, accountID)
+		}()
+	}
 }
 
 // --- GET /offerings/{id}/certification ---

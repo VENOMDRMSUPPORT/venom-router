@@ -16,11 +16,11 @@ type accountToVerify struct {
 
 // usabilityTick is the scheduler-tick body that sweeps every account needing
 // a model-usability pass (opencode-zen and clinepass today — each provider
-// with a registered probe spec in BuildUsabilityTick). Its two dependencies
+// with a registered probe spec in BuildUsabilityService). Its two dependencies
 // are closures so the tick logic stays trivially testable and the messy
 // composition-root wiring (AccountRepo.List filtered to connected accounts of
 // probe-capable providers + active credential resolution; the assembled
-// per-provider usabilityVerifier) lives in BuildUsabilityTick.
+// per-provider usabilityVerifier) lives in BuildUsabilityService.
 type usabilityTick struct {
 	list   func(ctx context.Context) ([]accountToVerify, error)
 	verify func(ctx context.Context, target accountToVerify) (usabilityRunSummary, error)

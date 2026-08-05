@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -562,6 +563,122 @@ func TestCertificationRead_ReviewReasonsAreComputedNotFabricated(t *testing.T) {
 				t.Fatalf("review_reasons contains fabricated reason %q — this read has no basis to assert it", forbidden)
 			}
 		}
+	}
+}
+
+// --- Fast-lane usability trigger (task-8, spec 2026-08-05) ---
+
+// usabilityTriggerCall records one fast-lane invocation for assertions.
+type usabilityTriggerCall struct {
+	providerID string
+	accountID  string
+}
+
+// newRecordingUsabilityTrigger builds a fast-lane hook that records every
+// call it receives, safe for concurrent use — the production trigger fires
+// from a detached goroutine, so the test reading calls() races with it by
+// design and must synchronize.
+func newRecordingUsabilityTrigger() (trigger func(ctx context.Context, providerID, accountID string), calls func() []usabilityTriggerCall) {
+	var mu sync.Mutex
+	var recorded []usabilityTriggerCall
+	trigger = func(_ context.Context, providerID, accountID string) {
+		mu.Lock()
+		defer mu.Unlock()
+		recorded = append(recorded, usabilityTriggerCall{providerID: providerID, accountID: accountID})
+	}
+	calls = func() []usabilityTriggerCall {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]usabilityTriggerCall, len(recorded))
+		copy(out, recorded)
+		return out
+	}
+	return trigger, calls
+}
+
+// waitForUsabilityTriggerCalls polls calls() in a bounded loop until it has
+// recorded at least `want` invocations, failing the test if it never does
+// within timeout — deterministic waiting for the fast lane's own detached
+// goroutine, mirroring waitForJobTerminal's approach to the discovery run's
+// goroutine.
+func waitForUsabilityTriggerCalls(t *testing.T, calls func() []usabilityTriggerCall, want int, timeout time.Duration) []usabilityTriggerCall {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		got := calls()
+		if len(got) >= want {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("usability trigger calls = %d after %v, want >= %d", len(got), timeout, want)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// TestDiscover_SuccessFiresUsabilityTriggerExactlyOnce proves runDiscovery's
+// ONE success point fires the fast-lane trigger with the run's own
+// provider+account ids, exactly once. This drives the PRODUCTION handler
+// path (ServeDiscover -> serveDiscover -> runDiscovery) rather than a
+// test-owned assembly of runDiscovery's pieces — the wrapper-hole shape that
+// has recurred twice in this project (a wrapper that fires the trigger sits
+// beside, not inside, the code the mutation test actually deletes from).
+func TestDiscover_SuccessFiresUsabilityTriggerExactlyOnce(t *testing.T) {
+	clock := fixedDiscoveryClock()
+	f := newDiscoveryFixture(t, func() time.Time { return clock }, discoveryFixtureOpts{WithDiscovery: true, WithCredential: true})
+	f.discAdapter.models = []providers.DiscoveredModel{
+		{ProviderModelID: "model-a", DisplayName: "Model A", Capabilities: []string{"chat"}},
+	}
+	trigger, calls := newRecordingUsabilityTrigger()
+	f.handler.SetUsabilityTrigger(trigger)
+	mux := newTestDiscoveryMux(f.handler)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, discoveryRequest(http.MethodPost, "/api/control/v1/accounts/"+f.accountID+"/discover"))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %q", rec.Code, rec.Body.String())
+	}
+	data := decodeDiscoverResponse(t, rec.Body.Bytes())
+
+	row := waitForJobTerminal(t, f.jobs, data.JobID, 2*time.Second)
+	if row.Status != storage.JobCompleted {
+		t.Fatalf("Status = %q, want completed", row.Status)
+	}
+
+	got := waitForUsabilityTriggerCalls(t, calls, 1, 2*time.Second)
+	if len(got) != 1 {
+		t.Fatalf("usability trigger fired %d times, want exactly 1: %+v", len(got), got)
+	}
+	if got[0].providerID != f.providerID || got[0].accountID != f.accountID {
+		t.Fatalf("usability trigger call = %+v, want provider=%s account=%s", got[0], f.providerID, f.accountID)
+	}
+}
+
+// TestDiscover_FailedRunFiresUsabilityTriggerZeroTimes proves a failed
+// discovery run (the adapter itself erroring) never reaches runDiscovery's
+// success point, so the fast lane never fires. Unlike the success case this
+// needs no bounded wait: the production code path never launches the trigger
+// goroutine at all on failure, so there is nothing async to race with —
+// asserting zero calls right after the job reaches its terminal (failed)
+// state is already deterministic.
+func TestDiscover_FailedRunFiresUsabilityTriggerZeroTimes(t *testing.T) {
+	clock := fixedDiscoveryClock()
+	f := newDiscoveryFixture(t, func() time.Time { return clock }, discoveryFixtureOpts{WithDiscovery: true, WithCredential: true})
+	f.discAdapter.err = fmt.Errorf("upstream discovery failure")
+	trigger, calls := newRecordingUsabilityTrigger()
+	f.handler.SetUsabilityTrigger(trigger)
+	mux := newTestDiscoveryMux(f.handler)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, discoveryRequest(http.MethodPost, "/api/control/v1/accounts/"+f.accountID+"/discover"))
+	data := decodeDiscoverResponse(t, rec.Body.Bytes())
+
+	row := waitForJobTerminal(t, f.jobs, data.JobID, 2*time.Second)
+	if row.Status != storage.JobFailed {
+		t.Fatalf("Status = %q, want failed", row.Status)
+	}
+	if got := calls(); len(got) != 0 {
+		t.Fatalf("usability trigger fired %d times on a failed run, want 0: %+v", len(got), got)
 	}
 }
 

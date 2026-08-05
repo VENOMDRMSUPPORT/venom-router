@@ -84,16 +84,38 @@ func usabilityAccountEligible(a domain.Account) bool {
 	return a.ConnectionState == domain.ConnectionConnected && a.HealthState == domain.HealthHealthy
 }
 
-// BuildUsabilityTick constructs the model-usability verification sweep the
-// boot scheduler runs (design 2026-08-03; extended to clinepass 2026-08-04).
-// It is this package's composition root for the sweep, mirroring
-// BuildSchedulerWorkers' role: it builds its own CertificationDriver over the
-// shared certifications table (stateless; CompareAndSwap handles concurrency
-// with the probe workers' own driver), the catalog lister, the decrypt-once
-// credential lease, one verifier per probe-capable provider, and the
-// connected-account lister closure, and returns the tick's Run for the
-// scheduler to drive. now defaults to time.Now.
-func BuildUsabilityTick(db *storage.DB, kr *secrets.Keyring, now func() time.Time) (func(context.Context) error, error) {
+// UsabilityService is BuildUsabilityService's product: the scheduled sweep's
+// Tick (unchanged behavior, just relocated) plus the fast-lane VerifyAccount
+// (design 2026-08-05) a caller can fire immediately after an event that just
+// made an account's models worth re-checking — today, a successful discovery
+// run (DiscoveryHandler). Both funcs are built over the SAME verifiers map,
+// so the fast lane and the sweep can never drift into two different
+// certification/probe wirings.
+type UsabilityService struct {
+	// Tick is the scheduler-tick body — usabilityTick.Run, exactly as it ran
+	// under the former BuildUsabilityTick.
+	Tick func(context.Context) error
+	// VerifyAccount runs ONE account's usability pass right now, like a single
+	// sweep lane: it re-checks eligibility and resolves the active credential
+	// itself, so a caller only ever has to hand it ids. A provider absent from
+	// usabilityProviderSpecs() (map miss) is a no-op — it never touches the
+	// DB. An ineligible account (unhealthy, disconnected) or one with no
+	// active credential is skipped, exactly like the sweep would skip it.
+	// Errors are swallowed (logged nowhere, retried by the next sweep) —
+	// mirroring how usabilityTick.Run treats one account's failure.
+	VerifyAccount func(ctx context.Context, providerID, accountID string)
+}
+
+// BuildUsabilityService constructs the model-usability verification
+// composition root (design 2026-08-03; extended to clinepass 2026-08-04;
+// refactored into a service exposing a fast lane 2026-08-05). It is this
+// package's composition root for the sweep, mirroring BuildSchedulerWorkers'
+// role: it builds its own CertificationDriver over the shared certifications
+// table (stateless; CompareAndSwap handles concurrency with the probe
+// workers' own driver), the catalog lister, the decrypt-once credential
+// lease, one verifier per probe-capable provider, and the connected-account
+// lister closure. now defaults to time.Now.
+func BuildUsabilityService(db *storage.DB, kr *secrets.Keyring, now func() time.Time) (*UsabilityService, error) {
 	if now == nil {
 		now = time.Now
 	}
@@ -102,7 +124,7 @@ func BuildUsabilityTick(db *storage.DB, kr *secrets.Keyring, now func() time.Tim
 	certAuditor := newCertificationAuditorAdapter(newAuditEmitter(db, nil))
 	driver, err := intelligence.NewCertificationDriver(certRepo, certAuditor, intelligence.DefaultProbeRetryBudget, now)
 	if err != nil {
-		return nil, fmt.Errorf("httpapi: build usability tick: %w", err)
+		return nil, fmt.Errorf("httpapi: build usability service: %w", err)
 	}
 
 	credentialRepo := storage.NewAccountCredentialRepo(db)
@@ -158,8 +180,33 @@ func BuildUsabilityTick(db *storage.DB, kr *secrets.Keyring, now func() time.Tim
 		},
 	}
 
-	// The sweep budget is applied PER PROVIDER LANE inside tick.Run, not once
-	// around the whole sweep: the lanes run in parallel, so a provider whose
-	// probes all time out burns its own 25s and nobody else's.
-	return tick.Run, nil
+	// verifyAccount is the fast lane: it runs like a single sweep lane for
+	// exactly one account, re-doing the SAME eligibility + credential
+	// resolution the sweep's own list() closure does above, since the caller
+	// (DiscoveryHandler) only ever hands it ids.
+	verifyAccount := func(ctx context.Context, providerID, accountID string) {
+		verifier, ok := verifiers[providerID]
+		if !ok {
+			// No probe spec for this provider — never touch the DB.
+			return
+		}
+		account, ok, err := accountRepo.GetByID(ctx, accountID)
+		if err != nil || !ok {
+			return
+		}
+		if !usabilityAccountEligible(account) {
+			return
+		}
+		credentialID, ok := activeCredentialIDFor(ctx, credentialRepo, accountID)
+		if !ok {
+			return
+		}
+		// Same per-phase budget the sweep gives one lane — the fast lane IS a
+		// one-account lane, not the whole sweep, so it gets the whole budget.
+		laneCtx, cancel := context.WithTimeout(ctx, tick.sweepBudget())
+		defer cancel()
+		_, _ = verifier.verifyAccount(laneCtx, accountID, credentialID)
+	}
+
+	return &UsabilityService{Tick: tick.Run, VerifyAccount: verifyAccount}, nil
 }
