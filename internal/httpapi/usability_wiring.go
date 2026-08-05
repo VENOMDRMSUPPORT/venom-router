@@ -40,9 +40,26 @@ type usabilityProviderSpec struct {
 // chat-usability probe. A provider absent from this map is simply never
 // swept — its models stay in `probing` until a probe is written for it.
 func usabilityProviderSpecs() map[string]usabilityProviderSpec {
+	bases := liveProviderBaseURLs()
 	return map[string]usabilityProviderSpec{
 		string(providers.OpenCodeZenID): {baseURL: providers.OpenCodeZenBaseURL, probe: probeOpenCodeZenChatUsability},
 		string(providers.ClinePassID):   {baseURL: providers.ClinePassBaseURL, probe: probeClinePassChatUsability},
+		// agnes-ai / ollama-cloud / nvidia-nim (P7-EXEC probes, task-2): plain
+		// OpenAI-compatible chat, so the probe appends ONLY "/chat/completions"
+		// onto liveProviderBaseURLs()'s already-versioned entry — never a
+		// retyped literal, so the two tables can never drift apart.
+		string(providers.AgnesAIID):     {baseURL: bases[providers.AgnesAIID], probe: probeOpenAICompatibleChatUsability},
+		string(providers.OllamaCloudID): {baseURL: bases[providers.OllamaCloudID], probe: probeOpenAICompatibleChatUsability},
+		string(providers.NvidiaNIMID):   {baseURL: bases[providers.NvidiaNIMID], probe: probeOpenAICompatibleChatUsability},
+		// gemini-cli (task-3): the probe appends
+		// "/models/{id}:generateContent" onto liveProviderBaseURLs()'s
+		// VERSIONED entry (GeminiCLIBaseURL + "/v1beta") — the bare host would
+		// 404 every probe.
+		string(providers.GeminiCLIID): {baseURL: bases[providers.GeminiCLIID], probe: probeGeminiChatUsability},
+		// claude-code (task-4): the probe appends "/v1/messages" onto
+		// liveProviderBaseURLs()'s BARE-host entry (ClaudeCodeAPIBase) — the
+		// versioned gemini-style base would double the /v1 segment.
+		string(providers.ClaudeCodeID): {baseURL: bases[providers.ClaudeCodeID], probe: probeClaudeCodeChatUsability},
 	}
 }
 
