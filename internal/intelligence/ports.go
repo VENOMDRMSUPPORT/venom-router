@@ -42,17 +42,29 @@ type GenerationAllocator interface {
 // unrecognized capability string is kept in Capabilities but contributes
 // no operation. Pricing and Evidence have already passed through this
 // package's sanitize layer.
+//
+// CandidateOperations (Task 3) is the parsed form of
+// providers.DiscoveredModel.CandidateOperations — operations the adapter did
+// NOT declare but still wants a probeable offering_operations row for, dropped
+// through the same models.ParseOperation vocabulary check as Operations
+// (unrecognized strings are silently dropped, identically). The storage layer
+// writes an offering_operations row for the UNION of Operations and
+// CandidateOperations, but capabilities_json is derived from Capabilities
+// only — CandidateOperations never appears there, which is exactly what keeps
+// ListNonChatOperationsToCertify from certifying a candidate as if it had
+// been declared.
 type DiscoverySnapshotModel struct {
-	CanonicalKey    string
-	ProviderModelID string
-	DisplayName     string
-	ContextLength   *int
-	MaxInputTokens  *int
-	MaxOutputTokens *int
-	Capabilities    []string
-	Operations      []models.Operation
-	Pricing         map[string]any
-	Evidence        map[string]any
+	CanonicalKey        string
+	ProviderModelID     string
+	DisplayName         string
+	ContextLength       *int
+	MaxInputTokens      *int
+	MaxOutputTokens     *int
+	Capabilities        []string
+	Operations          []models.Operation
+	CandidateOperations []models.Operation
+	Pricing             map[string]any
+	Evidence            map[string]any
 }
 
 // DiscoverySnapshot is one discovery run's fully-validated, ready-to-apply

@@ -350,18 +350,38 @@ type NonChatOperationToCertify struct {
 // operations whose certification is in `probing`. Unlike chat — which the
 // usability sweep verifies with a live runtime probe — these capabilities have
 // no runtime prober, so the drainer strands them in `probing` forever, which is
-// what makes every model read as "needs review". Their very existence as an
-// offering-operation IS the provider's declaration (discovery only creates a
-// tools/vision op when models.dev declares tool_call / image input), so the
-// sweep certifies them supported FROM THAT DECLARATION. Same `probing`-only
-// contract as ListChatOfferingsToVerify: `observed` is left to the drainer, and
+// what makes every model read as "needs review". An offering-operation's mere
+// existence is NOT by itself the provider's declaration: discovery also
+// creates CANDIDATE rows (Task 3 / clinepass) for operations the provider
+// never declared, purely so they stay probeable. The one honest signal for
+// "the provider declared this" is that the operation string appears in the
+// parent account_model_offerings.capabilities_json — that column is written
+// from DiscoveredModel.Capabilities only (never from CandidateOperations), so
+// the EXISTS/json_each clause below is exactly the declared/candidate
+// boundary. A candidate row is therefore left stranded in `probing` — read as
+// "needs review" — until a REAL probe (POST /offerings/{id}/probe, or Test
+// All) certifies it; certifying it here from "declaration" would be
+// fabricating evidence that was never given. Same `probing`-only contract as
+// ListChatOfferingsToVerify otherwise: `observed` is left to the drainer, and
 // already-certified/suspended/expired rows and other accounts are excluded.
+//
+// JSON1/json_each availability was confirmed against the modernc.org/sqlite
+// driver actually in use (a throwaway query test, since deleted — see
+// task-3-report.md) before this SQL-side filter was written; had it been
+// unavailable, the fallback would be filtering in Go after fetching the
+// offering's declared capabilities_json separately.
 func (r *CatalogRepo) ListNonChatOperationsToCertify(ctx context.Context, accountID string) ([]NonChatOperationToCertify, error) {
 	rows, err := r.db.Conn().QueryContext(ctx,
 		`SELECT oo.id, oo.operation
 		 FROM offering_operations oo
 		 JOIN certifications c ON c.offering_operation_id = oo.id
+		 JOIN account_model_offerings amo
+		   ON amo.account_id = oo.account_id AND amo.provider_model_id = oo.provider_model_id
 		 WHERE oo.account_id = ? AND oo.operation != 'chat' AND c.status = 'probing'
+		   AND EXISTS (
+		     SELECT 1 FROM json_each(amo.capabilities_json)
+		     WHERE json_each.value = oo.operation
+		   )
 		 ORDER BY oo.provider_model_id ASC, oo.operation ASC`,
 		accountID,
 	)

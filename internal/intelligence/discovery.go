@@ -198,6 +198,11 @@ func normalizeDiscoveredModel(providerID string, dm providers.DiscoveredModel) (
 			return DiscoverySnapshotModel{}, fmt.Errorf("intelligence: discovered model %q has an invalid capability string", dm.ProviderModelID)
 		}
 	}
+	for _, c := range dm.CandidateOperations {
+		if !validText(c) {
+			return DiscoverySnapshotModel{}, fmt.Errorf("intelligence: discovered model %q has an invalid candidate operation string", dm.ProviderModelID)
+		}
+	}
 	if err := validLimit(dm.ContextLength); err != nil {
 		return DiscoverySnapshotModel{}, fmt.Errorf("intelligence: discovered model %q: context_length: %w", dm.ProviderModelID, err)
 	}
@@ -220,17 +225,29 @@ func normalizeDiscoveredModel(providerID string, dm providers.DiscoveredModel) (
 		}
 	}
 
+	// Candidate operations are dropped through the exact same
+	// ParseOperation vocabulary check as declared ones (Task 3: "the same
+	// dropping rule") — an unrecognized candidate string is silently
+	// discarded, never surfaced as a validation error.
+	var candidateOps []models.Operation
+	for _, c := range dm.CandidateOperations {
+		if op, err := models.ParseOperation(c); err == nil {
+			candidateOps = append(candidateOps, op)
+		}
+	}
+
 	return DiscoverySnapshotModel{
-		CanonicalKey:    key,
-		ProviderModelID: dm.ProviderModelID,
-		DisplayName:     dm.DisplayName,
-		ContextLength:   dm.ContextLength,
-		MaxInputTokens:  dm.MaxInputTokens,
-		MaxOutputTokens: dm.MaxOutputTokens,
-		Capabilities:    dm.Capabilities,
-		Operations:      ops,
-		Pricing:         sanitizeMap(dm.Pricing),
-		Evidence:        sanitizeMap(dm.Evidence),
+		CanonicalKey:        key,
+		ProviderModelID:     dm.ProviderModelID,
+		DisplayName:         dm.DisplayName,
+		ContextLength:       dm.ContextLength,
+		MaxInputTokens:      dm.MaxInputTokens,
+		MaxOutputTokens:     dm.MaxOutputTokens,
+		Capabilities:        dm.Capabilities,
+		Operations:          ops,
+		CandidateOperations: candidateOps,
+		Pricing:             sanitizeMap(dm.Pricing),
+		Evidence:            sanitizeMap(dm.Evidence),
 	}, nil
 }
 

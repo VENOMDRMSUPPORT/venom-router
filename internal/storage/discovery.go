@@ -281,7 +281,30 @@ func (r *DiscoveryRepo) applyModel(ctx context.Context, tx *sql.Tx, accountID, p
 		return fmt.Errorf("storage: upsert offering (%q,%q): %w", accountID, m.ProviderModelID, err)
 	}
 
+	// An offering_operations row is written for the UNION of declared
+	// (m.Operations) and candidate (m.CandidateOperations) operations — a
+	// candidate exists purely so the capability stays probeable (Task 3) —
+	// but capabilities_json above was derived from m.Capabilities alone, so
+	// a candidate's row is never mistaken for a declaration. A duplicate
+	// operation string in both lists is declared: seenOps is seeded by the
+	// declared loop first, so the candidate loop skips it and no second row
+	// is attempted (ensureOfferingOperation upserts on natural key regardless,
+	// so this dedupe is a clarity/efficiency measure, not a correctness one).
+	seenOps := make(map[string]bool, len(m.Operations)+len(m.CandidateOperations))
 	for _, op := range m.Operations {
+		if seenOps[string(op)] {
+			continue
+		}
+		seenOps[string(op)] = true
+		if err := r.ensureOfferingOperation(ctx, tx, accountID, providerID, m.ProviderModelID, string(op), epoch); err != nil {
+			return err
+		}
+	}
+	for _, op := range m.CandidateOperations {
+		if seenOps[string(op)] {
+			continue
+		}
+		seenOps[string(op)] = true
 		if err := r.ensureOfferingOperation(ctx, tx, accountID, providerID, m.ProviderModelID, string(op), epoch); err != nil {
 			return err
 		}

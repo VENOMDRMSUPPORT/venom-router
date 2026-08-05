@@ -82,8 +82,19 @@ type DiscoveredModel struct {
 	MaxInputTokens  *int
 	MaxOutputTokens *int
 	Capabilities    []string // only from explicit provider fields
-	Pricing         map[string]any
-	Evidence        map[string]any
+	// CandidateOperations names operations the adapter has NOT declared (no
+	// wire field or models.dev entry backs them — "no guessing" forbids
+	// adding them to Capabilities) but still wants a probeable
+	// offering_operations row for, because without one the capability can
+	// never be probed at all. A candidate is never written to
+	// capabilities_json and the declared-certification path
+	// (ListNonChatOperationsToCertify) never certifies it from "declaration"
+	// — only a real runtime probe can. See clinepass: its wire returns
+	// {id, name} only, so it declares Capabilities: ["chat"] and lists
+	// "tools"/"structured_output" here instead of fabricating a declaration.
+	CandidateOperations []string
+	Pricing             map[string]any
+	Evidence            map[string]any
 }
 
 // QuotaWindow is one concurrently-tracked provider-evidence budget

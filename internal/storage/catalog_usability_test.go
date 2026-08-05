@@ -108,8 +108,16 @@ func TestCatalogRepo_ListNonChatOperationsToCertify_ProbingNonChatOpsOnly(t *tes
 	insertModelFull(t, db, "model-free", "ck-free", "Free Model", nil, nil, nil)
 	insertModelFull(t, db, "model-two", "ck-two", "Second Model", nil, nil, nil)
 
-	insertOfferingFull(t, db, "acct-1", "prov-1", "big-pickle", "model-free", nil, nil, nil, nil, nil, 0, 0)
-	insertOfferingFull(t, db, "acct-1", "prov-1", "mimo-free", "model-two", nil, nil, nil, nil, nil, 0, 0)
+	// capabilities_json declares every non-terminal operation seeded below on
+	// each offering, so this test continues to exercise ONLY the exclusion
+	// criteria it names (chat / observed / certified / other-account) — never
+	// the declared-vs-candidate distinction, which
+	// TestCatalogRepo_ListNonChatOperationsToCertify_ExcludesCandidateOperations
+	// owns.
+	insertOfferingFull(t, db, "acct-1", "prov-1", "big-pickle", "model-free", nil, nil, nil,
+		catalogStrPtr(`["chat","tools","vision"]`), nil, 0, 0)
+	insertOfferingFull(t, db, "acct-1", "prov-1", "mimo-free", "model-two", nil, nil, nil,
+		catalogStrPtr(`["tools","vision"]`), nil, 0, 0)
 	insertOfferingFull(t, db, "acct-2", "prov-1", "big-pickle", "model-free", nil, nil, nil, nil, nil, 0, 0)
 
 	// MUST be returned: non-chat ops stranded in probing.
@@ -138,5 +146,51 @@ func TestCatalogRepo_ListNonChatOperationsToCertify_ProbingNonChatOpsOnly(t *tes
 	}
 	if seen["op-tools"] != "tools" || seen["op-vision"] != "vision" {
 		t.Fatalf("returned %+v, want op-tools/tools + op-vision/vision", got)
+	}
+}
+
+// TestCatalogRepo_ListNonChatOperationsToCertify_ExcludesCandidateOperations
+// proves the declaration-certification lister returns a non-chat
+// offering-operation ONLY when its operation string is DECLARED — present in
+// the offering's account_model_offerings.capabilities_json. A CANDIDATE row
+// (one discovery created so the operation could be PROBED even though the
+// provider never declared it — see clinepass, whose wire returns no
+// capability metadata at all) sits in `probing` exactly like a declared row,
+// but certifying it from "declaration" would fabricate evidence: the
+// declaration never happened. MUTATION: dropping the capabilities_json filter
+// (reverting to "every probing non-chat op") makes this test pass op-candidate
+// straight through, which is precisely the bug this task fixes.
+func TestCatalogRepo_ListNonChatOperationsToCertify_ExcludesCandidateOperations(t *testing.T) {
+	db := migratedCatalogRepoDB(t)
+	insertProvider(t, db, "prov-1")
+	insertAccount(t, db, "acct-1", "prov-1")
+	insertModelFull(t, db, "model-candidate", "ck-candidate", "Candidate Model", nil, nil, nil)
+	insertModelFull(t, db, "model-declared", "ck-declared", "Declared Model", nil, nil, nil)
+
+	// Offering A: capabilities_json declares only "chat" — "tools" is a
+	// CANDIDATE operations row (probeable, never declared) and must be
+	// excluded. Its own "chat" row is excluded anyway (non-chat filter), but
+	// is seeded to prove that exclusion is unaffected by this change.
+	insertOfferingFull(t, db, "acct-1", "prov-1", "candidate-model", "model-candidate", nil, nil, nil,
+		catalogStrPtr(`["chat"]`), nil, 0, 0)
+	insertOfferingOperationFull(t, db, "op-candidate-chat", "acct-1", "prov-1", "candidate-model", "chat", "probing", "unknown", 0, nil, "")
+	insertOfferingOperationFull(t, db, "op-candidate-tools", "acct-1", "prov-1", "candidate-model", "tools", "probing", "unknown", 0, nil, "")
+
+	// Offering B: capabilities_json declares "tools" alongside "chat" — its
+	// tools row IS declared and must still be returned.
+	insertOfferingFull(t, db, "acct-1", "prov-1", "declared-model", "model-declared", nil, nil, nil,
+		catalogStrPtr(`["chat","tools"]`), nil, 0, 0)
+	insertOfferingOperationFull(t, db, "op-declared-tools", "acct-1", "prov-1", "declared-model", "tools", "probing", "unknown", 0, nil, "")
+
+	repo := NewCatalogRepo(db)
+	got, err := repo.ListNonChatOperationsToCertify(context.Background(), "acct-1")
+	if err != nil {
+		t.Fatalf("ListNonChatOperationsToCertify() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("returned %d ops, want 1 (only the declared tools row); got %+v", len(got), got)
+	}
+	if got[0].OfferingOperationID != "op-declared-tools" || got[0].Operation != "tools" {
+		t.Fatalf("returned %+v, want op-declared-tools/tools", got[0])
 	}
 }

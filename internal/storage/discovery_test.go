@@ -334,6 +334,82 @@ func TestDiscoveryRepo_Apply_FullRowSet(t *testing.T) {
 	}
 }
 
+// TestDiscoveryRepo_Apply_CandidateOperationsCreateRowsButStayUndeclared
+// proves Task 3's honesty rule end to end at the storage layer: a
+// DiscoverySnapshotModel with one declared operation (chat) and two CANDIDATE
+// operations (tools, structured_output — e.g. clinepass, whose wire has no
+// capability metadata at all) produces THREE offering_operations rows — every
+// declared and candidate operation must be probeable — but
+// account_model_offerings.capabilities_json contains ONLY "chat". A candidate
+// creating a row is what makes it probeable at all (no row, no probe target);
+// a candidate NOT reaching capabilities_json is what stops
+// ListNonChatOperationsToCertify from certifying it as if the provider had
+// declared it. MUTATION: writing capabilities_json from the union (or from
+// CandidateOperations at all) turns this false; writing offering_operations
+// rows for Operations only (dropping the CandidateOperations loop) leaves
+// only 1 row instead of 3.
+func TestDiscoveryRepo_Apply_CandidateOperationsCreateRowsButStayUndeclared(t *testing.T) {
+	db := migratedCatalogDB(t)
+	insertProvider(t, db, "prov1")
+	insertAccount(t, db, "acct1", "prov1")
+	repo := NewDiscoveryRepo(db, sequentialTestIDs())
+	ctx := context.Background()
+	now := time.Unix(1000, 0)
+
+	canonicalKey, err := models.CanonicalKey("prov1", "clinepass-model")
+	if err != nil {
+		t.Fatalf("CanonicalKey: %v", err)
+	}
+
+	gen1, _ := repo.BeginRun(ctx, "acct1", "run1", now)
+	snapshot := intelligence.DiscoverySnapshot{
+		AccountID: "acct1", ProviderID: "prov1", Generation: gen1,
+		Models: []intelligence.DiscoverySnapshotModel{{
+			CanonicalKey:        canonicalKey,
+			ProviderModelID:     "clinepass-model",
+			DisplayName:         "ClinePass Model",
+			Capabilities:        []string{"chat"},
+			Operations:          []models.Operation{models.OperationChat},
+			CandidateOperations: []models.Operation{models.OperationTools, models.OperationStructuredOutput},
+		}},
+	}
+	if applied, err := repo.Apply(ctx, "run1", snapshot, now); err != nil || !applied {
+		t.Fatalf("Apply = (%v, %v), want (true, nil)", applied, err)
+	}
+
+	var capabilitiesJSON sql.NullString
+	if err := db.Conn().QueryRow(
+		`SELECT capabilities_json FROM account_model_offerings WHERE account_id = ? AND provider_model_id = ?`,
+		"acct1", "clinepass-model",
+	).Scan(&capabilitiesJSON); err != nil {
+		t.Fatalf("query account_model_offerings: %v", err)
+	}
+	if capabilitiesJSON.String != `["chat"]` {
+		t.Fatalf("capabilities_json = %q, want [\"chat\"] (candidates must never be declared)", capabilitiesJSON.String)
+	}
+
+	for _, op := range []string{"chat", "tools", "structured_output"} {
+		var opID string
+		if err := db.Conn().QueryRow(
+			`SELECT id FROM offering_operations WHERE account_id = ? AND provider_model_id = ? AND operation = ?`,
+			"acct1", "clinepass-model", op,
+		).Scan(&opID); err != nil {
+			t.Fatalf("query offering_operations(%s): every declared+candidate op must have a probeable row: %v", op, err)
+		}
+	}
+
+	var opCount int
+	if err := db.Conn().QueryRow(
+		`SELECT COUNT(*) FROM offering_operations WHERE account_id = ? AND provider_model_id = ?`,
+		"acct1", "clinepass-model",
+	).Scan(&opCount); err != nil {
+		t.Fatalf("count offering_operations: %v", err)
+	}
+	if opCount != 3 {
+		t.Fatalf("offering_operations count = %d, want exactly 3 (chat + tools + structured_output, no duplicates)", opCount)
+	}
+}
+
 // TestDiscoveryRepo_Apply_ExistingOfferingOperationCertificationNeverReset
 // proves re-discovering an offering-operation whose certification has
 // already progressed (e.g. to certified) never resets it back to

@@ -524,7 +524,18 @@ func (a *ClinePassAdapter) DiscoverModels(ctx context.Context, creds StoredCrede
 		if display == "" {
 			display = m.ID
 		}
-		out = append(out, DiscoveredModel{ProviderModelID: m.ID, DisplayName: display, Capabilities: []string{"chat"}})
+		// The wire returns {id, name} only (docs/evidence/clinepass-legacy-wire-reference.md:97-105)
+		// and clinepass has no models.dev entry, so "no guessing" forbids
+		// declaring anything beyond chat. tools/structured_output are listed
+		// as CANDIDATES instead of Capabilities: this creates a probeable
+		// offering_operations row for each without fabricating a declaration
+		// — only a real runtime probe can certify them (Task 3).
+		out = append(out, DiscoveredModel{
+			ProviderModelID:     m.ID,
+			DisplayName:         display,
+			Capabilities:        []string{"chat"},
+			CandidateOperations: []string{"tools", "structured_output"},
+		})
 	}
 	return out, nil
 }

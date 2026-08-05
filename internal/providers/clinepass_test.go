@@ -404,6 +404,38 @@ func TestClinePass_DiscoveryIsPassOnly(t *testing.T) {
 	}
 }
 
+// TestClinePass_DiscoveryDeclaresChatOnlyWithToolsAndStructuredOutputAsCandidates
+// proves clinepass never fabricates a declaration it has no wire evidence
+// for (the wire returns {id, name} only — no capability metadata, no
+// models.dev entry) while still making "tools"/"structured_output" reachable
+// for a REAL runtime probe: Capabilities carries only "chat";
+// CandidateOperations carries the two unverified operations instead of
+// silently having no offering_operations row at all (Task 3).
+func TestClinePass_DiscoveryDeclaresChatOnlyWithToolsAndStructuredOutputAsCandidates(t *testing.T) {
+	get := clineGet(map[string]struct {
+		status int
+		body   string
+	}{
+		"/api/v1/users/me/plan/usage-limits": {200, `{"success":true,"data":{"limits":[{"type":"five_hour","percentUsed":1}]}}`},
+		"/recommended-models":                {200, `{"clinePass":[{"id":"cline/opus","name":"Opus"}]}`},
+	})
+	a := NewClinePassAdapter((&fakeClinePost{}).probe, get.probe)
+	models, err := a.DiscoverModels(context.Background(), storedCline("at"))
+	if err != nil {
+		t.Fatalf("DiscoverModels: %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("models = %+v, want 1", models)
+	}
+	m := models[0]
+	if len(m.Capabilities) != 1 || m.Capabilities[0] != "chat" {
+		t.Fatalf("Capabilities = %v, want exactly [chat] — clinepass's wire declares nothing else", m.Capabilities)
+	}
+	if len(m.CandidateOperations) != 2 || m.CandidateOperations[0] != "tools" || m.CandidateOperations[1] != "structured_output" {
+		t.Fatalf("CandidateOperations = %v, want [tools, structured_output]", m.CandidateOperations)
+	}
+}
+
 func TestClinePass_DiscoveryRejectsAccountWithoutPass(t *testing.T) {
 	get := clineGet(map[string]struct {
 		status int
