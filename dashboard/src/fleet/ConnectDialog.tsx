@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useOAuthRelayCompletion } from "./useOAuthRelay";
+import { toast } from "@venom/design-system";
 import {
   Alert,
   Button,
@@ -146,6 +147,9 @@ export default function ConnectDialog(props: ConnectDialogProps) {
         csrfToken,
         newIdempotencyKey(),
       );
+      toast.success("Account connected successfully", {
+        detail: `Connected account "${label || "default"}"`,
+      });
       reset();
       onConnected();
     } catch (err) {
@@ -153,6 +157,9 @@ export default function ConnectDialog(props: ConnectDialogProps) {
         onSessionExpired();
         return;
       }
+      toast.danger("Failed to connect account", {
+        detail: err instanceof Error ? err.message : String(err),
+      });
       setError(toApiError(err));
     } finally {
       setSubmitting(false);

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { toast } from "@venom/design-system";
 
 /**
  * The state-less OAuth completion leg, shared by every flow that opens an
@@ -88,11 +89,13 @@ export function useOAuthRelayCompletion({
         const denial = payload.data?.error;
         if (denial) {
           finished = true;
+          toast.danger("OAuth connection failed", { detail: denial });
           onDeniedRef.current?.(denial);
         }
         return;
       }
       finished = true;
+      toast.success("OAuth account connected", { detail: "Authenticated with provider" });
       onCodeRef.current(pendingTransactionID, code);
     }
 
