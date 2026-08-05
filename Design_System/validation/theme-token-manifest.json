@@ -1,14 +1,14 @@
 {
   "generatedBy": "validation/build-tokens.cjs",
-  "semanticTokenCount": 94,
+  "semanticTokenCount": 98,
   "completeness": {
     "venom-dark": {
-      "count": 94,
+      "count": 98,
       "missing": [],
       "extra": []
     },
     "venom-light": {
-      "count": 94,
+      "count": 98,
       "missing": [],
       "extra": []
     }
@@ -94,6 +94,10 @@
       "tier.pro.bg": "#2A1E44",
       "tier.pro.border": "#503884",
       "tier.pro.fg": "#B49CEE",
+      "toast.bg": "rgba(18, 22, 31, 0.88)",
+      "toast.border": "rgba(255, 255, 255, 0.12)",
+      "toast.fg": "#f3f4f6",
+      "toast.shadow": "0 12px 32px -4px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.3)",
       "viz.cat.1": "#3DA8C6",
       "viz.cat.2": "#9878E2",
       "viz.cat.3": "#CBA62B",
@@ -190,6 +194,10 @@
       "tier.pro.bg": "#EAE3FB",
       "tier.pro.border": "#B49CEE",
       "tier.pro.fg": "#503884",
+      "toast.bg": "rgba(255, 255, 255, 0.92)",
+      "toast.border": "rgba(0, 0, 0, 0.1)",
+      "toast.fg": "#111827",
+      "toast.shadow": "0 12px 32px -4px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.06)",
       "viz.cat.1": "#1D6F87",
       "viz.cat.2": "#6546A8",
       "viz.cat.3": "#876C12",

@@ -29,7 +29,6 @@
     "item": { "fg": { "$value": "{text.primary}" }, "hover": { "bg": { "$value": "{action.ghost.bg-hover}" } }, "danger-fg": { "$value": "{status.critical.fg}" } }
   },
   "dialog": { "bg": { "$value": "{surface.raised}" }, "border": { "$value": "{border.default}" }, "shadow": { "$value": "{elevation.modal}" }, "scrim": { "$value": "{surface.scrim}" } },
-  "toast":  { "bg": { "$value": "{surface.raised}" }, "border": { "$value": "{border.default}" }, "fg": { "$value": "{text.primary}" }, "shadow": { "$value": "{elevation.toast}" } },
   "nav": {
     "bg": { "$value": "{surface.primary}" },
     "item": {

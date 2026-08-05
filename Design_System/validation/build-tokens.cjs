@@ -222,6 +222,7 @@ export type PrimitiveToken = keyof typeof tokens.primitive;
   const twOutlineOffset = {};
   for (const k of canon) {
     if (k.startsWith('elevation.')) { twElevation[k.slice('elevation.'.length)] = varRef(k); continue; }
+    if (k === 'toast.shadow') { twElevation['toast'] = varRef(k); continue; }
     if (k === 'focus.ring-width') { twOutlineWidth.focus = varRef(k); continue; }
     if (k === 'focus.ring-offset') { twOutlineOffset.focus = varRef(k); continue; }
     // Classified against the resolved venom-dark value; the EMITTED value is always the

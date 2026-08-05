@@ -132,6 +132,11 @@ export const venomTailwindTheme = {
         "fg": "var(--tier-pro-fg)"
       }
     },
+    "toast": {
+      "bg": "var(--toast-bg)",
+      "border": "var(--toast-border)",
+      "fg": "var(--toast-fg)"
+    },
     "viz": {
       "cat": {
         "1": "var(--viz-cat-1)",
@@ -229,7 +234,7 @@ export const venomTailwindTheme = {
     "card": "var(--elevation-card)",
     "modal": "var(--elevation-modal)",
     "popover": "var(--elevation-popover)",
-    "toast": "var(--elevation-toast)"
+    "toast": "var(--toast-shadow)"
   },
   "zIndex": {
     "base": "var(--z-base)",

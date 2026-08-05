@@ -94,6 +94,12 @@
     "modal":   { "$value": "0 16px 48px rgba(16,24,32,0.22)" },
     "toast":   { "$value": "0 8px 24px rgba(16,24,32,0.18)" }
   },
+  "toast": {
+    "bg":     { "$value": "rgba(255, 255, 255, 0.92)" },
+    "fg":     { "$value": "#111827" },
+    "border": { "$value": "rgba(0, 0, 0, 0.1)" },
+    "shadow": { "$value": "0 12px 32px -4px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.06)" }
+  },
   "viz": {
     "$type": "color",
     "cat": {

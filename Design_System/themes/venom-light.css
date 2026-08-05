@@ -80,6 +80,10 @@
   --elevation-popover: 0 8px 24px rgba(16,24,32,0.16);
   --elevation-modal: 0 16px 48px rgba(16,24,32,0.22);
   --elevation-toast: 0 8px 24px rgba(16,24,32,0.18);
+  --toast-bg: rgba(255, 255, 255, 0.92);
+  --toast-fg: #111827;
+  --toast-border: rgba(0, 0, 0, 0.1);
+  --toast-shadow: 0 12px 32px -4px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.06);
   --viz-cat-1: var(--color-sky-600);
   --viz-cat-2: var(--color-violet-600);
   --viz-cat-3: var(--color-gold-600);
