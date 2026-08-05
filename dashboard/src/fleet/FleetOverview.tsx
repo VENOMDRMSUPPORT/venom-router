@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "@venom/design-system";
 import {
   Alert,
   Badge,
@@ -144,6 +145,11 @@ export default function FleetOverview(props: FleetOverviewProps) {
   // re-fetches on a short burst so the counts and the health dot fill in on
   // their own — no manual refresh.
   const startRefreshBurst = useRefreshBurst(reload);
+
+  const handleBurstRefresh = useCallback(() => {
+    startRefreshBurst();
+    toast.info("Fleet status refreshed");
+  }, [startRefreshBurst]);
 
   // The steady live heartbeat: the backend's own loops keep certifying
   // models, probing health and syncing quota in the background, so the page
@@ -504,7 +510,7 @@ export default function FleetOverview(props: FleetOverviewProps) {
           // appears. Harmless when already on "active".
           onViewChange?.("active");
           reload();
-          startRefreshBurst();
+          handleBurstRefresh();
         }}
       />
 

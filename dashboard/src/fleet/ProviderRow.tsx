@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toast } from "@venom/design-system";
 import { Badge, IconButton } from "@venom/design-system/primitives";
 import { Icon } from "@venom/design-system/icons";
 import { TypedErrorDisplay } from "@venom/design-system/domain";
@@ -114,7 +115,15 @@ export default function ProviderRow(props: ProviderRowProps) {
   function handleSyncAll() {
     setSyncAllState("loading");
     void runRowAction(async () => {
-      await syncProvider(provider.id, csrfToken);
+      try {
+        await syncProvider(provider.id, csrfToken);
+        toast.success("Provider configuration synced");
+      } catch (err) {
+        toast.danger("Provider sync failed", {
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      }
     }).then((success) => {
       setSyncAllState(success ? "success" : "failure");
       setTimeout(() => setSyncAllState("idle"), 2000);
@@ -126,17 +135,27 @@ export default function ProviderRow(props: ProviderRowProps) {
   function handleRefreshModels() {
     setRefreshModelsState("loading");
     void runRowAction(async () => {
-      for (const account of accounts) {
-        const handle = await startDiscovery(account.id, csrfToken);
-        const job = await pollJobToTerminal(handle.job_id);
-        if (job.status !== "completed") {
-          throw new AuthApiError(0, {
-            code: job.error?.code ?? `job_${job.status}`,
-            message: job.error?.message ?? `A discovery job is ${job.status}.`,
-            request_id: "",
-            retryable: true,
-          });
+      try {
+        for (const account of accounts) {
+          const handle = await startDiscovery(account.id, csrfToken);
+          const job = await pollJobToTerminal(handle.job_id);
+          if (job.status !== "completed") {
+            throw new AuthApiError(0, {
+              code: job.error?.code ?? `job_${job.status}`,
+              message: job.error?.message ?? `A discovery job is ${job.status}.`,
+              request_id: "",
+              retryable: true,
+            });
+          }
         }
+        toast.success("Discovery completed", {
+          detail: `Discovered models for ${provider.id}`,
+        });
+      } catch (err) {
+        toast.danger("Discovery failed", {
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
       }
     }).then((success) => {
       setRefreshModelsState(success ? "success" : "failure");

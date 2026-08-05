@@ -1,9 +1,11 @@
 import { useMemo, useState, type ChangeEvent } from "react";
+import { toast } from "@venom/design-system";
 import { Badge, Button, Dialog, EmptyState, IconButton, Input, Select } from "@venom/design-system/primitives";
 import { TypedErrorDisplay } from "@venom/design-system/domain";
 import {
   AuthApiError,
   isSessionExpired,
+  startBenchmark,
   startDiscovery,
   startProbe,
   toApiError,
@@ -88,6 +90,18 @@ const CAPABILITY_CHIP_CAP = 6;
  * lie. "Enabled" here is the server's own routability (certified AND
  * supported), reported, not toggled.
  */
+export async function handleStartBenchmark(modelId: string, csrfToken: string) {
+  try {
+    await startBenchmark(modelId, csrfToken);
+    toast.success("Benchmark job started", { detail: "Job handle created" });
+  } catch (err) {
+    toast.danger("Failed to start benchmark", {
+      detail: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+}
+
 export default function ModelTestReport(props: ModelTestReportProps) {
   const { open, account, providerName, offerings, csrfToken, onSessionExpired, onClose, onRefetch } = props;
 
@@ -138,15 +152,25 @@ export default function ModelTestReport(props: ModelTestReportProps) {
 
   function handleRefreshModels() {
     void runAction(async () => {
-      const handle = await startDiscovery(account.id, csrfToken);
-      const job = await pollJobToTerminal(handle.job_id);
-      if (job.status !== "completed") {
-        throw new AuthApiError(0, {
-          code: job.error?.code ?? `job_${job.status}`,
-          message: job.error?.message ?? `The discovery job is ${job.status}.`,
-          request_id: "",
-          retryable: true,
+      try {
+        const handle = await startDiscovery(account.id, csrfToken);
+        const job = await pollJobToTerminal(handle.job_id);
+        if (job.status !== "completed") {
+          throw new AuthApiError(0, {
+            code: job.error?.code ?? `job_${job.status}`,
+            message: job.error?.message ?? `The discovery job is ${job.status}.`,
+            request_id: "",
+            retryable: true,
+          });
+        }
+        toast.success("Discovery completed", {
+          detail: `Discovered models for ${account.provider}`,
         });
+      } catch (err) {
+        toast.danger("Discovery failed", {
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
       }
     });
   }
@@ -158,38 +182,65 @@ export default function ModelTestReport(props: ModelTestReportProps) {
     if (targets.length === 0) return;
     setProgress({ done: 0, total: targets.length });
     void runAction(async () => {
-      const results = await runWithConcurrency(
-        targets,
-        TEST_ALL_CONCURRENCY,
-        async (offeringOperationID) => {
-          const handle = await startProbe(offeringOperationID, csrfToken);
-          await pollJobToTerminal(handle.job_id);
-        },
-        (done) => setProgress({ done, total: targets.length }),
-      );
-      const failed = results.filter((r) => r.status === "rejected");
-      const sessionExpired = failed.find((r) => r.status === "rejected" && isSessionExpired(r.reason));
-      if (sessionExpired) {
-        onSessionExpired();
-        return;
-      }
-      if (failed.length > 0) {
-        throw new AuthApiError(0, {
-          code: "probe_batch_partial",
-          message: `${failed.length} of ${targets.length} probe(s) could not run. The rest completed; statuses below are refreshed.`,
-          request_id: "",
-          retryable: true,
+      try {
+        const results = await runWithConcurrency(
+          targets,
+          TEST_ALL_CONCURRENCY,
+          async (offeringOperationID) => {
+            const handle = await startProbe(offeringOperationID, csrfToken);
+            await pollJobToTerminal(handle.job_id);
+          },
+          (done) => setProgress({ done, total: targets.length }),
+        );
+        const failed = results.filter((r) => r.status === "rejected");
+        const sessionExpired = failed.find((r) => r.status === "rejected" && isSessionExpired(r.reason));
+        if (sessionExpired) {
+          onSessionExpired();
+          return;
+        }
+        if (failed.length > 0) {
+          toast.danger("Model probe failed", {
+            detail: `${failed.length} of ${targets.length} probe(s) failed`,
+          });
+          throw new AuthApiError(0, {
+            code: "probe_batch_partial",
+            message: `${failed.length} of ${targets.length} probe(s) could not run. The rest completed; statuses below are refreshed.`,
+            request_id: "",
+            retryable: true,
+          });
+        }
+        toast.success("Model probe completed", {
+          detail: `Probe for all ${targets.length} models passed`,
         });
+      } catch (err) {
+        if (!(err instanceof AuthApiError && err.code === "probe_batch_partial")) {
+          toast.danger("Model probe failed", {
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        }
+        throw err;
       }
     });
   }
 
-  function handleTestOne(offeringOperationID: string) {
+  function handleTestOne(offeringOperationID: string, modelId?: string) {
     void runAction(async () => {
-      const handle = await startProbe(offeringOperationID, csrfToken);
-      await pollJobToTerminal(handle.job_id);
+      try {
+        const handle = await startProbe(offeringOperationID, csrfToken);
+        await pollJobToTerminal(handle.job_id);
+        toast.success("Model probe completed", {
+          detail: `Probe for ${modelId || offeringOperationID} passed`,
+        });
+      } catch (err) {
+        toast.danger("Model probe failed", {
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      }
     });
   }
+
+
 
   return (
     <Dialog
@@ -333,7 +384,7 @@ export default function ModelTestReport(props: ModelTestReportProps) {
                     variant="ghost"
                     size="sm"
                     disabled={busy || !target}
-                    onClick={target ? () => handleTestOne(target) : undefined}
+                    onClick={target ? () => handleTestOne(target, offering.display_name || offering.provider_model_id) : undefined}
                   />
                 </div>
               );
