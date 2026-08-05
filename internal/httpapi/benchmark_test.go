@@ -567,6 +567,73 @@ func TestBenchmark_SurvivesClientCancellation(t *testing.T) {
 	}
 }
 
+// TestBenchmark_PersistsMeasurementAfterRunContextExpires pins the
+// "measurement is evidence, ALWAYS persisted" invariant against the run's own
+// 2-minute deadline (whole-branch review, 2026-08-05, finding 3). The suite
+// can legitimately finish microseconds before benchmarkRunTimeout fires; if
+// the two persistence writes ran on the expiring runCtx, that window would
+// silently discard a completed measurement AND leave the job failed for a
+// reason that has nothing to do with what was measured.
+//
+// It drives runBenchmark DIRECTLY rather than through the endpoint because
+// benchmarkRunTimeout is a package constant with no injection seam — the only
+// honest way to reach the post-suite/pre-persistence instant is to cancel the
+// run context there deliberately, which the fake stream does on its last
+// call. Everything downstream (repos, DB, job rows) is the real thing.
+//
+// Rating, hand-computed from localBenchmarkRating's documented weights:
+//
+//	speed = min(40/80,1) = 0.5; latency = 1 - 100/2000 = 0.95
+//	rating = 0.725  ->  models.quality_rating = 72.5 (0-100 column)
+func TestBenchmark_PersistsMeasurementAfterRunContextExpires(t *testing.T) {
+	const wantColumnRating = 72.5
+
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+
+	sample := benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}
+	calls := 0
+	stream := func(ctx context.Context, accountID, providerID, providerModelID, prompt string, maxTokens int) (benchmarkSample, error) {
+		// Sequential by construction (runBenchmarkSuite never fans out), so an
+		// unguarded counter is safe here.
+		calls++
+		if calls == benchmarkDefaultRequests {
+			// The deadline fires with the suite complete and nothing persisted.
+			cancelRun()
+		}
+		return sample, nil
+	}
+
+	f := newBenchmarkFixture(t, true, stream)
+	seedLiveOffering(t, f.db, "acct-bench-expired-ctx")
+
+	model, ok, err := f.catalog.GetCanonicalModel(context.Background(), benchModelID)
+	if err != nil || !ok {
+		t.Fatalf("GetCanonicalModel: ok=%v err=%v", ok, err)
+	}
+	const jobID = "job-bench-expired-ctx"
+	if err := f.jobs.Create(context.Background(), jobID, string(storage.JobKindBenchmark), benchNow); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	f.handler.runBenchmark(runCtx, jobID, model)
+
+	if n := f.benchmarkRunCount(t); n != 1 {
+		t.Fatalf("benchmark_runs rows = %d, want 1 — a completed measurement is evidence and must survive the run deadline", n)
+	}
+	got := f.qualityRating(t)
+	if got == nil || !floatsClose(*got, wantColumnRating, 1e-9) {
+		t.Fatalf("models.quality_rating = %v, want %v — the rating write must survive the run deadline too", got, wantColumnRating)
+	}
+	row, found, err := f.jobs.GetByID(context.Background(), jobID)
+	if err != nil || !found {
+		t.Fatalf("GetByID: found=%v err=%v", found, err)
+	}
+	if row.Status != storage.JobCompleted {
+		t.Fatalf("job status = %q (err %+v), want completed", row.Status, row.Error)
+	}
+}
+
 // TestBenchmark_MethodNotAllowed proves the endpoint is POST-only.
 func TestBenchmark_MethodNotAllowed(t *testing.T) {
 	stream, _ := scriptedStream(t, nil)

@@ -285,7 +285,15 @@ func (h *BenchmarkHandler) runBenchmark(ctx context.Context, jobID string, model
 		StartedAt:       startedAt,
 		FinishedAt:      finishedAt,
 	}
-	if err := h.runs.Insert(ctx, run); err != nil {
+	// context.WithoutCancel for BOTH persistence writes below (MarkTerminal
+	// already had it): the suite can finish microseconds before
+	// benchmarkRunTimeout fires, and a measurement that HAS been taken is
+	// evidence — it is never discarded because the clock ran out in the
+	// window between the last sample and the INSERT. Only the measuring is
+	// bounded by the deadline; recording what was measured is not.
+	persistCtx := context.WithoutCancel(ctx)
+
+	if err := h.runs.Insert(persistCtx, run); err != nil {
 		h.failJob(jobID, "internal", "benchmark run failed to persist its measurement")
 		return
 	}
@@ -294,7 +302,7 @@ func (h *BenchmarkHandler) runBenchmark(ctx context.Context, jobID string, model
 		// benchmarkRatingColumnScale, not the raw measurement: see that
 		// constant's doc comment for why the two tables hold this one fact on
 		// two different documented scales.
-		if err := h.catalog.SetQualityRating(ctx, model.ModelID, *aggregate.Rating*benchmarkRatingColumnScale, h.now()); err != nil {
+		if err := h.catalog.SetQualityRating(persistCtx, model.ModelID, *aggregate.Rating*benchmarkRatingColumnScale, h.now()); err != nil {
 			h.failJob(jobID, "benchmark_failed", "quality rating write failed")
 			return
 		}
