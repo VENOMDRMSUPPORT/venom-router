@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -795,6 +797,202 @@ func TestDiscoveryRepo_SetNativeContextTokens_UnknownModelErrors(t *testing.T) {
 	err := repo.SetNativeContextTokens(ctx, "does-not-exist", 128000)
 	if !errors.Is(err, ErrModelNotFound) {
 		t.Fatalf("SetNativeContextTokens(unknown model) error = %v, want ErrModelNotFound", err)
+	}
+}
+
+// TestApply_PrunesUndeclaredUncertifiedOperationRows and
+// TestApply_KeepsUndeclaredButCertifiedOperationRows pin the two sides of
+// discovery's operation-row reconciliation (the fix for the CandidateOperations
+// mechanism removed in bc56160, whose rows outlived the code that created
+// them): an operation row this run no longer declares is pruned ONLY when it
+// also carries no evidence (capability_truth = 'unknown'); a row already
+// certified 'supported' or 'unsupported' is evidence and must survive a run
+// that declares less, because a run that cannot reach the catalog falls back
+// to a narrower declaration set and pruning certified rows there would be a
+// downgrade on missing evidence.
+
+// newDiscoveryTestRepo returns a migrated storage DB seeded with provider
+// "prov-1" and account "acct-1", plus a DiscoveryRepo over it — the shared
+// setup for the operation-row reconciliation tests below.
+func newDiscoveryTestRepo(t *testing.T) (*DiscoveryRepo, *DB) {
+	t.Helper()
+	db := migratedCatalogDB(t)
+	insertProvider(t, db, "prov-1")
+	insertAccount(t, db, "acct-1", "prov-1")
+	return NewDiscoveryRepo(db, sequentialTestIDs()), db
+}
+
+// discoveryTestRunSeq backs nextDiscoveryTestRunID. The storage package's
+// tests never run in parallel (no t.Parallel call anywhere in this package),
+// so a bare package-level counter is race-free.
+var discoveryTestRunSeq int
+
+// nextDiscoveryTestRunID returns a fresh discovery_runs.id for applySnapshot
+// — a distinct run id per Apply call, since discovery_runs.id is a primary
+// key and BeginRun's generation is not known until after the id is chosen.
+func nextDiscoveryTestRunID() string {
+	discoveryTestRunSeq++
+	return fmt.Sprintf("recon-run-%d", discoveryTestRunSeq)
+}
+
+// snapshotModel builds a minimal DiscoverySnapshotModel declaring ops for
+// providerModelID, with a stable synthetic canonical key derived from the id.
+func snapshotModel(providerModelID string, ops []models.Operation) intelligence.DiscoverySnapshotModel {
+	return intelligence.DiscoverySnapshotModel{
+		CanonicalKey:    "key-" + providerModelID,
+		ProviderModelID: providerModelID,
+		DisplayName:     providerModelID,
+		Operations:      ops,
+	}
+}
+
+// applySnapshot runs one full BeginRun+Apply cycle for accountID/providerID
+// with ms as the declared models, failing the test on any error or on an
+// unexpectedly superseded run.
+func applySnapshot(t *testing.T, repo *DiscoveryRepo, ctx context.Context, accountID, providerID string, ms []intelligence.DiscoverySnapshotModel) {
+	t.Helper()
+	now := time.Unix(1000, 0)
+	runID := nextDiscoveryTestRunID()
+	gen, err := repo.BeginRun(ctx, accountID, runID, now)
+	if err != nil {
+		t.Fatalf("BeginRun(%q): %v", runID, err)
+	}
+	snapshot := intelligence.DiscoverySnapshot{
+		AccountID: accountID, ProviderID: providerID, Generation: gen, Models: ms,
+	}
+	applied, err := repo.Apply(ctx, runID, snapshot, now)
+	if err != nil {
+		t.Fatalf("Apply(%q): %v", runID, err)
+	}
+	if !applied {
+		t.Fatalf("Apply(%q) applied = false, want true", runID)
+	}
+}
+
+// operationsFor returns the sorted operation strings currently recorded in
+// offering_operations for (accountID, providerModelID).
+func operationsFor(t *testing.T, db *DB, accountID, providerModelID string) []string {
+	t.Helper()
+	rows, err := db.Conn().Query(
+		`SELECT operation FROM offering_operations WHERE account_id = ? AND provider_model_id = ? ORDER BY operation`,
+		accountID, providerModelID,
+	)
+	if err != nil {
+		t.Fatalf("query offering_operations for (%q,%q): %v", accountID, providerModelID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ops []string
+	for rows.Next() {
+		var op string
+		if err := rows.Scan(&op); err != nil {
+			t.Fatalf("scan operation for (%q,%q): %v", accountID, providerModelID, err)
+		}
+		ops = append(ops, op)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate offering_operations for (%q,%q): %v", accountID, providerModelID, err)
+	}
+	return ops
+}
+
+// certificationCountFor returns how many certifications rows remain joined
+// to (accountID, providerModelID)'s offering_operations rows.
+func certificationCountFor(t *testing.T, db *DB, accountID, providerModelID string) int {
+	t.Helper()
+	var n int
+	if err := db.Conn().QueryRow(
+		`SELECT COUNT(*) FROM certifications c
+		 JOIN offering_operations oo ON oo.id = c.offering_operation_id
+		 WHERE oo.account_id = ? AND oo.provider_model_id = ?`,
+		accountID, providerModelID,
+	).Scan(&n); err != nil {
+		t.Fatalf("count certifications for (%q,%q): %v", accountID, providerModelID, err)
+	}
+	return n
+}
+
+// certifyOperationRow sets (accountID, providerModelID, operation)'s
+// certification truth to truth through the same capability_truth column the
+// production reconciliation code reads, moving status to 'certified' when
+// truth is resolved — the shape a real probe verdict leaves behind, not a
+// hand-built row shape production never produces.
+func certifyOperationRow(t *testing.T, db *DB, accountID, providerModelID, operation, truth string) {
+	t.Helper()
+	status := "certified"
+	if truth == "unknown" {
+		status = "discovered"
+	}
+	res, err := db.Conn().Exec(
+		`UPDATE certifications SET status = ?, capability_truth = ?, certified_at = ?
+		 WHERE offering_operation_id = (
+		     SELECT id FROM offering_operations WHERE account_id = ? AND provider_model_id = ? AND operation = ?)`,
+		status, truth, time.Unix(1000, 0).Unix(), accountID, providerModelID, operation,
+	)
+	if err != nil {
+		t.Fatalf("certify operation row (%q,%q,%q): %v", accountID, providerModelID, operation, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		t.Fatalf("certify operation row (%q,%q,%q): rows affected: %v", accountID, providerModelID, operation, err)
+	}
+	if n != 1 {
+		t.Fatalf("certify operation row (%q,%q,%q) affected %d rows, want exactly 1 (row must already exist from a prior applySnapshot)", accountID, providerModelID, operation, n)
+	}
+}
+
+// TestApply_PrunesUndeclaredUncertifiedOperationRows proves the safety
+// rule's prune side: an operation row this run no longer declares, and whose
+// certification was never resolved by a probe or a prior declaration, is
+// exactly the CandidateOperations leftover the live audit found — it cannot
+// be certified (ListNonChatOperationsToCertify requires the operation to
+// appear in capabilities_json) and no probe path can reach it, so without
+// this it sits in the review backlog forever.
+func TestApply_PrunesUndeclaredUncertifiedOperationRows(t *testing.T) {
+	repo, db := newDiscoveryTestRepo(t)
+	ctx := context.Background()
+
+	// Run 1: the model declares chat and tools.
+	applySnapshot(t, repo, ctx, "acct-1", "prov-1", []intelligence.DiscoverySnapshotModel{
+		snapshotModel("m-1", []models.Operation{models.OperationChat, models.OperationTools}),
+	})
+	if got := operationsFor(t, db, "acct-1", "m-1"); !reflect.DeepEqual(got, []string{"chat", "tools"}) {
+		t.Fatalf("after run 1 operations = %v, want [chat tools]", got)
+	}
+
+	// Run 2: tools is no longer declared and was never certified.
+	applySnapshot(t, repo, ctx, "acct-1", "prov-1", []intelligence.DiscoverySnapshotModel{
+		snapshotModel("m-1", []models.Operation{models.OperationChat}),
+	})
+	if got := operationsFor(t, db, "acct-1", "m-1"); !reflect.DeepEqual(got, []string{"chat"}) {
+		t.Fatalf("after run 2 operations = %v, want [chat] — an undeclared, never-certified row must not survive; it is what the review backlog counts and no probe can resolve it", got)
+	}
+	if n := certificationCountFor(t, db, "acct-1", "m-1"); n != 1 {
+		t.Fatalf("certifications for m-1 = %d, want 1 — the pruned operation's certification row must go with it", n)
+	}
+}
+
+// TestApply_KeepsUndeclaredButCertifiedOperationRows proves the safety
+// rule's keep side: a certified capability is evidence and must survive a
+// run that could not see the catalog (the never-downgrade invariant) — the
+// exact live failure mode the brief warns about, where a ClinePass run that
+// cannot reach models.dev falls back to declaring only chat.
+func TestApply_KeepsUndeclaredButCertifiedOperationRows(t *testing.T) {
+	repo, db := newDiscoveryTestRepo(t)
+	ctx := context.Background()
+
+	applySnapshot(t, repo, ctx, "acct-1", "prov-1", []intelligence.DiscoverySnapshotModel{
+		snapshotModel("m-1", []models.Operation{models.OperationChat, models.OperationTools}),
+	})
+	certifyOperationRow(t, db, "acct-1", "m-1", "tools", "supported")
+
+	// The catalog was unreachable this run, so only chat is declared.
+	applySnapshot(t, repo, ctx, "acct-1", "prov-1", []intelligence.DiscoverySnapshotModel{
+		snapshotModel("m-1", []models.Operation{models.OperationChat}),
+	})
+
+	got := operationsFor(t, db, "acct-1", "m-1")
+	if !reflect.DeepEqual(got, []string{"chat", "tools"}) {
+		t.Fatalf("operations = %v, want [chat tools] — a certified capability is evidence and must survive a run that could not see the catalog (never-downgrade invariant)", got)
 	}
 }
 

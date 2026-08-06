@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
@@ -308,6 +309,73 @@ func (r *DiscoveryRepo) applyModel(ctx context.Context, tx *sql.Tx, accountID, p
 		if err := r.ensureOfferingOperation(ctx, tx, accountID, providerID, m.ProviderModelID, string(op), epoch); err != nil {
 			return err
 		}
+	}
+
+	return r.pruneStaleOperations(ctx, tx, accountID, m.ProviderModelID, seenOps)
+}
+
+// pruneStaleOperations deletes an offering_operations row for
+// (accountID, providerModelID) — and the certifications row it references —
+// when the row's operation is NOT in seenOps (the union of this run's
+// declared and candidate operations, just applied above) AND its
+// certification's capability_truth is still 'unknown'. This is the fix for
+// the CandidateOperations mechanism removed in bc56160: that mechanism left
+// offering_operations rows behind with no adapter still declaring them, no
+// probe path able to reach them (ListNonChatOperationsToCertify requires the
+// operation to appear in capabilities_json, and an undeclared row by
+// definition does not), sitting in the review backlog forever.
+//
+// The safety rule is exactly "no evidence, no survival": capability_truth =
+// 'unknown' means no probe ever resolved this operation and no declaration
+// ever certified it, so deleting it discards nothing. A row already
+// 'supported' or 'unsupported' IS evidence and is kept even though this run
+// declares less — a run that cannot reach a provider's catalog (e.g.
+// ClinePass falling back to declaring only chat when models.dev is
+// unreachable) must not have that treated as proof the capability vanished;
+// doing so would be exactly the downgrade-on-missing-evidence the
+// never-downgrade invariant forbids.
+//
+// Two statements, in this order, because certifications.offering_operation_id
+// references offering_operations(id): the certification row for a stale,
+// uncertified operation is deleted first, then any offering_operations row
+// left with no certification row at all is deleted. The second delete is
+// keyed on "has no certification row left" rather than repeating the
+// operation-set/truth filter, because ensureOfferingOperation inserts a
+// certifications row in the same transaction as every offering_operations
+// row it creates — a row without one is exactly a row whose certification
+// was just pruned by the first statement, and this avoids re-deriving the
+// same NOT IN (...) predicate twice.
+func (r *DiscoveryRepo) pruneStaleOperations(ctx context.Context, tx *sql.Tx, accountID, providerModelID string, seenOps map[string]bool) error {
+	declared := make([]any, 0, len(seenOps)+2)
+	placeholders := make([]string, 0, len(seenOps))
+	for op := range seenOps {
+		declared = append(declared, op)
+		placeholders = append(placeholders, "?")
+	}
+	notIn := ""
+	if len(placeholders) > 0 {
+		notIn = " AND oo.operation NOT IN (" + strings.Join(placeholders, ", ") + ")"
+	}
+	args := append([]any{accountID, providerModelID}, declared...)
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM certifications WHERE offering_operation_id IN (
+		     SELECT oo.id FROM offering_operations oo
+		     JOIN certifications c ON c.offering_operation_id = oo.id
+		     WHERE oo.account_id = ? AND oo.provider_model_id = ?
+		       AND c.capability_truth = 'unknown'`+notIn+`)`,
+		args...,
+	); err != nil {
+		return fmt.Errorf("storage: prune stale certifications (%q,%q): %w", accountID, providerModelID, err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM offering_operations
+		 WHERE account_id = ? AND provider_model_id = ?
+		   AND id NOT IN (SELECT offering_operation_id FROM certifications)`,
+		accountID, providerModelID,
+	); err != nil {
+		return fmt.Errorf("storage: prune stale operations (%q,%q): %w", accountID, providerModelID, err)
 	}
 	return nil
 }
