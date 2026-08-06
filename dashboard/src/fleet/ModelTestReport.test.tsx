@@ -215,6 +215,12 @@ describe("ModelTestReport — derived tiles and rows", () => {
     expect(screen.queryByTestId("report-row-zen/model-c")).toBeNull();
   });
 
+  it("uses the same unrated wording as the Live Models page", async () => {
+    renderReport();
+    expect(await screen.findAllByText("Not rated")).not.toHaveLength(0);
+    expect(screen.queryByText(/not rated — unknown/i)).toBeNull();
+  });
+
   it("has zero axe violations", async () => {
     renderReport();
     await screen.findByRole("dialog");

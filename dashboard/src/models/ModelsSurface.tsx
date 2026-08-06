@@ -23,10 +23,11 @@ import {
   toApiError,
   type AuthApiError,
   type EffectiveOffering,
-  type LatestBenchmark,
   type ModelGroup,
   type OfferingCapability,
 } from "../api/controlClient";
+import { benchmarkProvenanceTitle } from "../fleet/benchmarkProvenance";
+import { ContextProvenanceMark } from "../fleet/ContextProvenanceMark";
 import ProviderLogo from "../fleet/ProviderLogo";
 
 export interface ModelsSurfaceProps {
@@ -102,44 +103,6 @@ function groupContext(g: ModelGroup): { tokens: number | null; provenance?: stri
     : { tokens: null };
 }
 
-/** The provenance-derived prefix mark on a context-window badge (owner
- * requirement, 2026-08-05c): "≈" when the shown token count came from the
- * provider's own declared cap (`models.ContextProviderCap`, i.e. NOT
- * probe-verified), "✓" when it came from the canonical native fact a context
- * probe wrote back (`models.ContextNative`), and no mark at all when there is
- * no token count to qualify — `ContextWindowDisplay` already renders that case
- * as the word "ctx unknown" on its own, and a ≈/✓ beside it would be a claim
- * about a number that was never shown.
- *
- * This reuses the SAME `tokens`/`provenance` inputs `ContextWindowDisplay`
- * already receives; it never re-implements that component's "200K" token
- * formatting — it only prepends a small marker in front of it. */
-function ContextProvenanceMark(props: { tokens: number | null; provenance?: string }) {
-  const { tokens, provenance } = props;
-  if (tokens == null) return null;
-
-  const title = "≈ declared by provider (not probe-verified) · ✓ verified by a context probe";
-  if (provenance === "provider_cap") {
-    return (
-      <span
-        className="vn-caption"
-        title={title}
-        aria-label="context declared by provider, not probe-verified"
-      >
-        ≈
-      </span>
-    );
-  }
-  if (provenance === "native") {
-    return (
-      <span className="vn-caption" title={title} aria-label="context verified by context probe">
-        ✓
-      </span>
-    );
-  }
-  return null;
-}
-
 /** The scale `models.quality_rating` is stored on: 0-100 (04 §3, enforced by
  * internal/models.NewCanonicalModel). An offering's `quality_score` is that
  * same rating divided by 100 (internal/models.QualityScore), which is what
@@ -157,44 +120,6 @@ const QUALITY_RATING_SCALE = 100;
  * the same 0..1 scale every offering row shows. */
 function groupQualityScore(rating: number): number {
   return rating / QUALITY_RATING_SCALE;
-}
-
-/** The ISO day (yyyy-mm-dd) of an RFC3339 timestamp, or null when the value is
- * not shaped like one.
- *
- * Deliberately a prefix match rather than `new Date(...).toLocaleDateString()`:
- * the server serializes finished_at in UTC, and a locale/timezone-dependent
- * rendering would show two different days to two owners for the SAME
- * measurement. Null (rather than a guess) is what keeps a malformed value from
- * being displayed as a real date. */
-function isoDay(timestamp: string): string | null {
-  const match = /^(\d{4}-\d{2}-\d{2})/.exec(timestamp);
-  return match ? match[1] : null;
-}
-
-/** The provenance tooltip both quality badges carry (spec line ~205: "local
- * benchmark, <date>").
- *
- * Three honest states, never blended:
- *   - no run recorded (or an unparseable timestamp): "Local benchmark" alone —
- *     the source is known, the date is not, and inventing one would be a claim.
- *   - the latest run measured every request: "Local benchmark, <date>" — that
- *     run is what produced the rating being shown.
- *   - the latest run was PARTIAL: the rating on screen is NOT from it. The
- *     local benchmark writes a rating only on a fully successful suite and
- *     leaves the previous rating in place otherwise (see
- *     internal/httpapi/benchmark.go), so the tooltip names the newer run, says
- *     how much of it succeeded, and says the rating predates it. */
-function benchmarkProvenanceTitle(latest: LatestBenchmark | null | undefined): string {
-  const day = latest ? isoDay(latest.finished_at) : null;
-  if (!latest || day === null) return "Local benchmark";
-  if (latest.successes < latest.requests) {
-    return (
-      `Local benchmark — the latest run (${day}) completed only ${latest.successes} of ` +
-      `${latest.requests} requests, so it withheld a rating. The rating shown is from an earlier run.`
-    );
-  }
-  return `Local benchmark, ${day}`;
 }
 
 /** One capability's cell: certification state, capability truth, and the
@@ -327,7 +252,7 @@ function OfferingRow(props: {
               // Rendering quality_score (which is 0 in that case) would invent
               // the worst possible rating out of an absent one.
               <Badge tone="unknown" icon="circle-help">
-                Not rated — unknown
+                Not rated
               </Badge>
             )}
           </span>
@@ -521,7 +446,7 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
                     <span className="vn-caption">Canonical rating</span>
                     {g.quality_rating == null ? (
                       <Badge tone="unknown" icon="circle-help">
-                        Not rated — unknown
+                        Not rated
                       </Badge>
                     ) : (
                       // Same provenance note as OfferingRow's quality badge:

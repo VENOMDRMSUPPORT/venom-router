@@ -7,37 +7,10 @@ import {
   type CapabilityTruths,
 } from "@venom/design-system/domain";
 import { type AccountProjection, type EffectiveOffering } from "../api/controlClient";
+import { benchmarkProvenanceTitle } from "./benchmarkProvenance";
+import { ContextProvenanceMark } from "./ContextProvenanceMark";
 import { deriveModelStatus, isOfferingEnabled, type ModelStatus } from "./modelStatus";
 import ProviderLogo from "./ProviderLogo";
-
-/** The provenance-derived prefix mark on a context-window badge: "≈" when
- * the shown token count came from the provider's own declared cap (not
- * probe-verified), "✓" when a context probe verified it, nothing when there
- * is no token count to qualify — ContextWindowDisplay already renders that
- * case as "ctx unknown" on its own. Mirrors ModelsSurface's own
- * ContextProvenanceMark (same inputs, same two marks); duplicated locally
- * rather than shared since it is a small, page-local presentation detail on
- * both sides. */
-function ContextProvenanceMark(props: { tokens: number | null; provenance?: string }) {
-  const { tokens, provenance } = props;
-  if (tokens == null) return null;
-  const title = "≈ declared by provider (not probe-verified) · ✓ verified by a context probe";
-  if (provenance === "provider_cap") {
-    return (
-      <span className="vn-caption" title={title} aria-label="context declared by provider, not probe-verified">
-        ≈
-      </span>
-    );
-  }
-  if (provenance === "native") {
-    return (
-      <span className="vn-caption" title={title} aria-label="context verified by context probe">
-        ✓
-      </span>
-    );
-  }
-  return null;
-}
 
 export interface ModelTestReportProps {
   open: boolean;
@@ -214,7 +187,13 @@ export default function ModelTestReport(props: ModelTestReportProps) {
                         source={offering.context_provenance || undefined}
                       />
                       {offering.quality_known ? (
-                        <Badge tone="info" mono icon="gauge" title="Local benchmark">
+                        // EffectiveOffering carries no latest_benchmark (that
+                        // field lives on ModelGroup, which this modal never
+                        // receives), so this calls the SAME shared helper the
+                        // Live Models page uses, with null — the honest,
+                        // undated "Local benchmark" state, never a fabricated
+                        // date.
+                        <Badge tone="info" mono icon="gauge" title={benchmarkProvenanceTitle(null)}>
                           {offering.quality_score.toFixed(2)}
                         </Badge>
                       ) : (
