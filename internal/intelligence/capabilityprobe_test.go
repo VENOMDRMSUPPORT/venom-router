@@ -2,6 +2,7 @@ package intelligence
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -335,7 +336,7 @@ func TestCapabilityFixture_ClosedSet(t *testing.T) {
 	}
 	for _, op := range models.Operations() {
 		t.Run(string(op), func(t *testing.T) {
-			messages, maxOutput, err := CapabilityFixture(op)
+			messages, _, _, maxOutput, err := CapabilityFixture(op)
 			if supported[op] {
 				if err != nil {
 					t.Fatalf("CapabilityFixture(%q) error = %v, want a fixture", op, err)
@@ -350,6 +351,78 @@ func TestCapabilityFixture_ClosedSet(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCapabilityFixture_GivesEachFixtureRealTeeth proves the three
+// certified fixtures no longer merely describe what they want in prose —
+// each carries the structural piece its own witness actually depends on:
+// the tools fixture declares a real tool, the vision fixture carries the
+// image as a genuine ProbePart (never text), and the structured-output
+// fixture sets ResponseFormat. Before this, none of these three fields
+// existed on ProbeRequest at all, so a tools probe asked for a tool it
+// never declared and a vision probe pasted its image into a text string.
+func TestCapabilityFixture_GivesEachFixtureRealTeeth(t *testing.T) {
+	t.Run("tools declares the add tool", func(t *testing.T) {
+		_, tools, responseFormat, _, err := CapabilityFixture(models.OperationTools)
+		if err != nil {
+			t.Fatalf("CapabilityFixture error = %v", err)
+		}
+		if len(tools) != 1 || tools[0].Name != "add" {
+			t.Fatalf("tools = %#v, want exactly one tool named add", tools)
+		}
+		if tools[0].ParametersJSON == "" {
+			t.Fatalf("tools[0].ParametersJSON is empty, want a real JSON Schema")
+		}
+		var schema map[string]any
+		if err := json.Unmarshal([]byte(tools[0].ParametersJSON), &schema); err != nil {
+			t.Fatalf("ParametersJSON does not parse as JSON: %v", err)
+		}
+		if responseFormat != "" {
+			t.Fatalf("responseFormat = %q, want empty for the tools fixture", responseFormat)
+		}
+	})
+
+	t.Run("structured_output sets ResponseFormat", func(t *testing.T) {
+		_, tools, responseFormat, _, err := CapabilityFixture(models.OperationStructuredOutput)
+		if err != nil {
+			t.Fatalf("CapabilityFixture error = %v", err)
+		}
+		if responseFormat != "json_object" {
+			t.Fatalf("responseFormat = %q, want json_object", responseFormat)
+		}
+		if len(tools) != 0 {
+			t.Fatalf("tools = %#v, want none for the structured_output fixture", tools)
+		}
+	})
+
+	t.Run("vision carries the image as a real part, not text", func(t *testing.T) {
+		messages, _, _, _, err := CapabilityFixture(models.OperationVision)
+		if err != nil {
+			t.Fatalf("CapabilityFixture error = %v", err)
+		}
+		if len(messages) != 1 {
+			t.Fatalf("messages = %#v, want exactly one", messages)
+		}
+		parts := messages[0].Parts
+		if len(parts) != 2 {
+			t.Fatalf("Parts = %#v, want two parts (text + image)", parts)
+		}
+		var sawImage bool
+		for _, p := range parts {
+			if strings.Contains(messages[0].Content, visionFixtureImageBase64) {
+				t.Fatalf("the image base64 leaked into Content — the whole point is it must travel as a ProbePart, not pasted text")
+			}
+			if p.Kind == ProbePartImage {
+				sawImage = true
+				if p.ImageBase64 != visionFixtureImageBase64 {
+					t.Fatalf("ImageBase64 = %q, want the fixture's own constant", p.ImageBase64)
+				}
+			}
+		}
+		if !sawImage {
+			t.Fatalf("no ProbePartImage found among Parts = %#v", parts)
+		}
+	})
 }
 
 func TestCapabilityProbe_RefusalNeverCallsTransport(t *testing.T) {

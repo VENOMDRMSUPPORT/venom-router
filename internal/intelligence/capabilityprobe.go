@@ -21,9 +21,35 @@ const CapabilityProbeDeclaredInputTokens = 50
 // never a real chat-sized reply.
 const capabilityProbeMaxOutputTokens = 16
 
-// visionFixtureDataURI is a fixed, tiny (1x1 pixel) inline PNG data URI —
-// never a network URL — used by the vision fixture.
-const visionFixtureDataURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+// VisionFixtureColour is the solid colour of visionFixtureImageBase64's
+// image, named in lower case exactly as a model's plain-text answer would
+// name it. It is exported so the probe adapter (internal/httpapi) can check
+// a vision response's content for this word, case-insensitively, to
+// classify intelligence.WitnessVisionAnswer — a witness that stays
+// reachable only because the adapter is told what colour to expect; there
+// is no structural way to tell "the model answered the vision question"
+// apart from any other prose otherwise.
+const VisionFixtureColour = "magenta"
+
+// visionFixtureImageBase64 is a fixed, tiny (4x4 pixel), inline, fully
+// opaque SOLID-COLOUR PNG — never a network URL — used by the vision
+// fixture. It replaces a prior 1x1 TRANSPARENT pixel: a transparent pixel
+// has no colour to name, so even a working vision path could never
+// produce the expected answer. This one is solid VisionFixtureColour
+// (magenta, RGB 255/0/255), verified by round-tripping through image/png's
+// own decoder before being committed here (see task-1-report.md).
+const visionFixtureImageBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAGElEQVR4nGL5z/CfAQaYGJAAbg4gAAD//2U8AgmWdSNJAAAAAElFTkSuQmCC"
+
+// toolsFixtureAddTool is the tools fixture's declared function tool — a
+// minimal, real JSON Schema for a two-argument add function. A tools probe
+// that asks the model to "use the add tool if one is available" while
+// declaring no tool can never produce a tool call; this is the tool that
+// makes the fixture's own prompt possible to satisfy.
+var toolsFixtureAddTool = ProbeTool{
+	Name:           "add",
+	Description:    "Adds two numbers and returns their sum.",
+	ParametersJSON: `{"type":"object","properties":{"a":{"type":"number"},"b":{"type":"number"}},"required":["a","b"]}`,
+}
 
 // ErrNoCapabilityFixture is returned by CapabilityFixture and
 // RequiredWitness for any operation outside the exactly three this batch
@@ -31,28 +57,42 @@ const visionFixtureDataURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEA
 var ErrNoCapabilityFixture = errors.New("intelligence: no capability fixture for this operation")
 
 // CapabilityFixture returns the tiny, fixed, deterministic request body
-// and MaxOutputTokens used to certify op. Only tools, structured_output,
-// and vision are certified in this batch (04 §5 names exactly these three
+// (messages, declared tools, and response-format directive) and
+// MaxOutputTokens used to certify op. Only tools, structured_output, and
+// vision are certified in this batch (04 §5 names exactly these three
 // alongside chat/streaming/context_window as "recognized operations";
 // chat/streaming/context_window are certified elsewhere, and
 // image_generation is reserved future scope) — every other
 // models.Operation returns ErrNoCapabilityFixture.
-func CapabilityFixture(op models.Operation) ([]ProbeMessage, int, error) {
+//
+// The tools fixture declares toolsFixtureAddTool alongside its prompt — a
+// tools probe that asks for a tool it never declares can never produce a
+// tool call. The vision fixture carries the image as a real ProbePart
+// (never a data URI pasted into text) so a transport can actually forward
+// it as an image. The structured-output fixture sets responseFormat to
+// "json_object" alongside its prose.
+func CapabilityFixture(op models.Operation) (messages []ProbeMessage, tools []ProbeTool, responseFormat string, maxOutputTokens int, err error) {
 	switch op {
 	case models.OperationTools:
 		return []ProbeMessage{
 			{Role: "user", Content: "What is 2+2? Use the add tool if one is available."},
-		}, capabilityProbeMaxOutputTokens, nil
+		}, []ProbeTool{toolsFixtureAddTool}, "", capabilityProbeMaxOutputTokens, nil
 	case models.OperationStructuredOutput:
 		return []ProbeMessage{
 			{Role: "user", Content: `Return a JSON object with exactly one field "ok" set to true.`},
-		}, capabilityProbeMaxOutputTokens, nil
+		}, nil, "json_object", capabilityProbeMaxOutputTokens, nil
 	case models.OperationVision:
 		return []ProbeMessage{
-			{Role: "user", Content: "Describe the color of this image: " + visionFixtureDataURI},
-		}, capabilityProbeMaxOutputTokens, nil
+			{
+				Role: "user",
+				Parts: []ProbePart{
+					{Kind: ProbePartText, Text: "What colour is this image? Answer with one word."},
+					{Kind: ProbePartImage, ImageBase64: visionFixtureImageBase64, MediaType: "image/png"},
+				},
+			},
+		}, nil, "", capabilityProbeMaxOutputTokens, nil
 	default:
-		return nil, 0, fmt.Errorf("%w: %q", ErrNoCapabilityFixture, op)
+		return nil, nil, "", 0, fmt.Errorf("%w: %q", ErrNoCapabilityFixture, op)
 	}
 }
 
@@ -176,7 +216,7 @@ type CapabilityProbeReport struct {
 // precedence.go's proven-negative rule keeps it until a strictly higher
 // verification revalidates it.
 func (p *CapabilityProbe) Run(ctx context.Context, req ProbeRequest) (CapabilityProbeReport, error) {
-	messages, maxOutput, err := CapabilityFixture(req.Operation)
+	messages, tools, responseFormat, maxOutput, err := CapabilityFixture(req.Operation)
 	if err != nil {
 		return CapabilityProbeReport{}, err
 	}
@@ -186,6 +226,8 @@ func (p *CapabilityProbe) Run(ctx context.Context, req ProbeRequest) (Capability
 	}
 
 	req.Messages = messages
+	req.Tools = tools
+	req.ResponseFormat = responseFormat
 	req.MaxOutputTokens = maxOutput
 	req.DeclaredInputTokens = CapabilityProbeDeclaredInputTokens
 

@@ -8,10 +8,47 @@ import (
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
 )
 
+// ProbePartKind mirrors execution.ContentPartKind. This package must not
+// import internal/execution (see the layering test), so the vocabulary is
+// restated here and mapped at the adapter.
+type ProbePartKind string
+
+const (
+	ProbePartText  ProbePartKind = "text"
+	ProbePartImage ProbePartKind = "image"
+)
+
+// ProbePart is one part of a multimodal probe message. An image probe that
+// pastes a data URI into a text string is not an image probe — the provider
+// receives text and answers as text, which is exactly why the vision fixture
+// could never pass before this existed.
+type ProbePart struct {
+	Kind        ProbePartKind
+	Text        string
+	ImageURL    string
+	ImageBase64 string
+	MediaType   string
+}
+
+// ProbeTool is a function tool a probe declares. A tools probe that asks the
+// model to "use the add tool if one is available" while declaring no tool
+// cannot produce a tool call — the witness invariant then fails every time,
+// and the capability reads unknown forever.
+type ProbeTool struct {
+	Name           string
+	Description    string
+	ParametersJSON string
+}
+
 // ProbeMessage is one chat-shaped message in a probe's fixed request body.
 type ProbeMessage struct {
 	Role    string
 	Content string
+	// Parts carries multimodal content (e.g. a vision fixture's image).
+	// Content stays authoritative when Parts is empty, matching
+	// execution.Message's own rule — every pre-existing construction of
+	// ProbeMessage keeps its exact meaning.
+	Parts []ProbePart
 }
 
 // ProbeRequest is the transport-level request one probe attempt sends.
@@ -28,6 +65,12 @@ type ProbeRequest struct {
 	OfferingOperationID string
 	Operation           models.Operation
 	Messages            []ProbeMessage
+	// Tools are declared to the provider so a tools probe can actually
+	// elicit a tool call. Empty leaves the wire body unchanged.
+	Tools []ProbeTool
+	// ResponseFormat constrains the reply's shape ("json_object"). Empty
+	// leaves the wire body unchanged.
+	ResponseFormat      string
 	MaxOutputTokens     int
 	DeclaredInputTokens int
 }

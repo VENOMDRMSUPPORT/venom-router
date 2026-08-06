@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/application"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/execution"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
@@ -136,10 +138,14 @@ func (a *probeTransportAdapter) Available(providerID string) bool {
 
 // probeWitnessOf classifies resp per this batch's rule (§3): a non-empty
 // ToolCalls is tool_call; content that parses as a JSON OBJECT is
-// structured_json; anything else is text_only. This transport can never
-// distinguish a vision answer from plain text, so it never claims
-// WitnessVisionAnswer — RequiredWitness(vision) can therefore never be
-// satisfied through this adapter today, which is honest, not a defect.
+// structured_json; content naming the vision fixture's expected colour
+// (intelligence.VisionFixtureColour), case-insensitively, is vision_answer;
+// anything else is text_only. The vision check is necessarily a CONTENT
+// assertion, not a structural one — this transport has no way to tell a
+// vision answer apart from any other prose except by what it says — which
+// is exactly why WitnessVisionAnswer was dead before the adapter was given
+// the fixture's expected answer to check against. All classification stays
+// here, in one place.
 func probeWitnessOf(resp *execution.NormalizedResponse) intelligence.ProbeWitness {
 	if len(resp.ToolCalls) > 0 {
 		return intelligence.WitnessToolCall
@@ -147,6 +153,9 @@ func probeWitnessOf(resp *execution.NormalizedResponse) intelligence.ProbeWitnes
 	var asObject map[string]any
 	if json.Unmarshal([]byte(resp.Message.Content), &asObject) == nil {
 		return intelligence.WitnessStructuredJSON
+	}
+	if strings.Contains(strings.ToLower(resp.Message.Content), strings.ToLower(intelligence.VisionFixtureColour)) {
+		return intelligence.WitnessVisionAnswer
 	}
 	return intelligence.WitnessTextOnly
 }
@@ -165,6 +174,70 @@ func probeTransportFailureOf(execErr error) intelligence.ProbeTransportFailure {
 		return intelligence.TransportNetwork
 	default:
 		return intelligence.TransportNone
+	}
+}
+
+// execContentPartsFrom maps ProbePart onto execution.ContentPart one for
+// one. A nil/empty input returns nil (never an empty non-nil slice) so an
+// unset Parts leaves the serialized wire body byte-identical to a request
+// that never set it at all, matching execution.Message's own contract.
+func execContentPartsFrom(parts []intelligence.ProbePart) []execution.ContentPart {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]execution.ContentPart, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, execution.ContentPart{
+			Kind:        execution.ContentPartKind(p.Kind),
+			Text:        p.Text,
+			ImageURL:    p.ImageURL,
+			ImageBase64: p.ImageBase64,
+			MediaType:   p.MediaType,
+		})
+	}
+	return out
+}
+
+// execToolsFrom maps ProbeTool onto execution.ToolDefinition one for one.
+// A nil/empty input returns nil for the same byte-identical-wire-body
+// reason as execContentPartsFrom.
+func execToolsFrom(tools []intelligence.ProbeTool) []execution.ToolDefinition {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]execution.ToolDefinition, 0, len(tools))
+	for _, tl := range tools {
+		out = append(out, execution.ToolDefinition{
+			Name:           tl.Name,
+			Description:    tl.Description,
+			ParametersJSON: tl.ParametersJSON,
+		})
+	}
+	return out
+}
+
+// execOperationFor maps models.Operation (the eight-value catalog/offering
+// vocabulary) onto execution.Operation (the five-value transport
+// vocabulary). context_window, image_generation, and reasoning have no
+// execution-layer equivalent — context_window is deliberately probed with
+// a chat-shaped oversized request (ContextProbe) and must keep working
+// after this mapping exists, so any operation the execution vocabulary
+// does not carry falls back to execution.OperationChat rather than
+// dropping the request.
+func execOperationFor(op models.Operation) execution.Operation {
+	switch op {
+	case models.OperationChat:
+		return execution.OperationChat
+	case models.OperationStreaming:
+		return execution.OperationStreaming
+	case models.OperationTools:
+		return execution.OperationTools
+	case models.OperationStructuredOutput:
+		return execution.OperationStructuredOutput
+	case models.OperationVision:
+		return execution.OperationVision
+	default:
+		return execution.OperationChat
 	}
 }
 
@@ -190,7 +263,11 @@ func (a *probeTransportAdapter) Probe(ctx context.Context, req intelligence.Prob
 
 	messages := make([]execution.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {
-		messages = append(messages, execution.Message{Role: m.Role, Content: m.Content})
+		messages = append(messages, execution.Message{
+			Role:    m.Role,
+			Content: m.Content,
+			Parts:   execContentPartsFrom(m.Parts),
+		})
 	}
 	maxTokens := req.MaxOutputTokens
 
@@ -204,9 +281,11 @@ func (a *probeTransportAdapter) Probe(ctx context.Context, req intelligence.Prob
 			BaseURL:    baseURL,
 		}
 		normReq := execution.NormalizedRequest{
-			Operation: execution.OperationChat,
-			Messages:  messages,
-			MaxTokens: &maxTokens,
+			Operation:      execOperationFor(req.Operation),
+			Messages:       messages,
+			MaxTokens:      &maxTokens,
+			Tools:          execToolsFrom(req.Tools),
+			ResponseFormat: req.ResponseFormat,
 		}
 
 		resp, execErr := transport.Execute(ctx, route, normReq)

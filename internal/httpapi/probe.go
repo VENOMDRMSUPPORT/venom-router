@@ -418,7 +418,7 @@ func probeEstimateAllocations(op models.Operation) []quota.Allocation {
 		input = intelligence.ContextProbeInputTokens
 		maxOutput = intelligence.ContextProbeMaxOutputTokens
 	default:
-		_, fixtureMaxOutput, err := intelligence.CapabilityFixture(op)
+		_, _, _, fixtureMaxOutput, err := intelligence.CapabilityFixture(op)
 		if err != nil {
 			return nil
 		}
