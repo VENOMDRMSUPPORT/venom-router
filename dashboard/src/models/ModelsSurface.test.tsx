@@ -622,8 +622,47 @@ describe("ModelsSurface — unknowns are never fabricated", () => {
     await expandGroup("model-noq");
 
     const cell = screen.getByTestId("offering-quality-noq-1");
-    expect(cell.textContent ?? "").toMatch(/unknown|not rated/i);
+    // Tightened (whole-branch review, 2026-08-06): the old `/unknown|not
+    // rated/i` alternation matched the RETIRED "Not rated — unknown" wording
+    // just as happily as the unified "Not rated" — it could never fail when
+    // the unification reverted. `not\s*rated$` anchors on the end of the
+    // trimmed badge text, which the retired wording's " — unknown" suffix
+    // breaks.
+    expect(cell.textContent ?? "").toMatch(/not rated$/i);
     expect(cell.textContent ?? "").not.toMatch(/\b0(\.0+)?\b/);
+  });
+
+  it("uses the exact unified unrated wording on an offering row, not the retired 'Not rated — unknown'", async () => {
+    mockModels([
+      group({
+        model_id: "model-noq2",
+        quality_rating: 41,
+        offerings: [
+          offering({ provider_model_id: "noq2-1", quality_score: 0, quality_known: false }),
+        ],
+      }),
+    ]);
+    renderSurface();
+    await expandGroup("model-noq2");
+
+    const cell = screen.getByTestId("offering-quality-noq2-1");
+    // Exact match (RTL's default) — pins the retired string's ABSENCE: this
+    // throws if the badge still reads "Not rated — unknown".
+    within(cell).getByText("Not rated");
+  });
+
+  it("uses the exact unified unrated wording on a model group's header rating", async () => {
+    mockModels([
+      group({
+        model_id: "model-norating",
+        quality_rating: null,
+        offerings: [offering({ provider_model_id: "norating-1" })],
+      }),
+    ]);
+    renderSurface();
+
+    const header = await screen.findByTestId("model-group-rating-model-norating");
+    within(header).getByText("Not rated");
   });
 
   it("renders catalog_only as never entering a tier, and explicitly NOT as a failure", async () => {
