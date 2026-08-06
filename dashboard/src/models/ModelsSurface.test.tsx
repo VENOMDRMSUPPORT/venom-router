@@ -371,6 +371,47 @@ describe("ModelsSurface — capabilities as labelled chips (owner requirement 20
     // toBeInTheDocument matcher is not wired into this suite's expect.
     expect(within(cell).getByText("vision")).toBeTruthy();
   });
+
+  // Fix round 1 (2026-08-06): deleting CapabilityChips.tsx silently retired a
+  // 2026-08-05 owner requirement — a "declared" capability (the provider's
+  // own say-so) must read apart from a "probed" one (proven by a runtime
+  // measurement) WITHOUT hovering. Restored in the design system itself
+  // (CapabilityIcon's `provenance` prop -> `data-provenance` + a tooltip
+  // clause), not as a local wrapper. This matters more now that a catalog
+  // declaration alone certifies a capability, so most chips on the live
+  // fleet are "declared" today.
+  it("marks a declared capability distinctly from a probed one, via a DOM marker and the tooltip — never colour alone", async () => {
+    mockModels([
+      group({
+        offerings: [
+          offering({
+            provider_model_id: "prov-1",
+            capabilities: [
+              capability({ operation: "tools", state: "certified", truth: "supported", provenance: "declared" }),
+              capability({ operation: "vision", state: "certified", truth: "supported", provenance: "probed" }),
+            ],
+          }),
+        ],
+      }),
+    ]);
+    renderSurface();
+    await expandGroup("model-zen-chat");
+
+    const declaredCell = screen.getByTestId("capability-prov-1-tools");
+    const probedCell = screen.getByTestId("capability-prov-1-vision");
+    const declaredChip = within(declaredCell).getByTitle(/declared/i);
+    const probedChip = within(probedCell).getByTitle(/probed|proven/i);
+
+    // The DOM marker the design system's CSS keys off (Design_System's
+    // .vn-cap[data-provenance="declared"] rule) — the actual carrier of the
+    // dashed-border distinction, not just an incidental attribute.
+    expect(declaredChip.getAttribute("data-provenance")).toBe("declared");
+    expect(probedChip.getAttribute("data-provenance")).toBe("probed");
+    // The distinction is ALSO in the tooltip text, not the border alone —
+    // a screen-reader or high-contrast user must be able to tell them apart
+    // too.
+    expect(declaredChip.getAttribute("title")).not.toBe(probedChip.getAttribute("title"));
+  });
 });
 
 describe("ModelsSurface — honest context-provenance markers (owner requirement 2026-08-05c)", () => {

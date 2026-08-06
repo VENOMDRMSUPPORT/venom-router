@@ -68,8 +68,12 @@ const OFFERINGS: EffectiveOffering[] = [
     display_name: "Model A",
     capabilities: [
       capability({ truth: "supported", state: "certified", routable: true }),
-      capability({ operation: "tools", offering_operation_id: "op-a" }),
-      capability({ operation: "context_window", offering_operation_id: "op-a2" }),
+      // provenance on these two (both within the first-6 "shown" slice) is
+      // fix-round 1 fixture: one declared, one probed, so the row exercises
+      // the restored declared/probed distinction without touching the
+      // WORKING/FAILED/UNTESTED tile counts (which key off truth only).
+      capability({ operation: "tools", offering_operation_id: "op-a", provenance: "declared" }),
+      capability({ operation: "context_window", offering_operation_id: "op-a2", provenance: "probed" }),
       capability({ operation: "vision" }),
       capability({ operation: "reasoning" }),
       capability({ operation: "coding" }),
@@ -159,6 +163,28 @@ describe("ModelTestReport — derived tiles and rows", () => {
     within(rowA).getByText("zen/model-a");
     // 8 capabilities -> 6 chips + "+2".
     within(rowA).getByText("+2");
+  });
+
+  // Fix round 1 (2026-08-06): deleting CapabilityChips.tsx silently retired a
+  // 2026-08-05 owner requirement — a "declared" capability (the provider's
+  // own say-so) must read apart from a "probed" one (proven by a runtime
+  // measurement) WITHOUT hovering. Restored in the design system itself
+  // (CapabilityIcon's `provenance` prop -> `data-provenance` + a tooltip
+  // clause) and wired through ModelCapabilitySet's new `provenances` map,
+  // not as a local wrapper.
+  it("marks model-a's declared capability distinctly from its probed one, via a DOM marker and the tooltip — never colour alone", async () => {
+    renderReport();
+    await screen.findByRole("dialog");
+
+    const facts = screen.getByTestId("report-facts-zen/model-a");
+    const declaredChip = within(facts).getByTitle(/declared/i);
+    const probedChip = within(facts).getByTitle(/probed|proven/i);
+
+    // The DOM marker the design system's CSS keys off.
+    expect(declaredChip.getAttribute("data-provenance")).toBe("declared");
+    expect(probedChip.getAttribute("data-provenance")).toBe("probed");
+    // The distinction is ALSO in the tooltip text, not the border alone.
+    expect(declaredChip.getAttribute("title")).not.toBe(probedChip.getAttribute("title"));
   });
 
   it("renders NO selection controls — no checkboxes, no Enable All / Disable All, no Save selection (no backend persistence)", async () => {

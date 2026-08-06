@@ -13,6 +13,7 @@ import {
   CertificationStateBadge,
   ContextWindowDisplay,
   ModelIdentity,
+  type CapabilityProvenance as DSCapabilityProvenance,
   type CapabilityTruth as DSCapabilityTruth,
   type CertState as DSCertState,
 } from "@venom/design-system/domain";
@@ -210,8 +211,15 @@ function CapabilityCell(props: { offeringKey: string; capability: OfferingCapabi
     >
       {/* Owner requirement (2026-08-06, reversing 2026-08-05a): the design
           system's CapabilityIcon renders the icon AND a text label, so
-          `vision` and `reasoning` read apart at a glance without a hover. */}
-      <CapabilityIcon capability={capability.operation} truth={capability.truth as DSCapabilityTruth} />
+          `vision` and `reasoning` read apart at a glance without a hover.
+          `provenance` (fix round 1, restoring a 2026-08-05 requirement that
+          the CapabilityChips deletion silently dropped) additionally marks a
+          "declared" capability apart from a "probed" one. */}
+      <CapabilityIcon
+        capability={capability.operation}
+        truth={capability.truth as DSCapabilityTruth}
+        provenance={capability.provenance as DSCapabilityProvenance}
+      />
       <CertificationStateBadge state={capability.state as DSCertState} />
       <CapabilityTruthBadge truth={capability.truth as DSCapabilityTruth} />
       <span data-testid={`capability-routable-${offeringKey}-${capability.operation}`}>

@@ -62,21 +62,45 @@ export function CapabilityTruthBadge(props: CapabilityTruthBadgeProps) {
   return <Badge tone={m.tone} icon={m.icon} mono title={"capability truth: " + m.label}>{m.label}</Badge>;
 }
 
+/** How a certified+supported capability was earned: "probed" when a real
+ * runtime measurement proved it, "declared" when it was certified straight
+ * from the provider's own catalog metadata with no probe evidence, and ""
+ * when the capability is not certified+supported at all — provenance only
+ * qualifies an EARNED certification, so "" carries no provenance treatment.
+ * Mirrors the API's OfferingCapability.provenance verbatim (dashboard's
+ * controlClient.ts). */
+export type CapabilityProvenance = "probed" | "declared" | "";
+
+const PROVENANCE_LABEL: Record<Exclude<CapabilityProvenance, "">, string> = {
+  declared: "declared by provider",
+  probed: "proven by probe",
+};
+
 export interface CapabilityIconProps {
   /** A domain capability concept (chat, tools, vision, …) or custom glyph name. */
   capability: string;
   truth?: CapabilityTruth;
+  /** Owner requirement (2026-08-05, restored 2026-08-06 after a wholesale
+   * component deletion silently dropped it): a "declared" capability must
+   * read apart from a "probed" one WITHOUT hovering — never colour alone.
+   * Rendered as `data-provenance` (the CSS hook for the dashed-border
+   * treatment on "declared") AND folded into the tooltip text, so the
+   * distinction survives for keyboard/screen-reader users too. Omit (or
+   * pass "") for a capability with no provenance to show. */
+  provenance?: CapabilityProvenance;
   showLabel?: boolean;
 }
 
-/** CapabilityIcon — one capability chip: icon + short label + truth treatment. */
+/** CapabilityIcon — one capability chip: icon + short label + truth treatment
+ * + (when earned) a declared/probed provenance treatment. */
 export function CapabilityIcon(props: CapabilityIconProps) {
-  const { capability, truth = "unknown", showLabel = true } = props;
+  const { capability, truth = "unknown", provenance = "", showLabel = true } = props;
   const glyph = DOMAIN_ICON_MAP[capability] || "circle-help";
   const nice = capability.replace(/_/g, " ");
-  const title = nice + ": " + truth;
+  const provenanceLabel = provenance ? PROVENANCE_LABEL[provenance] : "";
+  const title = nice + ": " + truth + (provenanceLabel ? " (" + provenanceLabel + ")" : "");
   return (
-    <span className="vn-cap" data-truth={truth} title={title}>
+    <span className="vn-cap" data-truth={truth} data-provenance={provenance || undefined} title={title}>
       <Icon name={glyph} size={12} label={showLabel ? undefined : title} />
       {showLabel ? nice : null}
     </span>
@@ -86,21 +110,30 @@ export function CapabilityIcon(props: CapabilityIconProps) {
 const CAP_ORDER = ["chat", "streaming", "tools", "structured_output", "vision", "reasoning", "context_window"];
 
 export type CapabilityTruths = Record<string, CapabilityTruth>;
+export type CapabilityProvenances = Record<string, CapabilityProvenance>;
 
 export interface ModelCapabilitySetProps {
   /** Pass {chat:"supported", tools:"unknown", ...}. */
   truths?: CapabilityTruths;
+  /** Pass {tools:"declared", vision:"probed", ...} — same shape as `truths`,
+   * looked up by the same capability key. Missing/omitted reads as "" (no
+   * provenance treatment), matching CapabilityIcon's own default. */
+  provenances?: CapabilityProvenances;
   capabilities?: string[];
   showLabels?: boolean;
 }
 
 /** ModelCapabilitySet — the offering-operation truth set. Pass {chat:"supported", tools:"unknown", ...}. */
 export function ModelCapabilitySet(props: ModelCapabilitySetProps) {
-  const { truths = {}, capabilities, showLabels = true } = props;
+  const { truths = {}, provenances = {}, capabilities, showLabels = true } = props;
   const caps = capabilities || CAP_ORDER.filter((c) => truths[c] !== undefined);
   return (
     <span className="vn-cap-set" role="list" aria-label="Capability truth">
-      {caps.map((c) => <span role="listitem" key={c}><CapabilityIcon capability={c} truth={truths[c] || "unknown"} showLabel={showLabels} /></span>)}
+      {caps.map((c) => (
+        <span role="listitem" key={c}>
+          <CapabilityIcon capability={c} truth={truths[c] || "unknown"} provenance={provenances[c] || ""} showLabel={showLabels} />
+        </span>
+      ))}
     </span>
   );
 }

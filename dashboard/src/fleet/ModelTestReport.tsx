@@ -1,6 +1,11 @@
 import { useMemo, useState, type ChangeEvent } from "react";
 import { Badge, Button, Dialog, EmptyState, Input, Select } from "@venom/design-system/primitives";
-import { ContextWindowDisplay, ModelCapabilitySet, type CapabilityTruths } from "@venom/design-system/domain";
+import {
+  ContextWindowDisplay,
+  ModelCapabilitySet,
+  type CapabilityProvenances,
+  type CapabilityTruths,
+} from "@venom/design-system/domain";
 import { type AccountProjection, type EffectiveOffering } from "../api/controlClient";
 import { deriveModelStatus, isOfferingEnabled, type ModelStatus } from "./modelStatus";
 import ProviderLogo from "./ProviderLogo";
@@ -228,15 +233,25 @@ export default function ModelTestReport(props: ModelTestReportProps) {
                         // capabilities) is computed here, exactly as
                         // CapabilityChips did: slice to CAPABILITY_CHIP_CAP,
                         // show the remainder as "+N".
+                        //
+                        // `provenances` (fix round 1, restoring a 2026-08-05
+                        // requirement CapabilityChips' deletion silently
+                        // dropped): a "declared" capability must read apart
+                        // from a "probed" one without hovering.
                         const shown = offering.capabilities.slice(0, CAPABILITY_CHIP_CAP);
                         const overflow = offering.capabilities.length - shown.length;
                         const truths: CapabilityTruths = {};
-                        for (const c of shown) truths[c.operation] = c.truth;
+                        const provenances: CapabilityProvenances = {};
+                        for (const c of shown) {
+                          truths[c.operation] = c.truth;
+                          provenances[c.operation] = c.provenance;
+                        }
                         return (
                           <>
                             <ModelCapabilitySet
                               capabilities={shown.map((c) => c.operation)}
                               truths={truths}
+                              provenances={provenances}
                             />
                             {overflow > 0 ? (
                               <span className="vnd-capability-overflow-box">+{overflow}</span>

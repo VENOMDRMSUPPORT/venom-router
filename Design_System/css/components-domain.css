@@ -16,6 +16,18 @@
 .vn-cap[data-truth="supported"] { color: var(--status-healthy-fg); border-color: var(--status-healthy-border); background: var(--status-healthy-bg); }
 .vn-cap[data-truth="unsupported"] { color: var(--text-muted); background: var(--surface-sunken); text-decoration: line-through; text-decoration-thickness: 1px; }
 .vn-cap[data-truth="unknown"] { border-style: dashed; color: var(--status-unknown-fg); background: transparent; }
+/* "declared" (certified from the provider's own catalog metadata, no probe
+   evidence) reads apart from "probed" (proven by a real runtime measurement)
+   WITHOUT hovering — dashed, the same mark ContextWindowDisplay already uses
+   for "declared, unverified — not routable" (see that component's own
+   `style={!verified ? {borderStyle:"dashed"} : undefined}`), so "dashed
+   border = declared, not proven" stays one consistent rule across the
+   design system rather than a second, differently-styled convention.
+   "probed" and "" (not certified+supported, so provenance does not apply)
+   keep the plain solid border the truth rules above already set. Declared
+   AFTER the data-truth rules so it wins ONLY the border-style it sets,
+   leaving each truth's own color/background untouched. */
+.vn-cap[data-provenance="declared"] { border-style: dashed; }
 .vn-cap-set { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 
 /* ---- Certification ------------------------------------------------------- */
