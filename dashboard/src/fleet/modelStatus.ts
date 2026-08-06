@@ -98,17 +98,3 @@ export function distinctModelStats(offerings: readonly EffectiveOffering[]): Dis
   }
   return { total: seen.size, working: working.size };
 }
-
-/** The four operations the probe endpoint accepts — an exact mirror of the
- * server's `probeableOperations` (internal/httpapi/probe.go): anything else
- * is rejected 422 before a probe ever runs. chat and streaming are
- * DELIBERATELY excluded — they are certified by actual successful use, not
- * a deliberate probe — and image_generation is reserved future scope.
- * Declared in probe-preference order: tools first, then the remaining
- * three in the server set's declared order. */
-export const PROBEABLE_OPERATIONS: ReadonlySet<string> = new Set([
-  "tools",
-  "context_window",
-  "structured_output",
-  "vision",
-]);

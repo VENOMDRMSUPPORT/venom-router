@@ -8,6 +8,7 @@ import {
   Spinner,
 } from "@venom/design-system/primitives";
 import {
+  CapabilityIcon,
   CapabilityTruthBadge,
   CertificationStateBadge,
   ContextWindowDisplay,
@@ -26,7 +27,6 @@ import {
   type OfferingCapability,
 } from "../api/controlClient";
 import ProviderLogo from "../fleet/ProviderLogo";
-import CapabilityChips from "../fleet/CapabilityChips";
 
 export interface ModelsSurfaceProps {
   csrfToken: string;
@@ -208,10 +208,10 @@ function CapabilityCell(props: { offeringKey: string; capability: OfferingCapabi
       className="flex flex-wrap items-center gap-2"
       data-testid={`capability-${offeringKey}-${capability.operation}`}
     >
-      {/* Owner requirement (2026-08-05a): capabilities are ALWAYS icon chips
-          with tooltips here too, never bare operation words — reuse the ONE
-          shared chip renderer rather than a second implementation. */}
-      <CapabilityChips capabilities={[capability]} cap={1} />
+      {/* Owner requirement (2026-08-06, reversing 2026-08-05a): the design
+          system's CapabilityIcon renders the icon AND a text label, so
+          `vision` and `reasoning` read apart at a glance without a hover. */}
+      <CapabilityIcon capability={capability.operation} truth={capability.truth as DSCapabilityTruth} />
       <CertificationStateBadge state={capability.state as DSCertState} />
       <CapabilityTruthBadge truth={capability.truth as DSCapabilityTruth} />
       <span data-testid={`capability-routable-${offeringKey}-${capability.operation}`}>

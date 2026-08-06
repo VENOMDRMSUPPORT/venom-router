@@ -1,8 +1,7 @@
 import { useMemo, useState, type ChangeEvent } from "react";
 import { Badge, Button, Dialog, EmptyState, Input, Select } from "@venom/design-system/primitives";
-import { ContextWindowDisplay } from "@venom/design-system/domain";
+import { ContextWindowDisplay, ModelCapabilitySet, type CapabilityTruths } from "@venom/design-system/domain";
 import { type AccountProjection, type EffectiveOffering } from "../api/controlClient";
-import CapabilityChips from "./CapabilityChips";
 import { deriveModelStatus, isOfferingEnabled, type ModelStatus } from "./modelStatus";
 import ProviderLogo from "./ProviderLogo";
 
@@ -218,7 +217,33 @@ export default function ModelTestReport(props: ModelTestReportProps) {
                           Not rated
                         </Badge>
                       )}
-                      <CapabilityChips capabilities={offering.capabilities} cap={CAPABILITY_CHIP_CAP} />
+                      {(() => {
+                        // Owner requirement (2026-08-06, reversing
+                        // 2026-08-05a): the design system's ModelCapabilitySet
+                        // renders icon + text label per capability, so
+                        // `vision` and `reasoning` read apart without a
+                        // hover. It has no built-in cap/overflow concept, so
+                        // the "+N" collapse (a deliberate owner requirement,
+                        // still needed once a model exposes many
+                        // capabilities) is computed here, exactly as
+                        // CapabilityChips did: slice to CAPABILITY_CHIP_CAP,
+                        // show the remainder as "+N".
+                        const shown = offering.capabilities.slice(0, CAPABILITY_CHIP_CAP);
+                        const overflow = offering.capabilities.length - shown.length;
+                        const truths: CapabilityTruths = {};
+                        for (const c of shown) truths[c.operation] = c.truth;
+                        return (
+                          <>
+                            <ModelCapabilitySet
+                              capabilities={shown.map((c) => c.operation)}
+                              truths={truths}
+                            />
+                            {overflow > 0 ? (
+                              <span className="vnd-capability-overflow-box">+{overflow}</span>
+                            ) : null}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                   <span data-testid={`report-status-${offering.provider_model_id}`}>

@@ -913,51 +913,15 @@ body,
   margin-top: var(--space-1, 4px);
 }
 
-/* Capability-badge palette (Model Test Report). A CATEGORICAL scale: one
-   distinct hue per operation so the badges are told apart at a glance — this
-   is not a status scale, so the design system's semantic status tokens
-   (healthy/warning/critical/…) cannot express it. The values live here rather
-   than as literals in ModelTestReport.tsx because raw colors are forbidden in
-   TS/TSX (they cannot follow a theme); declaring them once here keeps the ONE
-   place to retune the palette, and the component already reads its fallback
-   branch through var() the same way. Fixed hues by design, so they are
-   theme-independent — exactly as they were when inlined. */
-:root {
-  --vnd-cap-chat: #f97316;
-  --vnd-cap-chat-bg: rgba(249, 115, 22, 0.08);
-  --vnd-cap-coding: #8b5cf6;
-  --vnd-cap-coding-bg: rgba(139, 92, 246, 0.08);
-  --vnd-cap-reasoning: #eab308;
-  --vnd-cap-reasoning-bg: rgba(234, 179, 8, 0.08);
-  --vnd-cap-structured: #0d9488;
-  --vnd-cap-structured-bg: rgba(13, 148, 136, 0.08);
-  --vnd-cap-tools: #06b6d4;
-  --vnd-cap-tools-bg: rgba(6, 182, 212, 0.08);
-  --vnd-cap-vision: #3b82f6;
-  --vnd-cap-vision-bg: rgba(59, 130, 246, 0.08);
-  --vnd-cap-streaming: #ec4899;
-  --vnd-cap-streaming-bg: rgba(236, 72, 153, 0.08);
-}
-
-.vnd-capability-icon-box {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-sm, 4px);
-  border: 1px solid var(--cap-border-color);
-  background: var(--cap-bg-color);
-  box-sizing: border-box;
-  transition: all 0.15s ease-in-out;
-  cursor: help;
-}
-
-.vnd-capability-icon-box:hover {
-  transform: scale(1.08);
-  box-shadow: 0 0 6px var(--cap-border-color);
-}
-
+/* The "+N" overflow indicator for a capped capability list (Model Test
+   Report). The per-operation icon-box palette this used to sit beside
+   (--vnd-cap-*, .vnd-capability-icon-box*) was deleted 2026-08-06: those
+   chips are now @venom/design-system/domain's ModelCapabilitySet/
+   CapabilityIcon (icon + text label + `data-truth` treatment, styled by
+   Design_System/css/components-domain.css's `.vn-cap`/`.vn-cap-set`), which
+   has no built-in cap/overflow concept — the "+N" box stays local because
+   the cap itself (CAPABILITY_CHIP_CAP in ModelTestReport.tsx) is this
+   surface's own presentation choice, not a design-system concern. */
 .vnd-capability-overflow-box {
   display: inline-flex;
   align-items: center;
@@ -1164,65 +1128,5 @@ textarea:focus-visible,
 [data-theme="venom-dark"] .vnd-account-details .vn-secret button.vn-btn {
   border-left-color: var(--border-subtle) !important;
   border-right-color: var(--border-subtle) !important;
-}
-
-/* Capability provenance (task-6, CapabilityChips.tsx): a "declared" chip
-   (certified with no runtime probe evidence) reads as dashed WITHOUT a
-   hover — the tooltip's provenance line is the only other place this
-   distinction lives, and hover is not always available. "probed" and ""
-   keep the plain solid border from .vnd-capability-icon-box above. */
-.vnd-capability-icon-box--declared {
-  border-style: dashed;
-}
-
-/* Truth-based tint (2026-08-05, Model Test Report redesign): overrides the
-   operation's own categorical color — a real negative (--failed) or an
-   unproven (--untested) result matters more here than which operation it
-   is. The icon glyph itself stays operation-specific; only the box's
-   border/background/icon color are retinted. */
-.vnd-capability-icon-box--failed {
-  --cap-border-color: var(--status-critical-border);
-  --cap-bg-color: var(--status-critical-bg);
-}
-.vnd-capability-icon-box--failed .vn-icon {
-  color: var(--status-critical-fg) !important;
-}
-.vnd-capability-icon-box--untested {
-  border-style: dashed;
-  --cap-border-color: var(--border-default);
-  --cap-bg-color: var(--surface-sunken);
-}
-.vnd-capability-icon-box--untested .vn-icon {
-  color: var(--text-muted) !important;
-}
-
-/* A <button> chip (CapabilityChips' onTest path) is otherwise identical to
-   the static <span> chip — reset the browser's default button chrome so it
-   still reads as the same icon box, just clickable. */
-button.vnd-capability-icon-box {
-  padding: 0;
-  border-style: solid;
-  font: inherit;
-  cursor: pointer;
-}
-button.vnd-capability-icon-box--untested {
-  border-style: dashed;
-}
-button.vnd-capability-icon-box:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.vnd-capability-icon-box__spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--border-default);
-  border-top-color: var(--text-secondary);
-  border-radius: 50%;
-  animation: vnd-capability-spin 0.6s linear infinite;
-}
-@keyframes vnd-capability-spin {
-  to { transform: rotate(360deg); }
 }
 

@@ -342,8 +342,16 @@ describe("ModelsSurface — provider identity per row/group (owner requirement 2
   });
 });
 
-describe("ModelsSurface — capabilities as icon chips, never bare words (owner requirement 2026-08-05a)", () => {
-  it("renders a capability as the shared icon-chip component, not its bare operation name as text", async () => {
+describe("ModelsSurface — capabilities as labelled chips (owner requirement 2026-08-06, reversing 2026-08-05a)", () => {
+  it("renders each capability as a labelled chip, so the operation is readable without hovering", async () => {
+    // Reversed 2026-08-06 by Claude Opus 5, on the owner's instruction: this
+    // previously asserted the operation name was NOT rendered as text (see
+    // git history for the prior "never bare words" test). Looking at the
+    // live fleet, the owner could not tell `vision` from `reasoning` from an
+    // icon alone. The design system's own rule is that colour/icon never
+    // carries state without an accompanying text label
+    // (Design_System/css/components-domain.css:1-4), so this is now the
+    // opposite assertion, encoded on purpose rather than silently dropped.
     mockModels([
       group({
         offerings: [
@@ -358,13 +366,10 @@ describe("ModelsSurface — capabilities as icon chips, never bare words (owner 
     await expandGroup("model-zen-chat");
 
     const cell = screen.getByTestId("capability-vision-1-vision");
-    // The shared CapabilityChips renderer: an accessible icon box labelled by
-    // the operation, carrying a tooltip — never a plain visible text node
-    // reading the operation name on its own.
-    const chip = within(cell).getByRole("img", { name: "vision" });
-    expect(chip.className).toMatch(/vnd-capability-icon-box/);
-    expect(chip.getAttribute("title") ?? "").toMatch(/VISION/);
-    expect(within(cell).queryByText("vision")).toBeNull();
+    // getByText already throws if no match is found; toBeTruthy matches this
+    // file's existing convention (see "Shared Model" above) since jest-dom's
+    // toBeInTheDocument matcher is not wired into this suite's expect.
+    expect(within(cell).getByText("vision")).toBeTruthy();
   });
 });
 
