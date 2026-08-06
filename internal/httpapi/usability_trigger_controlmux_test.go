@@ -215,12 +215,31 @@ func chatCertificationOf(t *testing.T, db *storage.DB, accountID, modelID string
 // the trigger exactly as boot.go wires it) fires on discovery success, and the
 // model must come out `certified`/`supported`.
 //
-// The row is `observed`, not `probing`, at the instant the fast lane runs — the
-// probe_drain scheduler tick is NOT running in this test, and in production it
-// has not ticked yet either. So this test fails outright unless the fast lane
-// drives the observed -> probing edge itself: with the sweep's probing-only
-// pass the lister returns zero rows, nothing is probed, and the model stays
-// exactly as discovery left it.
+// This test asserts ONLY that terminal outcome. It deliberately does NOT
+// assert any intermediate state (`observed` or `probing`) right after the
+// 202: the fast lane is fired from its own goroutine the instant discovery's
+// job row is marked completed (discovery.go's runDiscovery), so the instant
+// this test's HTTP round-trip returns, that goroutine may already have run
+// far enough to have moved the row to `probing` — `probing` is a legitimate
+// transient state on the path to `certified`, not a bug, and asserting an
+// intermediate state here would be asserting the outcome of a race, not a
+// guarantee. An earlier version of this test accepted {observed, certified}
+// right after the 202 and flaked with "status = probing, want observed" the
+// instant the goroutine won that race.
+//
+// The two facts that assertion was trying to pin are both already pinned
+// deterministically, with no async trigger in the loop, elsewhere:
+//   - discovery seeds the chat offering-operation at `observed` (no
+//     usability trigger involved at all): internal/storage/discovery_test.go's
+//     TestDiscoveryApply_AdvancesDiscoveredToObserved.
+//   - the observed -> probing transition itself:
+//     internal/intelligence/certdriver_test.go's
+//     testEdge2ObservedToProbing ("edge 2: observed -> probing via
+//     StartProbe"), a synchronous, single-threaded state-machine test.
+//
+// This test's own job is the composition proof the other two can't give:
+// that the REAL ControlMux wiring actually drives a freshly discovered model
+// all the way to certified/supported, end to end, with no test-only seam.
 func TestControlMux_DiscoverySuccess_FastLaneCertifiesFreshChatModelEndToEnd(t *testing.T) {
 	// GUARD: process-wide global swap — safe only while this package has zero
 	// t.Parallel() calls. See the sibling test above.
@@ -258,18 +277,13 @@ func TestControlMux_DiscoverySuccess_FastLaneCertifiesFreshChatModelEndToEnd(t *
 		t.Fatalf("discovery Status = %q, want completed (error = %+v)", row.Status, row.Error)
 	}
 
-	// Discovery must have seeded the chat op at `observed` — the precondition
-	// the whole finding is about. If this ever reads `probing`, something else
-	// started driving the edge and this test stopped proving anything.
-	status, _, found := chatCertificationOf(t, db, accountID, usabilityTriggerFastLaneFreeModelID)
-	if !found {
-		t.Fatalf("discovery created no chat offering-operation for %q", usabilityTriggerFastLaneFreeModelID)
-	}
-	if status != "observed" && status != "certified" {
-		t.Fatalf("chat certification status right after discovery = %q, want observed (or already certified if the fast lane won the race)", status)
-	}
-
-	var truth string
+	// Deliberately NO assertion here on the certification row's state right
+	// after the 202: discovery's fast-lane goroutine is already racing this
+	// test to advance observed -> probing -> certified (see the doc comment
+	// above), so any intermediate read is a coin flip, not a guarantee. The
+	// loop below is this test's one real assertion — the terminal outcome.
+	var status, truth string
+	var found bool
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		status, truth, found = chatCertificationOf(t, db, accountID, usabilityTriggerFastLaneFreeModelID)
@@ -277,7 +291,7 @@ func TestControlMux_DiscoverySuccess_FastLaneCertifiesFreshChatModelEndToEnd(t *
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("chat certification never reached certified: status = %q truth = %q — the fast lane did not verify the freshly discovered model", status, truth)
+			t.Fatalf("chat certification never reached certified: found=%v status = %q truth = %q — the fast lane did not verify the freshly discovered model", found, status, truth)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
