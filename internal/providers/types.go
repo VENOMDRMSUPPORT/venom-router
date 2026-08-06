@@ -89,9 +89,18 @@ type DiscoveredModel struct {
 	// never be probed at all. A candidate is never written to
 	// capabilities_json and the declared-certification path
 	// (ListNonChatOperationsToCertify) never certifies it from "declaration"
-	// — only a real runtime probe can. See clinepass: its wire returns
-	// {id, name} only, so it declares Capabilities: ["chat"] and lists
-	// "tools"/"structured_output" here instead of fabricating a declaration.
+	// — only a real runtime probe can.
+	//
+	// Currently UNUSED: no shipping adapter populates this field. clinepass
+	// was this mechanism's original and, until models.dev catalog enrichment
+	// landed, only motivating example (its wire returns {id, name} only); it
+	// now gets its capabilities from the joined catalog instead and reports
+	// Capabilities directly, so it no longer needs a candidate placeholder.
+	// The mechanism, its parsing (intelligence/discovery.go,
+	// intelligence/ports.go's CandidateOperations), and the storage guard
+	// that keeps it out of capabilities_json (internal/storage/catalog.go)
+	// all stay: a future adapter with the same "wire is too thin to declare
+	// from" shape is expected to need exactly this.
 	CandidateOperations []string
 	Pricing             map[string]any
 	Evidence            map[string]any

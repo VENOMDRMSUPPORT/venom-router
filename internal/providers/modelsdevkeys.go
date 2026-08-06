@@ -44,6 +44,19 @@ func ModelsDevKeyFor(providerID ProviderID) (string, bool) {
 // modelsDevProviderAPI extracts one provider entry's `api` field. An absent
 // or empty value yields "" — several real entries (anthropic, openai, google,
 // xai) carry no api at all.
+//
+// The unmarshal error is swallowed into "" here rather than surfaced,
+// which is safe ONLY because this is never called on unvalidated bytes: its
+// one caller, FactsForProvider, reads facts and raw together via
+// factsAndRaw under a single s.mu acquisition, and factsAndRaw itself
+// already unmarshals the very same body (into ModelsDevFacts) and returns an
+// error if that fails — so by the time raw reaches this function, its
+// top-level shape has already been proven to parse. A parse failure here
+// would mean the shared cache holds bytes two different unmarshal targets
+// disagree about, which should not be reachable; "" is the fail-closed
+// answer (skip the api-host check, same as a genuinely absent field) if it
+// ever somehow is. This invariant is invisible at this function's own call
+// site, hence this comment.
 func modelsDevProviderAPI(body []byte, key string) string {
 	var dataset map[string]struct {
 		API string `json:"api"`

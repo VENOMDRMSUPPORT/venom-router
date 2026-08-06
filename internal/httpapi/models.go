@@ -166,10 +166,20 @@ func (h *ModelsHandler) buildProjection(ctx context.Context, row storage.Catalog
 // domain's. A provider with no wired transport reports nil, which Project
 // reads as UNKNOWN and fails closed on.
 //
-// execution.Operation carries only the five operations a transport can
-// actually express; context_window and image_generation are deliberately
-// not transport operations — a transport carries requests, not a context
-// limit, and image_generation has no wire expression on this seam.
+// execution.Operation carries only five of the domain's eight operations —
+// chat, streaming, tools, vision, structured_output. The other three,
+// context_window, image_generation, and reasoning, are deliberately not
+// transport operations: a transport carries requests, not a context limit,
+// and neither image_generation nor reasoning has a wire expression on this
+// seam in this build. context_window and image_generation are certifiable
+// but reserved for future scope regardless (models.Operation's own doc), so
+// their absence here is not additionally consequential; reasoning is NOT
+// reserved — it is a live, routable-in-principle operation — so this is the
+// one place its practical consequence is recorded: because it can never
+// appear in TransportOperations, Project's effective/intersection
+// computation can never mark it effective, so a reasoning capability can be
+// certified+supported and still never be Routable in this build. That is a
+// transport-seam gap, not a certification bug.
 func (h *ModelsHandler) transportOperationsFor(providerID string) []models.Operation {
 	transport, wired := h.transports[providerID]
 	if !wired {
