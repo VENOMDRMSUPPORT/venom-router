@@ -102,9 +102,13 @@ function mockModels(
   groups: ModelGroup[],
   extra: Record<string, () => Response> = {},
 ): ReturnType<typeof createFetchMock> {
+  // No CENSUS_URL stub here: ModelsSurface no longer mounts ReviewQueueBanner
+  // and therefore never fetches GET /certifications/review itself. The census
+  // stub still lives on the handful of tests below that build their own
+  // fetch mock directly (pagination/loading/error), left untouched by this
+  // fix round per its stated scope.
   const mock = createFetchMock({
     [MODELS_URL]: () => jsonResponse(200, { data: groups }),
-    [CENSUS_URL]: () => jsonResponse(200, censusBody()),
     ...extra,
   });
   vi.stubGlobal("fetch", mock);
@@ -655,7 +659,36 @@ describe("ModelsSurface — quality rating provenance (Plan 3, local-benchmark-r
 
 describe("ModelsSurface — display only", () => {
   it("renders no manual test or trigger control anywhere — the page is display only", async () => {
-    mockModels([group()]);
+    // The default `capability()` (certified+supported, no offering_operation_id)
+    // is the WRONG fixture for this test: against it, a restored Probe button
+    // would render its disabled "Probe — not available for this operation"
+    // label (which /^probe$/i does not match), and a restored Needs-review
+    // predicate would never fire (certified+supported never needs review) —
+    // both regressions would pass unnoticed. So this offering deliberately
+    // carries two capabilities: one WITH an offering_operation_id (an enabled
+    // Probe button, labelled exactly "Probe", would render for it) and one
+    // that is NOT certified+supported (the Needs-review predicate would fire
+    // for it). Together they make every one of the four checks below
+    // load-bearing, not vacuous — see the fix-round mutation trace in
+    // task-1-report.md, which restores each control in turn against this
+    // exact fixture.
+    mockModels([
+      group({
+        offerings: [
+          offering({
+            capabilities: [
+              capability({ offering_operation_id: "would-be-probed-1" }),
+              capability({
+                operation: "tools",
+                state: "observed",
+                truth: "unknown",
+                routable: false,
+              }),
+            ],
+          }),
+        ],
+      }),
+    ]);
     renderSurface();
     await screen.findByText("Zen Chat");
     await expandGroup("model-zen-chat");
@@ -663,8 +696,11 @@ describe("ModelsSurface — display only", () => {
     for (const label of [/discover/i, /benchmark/i, /^probe$/i, /needs review/i]) {
       expect(screen.queryByRole("button", { name: label })).toBeNull();
     }
-    // "Needs review" is rendered as a badge, not a button — assert its text is
-    // gone outright rather than only checking the (never-matching) button role.
+    // "Needs review" is rendered as a badge, not a button. The fixture's
+    // second capability (state "observed", not certified+supported)
+    // guarantees the old predicate WOULD flag this group if it still
+    // existed, so this text query is load-bearing rather than vacuously
+    // null regardless of whether the predicate is present.
     expect(screen.queryByText(/needs review/i)).toBeNull();
     expect(screen.queryByTestId("job-outcome")).toBeNull();
     expect(screen.queryByText(/\d+ offerings?$/)).toBeNull();
