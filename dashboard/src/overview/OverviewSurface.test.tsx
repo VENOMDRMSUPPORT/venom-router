@@ -367,6 +367,19 @@ describe("OverviewSurface — review banner", () => {
     expect(within(banner).getByText("capability_not_certified")).toBeTruthy();
   });
 
+  // Whole-branch review (2026-08-06): Overview has no catalog of its own to
+  // filter down to the backlog, so it mounts the banner with no
+  // onReviewBacklog. Before this fix that prop was required and Overview
+  // passed a no-op, so the owner saw a real "Review the backlog" button that
+  // could never do anything whenever their backlog was non-empty.
+  it("never renders the backlog action, even with a real backlog — Overview has nothing for it to do", async () => {
+    mockAll({ [CENSUS_URL]: () => jsonResponse(200, censusBody(3)) });
+    renderSurface();
+
+    await screen.findByTestId("review-queue-banner");
+    expect(screen.queryByRole("button", { name: /review the backlog/i })).toBeNull();
+  });
+
   it("does not show the backlog call to action when the backlog is empty", async () => {
     mockAll({ [CENSUS_URL]: () => jsonResponse(200, censusBody(0)) });
     renderSurface();

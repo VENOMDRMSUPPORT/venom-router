@@ -11,8 +11,13 @@ import {
 
 export interface ReviewQueueBannerProps {
   onSessionExpired: () => void;
-  /** Filters the Models surface down to the offerings that need review. */
-  onReviewBacklog: () => void;
+  /** Filters the Models surface down to the offerings that need review.
+   * Optional: a mount with no working navigation to offer (whole-branch
+   * review, 2026-08-06 — the Overview surface has no catalog of its own to
+   * filter) omits this rather than passing a handler that does nothing. The
+   * banner renders no action at all when it is absent, even with a real
+   * backlog — never a button that cannot do anything. */
+  onReviewBacklog?: () => void;
 }
 
 /**
@@ -177,11 +182,17 @@ export default function ReviewQueueBanner(props: ReviewQueueBannerProps) {
   const total = evaluated.reduce((sum, r) => sum + r.count, 0);
   const hasBacklog = total > 0;
 
+  // The action is offered only when BOTH a backlog exists AND a caller
+  // supplied something for it to do — a backlog with no handler renders the
+  // rest of the banner (the counts, the reason breakdown) but no button that
+  // can never do anything.
+  const canReviewBacklog = hasBacklog && onReviewBacklog !== undefined;
+
   return (
     <Banner
       tone={hasBacklog ? "warning" : "info"}
       actions={
-        hasBacklog ? (
+        canReviewBacklog ? (
           <Button size="sm" variant="secondary" onClick={onReviewBacklog}>
             Review the backlog
           </Button>

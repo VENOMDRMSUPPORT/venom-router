@@ -309,14 +309,15 @@ export default function OverviewSurface(props: OverviewSurfaceProps) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* The same banner the Models surface renders (P6-UI-012). Its own
-          all-clear/error states are its business, not this page's. */}
-      <ReviewQueueBanner
-        onSessionExpired={onSessionExpired}
-        // Overview has no catalog to filter; the banner's action is a no-op hint
-        // here, and the banner only offers it when a backlog exists.
-        onReviewBacklog={() => {}}
-      />
+      {/* P6-UI-012. The Models surface no longer mounts this banner itself
+          (Task 1 made that page display-only); Overview is its only mount
+          now. Its own all-clear/error states are its business, not this
+          page's. No `onReviewBacklog` is passed — Overview has no catalog of
+          its own to filter down to the backlog, and the banner renders no
+          "Review the backlog" button at all when the handler is absent, even
+          with a real backlog, rather than offering an action that would do
+          nothing. */}
+      <ReviewQueueBanner onSessionExpired={onSessionExpired} />
 
       {onOpenQuickStart ? (
         <Card data-testid="overview-quick-start">

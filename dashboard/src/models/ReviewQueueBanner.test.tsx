@@ -178,6 +178,19 @@ describe("ReviewQueueBanner — navigation, states, a11y", () => {
     expect(screen.queryByRole("button", { name: /review the backlog/i })).toBeNull();
   });
 
+  // Whole-branch review (2026-08-06): OverviewSurface mounts this banner with
+  // NO onReviewBacklog (it has no catalog of its own to filter). Before this
+  // fix the prop was required, so every mount got a real backlog button
+  // wired to a no-op — a control that renders but can never do anything.
+  it("offers no backlog button when no handler is supplied, even with a real backlog", async () => {
+    mockCensus(census({ by_reason: [{ reason: "capability_not_certified", count: 5 }] }));
+    render(<ReviewQueueBanner onSessionExpired={vi.fn()} />);
+
+    const banner = await screen.findByTestId("review-queue-banner");
+    expect(banner.textContent ?? "").toMatch(/5/);
+    expect(screen.queryByRole("button", { name: /review the backlog/i })).toBeNull();
+  });
+
   it("renders nothing but a quiet notice when the census cannot be read", async () => {
     vi.stubGlobal(
       "fetch",
