@@ -24,7 +24,28 @@
 // point. A stat-based mtime comparison costs milliseconds whether run once or
 // three times in one job, and failing loudly beats silently "fixing" staleness
 // the developer never noticed they had.
-
+//
+// SCOPE (whole-branch review, 2026-08-06): an earlier version of this check
+// scanned all of Design_System/ minus a small deny-list of build OUTPUT
+// directories (dist, dist-explorer, node_modules, ...), treating EVERYTHING
+// else as source dist/ depends on. It doesn't. `dist/` is built by
+// `vite.config.ts`'s lib build, whose only entry points are `src/*.ts` — and
+// those, transitively, only ever import from `src/` and `components/`
+// (`grep -rl '\.css[\'"]' src/ components/` finds nothing: no component
+// imports a stylesheet). Everything else under Design_System/ — css/,
+// themes/, tokens/*.css & *.json, icons/, assets/, tests/, storybook/,
+// README.md, ... — is either consumed VERBATIM at runtime (styles.css's
+// @import lines resolve straight to css/, themes/, tokens/, icons/ — never
+// through dist/) or is tooling/docs the build never reads at all. Scanning
+// those trees for staleness produced false failures for real, ordinary work:
+// this branch edited Design_System/css/components-domain.css and the change
+// was live in the dashboard with no rebuild needed, yet the old check called
+// it stale; the DS visual-snapshot suite writes new files under tests/ and
+// tripped the same false failure. So the scanned set is narrowed to an
+// ALLOW-list of the two directories dist/ is actually compiled from, filtered
+// to the TypeScript/TSX files tsc/vite actually read (components/ also holds
+// `*.card.html` demo pages and `*.prompt.md` design docs that are source for
+// nothing dist/ contains).
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,19 +56,28 @@ const REPO_ROOT = path.resolve(DASHBOARD_ROOT, "..");
 const DS_ROOT = path.join(REPO_ROOT, "Design_System");
 const DIST_DIR = path.join(DS_ROOT, "dist");
 
-// Directories under Design_System/ that are build OUTPUT or noise, never
-// SOURCE — excluded so editing a build artifact can never itself trip the
-// "source is newer than dist" check.
-const SKIP_DIRS = new Set(["dist", "dist-explorer", "node_modules", "test-results", "playwright-report", ".git"]);
+// The only two directories dist/ is compiled from (see vite.config.ts's lib
+// entries under src/, which import their component trees from components/).
+const SOURCE_DIRS = ["src", "components"];
+// The two extensions tsc/vite actually compile. Everything else under
+// SOURCE_DIRS (*.card.html demo pages, *.prompt.md design docs) is never
+// read by the build and must not be able to trip this check.
+const SOURCE_EXTENSIONS = new Set([".ts", ".tsx"]);
 
-function newestMtimeMs(dir) {
+/** Newest mtime under `dir`, recursively. `extensions`, when given, restricts
+ * which FILES count (directories are always walked); omit it to consider
+ * every file (used for dist/, whose output extensions are its own concern). */
+function newestMtimeMs(dir, extensions) {
   let newest = 0;
+  if (!existsSync(dir)) return newest;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (SKIP_DIRS.has(entry.name)) continue;
-      newest = Math.max(newest, newestMtimeMs(path.join(dir, entry.name)));
+      if (entry.name === "node_modules") continue;
+      newest = Math.max(newest, newestMtimeMs(full, extensions));
     } else if (entry.isFile()) {
-      newest = Math.max(newest, statSync(path.join(dir, entry.name)).mtimeMs);
+      if (extensions && !extensions.has(path.extname(entry.name))) continue;
+      newest = Math.max(newest, statSync(full).mtimeMs);
     }
   }
   return newest;
@@ -67,7 +97,9 @@ if (!existsSync(DIST_DIR)) {
   fail("Design_System/dist is missing — nothing has built the design system in this checkout yet.");
 }
 
-const sourceNewest = newestMtimeMs(DS_ROOT);
+const sourceNewest = Math.max(
+  ...SOURCE_DIRS.map((dir) => newestMtimeMs(path.join(DS_ROOT, dir), SOURCE_EXTENSIONS)),
+);
 const distNewest = newestMtimeMs(DIST_DIR);
 
 if (sourceNewest > distNewest) {
