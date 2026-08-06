@@ -14,11 +14,6 @@ const NvidiaNIMID ProviderID = "nvidia-nim"
 // equal the BuiltinCatalog entry — asserted by a test.
 const NvidiaNIMBaseURL = "https://integrate.api.nvidia.com/v1"
 
-// modelsDevNvidiaKey is nvidia-nim's provider key inside the models.dev
-// dataset. Verified 2026-08-03: the key is "nvidia" (NOT "nvidia-nim"), its
-// `api` equals NvidiaNIMBaseURL, and its 98 model ids match /v1/models 1:1.
-const modelsDevNvidiaKey = "nvidia"
-
 // nvidiaSyntheticPlan is the display-only plan label nvidia-nim has no identity
 // endpoint to source. It is NOT funding evidence.
 const nvidiaSyntheticPlan = "Free"
@@ -71,11 +66,18 @@ func (a *NvidiaNIMAdapter) ConnectAPIKey(ctx context.Context, key string) (Ident
 }
 
 // DiscoverModels reads the live id list from GET /v1/models and enriches it
-// with the models.dev `nvidia` facts, applying the shared discovery rules
-// (modelsFromLiveIDs): deprecated dropped, non-text-output dropped,
-// capabilities only from tool_call/structured_output/image-input, limits from
-// limit.context/limit.output, uncatalogued ids chat-only, dataset-down still
-// lists the live ids.
+// with the models.dev `nvidia` facts (verified 2026-08-03: the dataset key is
+// "nvidia", NOT "nvidia-nim", and its 98 model ids match /v1/models 1:1),
+// resolved through FactsForProvider so a dataset entry whose `api` no longer
+// matches NvidiaNIMBaseURL is refused rather than silently joined (see
+// FactsForProvider's doc — this is the opencode/opencode-go collision
+// scenario applied to nvidia-nim). Applies the shared discovery rules
+// (modelsFromLiveIDs): deprecated dropped (narrowed from an earlier
+// non-text-output drop — reasoning/image_generation/context_window are now
+// certifiable operations, not reasons to hide a model), capabilities from
+// tool_call/structured_output/image-input/context/image-output/reasoning,
+// limits from limit.context/limit.input/limit.output, uncatalogued ids
+// chat-only, dataset-down still lists the live ids.
 //
 // It deliberately does NOT try to distinguish a true chat/instruct model from a
 // text-output non-generative one (embedding, rerank, safety classifier):
@@ -92,7 +94,7 @@ func (a *NvidiaNIMAdapter) DiscoverModels(ctx context.Context, creds StoredCrede
 		return nil, fmt.Errorf("providers: nvidia-nim discover models: parse response: %w", err)
 	}
 
-	facts, ferr := a.facts.Facts(ctx, modelsDevNvidiaKey)
+	facts, ferr := a.facts.FactsForProvider(ctx, NvidiaNIMID, NvidiaNIMBaseURL)
 	if ferr != nil {
 		// Dataset unavailable/unparseable: still list the live ids chat-only.
 		facts = nil

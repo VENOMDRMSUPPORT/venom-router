@@ -30,6 +30,13 @@ func (p *countingModelsDevProbe) probe(context.Context) ([]byte, error) {
 	return p.body, nil
 }
 
+// testModelsDevProviderKey is an arbitrary provider key present in
+// modelsDevTwoProviderFixture, used by the ModelsDevSource.Facts/cache tests
+// below that exercise the generic fetch/cache/parse path and do not care
+// which provider it names (no production ProviderID key constant exists for
+// this purpose — see modelsdevkeys.go — so a plain literal is correct here).
+const testModelsDevProviderKey = "ollama-cloud"
+
 const modelsDevTwoProviderFixture = `{
   "ollama-cloud": {"models": {
     "gpt-oss:20b": {"name": "GPT-OSS 20B", "tool_call": true, "structured_output": true,
@@ -51,7 +58,7 @@ func TestModelsDevSource_CacheTTL(t *testing.T) {
 	probe := &countingModelsDevProbe{body: []byte(modelsDevTwoProviderFixture)}
 	src := NewModelsDevSource(probe.probe, func() time.Time { return clock })
 
-	if _, err := src.Facts(context.Background(), modelsDevOllamaKey); err != nil {
+	if _, err := src.Facts(context.Background(), testModelsDevProviderKey); err != nil {
 		t.Fatalf("first Facts() error = %v", err)
 	}
 	if probe.calls != 1 {
@@ -61,7 +68,7 @@ func TestModelsDevSource_CacheTTL(t *testing.T) {
 	// A second call for the same key, still within the TTL, must be served from
 	// cache — no second probe.
 	clock = base.Add(5 * time.Minute)
-	if _, err := src.Facts(context.Background(), modelsDevOllamaKey); err != nil {
+	if _, err := src.Facts(context.Background(), testModelsDevProviderKey); err != nil {
 		t.Fatalf("cached Facts() error = %v", err)
 	}
 	if probe.calls != 1 {
@@ -70,7 +77,7 @@ func TestModelsDevSource_CacheTTL(t *testing.T) {
 
 	// Past the TTL, the next call re-fetches.
 	clock = base.Add(modelsDevFactsCacheTTL + time.Second)
-	if _, err := src.Facts(context.Background(), modelsDevOllamaKey); err != nil {
+	if _, err := src.Facts(context.Background(), testModelsDevProviderKey); err != nil {
 		t.Fatalf("post-TTL Facts() error = %v", err)
 	}
 	if probe.calls != 2 {
@@ -100,7 +107,7 @@ func TestModelsDevSource_FetchAndParseFailures(t *testing.T) {
 	t.Run("fetch failure", func(t *testing.T) {
 		probe := &countingModelsDevProbe{err: errors.New("boom")}
 		src := NewModelsDevSource(probe.probe, func() time.Time { return time.Unix(1, 0) })
-		if _, err := src.Facts(context.Background(), modelsDevOllamaKey); err == nil {
+		if _, err := src.Facts(context.Background(), testModelsDevProviderKey); err == nil {
 			t.Fatal("Facts() error = nil, want non-nil on a fetch failure")
 		}
 	})
@@ -108,7 +115,7 @@ func TestModelsDevSource_FetchAndParseFailures(t *testing.T) {
 	t.Run("malformed dataset", func(t *testing.T) {
 		probe := &countingModelsDevProbe{body: []byte("{not json")}
 		src := NewModelsDevSource(probe.probe, func() time.Time { return time.Unix(1, 0) })
-		if _, err := src.Facts(context.Background(), modelsDevOllamaKey); err == nil {
+		if _, err := src.Facts(context.Background(), testModelsDevProviderKey); err == nil {
 			t.Fatal("Facts() error = nil, want non-nil on a malformed dataset")
 		}
 	})
@@ -119,7 +126,7 @@ func TestModelsDevSource_FetchAndParseFailures(t *testing.T) {
 func TestModelsDevSource_ParsesExplicitFieldsOnly(t *testing.T) {
 	probe := &countingModelsDevProbe{body: []byte(modelsDevTwoProviderFixture)}
 	src := NewModelsDevSource(probe.probe, func() time.Time { return time.Unix(1, 0) })
-	facts, err := src.Facts(context.Background(), modelsDevOllamaKey)
+	facts, err := src.Facts(context.Background(), testModelsDevProviderKey)
 	if err != nil {
 		t.Fatalf("Facts() error = %v", err)
 	}

@@ -21,11 +21,6 @@ const OllamaCloudBaseURL = "https://ollama.com/v1"
 // health probe uses: POST {base}/me returns the account record (03 §3).
 const OllamaCloudIdentityBaseURL = "https://ollama.com/api"
 
-// modelsDevOllamaKey is ollama-cloud's provider key inside the models.dev
-// dataset. Verified 2026-08-03: its `api` equals OllamaCloudBaseURL and its
-// model ids match /v1/models 1:1.
-const modelsDevOllamaKey = "ollama-cloud"
-
 // ErrIdentityMissingStableID is returned when the identity endpoint answered
 // successfully but carried no stable external ID. The catalog declares
 // ollama-cloud's StableID as "account.ID"; substituting a key fingerprint
@@ -163,8 +158,12 @@ func ollamaFundingFromPlan(plan string) (string, float64) {
 }
 
 // DiscoverModels reads the live id list from GET /v1/models and enriches it
-// with the models.dev `ollama-cloud` facts. If the dataset cannot be fetched
-// or parsed, discovery still returns the live ids as chat-only (a facts source
+// with the models.dev `ollama-cloud` facts, resolved through
+// FactsForProvider so a dataset entry whose `api` no longer matches
+// OllamaCloudBaseURL is refused rather than silently joined (see
+// FactsForProvider's doc — this is the opencode/opencode-go collision
+// scenario applied to ollama-cloud). If the dataset cannot be fetched or
+// parsed, discovery still returns the live ids as chat-only (a facts source
 // being down must never make a working account look empty) — see
 // modelsFromLiveIDs.
 func (a *OllamaCloudAdapter) DiscoverModels(ctx context.Context, creds StoredCredentials) ([]DiscoveredModel, error) {
@@ -177,7 +176,7 @@ func (a *OllamaCloudAdapter) DiscoverModels(ctx context.Context, creds StoredCre
 		return nil, fmt.Errorf("providers: ollama-cloud discover models: parse response: %w", err)
 	}
 
-	facts, ferr := a.facts.Facts(ctx, modelsDevOllamaKey)
+	facts, ferr := a.facts.FactsForProvider(ctx, OllamaCloudID, OllamaCloudBaseURL)
 	if ferr != nil {
 		// Dataset unavailable/unparseable: still list the live ids chat-only.
 		facts = nil

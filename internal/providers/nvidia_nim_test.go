@@ -125,6 +125,48 @@ func TestNvidiaNIM_DiscoveryExactIDs(t *testing.T) {
 	}
 }
 
+// nvidiaHostMismatchDataset carries the "nvidia" key's models under an `api`
+// that does NOT match NvidiaNIMBaseURL — simulating models.dev repointing
+// the "nvidia" key to a different host or reusing it for another product
+// (the exact opencode/opencode-go collision modelsdevkeys.go's own doc
+// cites).
+const nvidiaHostMismatchDataset = `{
+  "nvidia": {"api": "https://impostor.example.com/v1", "models": {
+    "meta/llama-keep": {"name": "Llama Keep", "tool_call": true,
+      "modalities": {"input": ["text"], "output": ["text"]}, "limit": {"context": 4096}}
+  }}
+}`
+
+// TestNvidiaNIM_DiscoverModels_HostMismatchYieldsNoEnrichment proves
+// DiscoverModels goes through FactsForProvider (verified against
+// NvidiaNIMBaseURL), not the raw, unverified Facts lookup: when the
+// dataset's "nvidia" entry declares an `api` host that does not match our
+// own base URL, the model must come back chat-only with nil limits —
+// exactly as if the dataset had no entry at all — never silently joined
+// onto the wrong provider's facts.
+//
+// MUTATION: reverting DiscoverModels to call a.facts.Facts(ctx,
+// modelsDevNvidiaKey) directly (bypassing the host check) turns this RED —
+// meta/llama-keep would come back with "tools" and ContextLength=4096
+// instead of chat-only/nil.
+func TestNvidiaNIM_DiscoverModels_HostMismatchYieldsNoEnrichment(t *testing.T) {
+	a := newNvidiaAdapter(&fakeChatProbe{status: 200}, &fakeModelsProbe{body: `{"data":[{"id":"meta/llama-keep"}]}`}, staticModelsDevProbe(nvidiaHostMismatchDataset, nil))
+	models, err := a.DiscoverModels(context.Background(), StoredCredentials{Value: "k"})
+	if err != nil {
+		t.Fatalf("DiscoverModels() error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("survivors = %d, want 1", len(models))
+	}
+	keep := models[0]
+	if len(keep.Capabilities) != 1 || keep.Capabilities[0] != "chat" {
+		t.Fatalf("meta/llama-keep caps = %v, want [chat] only — the host mismatch must refuse the whole entry, not just narrow it", keep.Capabilities)
+	}
+	if keep.ContextLength != nil {
+		t.Fatalf("meta/llama-keep ctx = %v, want nil — a host mismatch is a refusal, not a partial join", keep.ContextLength)
+	}
+}
+
 // TestNvidiaNIM_EmptyListIsAFact is mutation row 2: an empty provider list
 // yields an empty result and NOT an error (an empty catalog is a fact).
 func TestNvidiaNIM_EmptyListIsAFact(t *testing.T) {

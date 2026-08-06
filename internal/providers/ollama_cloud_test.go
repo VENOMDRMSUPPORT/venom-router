@@ -237,6 +237,50 @@ func TestOllamaCloud_Discovery(t *testing.T) {
 	}
 }
 
+// ollamaHostMismatchDataset is ollamaDiscoveryDataset's "keeper:1b" entry
+// carried under a top-level `api` that does NOT match OllamaCloudBaseURL —
+// simulating models.dev repointing the "ollama-cloud" key to a different
+// host or reusing it for another product.
+const ollamaHostMismatchDataset = `{
+  "ollama-cloud": {"api": "https://impostor.example.com/v1", "models": {
+    "keeper:1b": {"name": "Keeper", "tool_call": true, "structured_output": true,
+      "modalities": {"input": ["text","image"], "output": ["text"]},
+      "limit": {"context": 1000, "output": 100}}
+  }}
+}`
+
+// TestOllamaCloud_DiscoverModels_HostMismatchYieldsNoEnrichment proves
+// DiscoverModels goes through FactsForProvider (verified against
+// OllamaCloudBaseURL), not the raw, unverified Facts lookup: when the
+// dataset's "ollama-cloud" entry declares an `api` host that does not match
+// our own base URL, the model must come back chat-only with nil limits —
+// exactly as if the dataset had no entry at all — never joined onto the
+// wrong provider's facts.
+//
+// MUTATION: reverting DiscoverModels to call a.facts.Facts(ctx,
+// modelsDevOllamaKey) directly (bypassing the host check) turns this RED —
+// keeper:1b would come back with tools/structured_output/vision and real
+// limits instead of chat-only/nil.
+func TestOllamaCloud_DiscoverModels_HostMismatchYieldsNoEnrichment(t *testing.T) {
+	id := &fakeOllamaIdentity{status: 200, body: ollamaMeOK}
+	a := newOllamaAdapter(id, &fakeModelsProbe{body: `{"data":[{"id":"keeper:1b"}]}`}, staticModelsDevProbe(ollamaHostMismatchDataset, nil))
+
+	models, err := a.DiscoverModels(context.Background(), StoredCredentials{Value: "k"})
+	if err != nil {
+		t.Fatalf("DiscoverModels() error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("survivors = %d, want 1", len(models))
+	}
+	keeper := models[0]
+	if len(keeper.Capabilities) != 1 || keeper.Capabilities[0] != "chat" {
+		t.Fatalf("keeper caps = %v, want [chat] only — the host mismatch must refuse the whole entry, not just narrow it", keeper.Capabilities)
+	}
+	if keeper.ContextLength != nil || keeper.MaxOutputTokens != nil {
+		t.Fatalf("keeper limits = ctx %v out %v, want both nil — a host mismatch is a refusal, not a partial join", keeper.ContextLength, keeper.MaxOutputTokens)
+	}
+}
+
 // TestOllamaCloud_DatasetDownStillListsLiveIDs is mutation row 8: when the
 // models.dev dataset is unavailable, discovery still returns EVERY live id as
 // chat-only — a facts source being down must not make a working account look
