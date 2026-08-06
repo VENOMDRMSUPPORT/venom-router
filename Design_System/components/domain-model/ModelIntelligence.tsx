@@ -281,13 +281,25 @@ export interface ContextWindowDisplayProps {
   source?: React.ReactNode;
 }
 
+// trimTrailingZero turns "1.0" into "1" so a round megatoken count reads "1M",
+// while "1.5" survives intact. The exact token count is never lost - the
+// badge's title attribute carries tokens.toLocaleString().
+function trimTrailingZero(value: string): string {
+  return value.endsWith(".0") ? value.slice(0, -2) : value;
+}
+
 /** ContextWindowDisplay — verified context tokens. Unknown renders as the word, never 0; unverified is ineligible. */
 export function ContextWindowDisplay(props: ContextWindowDisplayProps) {
   const { tokens, verified = false, source } = props;
   if (tokens == null) {
     return <Badge tone="unknown" icon="circle-help" title="Context unknown — ineligible for every tier (fail closed)">ctx unknown</Badge>;
   }
-  const fmt = tokens >= 1000000 ? (tokens / 1000000) + "M" : tokens >= 1000 ? Math.round(tokens / 1000) + "K" : String(tokens);
+  const fmt =
+    tokens >= 1000000
+      ? trimTrailingZero((tokens / 1000000).toFixed(1)) + "M"
+      : tokens >= 1000
+        ? Math.round(tokens / 1000) + "K"
+        : String(tokens);
   return (
     <span className="vn-badge vn-badge--mono" title={tokens.toLocaleString() + " tokens" + (source ? " · " + source : "") + (verified ? " · verified" : " · declared, unverified — not routable")} style={!verified ? { borderStyle: "dashed" } : undefined}>
       <Icon name="scan-text" size={11} />{fmt}{verified ? "" : " ?"}

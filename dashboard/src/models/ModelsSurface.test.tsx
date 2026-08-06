@@ -475,6 +475,80 @@ describe("ModelsSurface — honest context-provenance markers (owner requirement
   });
 });
 
+// The design system's ContextWindowDisplay (Design_System/components/domain-model/
+// ModelIntelligence.tsx) had no rounding on its megatoken branch, so the owner's
+// fleet showed "1M" beside "1.048576M" for two models with genuinely similar
+// limits. These tests exercise the BUILT bundle (@venom/design-system/domain ->
+// dist/domain.mjs) as actually consumed by this surface — the design system
+// package itself has no unit-test infrastructure for React rendering (its own
+// "test" script is three Playwright suites: unit/a11y/visual, none of which
+// render this component), so the behaviour is pinned here, where it is
+// consumed, per the same convention as the "honest context-provenance markers"
+// suite above.
+describe("ModelsSurface — megatoken context rounds to one decimal (owner requirement 2026-08-06)", () => {
+  it("rounds a megatoken context to '1M', never the raw quotient", async () => {
+    mockModels([
+      group({
+        model_id: "model-ctx-megatoken",
+        offerings: [
+          offering({
+            provider_model_id: "ctx-mega-1",
+            effective_context_tokens: 1_048_576,
+            context_provenance: "native",
+          }),
+        ],
+      }),
+    ]);
+    renderSurface();
+    await expandGroup("model-ctx-megatoken");
+
+    const cell = screen.getByTestId("offering-context-ctx-mega-1");
+    expect(cell.textContent ?? "").toMatch(/\b1M\b/);
+    expect(cell.textContent ?? "").not.toMatch(/1\.048576M/);
+  });
+
+  it("keeps a genuinely fractional megatoken context readable as '1.5M'", async () => {
+    mockModels([
+      group({
+        model_id: "model-ctx-fractional-mega",
+        offerings: [
+          offering({
+            provider_model_id: "ctx-mega-2",
+            effective_context_tokens: 1_500_000,
+            context_provenance: "native",
+          }),
+        ],
+      }),
+    ]);
+    renderSurface();
+    await expandGroup("model-ctx-fractional-mega");
+
+    const cell = screen.getByTestId("offering-context-ctx-mega-2");
+    expect(cell.textContent ?? "").toMatch(/\b1\.5M\b/);
+  });
+
+  it("still carries the exact token count in the badge's tooltip after rounding", async () => {
+    mockModels([
+      group({
+        model_id: "model-ctx-mega-tooltip",
+        offerings: [
+          offering({
+            provider_model_id: "ctx-mega-3",
+            effective_context_tokens: 1_048_576,
+            context_provenance: "native",
+          }),
+        ],
+      }),
+    ]);
+    renderSurface();
+    await expandGroup("model-ctx-mega-tooltip");
+
+    const cell = screen.getByTestId("offering-context-ctx-mega-3");
+    const badge = cell.querySelector('[title*="1,048,576 tokens"]');
+    expect(badge).toBeTruthy();
+  });
+});
+
 describe("ModelsSurface — unknowns are never fabricated", () => {
   it("renders an unknown effective context as unknown, and never as 0", async () => {
     mockModels([
