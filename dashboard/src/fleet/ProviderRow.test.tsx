@@ -58,14 +58,14 @@ function renderRow(overrides: Partial<ComponentProps<typeof ProviderRow>> = {}) 
 }
 
 describe("ProviderRow — headline model counts lead with verified-working", () => {
-  it("shows the working count ahead of the discovered total, verbatim", () => {
+  it("shows the live models count", () => {
     renderRow({ workingModelCount: 3, uniqueModelCount: 12 });
-    screen.getByText("3 working / 12 discovered");
+    screen.getByText("3 Live Models");
   });
 
-  it("renders an honest dash for both numbers when the offerings read is unknown", () => {
+  it("renders an honest dash when the offerings read is unknown", () => {
     renderRow({ workingModelCount: null, uniqueModelCount: null });
-    screen.getByText("— working / — discovered");
+    screen.getByText("— Live Models");
   });
 
   it("keeps the verified-working explanation in the tooltip", () => {

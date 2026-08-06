@@ -617,7 +617,7 @@ describe("FleetOverview — Active Providers rows", () => {
     // 1/2, not 1/3: the aggregate is scoped to the COUNTED accounts, so the
     // owner's disabled account cannot hold the provider at "warning" forever.
     screen.getByTitle("1/2 accounts healthy");
-    screen.getByText(/\d+ working \/ \d+ discovered/);
+    screen.getByText(/\d+ Live Models/);
     screen.getByText(/\d+ accounts/);
     screen.getByRole("button", { name: /sync all accounts/i });
     screen.getByRole("button", { name: /refresh models for every account/i });
@@ -1493,7 +1493,7 @@ describe("FleetOverview — ClinePass OAuth subscription contract", () => {
     expect(
       document.querySelector('.vnd-health-dot--warning[title="1/2 accounts healthy"]'),
     ).toBeTruthy();
-    screen.getByText("1 working / 1 discovered");
+    screen.getByText("1 Live Models");
     screen.getByText("2 accounts");
     screen.getByText("1 require action");
   });

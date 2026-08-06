@@ -211,7 +211,7 @@ export default function ProviderRow(props: ProviderRowProps) {
           <div className="vnd-provider-row-sub">
             <span className="vnd-metric-chip vnd-metric-chip--healthy" title={`${workingModelCount ?? 0} out of ${uniqueModelCount ?? 0} models verified working`}>
               <span className="vnd-metric-dot vnd-metric-dot--healthy" aria-hidden="true" />
-              {workingModelCount == null ? "—" : workingModelCount} working / {uniqueModelCount == null ? "—" : uniqueModelCount} discovered
+              {workingModelCount == null ? "—" : workingModelCount} Live Models
             </span>
             <span aria-hidden="true" className="vnd-metric-sep">·</span>
             <span className="vnd-metric-chip vnd-metric-chip--info" title={`${connectedCount} out of ${accounts.length} accounts connected`}>
