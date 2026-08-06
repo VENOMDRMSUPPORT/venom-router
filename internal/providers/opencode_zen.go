@@ -109,6 +109,15 @@ type zenModelFacts struct {
 	// ImageInput is true when the entry's `modalities.input` array
 	// explicitly contains "image" (-> the "vision" capability).
 	ImageInput bool
+	// OutputDeclaresNonTextOnly mirrors modelsdev.go's
+	// declaresNonTextOnlyOutput: true only when `modalities.output` is
+	// EXPLICITLY non-empty and excludes "text" (the pure image/media output
+	// case). An absent or empty output-modality list, or one that includes
+	// "text" (alone or alongside other modalities), is false — same
+	// vacuous-assume-text convention modelsdev.go uses. This is what grounds
+	// zenCapabilities' "chat" decision instead of asserting it
+	// unconditionally.
+	OutputDeclaresNonTextOnly bool
 	// Context/Input/Output mirror the entry's `limit` object
 	// ({context, input?, output} in the live dataset, verified
 	// 2026-08-02); each is nil when the field is absent — never
@@ -210,25 +219,38 @@ func (a *OpenCodeZenAdapter) DiscoverModels(ctx context.Context, creds StoredCre
 // zenCapabilities maps one surviving model's explicit models.dev facts
 // onto the fixed operation vocabulary (internal/models Operations).
 //
-//   - "chat" is asserted for EVERY surviving model rather than read from a
-//     dataset field: the zen gateway serves exactly the OpenAI-compatible
-//     POST /v1/chat/completions surface (03 §3), so a model listed by a
-//     chat-completions gateway is, by that explicit fact, a chat model.
+//   - "chat" is grounded in the entry's own declared output modalities, the
+//     same rule modelsdev.go's OperationsFromFacts/declaresNonTextOnlyOutput
+//     use, NOT asserted unconditionally: modalities.output absent/empty is
+//     vacuously assumed to support text (unknown output must not make a
+//     chat model vanish); modalities.output explicitly containing "text"
+//     gets chat; modalities.output explicitly non-empty and excluding
+//     "text" (pure image/media output) does NOT get chat. (Zen's gateway
+//     serving exactly the OpenAI-compatible POST /v1/chat/completions
+//     surface (03 §3) is true of every listed model, but that says the
+//     gateway CAN carry a chat request — it does not make an entry the
+//     dataset itself declares as image-only output an actual chat model.
+//     Asserting chat unconditionally here was the same bug modelsdev.go's
+//     OperationsFromFacts was fixed for; zen has its own parse and was
+//     missed.)
 //   - "tools" only when the entry declares `tool_call: true`.
 //   - "vision" only when `modalities.input` explicitly contains "image".
 //
 // Nothing else is mapped: the dataset's `reasoning` flag has no operation
 // in the vocabulary and is deliberately dropped, and streaming /
 // structured_output / context_window / image_generation have no explicit
-// per-model models.dev field to ground them — asserting any of them here
-// would be fabrication.
+// per-model models.dev field grounded in THIS parse — asserting any of
+// them here would be fabrication.
 //
 // The literals spell internal/models' operation vocabulary (ParseOperation
 // fails closed on anything else); they are duplicated here rather than
 // imported because internal/providers imports no internal package
 // (layering — same reason fingerprintAPIKey is duplicated).
 func zenCapabilities(facts zenModelFacts) []string {
-	caps := []string{"chat"}
+	var caps []string
+	if !facts.OutputDeclaresNonTextOnly {
+		caps = append(caps, "chat")
+	}
 	if facts.ToolCall {
 		caps = append(caps, "tools")
 	}
@@ -284,7 +306,8 @@ type modelsDevModel struct {
 	Status     string `json:"status"`
 	ToolCall   bool   `json:"tool_call"`
 	Modalities struct {
-		Input []string `json:"input"`
+		Input  []string `json:"input"`
+		Output []string `json:"output"`
 	} `json:"modalities"`
 	Limit struct {
 		Context *int `json:"context"`
@@ -321,11 +344,12 @@ func parseModelsDevFreeSet(body []byte) (map[string]zenModelFacts, error) {
 		}
 		if *m.Cost.Input == 0 && *m.Cost.Output == 0 {
 			freeSet[id] = zenModelFacts{
-				ToolCall:   m.ToolCall,
-				ImageInput: containsImageModality(m.Modalities.Input),
-				Context:    m.Limit.Context,
-				Input:      m.Limit.Input,
-				Output:     m.Limit.Output,
+				ToolCall:                  m.ToolCall,
+				ImageInput:                containsImageModality(m.Modalities.Input),
+				OutputDeclaresNonTextOnly: declaresNonTextOnlyOutput(m.Modalities.Output),
+				Context:                   m.Limit.Context,
+				Input:                     m.Limit.Input,
+				Output:                    m.Limit.Output,
 			}
 		}
 	}

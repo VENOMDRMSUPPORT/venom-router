@@ -387,6 +387,64 @@ func TestOpenCodeZenAdapter_DiscoverModels_MapsExplicitCapabilitiesAndLimits(t *
 	}
 }
 
+// TestOpenCodeZenAdapter_DiscoverModels_ChatGroundedInDeclaredTextOutput
+// mirrors modelsdev.go's OperationsFromFacts/declaresNonTextOnlyOutput
+// grounding rule inside zen's own free-set parse: "chat" must not be
+// asserted unconditionally for every surviving free model. An entry whose
+// modalities.output is explicitly non-empty and excludes "text" (pure
+// image/media output) is not a chat model and must not get the "chat"
+// capability; an entry that explicitly declares "text" among its outputs,
+// or declares no output modalities at all (unknown, vacuously assumed to
+// support text), still gets "chat".
+//
+// MUTATION: reverting zenCapabilities to unconditionally prepend "chat"
+// turns this RED on the "imageonly" case.
+func TestOpenCodeZenAdapter_DiscoverModels_ChatGroundedInDeclaredTextOutput(t *testing.T) {
+	zen := fixtureZenCatalogProbe("imageonly", "textonly", "nomodalities")
+	modelsDev := func(ctx context.Context) ([]byte, error) {
+		return fixtureModelsDevBody(
+			`"imageonly":{"cost":{"input":0,"output":0},"tool_call":true,"modalities":{"output":["image"]}},` +
+				`"textonly":{"cost":{"input":0,"output":0},"modalities":{"output":["text"]}},` +
+				`"nomodalities":{"cost":{"input":0,"output":0}}`,
+		), nil
+	}
+
+	adapter := NewOpenCodeZenAdapter(nil, zen, modelsDev, nil)
+	discovered, err := adapter.DiscoverModels(context.Background(), StoredCredentials{Value: "k"})
+	if err != nil {
+		t.Fatalf("DiscoverModels: %v", err)
+	}
+	byID := map[string]DiscoveredModel{}
+	for _, m := range discovered {
+		byID[m.ProviderModelID] = m
+	}
+	if len(byID) != 3 {
+		t.Fatalf("discovered %d models (%+v), want 3", len(byID), discovered)
+	}
+
+	containsCap := func(id, cap string) bool {
+		for _, c := range byID[id].Capabilities {
+			if c == cap {
+				return true
+			}
+		}
+		return false
+	}
+
+	if containsCap("imageonly", "chat") {
+		t.Fatalf("imageonly capabilities = %v, want NO chat (modalities.output = [\"image\"] declares non-text-only output)", byID["imageonly"].Capabilities)
+	}
+	if !containsCap("imageonly", "tools") {
+		t.Fatalf("imageonly capabilities = %v, want tools present (tool_call:true)", byID["imageonly"].Capabilities)
+	}
+	if !containsCap("textonly", "chat") {
+		t.Fatalf("textonly capabilities = %v, want chat (modalities.output explicitly contains \"text\")", byID["textonly"].Capabilities)
+	}
+	if !containsCap("nomodalities", "chat") {
+		t.Fatalf("nomodalities capabilities = %v, want chat (absent modalities.output is vacuously assumed to support text)", byID["nomodalities"].Capabilities)
+	}
+}
+
 // TestOpenCodeZenAdapter_DiscoverModels_CacheHonoredWithinTTL proves the
 // models.dev parse is served from cache inside the ~10 min TTL and
 // re-fetched after it — with an injected clock, no timers.
