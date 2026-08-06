@@ -905,14 +905,6 @@ body,
   flex-wrap: wrap;
 }
 
-.vnd-report-chips {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1, 4px);
-  flex-wrap: wrap;
-  margin-top: var(--space-1, 4px);
-}
-
 /* The "+N" overflow indicator for a capped capability list (Model Test
    Report). The per-operation icon-box palette this used to sit beside
    (--vnd-cap-*, .vnd-capability-icon-box*) was deleted 2026-08-06: those

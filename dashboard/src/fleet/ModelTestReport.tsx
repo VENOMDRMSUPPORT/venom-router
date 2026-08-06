@@ -201,43 +201,57 @@ export default function ModelTestReport(props: ModelTestReportProps) {
                           Not rated
                         </Badge>
                       )}
-                      {(() => {
-                        // Owner requirement (2026-08-06, reversing
-                        // 2026-08-05a): the design system's ModelCapabilitySet
-                        // renders icon + text label per capability, so
-                        // `vision` and `reasoning` read apart without a
-                        // hover. It has no built-in cap/overflow concept, so
-                        // the "+N" collapse (a deliberate owner requirement,
-                        // still needed once a model exposes many
-                        // capabilities) is computed here, exactly as
-                        // CapabilityChips did: slice to CAPABILITY_CHIP_CAP,
-                        // show the remainder as "+N".
-                        //
-                        // `provenances` (fix round 1, restoring a 2026-08-05
-                        // requirement CapabilityChips' deletion silently
-                        // dropped): a "declared" capability must read apart
-                        // from a "probed" one without hovering.
-                        const shown = offering.capabilities.slice(0, CAPABILITY_CHIP_CAP);
-                        const overflow = offering.capabilities.length - shown.length;
-                        const truths: CapabilityTruths = {};
-                        const provenances: CapabilityProvenances = {};
-                        for (const c of shown) {
-                          truths[c.operation] = c.truth;
-                          provenances[c.operation] = c.provenance;
-                        }
-                        return (
-                          <>
-                            <ModelCapabilitySet
-                              capabilities={shown.map((c) => c.operation)}
-                              truths={truths}
-                              provenances={provenances}
-                            />
-                            {overflow > 0 ? (
-                              <span className="vnd-capability-overflow-box">+{overflow}</span>
-                            ) : null}
-                          </>
-                        );
-                      })()}
+                      {offering.capabilities.length === 0 ? (
+                        // Parity with the Live Models page (ModelsSurface.tsx):
+                        // an offering with zero observed capabilities is a
+                        // real, expected state (nothing has been discovered
+                        // for it yet), not an empty list to render silently.
+                        // The deleted local CapabilityChips component said
+                        // this; ModelCapabilitySet has no such fallback of its
+                        // own, so an empty capabilities array here used to
+                        // render nothing at all.
+                        <span className="vn-caption">
+                          No capability has been observed for this offering yet.
+                        </span>
+                      ) : (
+                        (() => {
+                          // Owner requirement (2026-08-06, reversing
+                          // 2026-08-05a): the design system's ModelCapabilitySet
+                          // renders icon + text label per capability, so
+                          // `vision` and `reasoning` read apart without a
+                          // hover. It has no built-in cap/overflow concept, so
+                          // the "+N" collapse (a deliberate owner requirement,
+                          // still needed once a model exposes many
+                          // capabilities) is computed here, exactly as
+                          // CapabilityChips did: slice to CAPABILITY_CHIP_CAP,
+                          // show the remainder as "+N".
+                          //
+                          // `provenances` (fix round 1, restoring a 2026-08-05
+                          // requirement CapabilityChips' deletion silently
+                          // dropped): a "declared" capability must read apart
+                          // from a "probed" one without hovering.
+                          const shown = offering.capabilities.slice(0, CAPABILITY_CHIP_CAP);
+                          const overflow = offering.capabilities.length - shown.length;
+                          const truths: CapabilityTruths = {};
+                          const provenances: CapabilityProvenances = {};
+                          for (const c of shown) {
+                            truths[c.operation] = c.truth;
+                            provenances[c.operation] = c.provenance;
+                          }
+                          return (
+                            <>
+                              <ModelCapabilitySet
+                                capabilities={shown.map((c) => c.operation)}
+                                truths={truths}
+                                provenances={provenances}
+                              />
+                              {overflow > 0 ? (
+                                <span className="vnd-capability-overflow-box">+{overflow}</span>
+                              ) : null}
+                            </>
+                          );
+                        })()
+                      )}
                     </div>
                   </div>
                   <span data-testid={`report-status-${offering.provider_model_id}`}>
