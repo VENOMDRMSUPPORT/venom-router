@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
@@ -93,16 +94,22 @@ func (fakeAlwaysAdmitReserver) ReserveProbe(_ context.Context, _, requestID, att
 	return "res-" + requestID + "-" + attemptID, nil
 }
 
-// newQualificationTickForTest builds a qualificationTick directly (bypassing
-// BuildQualificationTick's production credential/dispatcher composition) so
-// a test can inject a fake benchmarkStreamFn (withStream) and/or a fake
-// capability-probe transport (withCapabilityProbeResult) and drive
-// real-clock freshness/certification logic without any network I/O — the
-// same shape as benchmark_test.go injecting a fake stream into
+// buildQualificationTickForTest builds a qualificationTick directly
+// (bypassing BuildQualificationTick's production credential/dispatcher
+// composition) so a test can inject a fake benchmarkStreamFn (withStream)
+// and/or a fake capability-probe transport (withCapabilityProbeResult) and
+// drive real-clock freshness/certification logic without any network I/O —
+// the same shape as benchmark_test.go injecting a fake stream into
 // NewBenchmarkHandler. Every capability-probe dependency besides the
 // transport and the reservation is wired over the REAL repos against db,
 // exactly as BuildQualificationTick wires them in production.
-func newQualificationTickForTest(t *testing.T, db *storage.DB, opts ...qualificationTickOption) func(context.Context) error {
+//
+// It returns the raw *qualificationTick (fix round 2, item 2): most tests
+// only need the bound tick.Run value newQualificationTickForTest below
+// hands back, but a test that must assert on a private SELECTION method's
+// own output directly (dueCapabilityProbes, rather than inferring it
+// indirectly through transport call counts) needs the struct itself.
+func buildQualificationTickForTest(t *testing.T, db *storage.DB, opts ...qualificationTickOption) *qualificationTick {
 	t.Helper()
 
 	certRepo := storage.NewCertificationRepo(db, nil)
@@ -129,6 +136,15 @@ func newQualificationTickForTest(t *testing.T, db *storage.DB, opts ...qualifica
 	for _, opt := range opts {
 		opt(tick)
 	}
+	return tick
+}
+
+// newQualificationTickForTest is buildQualificationTickForTest's bound
+// tick.Run value — what every test that only cares about running a round
+// (rather than inspecting a private method's own output) actually wants.
+func newQualificationTickForTest(t *testing.T, db *storage.DB, opts ...qualificationTickOption) func(context.Context) error {
+	t.Helper()
+	tick := buildQualificationTickForTest(t, db, opts...)
 	return tick.Run
 }
 
@@ -720,6 +736,49 @@ func TestQualificationTick_SemanticRejectionNeverRendersAsProbed(t *testing.T) {
 	}
 }
 
+// TestQualificationTick_DefinitiveNegativeSuspendsAndStopsTheTreadmill is
+// fix round 2's ITEM 1 test — the important one. Fix round 1 stopped a
+// semantic rejection from rendering as "probed" (the test above), but left
+// the certification itself certified/supported and the candidate endlessly
+// re-selected: certified -> certified is illegal for ANY outcome, so no
+// verdict from RecordAttempt could ever land, and the read model's honest
+// "declared" hedge was still wrong about what was actually measured and
+// paid for — the provider explicitly said "no". This mirrors Important
+// 4's own terminal-failure suspend (certified -> suspended, edge 6, legal)
+// applied to the OTHER outcome that can never legally reach
+// certified -> certified: a definitive negative.
+func TestQualificationTick_DefinitiveNegativeSuspendsAndStopsTheTreadmill(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 400, ProviderCode: "tool_use_not_supported"}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("round 1: %v", err)
+	}
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("transport calls after round 1 = %d, want 1", got)
+	}
+
+	state, truth := certificationOf(t, db, "acct-1", "m-1", "tools")
+	if state != "suspended" {
+		t.Fatalf("certification state = %q, want \"suspended\" — a definitive negative must stop this capability from staying routable behind evidence that just contradicted it", state)
+	}
+	if truth != "supported" {
+		t.Fatalf("certification truth = %q, want \"supported\" unchanged — Transition's own default branch never touches Truth on the certified -> suspended edge, exactly like Important 4's terminal-failure suspend", truth)
+	}
+
+	// The treadmill: with the row now suspended (not certified/supported),
+	// dueCapabilityProbes' own `c.status = 'certified'` filter must stop
+	// selecting it — a second round must not re-attempt it at all.
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("round 2: %v", err)
+	}
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("transport calls after round 2 = %d, want STILL 1 — a suspended row must never be re-selected; the treadmill must be terminated, not merely slowed by the cooldown", got)
+	}
+}
+
 // TestQualificationTick_RefusedCapabilityProbeRecordsNoSpend is fix round
 // 1's CRITICAL 2(a) test: when ProbeGuard.Admit refuses an attempt (here,
 // deliberately, by configuring a policy with NO per-probe caps at all —
@@ -897,6 +956,36 @@ func TestQualificationTick_NeverProbesADisconnectedAccountsCapability(t *testing
 	}
 }
 
+// TestQualificationTick_NeverProbesAWithdrawnOfferingsCapability is fix
+// round 2's ITEM 3 test: the OTHER half of Important 5's liveness gate —
+// account_model_offerings.availability = 'available' — had no test of its
+// own. A healthy, connected account whose offering has since been
+// withdrawn (the SAME state DiscoveryRepo.withdrawMissing sets when a
+// provider stops listing a model) must not be probed either. Before this
+// test, deleting the `amo.availability = 'available'` condition from
+// dueCapabilityProbes left the entire qualification suite green.
+func TestQualificationTick_NeverProbesAWithdrawnOfferingsCapability(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	if _, err := db.Conn().Exec(`UPDATE account_model_offerings SET availability = 'withdrawn' WHERE account_id = ? AND provider_model_id = ?`, "acct-1", "m-1"); err != nil {
+		t.Fatalf("simulate withdrawn offering: %v", err)
+	}
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if got := transport.callCount(); got != 0 {
+		t.Fatalf("capability probe transport calls = %d, want 0 — a withdrawn offering must never be probed even on a healthy, connected account", got)
+	}
+	if hasSucceededProbeRun(t, db, "acct-1", "m-1", "tools") {
+		t.Fatal("no probe run of any kind should exist for a withdrawn offering")
+	}
+}
+
 // TestQualificationTick_CapsHowManyCapabilityProbesOneRoundRuns is fix round
 // 1's MINOR 6(a) test: with more due capability probes than
 // qualificationCapabilityProbeCap, only that many are actually attempted in
@@ -921,10 +1010,47 @@ func TestQualificationTick_CapsHowManyCapabilityProbesOneRoundRuns(t *testing.T)
 	}
 }
 
+// TestQualificationTick_SelectionNeverIncludesChatOrContextWindow is fix
+// round 2's ITEM 2 test, replacing the transport-call-count assertion below
+// as the thing that actually pins capabilityProbeOperations: it asserts on
+// dueCapabilityProbes' own OUTPUT directly. The reviewer's mutation — adding
+// models.OperationChat and models.OperationContextWindow to
+// capabilityProbeOperations — survived TestQualificationTick_
+// NeverProbesChatOrContextWindow below unnoticed: CapabilityProbe.Run looks
+// up CapabilityFixture/RequiredWitness BEFORE Admit (capabilityprobe.go),
+// so a chat/context_window row bails out with ErrNoCapabilityFixture and
+// never reaches the transport — the zero-call assertion was enforced by the
+// FIXTURE layer, not by the operation list this test's own doc comment
+// claimed it pinned. Asserting on the selection's own output instead means
+// this test fails exactly when the list changes, never when a downstream
+// layer happens to also catch it.
+func TestQualificationTick_SelectionNeverIncludesChatOrContextWindow(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-chat", "prov-chat", "m-chat", "chat")
+	seedCertifiedDeclaredCapability(t, db, "acct-ctx", "prov-ctx", "m-ctx", "context_window")
+
+	tick := buildQualificationTickForTest(t, db)
+	due, err := tick.dueCapabilityProbes(context.Background())
+	if err != nil {
+		t.Fatalf("dueCapabilityProbes: %v", err)
+	}
+	for _, c := range due {
+		if c.Operation == models.OperationChat || c.Operation == models.OperationContextWindow {
+			t.Fatalf("dueCapabilityProbes returned operation %q for offering-operation %q — chat and context_window must never be in capabilityProbeOperations", c.Operation, c.OfferingOperationID)
+		}
+	}
+}
+
 // TestQualificationTick_NeverProbesChatOrContextWindow is fix round 1's
-// MINOR 6(b) test: chat and context_window must never be selected by this
-// pass, regardless of certification state. Mutation this pins: adding
-// OperationChat and OperationContextWindow to capabilityProbeOperations.
+// MINOR 6(b) test, kept as defense-in-depth: even IF the operation list
+// were ever mistakenly widened, CapabilityProbe.Run's own fixture lookup
+// (CapabilityFixture/RequiredWitness) would still refuse chat/context_window
+// before the transport is ever reached. It is NOT, by itself, proof that
+// capabilityProbeOperations excludes them — see
+// TestQualificationTick_SelectionNeverIncludesChatOrContextWindow above for
+// the test that actually pins the operation list itself (fix round 2, item
+// 2 — the reviewer's mutation on capabilityProbeOperations survived THIS
+// test unnoticed for exactly that reason).
 func TestQualificationTick_NeverProbesChatOrContextWindow(t *testing.T) {
 	db := testControlDB(t)
 	// acct-chat's certified "chat" op incidentally also satisfies dueModels'

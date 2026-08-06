@@ -191,11 +191,26 @@ type qualificationTick struct {
 	// fake in tests — never live network either way, per this plan's global
 	// constraint.
 	probeTransport intelligence.ProbeTransport
-	// driver is the narrow RecordAttempt slice of *intelligence.
-	// CertificationDriver usability_verify.go's certRecorder already
-	// declares, reused rather than re-declared for the same purpose here:
-	// turn a probe outcome into a certification-lifecycle move.
-	driver certRecorder
+	// driver is the slice of *intelligence.CertificationDriver
+	// probeOneCapability needs: RecordAttempt (usability_verify.go's
+	// certRecorder already declares this one method; capabilityCertDriver
+	// below widens it by exactly one more) for every outcome except a
+	// definitive negative, and Suspend (edge 6, certified -> suspended) for
+	// exactly that case — fix round 2, finding 1; see probeOneCapability's
+	// own doc comment for why the two read as one policy with Important 4's
+	// terminal-failure suspend, not two.
+	driver capabilityCertDriver
+}
+
+// capabilityCertDriver is the two-method slice of *intelligence.
+// CertificationDriver probeOneCapability needs. It is declared here rather
+// than widening usability_verify.go's certRecorder in place: that interface
+// is also used by the (unrelated) chat-usability path, which never needs
+// Suspend, and growing it there would widen what every caller of THAT path
+// must satisfy for a method only this file's capability-probe path calls.
+type capabilityCertDriver interface {
+	RecordAttempt(ctx context.Context, offeringOperationID string, outcome intelligence.ProbeOutcome, attempts int) (models.Certification, error)
+	Suspend(ctx context.Context, offeringOperationID string, reason intelligence.SuspensionReason) (models.Certification, error)
 }
 
 // qualificationCandidate is one live-offering model this round considered:
@@ -562,7 +577,16 @@ func (t *qualificationTick) probeCapabilities(ctx context.Context) {
 // Because no row exists for this attempt until AFTER cp.Run returns, the
 // guard's in-flight reader is t.probeRuns directly — no self-counting risk,
 // so the inFlightExcluding wrapper probe.go's ProbeHandler needs (its OWN
-// row exists ACROSS the transport call) is not needed here.
+// row exists ACROSS the transport call) is not needed here. The other side
+// of that trade (fix round 2, item 3's follow-up): because the row is
+// written AFTER the transport call rather than across it, THIS tick's own
+// in-flight attempt is invisible to MaxInFlightPerProvider for the whole
+// duration it is actually in flight. probeCapabilities' own sequential
+// `for` loop and the per-round cap already bound how far that can go from
+// THIS tick's side (never more than one at a time, never more than
+// qualificationCapabilityProbeCap per round) — but a CONCURRENT manual probe
+// (POST /offerings/{id}/probe, probe.go) against the same provider would not
+// see this one and would not be held back by it.
 //
 // FIX ROUND 1 — CRITICAL 2(b): the guard is also given a capability-probe
 // cooldown (ProbeGuard.WithCapabilityCooldown, backed by
@@ -595,13 +619,13 @@ func (t *qualificationTick) probeCapabilities(ctx context.Context) {
 // c is selected by dueCapabilityProbes ONLY when its certification is
 // already certified/supported — declared, in this task's own vocabulary,
 // on a LIVE account/offering (Important 5, fix round 1). That is exactly
-// why calling t.driver.RecordAttempt(outcome) UNCONDITIONALLY below is
+// why calling t.driver.RecordAttempt(outcome) for the outcomes below is
 // safe, and not a second interpretation of the outcome:
 // models.Certification.Transition's frozen legal-transition table
 // (models/certification.go) has no certified -> certified edge and no
 // certified -> probing edge. So:
-//   - a genuine capability_response OR semantic_rejection (both Definitive)
-//     targets certified -> certified, which Transition rejects as illegal;
+//   - a genuine capability_response (Definitive, Truth=Supported) targets
+//     certified -> certified, which Transition rejects as illegal;
 //   - any non-definitive/rate-limited/timeout/malformed outcome targets
 //     certified -> probing, which Transition rejects the same way;
 //   - either way RecordAttempt returns a wrapped
@@ -612,18 +636,49 @@ func (t *qualificationTick) probeCapabilities(ctx context.Context) {
 //     certification edge already goes through, not a bespoke check added
 //     here.
 //
-// The one outcome that DOES legally move an already certified/supported row
-// is a genuine terminal failure (401/403, credential-blocked): certified ->
-// suspended (edge 6) is legal, and Transition's own default branch leaves
-// Truth untouched on that edge. This is DELIBERATE (Important 4, fix round
-// 1, pinned by its own test): a credential rejection suspends routing
-// rather than leaving a rejected credential's capability routable forever;
-// recovery is the review drainer's job, not this tick's.
+// Two outcomes are deliberately NOT handed to RecordAttempt at all, because
+// certified -> certified is a dead end for them and leaving it at that would
+// be worse than doing nothing — this tick calls t.driver.Suspend instead,
+// which drives the ONE other edge (6, certified -> suspended) that IS legal
+// from the state dueCapabilityProbes' own selection guarantees c is in.
+// Read together, both are one policy — "certified/supported is not a fact
+// this tick may quietly keep asserting once evidence contradicts it, and
+// the only lever available is suspend, never a truth this probe did not
+// earn" — not two unrelated accidents:
+//   - a genuine terminal failure (401/403, credential-blocked): Important 4,
+//     fix round 1, pinned by its own test. Transition's default branch
+//     leaves Truth untouched on this edge.
+//   - a genuine DEFINITIVE NEGATIVE (Truth=Unsupported — one of the three
+//     reliableUnsupportedCodes fired): fix round 2, finding 1, pinned by
+//     its own test. Left as a plain RecordAttempt call, this is the
+//     TREADMILL fix round 2 measured directly: certified -> certified is
+//     illegal regardless of outcome.Truth, so the certification stays
+//     certified/supported (wrong routing — the provider just told us this
+//     capability is absent) AND the row is never removed from
+//     dueCapabilityProbes' selection (no succeeded run can ever land), so
+//     it is re-attempted, re-paid, every cooldown window, forever. Suspending
+//     it fixes BOTH: models.Routable(state, truth) requires state=certified,
+//     so a suspended row stops being routable immediately, and
+//     dueCapabilityProbes' own `c.status = 'certified'` filter stops
+//     selecting it, so the treadmill terminates. Uses
+//     intelligence.SuspensionCapabilityContradiction — the vocabulary's own
+//     name for exactly "evidence contradicted what was certified".
 //
-// A rejection from RecordAttempt is logged, never returned as this
-// function's own error — the probe attempt itself already succeeded (the
-// run row is real evidence), so there is nothing to retry or warn the
-// caller about beyond what the log line already says.
+// What this does NOT do: SuspensionCapabilityContradiction and
+// SuspensionCredentialBlocked (used by the terminal-failure branch above)
+// both land on the IDENTICAL certified -> suspended STATE — "certified" only
+// distinguishes the reason in the audit trail, never in the routing-facing
+// (state, truth) pair a client actually reads. A suspended capability's
+// chip cannot tell "the provider disowned it" apart from "the credential
+// was rejected" without reading the audit log. That is a limitation of the
+// frozen six-state/seven-reason vocabulary this tick inherits
+// (models/certification.go, certdriver.go's SuspensionReason set) — it is
+// not something to work around here.
+//
+// A rejection from RecordAttempt (or a failure from Suspend) is logged,
+// never returned as this function's own error — the probe attempt itself
+// already succeeded (the run row is real evidence), so there is nothing to
+// retry or warn the caller about beyond what the log line already says.
 func (t *qualificationTick) probeOneCapability(ctx context.Context, c capabilityProbeCandidate) error {
 	guard, err := intelligence.NewProbeGuard(t.probeGuardPolicy, t.probeReserver, t.probeRuns, t.probeRuns, t.probeRuns, t.now)
 	if err != nil {
@@ -669,8 +724,31 @@ func (t *qualificationTick) probeOneCapability(ctx context.Context, c capability
 	}); err != nil {
 		return fmt.Errorf("start probe run: %w", err)
 	}
-	if err := t.probeRuns.Finish(ctx, runID, runExecution, t.now()); err != nil {
-		return fmt.Errorf("finish probe run: %w", err)
+	// FIX ROUND 2, item 3 (non-blocking, addressed): Finish is deferred
+	// under a WithoutCancel context and its error swallowed — mirroring
+	// ProbeHandler.runProbe's own discipline exactly (probe.go). Start has
+	// already claimed the row; a cancellation between here and Finish must
+	// not leave it stuck at 'running' until ReclaimStale eventually sweeps
+	// it. The window this closes is narrow (a couple of local DB
+	// statements, not a whole transport call — Start now runs AFTER the
+	// transport call, per CRITICAL 2(a) above), but matching the manual
+	// path's own choice costs nothing.
+	defer func() {
+		_ = t.probeRuns.Finish(context.WithoutCancel(ctx), runID, runExecution, t.now())
+	}()
+
+	// FIX ROUND 2, finding 1 — see this method's own doc comment for why
+	// this is the SAME policy as Important 4's terminal-failure suspend,
+	// not a second one.
+	if report.Outcome.Definitive && report.Outcome.Truth == models.TruthUnsupported {
+		if _, err := t.driver.Suspend(ctx, c.OfferingOperationID, intelligence.SuspensionCapabilityContradiction); err != nil {
+			t.log.Warn("model qualification: suspending a capability after a definitive negative failed",
+				observability.String("offering_operation_id", c.OfferingOperationID),
+				observability.String("operation", string(c.Operation)),
+				observability.Err(err),
+			)
+		}
+		return nil
 	}
 
 	if _, err := t.driver.RecordAttempt(ctx, c.OfferingOperationID, report.Outcome, attempts); err != nil {
