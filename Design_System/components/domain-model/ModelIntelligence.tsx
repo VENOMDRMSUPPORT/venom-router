@@ -83,16 +83,34 @@ export interface CapabilityIconProps {
   /** Owner requirement (2026-08-05, restored 2026-08-06 after a wholesale
    * component deletion silently dropped it): a "declared" capability must
    * read apart from a "probed" one WITHOUT hovering — never colour alone.
-   * Rendered as `data-provenance` (the CSS hook for the dashed-border
-   * treatment on "declared") AND folded into the tooltip text, so the
-   * distinction survives for keyboard/screen-reader users too. Omit (or
-   * pass "") for a capability with no provenance to show. */
+   * Rendered as `data-provenance` (the CSS hook for the dotted-border
+   * treatment on "declared" — see css/components-domain.css, chosen
+   * specifically because it does not collide with data-truth="unknown"'s own
+   * dashed border) AND as a real accessible carrier (`aria-label` +
+   * `tabIndex`, not `title` alone — see the chip's own JSX below), so the
+   * distinction survives for keyboard and screen-reader users too, not only
+   * sighted mouse-hover ones. Omit (or pass "") for a capability with no
+   * provenance to show. */
   provenance?: CapabilityProvenance;
   showLabel?: boolean;
 }
 
 /** CapabilityIcon — one capability chip: icon + short label + truth treatment
- * + (when earned) a declared/probed provenance treatment. */
+ * + (when earned) a declared/probed provenance treatment.
+ *
+ * The truth/provenance distinction (`title`) used to live ONLY on a `title`
+ * attribute of this plain `<span>` — no role, no tabindex, no aria-label
+ * (whole-branch review, 2026-08-06). A keyboard-only user has no way to
+ * reveal a native `title` tooltip, and `title` on a generic element is not
+ * reliably exposed to assistive tech at all. `tabIndex={0}` puts the chip in
+ * the tab order; `aria-label` gives it a real accessible name carrying the
+ * SAME text as `title`, so a screen reader announces it on focus without
+ * requiring a hover. `role="img"` (the same role CertificationTimeline and
+ * MetadataConfidenceIndicator already use for this exact shape — a small
+ * glyph plus a summary that doesn't line up 1:1 with its visible text)
+ * matters beyond convention here: a plain `<span>`'s implicit role is
+ * "generic", which the ARIA spec marks "name from: prohibited" — `aria-label`
+ * on a bare `<span>` can be dropped by the accessibility tree entirely. */
 export function CapabilityIcon(props: CapabilityIconProps) {
   const { capability, truth = "unknown", provenance = "", showLabel = true } = props;
   const glyph = DOMAIN_ICON_MAP[capability] || "circle-help";
@@ -100,7 +118,15 @@ export function CapabilityIcon(props: CapabilityIconProps) {
   const provenanceLabel = provenance ? PROVENANCE_LABEL[provenance] : "";
   const title = nice + ": " + truth + (provenanceLabel ? " (" + provenanceLabel + ")" : "");
   return (
-    <span className="vn-cap" data-truth={truth} data-provenance={provenance || undefined} title={title}>
+    <span
+      className="vn-cap"
+      data-truth={truth}
+      data-provenance={provenance || undefined}
+      title={title}
+      role="img"
+      aria-label={title}
+      tabIndex={0}
+    >
       <Icon name={glyph} size={12} label={showLabel ? undefined : title} />
       {showLabel ? nice : null}
     </span>

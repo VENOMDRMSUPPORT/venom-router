@@ -18,16 +18,22 @@
 .vn-cap[data-truth="unknown"] { border-style: dashed; color: var(--status-unknown-fg); background: transparent; }
 /* "declared" (certified from the provider's own catalog metadata, no probe
    evidence) reads apart from "probed" (proven by a real runtime measurement)
-   WITHOUT hovering — dashed, the same mark ContextWindowDisplay already uses
-   for "declared, unverified — not routable" (see that component's own
-   `style={!verified ? {borderStyle:"dashed"} : undefined}`), so "dashed
-   border = declared, not proven" stays one consistent rule across the
-   design system rather than a second, differently-styled convention.
-   "probed" and "" (not certified+supported, so provenance does not apply)
-   keep the plain solid border the truth rules above already set. Declared
-   AFTER the data-truth rules so it wins ONLY the border-style it sets,
-   leaving each truth's own color/background untouched. */
-.vn-cap[data-provenance="declared"] { border-style: dashed; }
+   WITHOUT hovering. It does NOT reuse data-truth="unknown"'s dashed border
+   (whole-branch review, 2026-08-06 — a prior version of this rule did, and
+   collided with it): on a surface that shows the chip alone, with no truth
+   badge alongside it (the Model Report modal), "unknown" (dashed, grey) and
+   "supported declared" (dashed, green) then differ ONLY by colour — exactly
+   what the rule at the top of this file forbids. `dotted` stays inside this
+   file's own border-style vocabulary (solid = plain/earned-by-probe, dashed =
+   missing evidence/inaction — see data-truth="unknown" above and
+   [data-outcome="skipped"]/[data-state="blocked"] below) while adding a
+   THIRD, visually distinct value: a declared capability is never mistaken
+   for an unproven one by shape alone, regardless of which truth colour it
+   carries. "probed" and "" (not certified+supported, so provenance does not
+   apply) keep the plain solid border the truth rules above already set.
+   Declared AFTER the data-truth rules so it wins ONLY the border-style it
+   sets, leaving each truth's own color/background untouched. */
+.vn-cap[data-provenance="declared"] { border-style: dotted; }
 .vn-cap-set { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 
 /* ---- Certification ------------------------------------------------------- */
