@@ -15,24 +15,90 @@ import (
 	"testing"
 	"time"
 
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
 
+// qualificationTickOption configures a test-only qualificationTick beyond its
+// base wiring. Task 3 added capability-probe dependencies (a fake transport;
+// the real driver/probeRuns pair over the same db) that most of this file's
+// existing tests never touch, so they are opt-in rather than growing
+// newQualificationTickForTest's positional parameter list a second time.
+type qualificationTickOption func(*qualificationTick)
+
+// withStream overrides the fake benchmarkStreamFn the performance-scoring
+// pass (dueModels/measureOne) calls — every pre-existing test in this file
+// uses this exactly where it used to pass stream directly as
+// newQualificationTickForTest's third positional argument.
+func withStream(stream benchmarkStreamFn) qualificationTickOption {
+	return func(tick *qualificationTick) { tick.stream = stream }
+}
+
+// withCapabilityProbeResult wires a fake, controllable intelligence.
+// ProbeTransport that returns res for every call — the ONE seam task 3's
+// capability-probe tests fake (fakeProbeTransport is probe_test.go's own
+// type, reused here rather than redefined — same package). Every other
+// capability-probe dependency (probe_runs bookkeeping, the certification
+// driver, the guard's spend/in-flight/cooldown reads) stays the REAL
+// storage-backed one this file's default wiring already builds over the
+// same test db — only the reservation itself is faked
+// (fakeAlwaysAdmitReserver below), since a real reservation additionally
+// requires quota-window fixtures no test in this file otherwise needs.
+func withCapabilityProbeResult(res intelligence.ProbeResult) qualificationTickOption {
+	return func(tick *qualificationTick) {
+		tick.probeTransport = &fakeProbeTransport{available: true, result: res}
+	}
+}
+
+// fakeAlwaysAdmitReserver is the one non-storage-backed capability-probe
+// dependency this file's tests use: a real reservation
+// (storage.QuotaReservationRepo.Reserve) fails closed with
+// quota.ErrNoApplicableWindow unless quota-window rows already exist for the
+// account, and this file's fixtures have no reason to carry that unrelated
+// setup just to prove a capability-probe outcome. It always admits,
+// deterministically, never touching the database.
+type fakeAlwaysAdmitReserver struct{}
+
+func (fakeAlwaysAdmitReserver) ReserveProbe(_ context.Context, _, requestID, attemptID string, _ []quota.Allocation) (string, error) {
+	return "res-" + requestID + "-" + attemptID, nil
+}
+
 // newQualificationTickForTest builds a qualificationTick directly (bypassing
 // BuildQualificationTick's production credential/dispatcher composition) so
-// a test can inject a fake benchmarkStreamFn and drive real-clock freshness
-// logic without any network I/O — the same shape as benchmark_test.go
-// injecting a fake stream into NewBenchmarkHandler.
-func newQualificationTickForTest(t *testing.T, db *storage.DB, stream benchmarkStreamFn) func(context.Context) error {
+// a test can inject a fake benchmarkStreamFn (withStream) and/or a fake
+// capability-probe transport (withCapabilityProbeResult) and drive
+// real-clock freshness/certification logic without any network I/O — the
+// same shape as benchmark_test.go injecting a fake stream into
+// NewBenchmarkHandler. Every capability-probe dependency besides the
+// transport and the reservation is wired over the REAL repos against db,
+// exactly as BuildQualificationTick wires them in production.
+func newQualificationTickForTest(t *testing.T, db *storage.DB, opts ...qualificationTickOption) func(context.Context) error {
 	t.Helper()
+
+	certRepo := storage.NewCertificationRepo(db, nil)
+	certAuditor := newCertificationAuditorAdapter(newAuditEmitter(db, nil))
+	driver, err := intelligence.NewCertificationDriver(certRepo, certAuditor, intelligence.DefaultProbeRetryBudget, nil)
+	if err != nil {
+		t.Fatalf("NewCertificationDriver: %v", err)
+	}
+
 	tick := &qualificationTick{
 		catalog: storage.NewCatalogRepo(db),
 		runs:    storage.NewBenchmarkRunRepo(db, nil),
-		stream:  stream,
 		newID:   newOAuthTransactionID,
 		now:     time.Now,
 		log:     observability.Default(),
+
+		db:               db,
+		probeRuns:        storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown),
+		probeReserver:    fakeAlwaysAdmitReserver{},
+		probeGuardPolicy: intelligence.DefaultProbeSafetyPolicy(),
+		driver:           driver,
+	}
+	for _, opt := range opts {
+		opt(tick)
 	}
 	return tick.Run
 }
@@ -162,10 +228,10 @@ func TestQualificationTick_ScoresAModelThatHasNeverBeenMeasured(t *testing.T) {
 	seedLiveChatOffering(t, db, "acct-1", "prov-1", "m-1")
 
 	var streamed int
-	tick := newQualificationTickForTest(t, db, func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
+	tick := newQualificationTickForTest(t, db, withStream(func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
 		streamed++
 		return benchmarkSample{OK: true, TTFT: 200 * time.Millisecond, TokensPerSec: 40}, nil
-	})
+	}))
 
 	if err := tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
@@ -203,10 +269,10 @@ func TestQualificationTick_SkipsAModelMeasuredRecently(t *testing.T) {
 	seedBenchmarkRun(t, db, "m-1", time.Now().Add(-time.Hour))
 
 	var streamed int
-	tick := newQualificationTickForTest(t, db, func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
+	tick := newQualificationTickForTest(t, db, withStream(func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
 		streamed++
 		return benchmarkSample{OK: true}, nil
-	})
+	}))
 	if err := tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
@@ -226,10 +292,10 @@ func TestQualificationTick_ReMeasuresAfterTheTTLExpires(t *testing.T) {
 	seedBenchmarkRun(t, db, "m-1", time.Now().Add(-qualificationFreshnessTTL-time.Hour))
 
 	var streamed int
-	tick := newQualificationTickForTest(t, db, func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
+	tick := newQualificationTickForTest(t, db, withStream(func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
 		streamed++
 		return benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 50}, nil
-	})
+	}))
 	if err := tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
@@ -250,10 +316,10 @@ func TestQualificationTick_SkipsAModelWithNoLiveOffering(t *testing.T) {
 	p3aSeedAccount(t, db, "acct-dead", "prov-dead")
 
 	var streamed int
-	tick := newQualificationTickForTest(t, db, func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
+	tick := newQualificationTickForTest(t, db, withStream(func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
 		streamed++
 		return benchmarkSample{OK: true}, nil
-	})
+	}))
 	if err := tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
@@ -272,13 +338,13 @@ func TestQualificationTick_NeverFabricatesARatingFromAPartialRun(t *testing.T) {
 	seedLiveChatOffering(t, db, "acct-1", "prov-1", "m-1")
 
 	calls := 0
-	tick := newQualificationTickForTest(t, db, func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
+	tick := newQualificationTickForTest(t, db, withStream(func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
 		calls++
 		if calls == 2 {
 			return benchmarkSample{OK: false}, nil
 		}
 		return benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}, nil
-	})
+	}))
 	if err := tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
@@ -313,10 +379,10 @@ func TestQualificationTick_CapsHowManyModelsOneRoundMeasures(t *testing.T) {
 	}
 
 	var streamed int
-	tick := newQualificationTickForTest(t, db, func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
+	tick := newQualificationTickForTest(t, db, withStream(func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
 		streamed++
 		return benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}, nil
-	})
+	}))
 	if err := tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
@@ -351,10 +417,10 @@ func TestQualificationTick_HandlesAFleetLargerThanOnePage(t *testing.T) {
 	}
 
 	var streamed int
-	tick := newQualificationTickForTest(t, db, func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
+	tick := newQualificationTickForTest(t, db, withStream(func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
 		streamed++
 		return benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}, nil
-	})
+	}))
 	if err := tick(context.Background()); err != nil {
 		t.Fatalf("tick across %d models spanning multiple ListOfferings pages: %v", total, err)
 	}
@@ -382,5 +448,135 @@ func TestBuildQualificationTick_ConstructsAWorkingTick(t *testing.T) {
 	}
 	if err := run(context.Background()); err != nil {
 		t.Fatalf("run() on an empty fleet: %v", err)
+	}
+}
+
+// --- Task 3: upgrade declared capabilities to measured ones ---------------
+
+// seedCertifiedDeclaredCapability builds one non-chat capability already
+// certified/supported FROM ITS DECLARATION — exactly certifyDeclaredCapabilities'
+// own product (usability_account.go) — through the real production write
+// path (seedCertifiedOffering: intelligence.DiscoveryRepo.Apply +
+// CertificationDriver.StartProbe/RecordAttempt), never a raw INSERT, so the
+// seeded row cannot drift from what production actually certifies. It also
+// grants the account generous local-safety quota windows so the REAL
+// reservation engine wired into the capability-probe guard
+// (newQualificationTickForTest's default probeRuns/driver wiring) can
+// actually admit a probe attempt — the one piece of this fixture that is not
+// itself under test (only the transport is faked; see
+// withCapabilityProbeResult).
+func seedCertifiedDeclaredCapability(t *testing.T, db *storage.DB, accountID, providerID, providerModelID, operation string) {
+	t.Helper()
+	seedCertifiedOffering(t, db, seedArgs{
+		AccountID:     accountID,
+		ProviderID:    providerID,
+		ModelID:       providerModelID,
+		Capabilities:  []string{operation},
+		Certified:     []string{operation},
+		ContextTokens: 8192,
+	})
+
+	windowRepo := storage.NewQuotaWindowRepo(db, nil, nil)
+	if err := windowRepo.EnsureLocalSafetyWindows(context.Background(), accountID, generousLocalSafetySpecs(t)); err != nil {
+		t.Fatalf("EnsureLocalSafetyWindows: %v", err)
+	}
+}
+
+// offeringOperationIDFor resolves the offering_operations row id for one
+// (account, provider-model, operation) triple — the join key
+// hasSucceededProbeRun/certificationOf both need to address the exact row
+// seedCertifiedDeclaredCapability built.
+func offeringOperationIDFor(t *testing.T, db *storage.DB, accountID, providerModelID, operation string) string {
+	t.Helper()
+	var id string
+	if err := db.Conn().QueryRow(
+		`SELECT id FROM offering_operations WHERE account_id = ? AND provider_model_id = ? AND operation = ?`,
+		accountID, providerModelID, operation,
+	).Scan(&id); err != nil {
+		t.Fatalf("resolve offering_operation id for (%q,%q,%q): %v", accountID, providerModelID, operation, err)
+	}
+	return id
+}
+
+// hasSucceededProbeRun reports whether a SUCCEEDED probe_runs row exists for
+// the offering-operation identified by (accountID, providerModelID,
+// operation) — read straight from probe_runs, the same table
+// intelligence/readmodel.go's provenance derivation
+// (ProbeRunRepo.SucceededOfferingOperationIDs) reads.
+func hasSucceededProbeRun(t *testing.T, db *storage.DB, accountID, providerModelID, operation string) bool {
+	t.Helper()
+	opID := offeringOperationIDFor(t, db, accountID, providerModelID, operation)
+	var n int
+	if err := db.Conn().QueryRow(
+		`SELECT COUNT(*) FROM probe_runs WHERE offering_operation_id = ? AND execution = 'succeeded'`,
+		opID,
+	).Scan(&n); err != nil {
+		t.Fatalf("count succeeded probe runs for %q: %v", opID, err)
+	}
+	return n > 0
+}
+
+// certificationOf reads the certification row's (status, capability_truth)
+// straight from the certifications table for the offering-operation
+// identified by (accountID, providerModelID, operation) — never a
+// projection, so a test asserting on it is checking what production actually
+// persisted.
+func certificationOf(t *testing.T, db *storage.DB, accountID, providerModelID, operation string) (state, truth string) {
+	t.Helper()
+	opID := offeringOperationIDFor(t, db, accountID, providerModelID, operation)
+	if err := db.Conn().QueryRow(
+		`SELECT status, capability_truth FROM certifications WHERE offering_operation_id = ?`,
+		opID,
+	).Scan(&state, &truth); err != nil {
+		t.Fatalf("read certification for %q: %v", opID, err)
+	}
+	return state, truth
+}
+
+// TestQualificationTick_UpgradesADeclaredCapabilityToProbed is task-3's Step
+// 1 test: a non-chat capability already certified/supported from its
+// declaration, with no succeeded probe run yet, must be probed — and a
+// genuine capability response (2xx, the required witness) must leave a
+// SUCCEEDED probe_runs row behind. That row is exactly the fact
+// intelligence/readmodel.go's provenance derivation (proved[op], built from
+// ProbeRunRepo.SucceededOfferingOperationIDs) reads to move the chip from
+// "declared" to "probed" — without it the chip would keep reading "declared"
+// forever, even once a real probe exists to prove it.
+func TestQualificationTick_UpgradesADeclaredCapabilityToProbed(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	tick := newQualificationTickForTest(t, db,
+		withCapabilityProbeResult(intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if !hasSucceededProbeRun(t, db, "acct-1", "m-1", "tools") {
+		t.Fatal("no succeeded probe run recorded; the read model derives provenance=probed from exactly this, so the chip would keep reading 'declared' forever")
+	}
+}
+
+// TestQualificationTick_RateLimitNeverDowngradesADeclaredCapability is
+// task-3's second Step 1 test, and this task's single most important
+// assertion (04 §2's hard rule): a rate-limited probe attempt against an
+// already certified/supported capability must leave the certification
+// BYTE-IDENTICAL. intelligence.ClassifyProbeSignal maps a 429 to a
+// non-definitive, retryable outcome, and models.Certification.Transition has
+// no certified -> probing edge (models/certification.go's frozen legal-
+// transition table), so CertificationDriver.RecordAttempt's own state
+// machine rejects the write outright — never a second, bespoke "is this
+// outcome definitive" check added by this tick.
+func TestQualificationTick_RateLimitNeverDowngradesADeclaredCapability(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	tick := newQualificationTickForTest(t, db,
+		withCapabilityProbeResult(intelligence.ProbeResult{HTTPStatus: 429}))
+	_ = tick(context.Background())
+
+	state, truth := certificationOf(t, db, "acct-1", "m-1", "tools")
+	if state != "certified" || truth != "supported" {
+		t.Fatalf("certification = %s/%s, want certified/supported unchanged — 04 §2's hard rule is that a rate limit must never flip a capability to false", state, truth)
 	}
 }

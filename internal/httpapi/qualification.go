@@ -33,9 +33,14 @@ package httpapi
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/accounts/application"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/execution"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
@@ -78,6 +83,50 @@ const qualificationFreshnessTTL = 24 * time.Hour
 // skipped and why.
 const qualificationPerRoundCap = 5
 
+// qualificationCapabilityProbeCap bounds how many capability probes ONE tick
+// round will run — mirroring qualificationPerRoundCap's own reasoning: a
+// fleet whose declared tools/structured_output/vision capabilities have
+// never been probed would otherwise fan out unboundedly the first round
+// after this capability landed. These probes are far cheaper than a
+// 3-request benchmark suite (one fixed tiny fixture request each), but the
+// same "bounded catch-up, never silent" discipline still applies, so the
+// number is kept identical to qualificationPerRoundCap rather than invented
+// a second time. probeCapabilities logs exactly what was deferred, for the
+// same reason qualificationPerRoundCap's own doc comment gives.
+const qualificationCapabilityProbeCap = 5
+
+// capabilityProbeOperations is the fixed three-value subset of the non-chat
+// operation vocabulary this tick may ever probe (task-3 of the automatic-
+// model-qualification plan). tools/structured_output/vision are genuinely
+// probeable now that the probe port carries tools/parts/response-format
+// (Task 1, commit 52cb717). context_window is Task 4's own, separately
+// gated, far more expensive probe; reasoning and image_generation have no
+// wire expression on this seam (execution.NormalizedResponse carries
+// neither a reasoning field nor an image output part, confirmed by a
+// repo-wide search — see task-3-report.md); chat is never probed here at
+// all — it is proven only by the usability sweep's real use.
+var capabilityProbeOperations = []models.Operation{
+	models.OperationTools,
+	models.OperationStructuredOutput,
+	models.OperationVision,
+}
+
+// capabilityProbeCandidate is one offering-operation a round may probe: a
+// non-chat capability already certified/supported FROM ITS DECLARATION
+// (certifyDeclaredCapabilities, usability_account.go) with no succeeded
+// probe run yet — exactly the fact intelligence/readmodel.go's
+// projectCapabilities reads (proved[op], derived from
+// ProbeRunRepo.SucceededOfferingOperationIDs) to decide whether a
+// certified/supported capability's provenance renders as "declared" or
+// "probed". Probing it is what moves that chip.
+type capabilityProbeCandidate struct {
+	OfferingOperationID string
+	Operation           models.Operation
+	AccountID           string
+	ProviderID          string
+	ProviderModelID     string
+}
+
 // qualificationTick is the scheduler-tick body. Dependencies are closures
 // over the existing repos/seam, mirroring tokenRefreshTick/usabilityTick's
 // shape — the composition-root wiring lives in BuildQualificationTick, and a
@@ -89,6 +138,39 @@ type qualificationTick struct {
 	newID   func() string
 	now     func() time.Time
 	log     *observability.Logger
+
+	// db backs dueCapabilityProbes' own raw query: none of catalog/runs above
+	// is shaped for the offering_operations/certifications/probe_runs
+	// three-way join a "certified/supported, no succeeded probe run yet"
+	// selection needs, so this tick reads it directly rather than growing a
+	// storage-repo method for a query only this one caller needs.
+	db *storage.DB
+	// probeRuns is shared for BOTH bookkeeping (Start/Finish/CountAttempts,
+	// exactly like ProbeHandler.runProbe) AND every intelligence.ProbeGuard
+	// read port that is not the reservation itself (ProbeSpendReader,
+	// ProbeInFlightReader via the inFlightExcluding wrapper below,
+	// ProbeCooldownReader) — one repo, never a second instance that could
+	// disagree with the first about what has already run.
+	probeRuns *storage.ProbeRunRepo
+	// probeReserver is the ONE quota-consuming port a capability probe's
+	// admission needs beyond probeRuns above.
+	probeReserver intelligence.ProbeReserver
+	// probeGuardPolicy is the safety policy every capability-probe attempt is
+	// admitted against — see BuildQualificationTick's own assignment for the
+	// task-3 brief's required concurrency-limit decision and its reasoning.
+	probeGuardPolicy intelligence.ProbeSafetyPolicy
+	// probeTransport is the seam intelligence.CapabilityProbe actually calls:
+	// the production probeTransportAdapter (controlmux.go:403's own
+	// construction, independently composed here exactly as
+	// buildBenchmarkStreamFn already is above) in production, a fixed-result
+	// fake in tests — never live network either way, per this plan's global
+	// constraint.
+	probeTransport intelligence.ProbeTransport
+	// driver is the narrow RecordAttempt slice of *intelligence.
+	// CertificationDriver usability_verify.go's certRecorder already
+	// declares, reused rather than re-declared for the same purpose here:
+	// turn a probe outcome into a certification-lifecycle move.
+	driver certRecorder
 }
 
 // qualificationCandidate is one live-offering model this round considered:
@@ -112,6 +194,13 @@ type qualificationCandidate struct {
 // stop the rest of the round from being measured, mirroring runBenchmarkSuite's
 // own "one bad sample never loses the others" discipline one level up.
 func (t *qualificationTick) Run(ctx context.Context) error {
+	// Task 3: upgrade declared capabilities to measured ones. Run first (its
+	// own failure is logged, never fatal to the round — see probeCapabilities'
+	// own doc comment) so the performance-scoring pass below still runs
+	// exactly as it always has, regardless of whether any capability probing
+	// was due this round.
+	t.probeCapabilities(ctx)
+
 	due, err := t.dueModels(ctx)
 	if err != nil {
 		return fmt.Errorf("httpapi: model qualification: list due models: %w", err)
@@ -274,6 +363,214 @@ func (t *qualificationTick) measureOne(ctx context.Context, candidate qualificat
 	return nil
 }
 
+// dueCapabilityProbes resolves every offering-operation that is
+// certified/supported, whose operation is one of capabilityProbeOperations,
+// and which has no succeeded probe_runs row yet — a direct query against
+// offering_operations/certifications/probe_runs (none of t.catalog's
+// existing methods is shaped for this three-way join), in deterministic
+// (offering_operation_id ASC) order. Every matching row is returned
+// unbounded here; probeCapabilities applies qualificationCapabilityProbeCap
+// and logs what it defers, mirroring dueModels/Run's own cap-after-select
+// shape.
+func (t *qualificationTick) dueCapabilityProbes(ctx context.Context) ([]capabilityProbeCandidate, error) {
+	placeholders := make([]string, len(capabilityProbeOperations))
+	args := make([]any, len(capabilityProbeOperations))
+	for i, op := range capabilityProbeOperations {
+		placeholders[i] = "?"
+		args[i] = string(op)
+	}
+
+	query := `SELECT oo.id, oo.operation, oo.account_id, oo.provider_id, oo.provider_model_id
+		FROM offering_operations oo
+		JOIN certifications c ON c.offering_operation_id = oo.id
+		WHERE c.status = 'certified' AND c.capability_truth = 'supported'
+		  AND oo.operation IN (` + strings.Join(placeholders, ",") + `)
+		  AND NOT EXISTS (
+		    SELECT 1 FROM probe_runs pr
+		    WHERE pr.offering_operation_id = oo.id AND pr.execution = 'succeeded'
+		  )
+		ORDER BY oo.id ASC`
+
+	rows, err := t.db.Conn().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("httpapi: model qualification: list due capability probes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []capabilityProbeCandidate
+	for rows.Next() {
+		var c capabilityProbeCandidate
+		var opStr string
+		if err := rows.Scan(&c.OfferingOperationID, &opStr, &c.AccountID, &c.ProviderID, &c.ProviderModelID); err != nil {
+			return nil, fmt.Errorf("httpapi: model qualification: scan due capability probe: %w", err)
+		}
+		op, err := models.ParseOperation(opStr)
+		if err != nil {
+			return nil, fmt.Errorf("httpapi: model qualification: due capability probe: %w", err)
+		}
+		c.Operation = op
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("httpapi: model qualification: list due capability probes: %w", err)
+	}
+	return out, nil
+}
+
+// probeCapabilities runs one round of task 3 (automatic-model-qualification
+// plan): for every candidate dueCapabilityProbes selects, run the existing
+// intelligence.CapabilityProbe through the existing intelligence.ProbeGuard
+// and record whatever it produces through the existing
+// CertificationDriver.RecordAttempt — never a second interpretation of the
+// outcome (04 §2's hard rule; intelligence.ClassifyProbeSignal already
+// encodes it, see probeOneCapability's own doc comment for exactly how that
+// holds even though every candidate here starts already certified/
+// supported).
+//
+// A LIST-phase failure is logged and this round's capability probing is
+// simply skipped — never fatal to the tick as a whole, exactly like
+// dueModels' own failure aborts only the performance-scoring half of Run,
+// never the other. A per-candidate failure is likewise logged and the round
+// continues with the rest, mirroring measureOne's "one bad row never aborts
+// the rest" discipline one level up.
+func (t *qualificationTick) probeCapabilities(ctx context.Context) {
+	due, err := t.dueCapabilityProbes(ctx)
+	if err != nil {
+		t.log.Warn("model qualification: listing due capability probes failed, skipping this round's capability probing",
+			observability.Err(err))
+		return
+	}
+	if len(due) == 0 {
+		return
+	}
+
+	probe := due
+	if len(probe) > qualificationCapabilityProbeCap {
+		probe = due[:qualificationCapabilityProbeCap]
+	}
+	if skipped := len(due) - len(probe); skipped > 0 {
+		skippedIDs := make([]string, 0, skipped)
+		for _, c := range due[len(probe):] {
+			skippedIDs = append(skippedIDs, c.OfferingOperationID)
+		}
+		// Logged, never silent — see qualificationPerRoundCap's own doc
+		// comment for why a cap nobody can see is a dishonesty this project
+		// keeps fixing.
+		t.log.Info("model qualification: capability-probe per-round cap reached, deferring the rest to a later round",
+			observability.Int("cap", qualificationCapabilityProbeCap),
+			observability.Int("due", len(due)),
+			observability.Int("deferred", skipped),
+			observability.String("deferred_offering_operation_ids", fmt.Sprintf("%v", skippedIDs)),
+		)
+	}
+
+	for _, c := range probe {
+		if err := t.probeOneCapability(ctx, c); err != nil {
+			t.log.Warn("model qualification: probing one capability failed, continuing with the rest of the round",
+				observability.String("offering_operation_id", c.OfferingOperationID),
+				observability.String("operation", string(c.Operation)),
+				observability.Err(err),
+			)
+		}
+	}
+}
+
+// probeOneCapability runs exactly one capability-probe attempt for c and
+// records its outcome. The probe_runs row (Start/Finish) is written
+// regardless of what the certification driver ends up doing with the
+// outcome below — a succeeded row is exactly what intelligence/readmodel.go's
+// SucceededOfferingOperationIDs reads to derive provenance=probed,
+// independent of the certification lifecycle itself.
+//
+// c is selected by dueCapabilityProbes ONLY when its certification is
+// already certified/supported — declared, in this task's own vocabulary.
+// That is exactly why calling t.driver.RecordAttempt(outcome) UNCONDITIONALLY
+// below is safe, and not a second interpretation of the outcome:
+// models.Certification.Transition's frozen legal-transition table
+// (models/certification.go) has no certified -> certified edge and no
+// certified -> probing edge. So:
+//   - a genuine capability_response (Definitive, Truth=Supported) targets
+//     certified -> certified, which Transition rejects as illegal;
+//   - any non-definitive/infrastructure outcome (rate-limited, timeout,
+//     malformed, …) targets certified -> probing, which Transition rejects
+//     the same way;
+//   - either way RecordAttempt returns a wrapped
+//     models.ErrIllegalCertificationTransition and the certification is
+//     returned byte-for-byte unchanged (CompareAndSwap is never reached) —
+//     the exact "never downgrade on missing evidence" invariant this task
+//     exists to prove, enforced by the SAME frozen table every other
+//     certification edge already goes through, not a bespoke check added
+//     here.
+//
+// The one outcome that DOES legally move an already certified/supported row
+// is a genuine terminal failure (401/403, credential-blocked): certified ->
+// suspended (edge 6) is legal, and Transition's own default branch leaves
+// Truth untouched on that edge — a credential problem suspends routing
+// without ever fabricating a truth this probe attempt did not earn.
+//
+// A rejection from RecordAttempt is logged, never returned as this
+// function's own error — the probe attempt itself already succeeded (the
+// run row above is real evidence), so there is nothing to retry or warn the
+// caller about beyond what the log line already says.
+func (t *qualificationTick) probeOneCapability(ctx context.Context, c capabilityProbeCandidate) error {
+	attempts, err := t.probeRuns.CountAttempts(ctx, c.OfferingOperationID)
+	if err != nil {
+		return fmt.Errorf("count probe attempts: %w", err)
+	}
+	attempts++ // this attempt
+
+	runID := t.newID()
+	if err := t.probeRuns.Start(ctx, storage.ProbeRunParams{
+		ID: runID, OfferingOperationID: c.OfferingOperationID, AccountID: c.AccountID, ProviderID: c.ProviderID,
+		Operation: string(c.Operation), Class: intelligence.ProbeStandard,
+		Allocations: probeEstimateAllocations(c.Operation), StartedAt: t.now(),
+	}); err != nil {
+		return fmt.Errorf("start probe run: %w", err)
+	}
+	// Defaults to terminal_failure, mirroring ProbeHandler.runProbe's own
+	// choice: a guard refusal or transport error below never reaches the
+	// line that overwrites this, so the run is honestly recorded as failed
+	// rather than left "running" forever.
+	runExecution := intelligence.ProbeTerminalFailure
+	defer func() {
+		_ = t.probeRuns.Finish(context.WithoutCancel(ctx), runID, runExecution, t.now())
+	}()
+
+	// InFlightProbes must not count this run's own just-written row — see
+	// inFlightExcluding's doc comment (probe.go) for why a self-counting
+	// reader would make every probe refuse itself under the default cap of 1.
+	guard, err := intelligence.NewProbeGuard(t.probeGuardPolicy, t.probeReserver, t.probeRuns,
+		inFlightExcluding{runs: t.probeRuns, excludeRun: runID}, t.probeRuns, t.now)
+	if err != nil {
+		return fmt.Errorf("build probe guard: %w", err)
+	}
+	cp, err := intelligence.NewCapabilityProbe(t.probeTransport, guard, t.now)
+	if err != nil {
+		return fmt.Errorf("build capability probe: %w", err)
+	}
+
+	report, err := cp.Run(ctx, intelligence.ProbeRequest{
+		AccountID: c.AccountID, ProviderID: c.ProviderID, ProviderModelID: c.ProviderModelID,
+		OfferingOperationID: c.OfferingOperationID, Operation: c.Operation,
+	})
+	if err != nil {
+		// A guard refusal (cap/cooldown/concurrency) or a transport error:
+		// nothing was learned about the capability, so nothing is recorded
+		// beyond the terminal_failure run row Finish already writes.
+		return fmt.Errorf("run capability probe: %w", err)
+	}
+
+	runExecution = report.Outcome.Execution
+	if _, err := t.driver.RecordAttempt(ctx, c.OfferingOperationID, report.Outcome, attempts); err != nil {
+		t.log.Info("model qualification: capability probe recorded a run, but the certification transition was rejected (expected for an already-certified capability unless the outcome is a genuine terminal failure — see probeOneCapability's own doc comment)",
+			observability.String("offering_operation_id", c.OfferingOperationID),
+			observability.String("operation", string(c.Operation)),
+			observability.Err(err),
+		)
+	}
+	return nil
+}
+
 // BuildQualificationTick constructs the automatic-qualification sweep the
 // boot scheduler runs. Its own composition root, mirroring
 // BuildTokenRefreshTick/BuildAccountMaintenanceTick: it builds the SAME
@@ -282,6 +579,13 @@ func (t *qualificationTick) measureOne(ctx context.Context, candidate qualificat
 // credential repo/service), so the tick executes real streamed inference
 // through the identical dispatch path the owner-triggered endpoint used to,
 // never a second dispatcher. now defaults to time.Now.
+//
+// Task 3 additionally builds the SAME capability-probe composition
+// ControlMux wires for the callerless POST /offerings/{id}/probe endpoint
+// (controlmux.go:293-308 for the transport maps, :403 for
+// probeTransportAdapter itself) — independently, exactly like
+// buildBenchmarkStreamFn above is independently composed rather than shared
+// as one instance with NewBenchmarkHandler's own build.
 func BuildQualificationTick(db *storage.DB, kr *secrets.Keyring, now func() time.Time) (func(context.Context) error, error) {
 	if now == nil {
 		now = time.Now
@@ -292,6 +596,40 @@ func BuildQualificationTick(db *storage.DB, kr *secrets.Keyring, now func() time
 	credentialService := application.NewCredentialService(credentialRepo, kr, now)
 	stream := buildBenchmarkStreamFn(reg, credentialRepo, credentialService)
 
+	// probeTransports/probeBaseURLs: a DATA lookup (never a slug switch) from
+	// provider id to the execution.InferenceTransport that serves it, and the
+	// full base URL that transport needs — the identical filter
+	// ControlMux's own construction applies (a provider absent from
+	// liveProviderBaseURLs, or unregistered, or whose declared transport kind
+	// has no wired implementation, is simply absent from both maps: fail
+	// closed, never a fabricated capability).
+	probeHTTPClient := &http.Client{Timeout: execution.DefaultOpenAICompatibleTimeout}
+	probeImpls := liveTransportImpls(probeHTTPClient, reg)
+	probeTransports := make(map[string]execution.InferenceTransport)
+	probeBaseURLs := make(map[string]string)
+	for id, base := range liveProviderBaseURLs() {
+		def, registered := reg.Definition(id)
+		if !registered {
+			continue
+		}
+		impl, wired := probeImpls[execution.TransportType(def.Transport)]
+		if !wired {
+			continue
+		}
+		probeTransports[string(id)] = impl
+		probeBaseURLs[string(id)] = base
+	}
+	probeTransport := newProbeTransportAdapter(probeTransports, probeBaseURLs, credentialRepo, credentialService)
+
+	probeRuns := storage.NewProbeRunRepo(db, now, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown)
+	probeReserver := newProbeReserverAdapter(storage.NewQuotaReservationRepo(db, now))
+	certRepo := storage.NewCertificationRepo(db, now)
+	certAuditor := newCertificationAuditorAdapter(newAuditEmitter(db, observability.Default()))
+	certDriver, err := intelligence.NewCertificationDriver(certRepo, certAuditor, intelligence.DefaultProbeRetryBudget, now)
+	if err != nil {
+		return nil, fmt.Errorf("httpapi: build qualification tick: certification driver: %w", err)
+	}
+
 	tick := &qualificationTick{
 		catalog: storage.NewCatalogRepo(db),
 		runs:    storage.NewBenchmarkRunRepo(db, now),
@@ -299,6 +637,32 @@ func BuildQualificationTick(db *storage.DB, kr *secrets.Keyring, now func() time
 		newID:   newOAuthTransactionID,
 		now:     now,
 		log:     observability.Default(),
+
+		db:            db,
+		probeRuns:     probeRuns,
+		probeReserver: probeReserver,
+		// DECISION (task-3 brief, step 4 — the two concurrency limits
+		// disagree because the usability sweep and the probe stack share no
+		// limiter): keep intelligence.DefaultProbeSafetyPolicy()'s
+		// MaxInFlightPerProvider at its default of 1, unchanged, rather than
+		// raising it to match usabilityProbeMaxConcurrency (4).
+		// usabilityProbeMaxConcurrency exists because verifyAccountChatUsability
+		// dispatches several chat probes for ONE account IN PARALLEL
+		// (usability_account.go's worker-pool wave loop). This tick never does
+		// that for capability probes: probeCapabilities above drives
+		// dueCapabilityProbes' candidates through a single sequential `for`
+		// loop, one attempt at a time, regardless of how many distinct
+		// providers or accounts they span. So there is never more than one
+		// capability probe in flight at any instant across the whole tick,
+		// and a per-provider cap of 1 never actually constrains anything here
+		// — it is already looser than what this tick's own dispatch shape
+		// produces. Raising it would only matter if this dispatch became
+		// concurrent, which it deliberately is not; the day it does, the new
+		// number belongs in the policy passed here, never in bypassing
+		// ProbeGuard itself.
+		probeGuardPolicy: intelligence.DefaultProbeSafetyPolicy(),
+		probeTransport:   probeTransport,
+		driver:           certDriver,
 	}
 	return tick.Run, nil
 }
