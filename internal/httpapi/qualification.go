@@ -162,13 +162,29 @@ func (t *qualificationTick) Run(ctx context.Context) error {
 // those whose most recent benchmark_runs row (LatestForModels — the existing
 // indexed batched freshness read) is missing or stale.
 //
+// LatestForModels is called ONCE PER PAGE of ListOfferings, never once over
+// the whole fleet's accumulated id list. BenchmarkRunRepo.LatestForModels's
+// own doc comment is explicit about this: "Never remove the caller-side page
+// bound on the assumption this query can absorb an unbounded id list" — its
+// one existing caller (ServeModels) already respects that by construction,
+// scoping each call to one page of offerings (bounded by
+// defaultCatalogListLimit). Accumulating every live model id across every
+// page into one slice before a single LatestForModels call would silently
+// reverse that documented invariant: harmless at today's fleet size, but a
+// hard SQL error once the id list exceeds SQLite's bind-parameter ceiling.
+// Calling it per page keeps every call's argument bounded by the SAME page
+// size ListOfferings itself already enforces.
+//
 // One offering is kept per model (the first one ListOfferings returns for
 // it, in its own deterministic account_id/provider_model_id order) — a model
 // with several live offerings only needs ONE of them measured to earn a
-// rating, exactly like targetOffering picks exactly one.
+// rating, exactly like targetOffering picks exactly one. seen tracks model
+// ids already resolved on an earlier page so a model whose several offerings
+// land on different pages is never double-counted or double-queried.
 func (t *qualificationTick) dueModels(ctx context.Context) ([]qualificationCandidate, error) {
-	byModel := make(map[string]qualificationCandidate)
-	var order []string
+	seen := make(map[string]bool)
+	var due []qualificationCandidate
+	now := t.now()
 
 	cursor := ""
 	for {
@@ -176,39 +192,40 @@ func (t *qualificationTick) dueModels(ctx context.Context) ([]qualificationCandi
 		if err != nil {
 			return nil, err
 		}
+
+		pageOrder := make([]string, 0, len(rows))
+		pageByModel := make(map[string]qualificationCandidate, len(rows))
 		for _, row := range rows {
-			if _, exists := byModel[row.ModelID]; exists {
+			if seen[row.ModelID] {
 				continue
 			}
-			byModel[row.ModelID] = qualificationCandidate{
+			seen[row.ModelID] = true
+			pageByModel[row.ModelID] = qualificationCandidate{
 				ModelID:         row.ModelID,
 				AccountID:       row.AccountID,
 				ProviderID:      row.ProviderID,
 				ProviderModelID: row.ProviderModelID,
 			}
-			order = append(order, row.ModelID)
+			pageOrder = append(pageOrder, row.ModelID)
 		}
+
+		if len(pageOrder) > 0 {
+			latest, err := t.runs.LatestForModels(ctx, pageOrder)
+			if err != nil {
+				return nil, err
+			}
+			for _, modelID := range pageOrder {
+				if run, ok := latest[modelID]; ok && now.Sub(run.FinishedAt) < qualificationFreshnessTTL {
+					continue
+				}
+				due = append(due, pageByModel[modelID])
+			}
+		}
+
 		if next == "" {
 			break
 		}
 		cursor = next
-	}
-	if len(order) == 0 {
-		return nil, nil
-	}
-
-	latest, err := t.runs.LatestForModels(ctx, order)
-	if err != nil {
-		return nil, err
-	}
-
-	now := t.now()
-	due := make([]qualificationCandidate, 0, len(order))
-	for _, modelID := range order {
-		if run, ok := latest[modelID]; ok && now.Sub(run.FinishedAt) < qualificationFreshnessTTL {
-			continue
-		}
-		due = append(due, byModel[modelID])
 	}
 	return due, nil
 }

@@ -11,6 +11,7 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -114,12 +115,49 @@ func qualityRatingOf(t *testing.T, db *storage.DB, providerModelID string) *floa
 	return v
 }
 
+// latestBenchmarkRunOf resolves providerModelID's canonical model and reads
+// its most recent benchmark_runs row through the REAL
+// BenchmarkRunRepo.LatestForModel read path (never a raw SELECT re-deriving
+// the column layout, and never the aggregate the tick itself already
+// computed) — so a test asserting on run.Rating is checking what production
+// actually persisted, not re-deriving its own expectation from the code
+// under test.
+func latestBenchmarkRunOf(t *testing.T, db *storage.DB, providerModelID string) storage.BenchmarkRun {
+	t.Helper()
+	modelID := canonicalModelIDForProviderModel(t, db, providerModelID)
+	runs := storage.NewBenchmarkRunRepo(db, nil)
+	run, ok, err := runs.LatestForModel(context.Background(), modelID)
+	if err != nil {
+		t.Fatalf("LatestForModel(%q): %v", modelID, err)
+	}
+	if !ok {
+		t.Fatalf("LatestForModel(%q): no row, want one", modelID)
+	}
+	return run
+}
+
 // TestQualificationTick_ScoresAModelThatHasNeverBeenMeasured is the task-2
-// brief's Step 1 test verbatim: a model with a live chat offering and NO
-// prior benchmark_runs row must be measured, and models.quality_rating must
-// land on the 0-100 COLUMN scale (never the raw 0..1 measurement) — with the
-// dashboard trigger gone, this tick is the only writer left.
+// brief's Step 1 test, STRENGTHENED after fix-round 1 (see task-2-report.md):
+// a model with a live chat offering and NO prior benchmark_runs row must be
+// measured, and models.quality_rating must land on the EXACT 0-100 COLUMN
+// value — not merely "some value in (0,100]", which a reviewer mutation
+// proved cannot distinguish the correct 70.0 from the unscaled-raw-value
+// defect (0.70 also satisfies "0 < x <= 100").
+//
+// The expected numbers are computed BY HAND from the fixture's own inputs
+// (TTFT 200ms, 40 tok/s) and localBenchmarkRating's DOCUMENTED weights —
+// deliberately NEVER by calling localBenchmarkRating/benchmarkRatingColumnScale
+// from this test, which would let production supply its own expected value
+// and make the assertion tautological again:
+//
+//	speed        = min(40/80, 1)        = 0.5
+//	latency      = max(0, 1 - 200/2000) = 0.9
+//	rawRating    = 0.5*0.5 + 0.5*0.9    = 0.70   (benchmark_runs.rating, 0..1)
+//	columnRating = 0.70 * 100           = 70.0   (models.quality_rating, 0-100)
 func TestQualificationTick_ScoresAModelThatHasNeverBeenMeasured(t *testing.T) {
+	const wantRawRating = 0.70
+	const wantColumnRating = 70.0
+
 	db := testControlDB(t)
 	seedLiveChatOffering(t, db, "acct-1", "prov-1", "m-1")
 
@@ -140,8 +178,18 @@ func TestQualificationTick_ScoresAModelThatHasNeverBeenMeasured(t *testing.T) {
 	if rating == nil {
 		t.Fatal("quality_rating is still NULL — Not rated would stay unearnable")
 	}
-	if *rating <= 0 || *rating > 100 {
-		t.Fatalf("quality_rating = %v, want the 0-100 column scale", *rating)
+	if !floatsClose(*rating, wantColumnRating, 1e-9) {
+		t.Fatalf("quality_rating = %v, want exactly %v (the 0-100 column scale) — %v would mean the raw 0..1 measurement leaked into this column unscaled (the exact prior incident benchmarkRatingColumnScale's doc comment documents)",
+			*rating, wantColumnRating, wantRawRating)
+	}
+
+	// benchmark_runs.rating must independently hold the RAW 0..1 measurement
+	// — the two scales living in two tables is the whole point of
+	// benchmarkRatingColumnScale's doc comment, and pinning only the column
+	// above would leave this one free to drift.
+	run := latestBenchmarkRunOf(t, db, "m-1")
+	if run.Rating == nil || !floatsClose(*run.Rating, wantRawRating, 1e-9) {
+		t.Fatalf("benchmark_runs.rating = %v, want exactly %v (the raw 0..1 measurement)", run.Rating, wantRawRating)
 	}
 }
 
@@ -277,6 +325,45 @@ func TestQualificationTick_CapsHowManyModelsOneRoundMeasures(t *testing.T) {
 	if streamed != wantSamples {
 		t.Fatalf("streamed %d times, want %d (%d models * %d requests) — the per-round cap must bound the fan-out",
 			streamed, wantSamples, qualificationPerRoundCap, benchmarkDefaultRequests)
+	}
+}
+
+// TestQualificationTick_HandlesAFleetLargerThanOnePage is fix-round 1's proof
+// for the second finding: dueModels must walk ListOfferings' pagination and
+// call BenchmarkRunRepo.LatestForModels bounded PER PAGE, never once over an
+// unbounded id list accumulated across the whole fleet — LatestForModels'
+// own doc comment (storage/benchmarkruns.go:94-99) is explicit that removing
+// the caller-side page bound is a documented invariant every other caller
+// (ServeModels) already respects. defaultCatalogListLimit (storage/
+// catalog.go) is 50, so seeding more models than that forces ListOfferings
+// across at least two pages; if dueModels regressed to one LatestForModels
+// call over the whole accumulated list, this test would still pass at this
+// fleet size (the real failure mode is a hard SQL error only far past
+// SQLite's bind-parameter ceiling) — its job is to pin the PAGINATION
+// walking + cap behaviour so a future change to page-at-a-time semantics is
+// caught here rather than only in production at fleet-size scale.
+func TestQualificationTick_HandlesAFleetLargerThanOnePage(t *testing.T) {
+	db := testControlDB(t)
+	total := 55 // > defaultCatalogListLimit (50): forces >= 2 ListOfferings pages.
+	for i := 0; i < total; i++ {
+		suffix := fmt.Sprintf("%03d", i)
+		seedLiveChatOffering(t, db, "acct-page-"+suffix, "prov-page-"+suffix, "m-page-"+suffix)
+	}
+
+	var streamed int
+	tick := newQualificationTickForTest(t, db, func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
+		streamed++
+		return benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}, nil
+	})
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick across %d models spanning multiple ListOfferings pages: %v", total, err)
+	}
+
+	// The per-round cap still applies across a multi-page fleet — pagination
+	// must not let the cap silently widen.
+	wantSamples := qualificationPerRoundCap * benchmarkDefaultRequests
+	if streamed != wantSamples {
+		t.Fatalf("streamed %d times, want %d — the per-round cap must hold across a fleet spanning multiple ListOfferings pages", streamed, wantSamples)
 	}
 }
 
