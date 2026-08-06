@@ -345,6 +345,53 @@ func (r *DiscoveryRepo) applyModel(ctx context.Context, tx *sql.Tx, accountID, p
 // row it creates — a row without one is exactly a row whose certification
 // was just pruned by the first statement, and this avoids re-deriving the
 // same NOT IN (...) predicate twice.
+//
+// Both statements filter on accountID, not merely providerModelID: two
+// different accounts can offer the identical provider_model_id (two
+// ClinePass accounts both offering mimo-v2.5, say), and this run's seenOps
+// describes only ONE account's declaration. Losing the account_id filter
+// would let this account's narrower run delete the OTHER account's
+// certifications for the same provider_model_id whenever that other
+// account's truth also happens to be 'unknown' — silently orphaning that
+// account's operation rows, which then vanish on ITS OWN next run even
+// though they were never stale for it at all.
+// TestApply_PrunesUndeclaredUncertifiedOperationRows pins this with a
+// second account sharing "m-1"; see its doc comment and the task report's
+// mutation trace for the adversarial-review finding this closed.
+//
+// seenOps can legitimately be empty for a real run: OperationsFromFacts
+// (internal/providers/modelsdev.go) returns an empty slice for a models.dev
+// entry whose declared output is non-text-only and every other flag
+// (tool_call, structured_output, image input/output, context, reasoning)
+// is false or absent — an audio/TTS-only catalog entry, for example — and
+// that empty slice is assigned straight into DiscoveredModel.Capabilities
+// by clinepass.go, opencode_zen.go, and modelsdev.go's own live-ID path; the
+// same happens for any adapter whose capability strings all fail
+// models.ParseOperation. When seenOps is empty, notIn stays "" and the
+// certifications DELETE is constrained only by capability_truth = 'unknown'
+// (plus accountID/providerModelID) — the query never degenerates into an
+// unfiltered delete, and a row already certified 'supported' or
+// 'unsupported' still survives via that same truth predicate. What DOES
+// change is the semantic scope of the prune: with nothing declared, it
+// widens from "the operations this run dropped" to "every uncertified
+// operation this offering has", including 'chat' — which leaves the
+// offering unroutable until a later run reports a non-empty declared set.
+// That is the correct trade-off for evidence (nothing uncertified is lost
+// that a probe could still reach), not a defect in this function.
+//
+// A stale offering_operations row's deletion cascades (foreign_keys is ON,
+// storage.go) to every OTHER table that references offering_operations(id)
+// ON DELETE CASCADE: probe_runs (00010_probe_runs.sql) and cooldowns
+// (00008_quota.sql) both go with it, so a probe history or an active
+// cooldown for an operation nobody declares and nobody ever certified is
+// removed too — the correct outcome, since a cooldown or probe run pinned
+// to a now-nonexistent operation is itself junk, not evidence. One table
+// keeps no such tie: route_attempts.offering_operation_id
+// (00011_routing.sql) carries NO foreign key at all, so a historical route
+// attempt row keeps an offering_operation_id that no longer resolves to any
+// row — an orphaned id in a append-only audit table, exactly the same
+// shape account deletion already leaves behind there, not a new failure
+// mode this function introduces.
 func (r *DiscoveryRepo) pruneStaleOperations(ctx context.Context, tx *sql.Tx, accountID, providerModelID string, seenOps map[string]bool) error {
 	declared := make([]any, 0, len(seenOps)+2)
 	placeholders := make([]string, 0, len(seenOps))

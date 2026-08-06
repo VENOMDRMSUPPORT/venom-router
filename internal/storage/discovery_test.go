@@ -911,32 +911,72 @@ func certificationCountFor(t *testing.T, db *DB, accountID, providerModelID stri
 	return n
 }
 
-// certifyOperationRow sets (accountID, providerModelID, operation)'s
-// certification truth to truth through the same capability_truth column the
-// production reconciliation code reads, moving status to 'certified' when
-// truth is resolved — the shape a real probe verdict leaves behind, not a
-// hand-built row shape production never produces.
+// certifyOperationRow drives (accountID, providerModelID, operation)'s
+// certification to a resolved verdict through the SAME production writer
+// the real certification state machine uses —
+// CertificationRepo.Load/CompareAndSwap plus models.Certification.Transition
+// — rather than a hand-built UPDATE. The truth transition is exactly what
+// TestApply_KeepsUndeclaredButCertifiedOperationRows's keep-guard depends
+// on, so that test only proves what it claims if the certified row it
+// builds has the shape a real probe verdict actually leaves behind: 04 §5
+// edges 1/2/4 (discovered -> observed -> probing -> certified), walked one
+// legal Transition + CompareAndSwap at a time, never a row shape production
+// itself never produces (fix round 1, MINOR 5).
+//
+// truth must be "supported" or "unsupported" — Transition's own edge 4
+// (probing -> certified) requires a resolved verdict (ErrVerdictRequired)
+// and every row this helper is handed already exists at
+// discovered/observed/unknown from a prior applySnapshot call, so there is
+// nothing to walk toward "unknown".
 func certifyOperationRow(t *testing.T, db *DB, accountID, providerModelID, operation, truth string) {
 	t.Helper()
-	status := "certified"
-	if truth == "unknown" {
-		status = "discovered"
+	verdict, err := models.ParseCapabilityTruth(truth)
+	if err != nil || verdict == models.TruthUnknown {
+		t.Fatalf("certifyOperationRow(%q,%q,%q,%q): truth must be %q or %q", accountID, providerModelID, operation, truth, models.TruthSupported, models.TruthUnsupported)
 	}
-	res, err := db.Conn().Exec(
-		`UPDATE certifications SET status = ?, capability_truth = ?, certified_at = ?
-		 WHERE offering_operation_id = (
-		     SELECT id FROM offering_operations WHERE account_id = ? AND provider_model_id = ? AND operation = ?)`,
-		status, truth, time.Unix(1000, 0).Unix(), accountID, providerModelID, operation,
-	)
+
+	var opID string
+	if err := db.Conn().QueryRow(
+		`SELECT id FROM offering_operations WHERE account_id = ? AND provider_model_id = ? AND operation = ?`,
+		accountID, providerModelID, operation,
+	).Scan(&opID); err != nil {
+		t.Fatalf("certify operation row (%q,%q,%q): lookup id: %v", accountID, providerModelID, operation, err)
+	}
+
+	ctx := context.Background()
+	now := time.Unix(2000, 0)
+	retry := models.RetryPolicy{Attempts: 1, Budget: 3}
+	certRepo := NewCertificationRepo(db, nil)
+
+	cert, err := certRepo.Load(ctx, opID)
 	if err != nil {
-		t.Fatalf("certify operation row (%q,%q,%q): %v", accountID, providerModelID, operation, err)
+		t.Fatalf("certify operation row (%q,%q,%q): load: %v", accountID, providerModelID, operation, err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		t.Fatalf("certify operation row (%q,%q,%q): rows affected: %v", accountID, providerModelID, operation, err)
-	}
-	if n != 1 {
-		t.Fatalf("certify operation row (%q,%q,%q) affected %d rows, want exactly 1 (row must already exist from a prior applySnapshot)", accountID, providerModelID, operation, n)
+
+	// Walk the legal transition graph up to certified. Production always
+	// advances a freshly-applied row straight to 'observed'
+	// (ensureOfferingOperation), so in practice this is observed -> probing
+	// -> certified; the discovered branch is defensive, not load-bearing.
+	for cert.State != models.CertCertified {
+		var target models.CertificationState
+		switch cert.State {
+		case models.CertDiscovered:
+			target = models.CertObserved
+		case models.CertObserved:
+			target = models.CertProbing
+		case models.CertProbing:
+			target = models.CertCertified
+		default:
+			t.Fatalf("certify operation row (%q,%q,%q): no legal path to certified from %s", accountID, providerModelID, operation, cert.State)
+		}
+		next, err := cert.Transition(target, verdict, retry, now)
+		if err != nil {
+			t.Fatalf("certify operation row (%q,%q,%q): transition %s -> %s: %v", accountID, providerModelID, operation, cert.State, target, err)
+		}
+		if err := certRepo.CompareAndSwap(ctx, cert, next); err != nil {
+			t.Fatalf("certify operation row (%q,%q,%q): compare-and-swap %s -> %s: %v", accountID, providerModelID, operation, cert.State, target, err)
+		}
+		cert = next
 	}
 }
 
@@ -947,9 +987,28 @@ func certifyOperationRow(t *testing.T, db *DB, accountID, providerModelID, opera
 // be certified (ListNonChatOperationsToCertify requires the operation to
 // appear in capabilities_json) and no probe path can reach it, so without
 // this it sits in the review backlog forever.
+//
+// It also proves the prune is account-scoped, not merely operation-set-
+// scoped: acct-2 offers the SAME provider_model_id ("m-1" — think two
+// ClinePass accounts both offering mimo-v2.5) with its own "tools" row,
+// whose certification is truth='unknown' (never probed) and whose operation
+// is not in acct-1's second-run declared set either. To a query that joins
+// only on provider_model_id and the declared-set/truth predicate — dropping
+// the account_id filter — acct-2's row is indistinguishable from acct-1's
+// genuinely stale one. It must survive acct-1's reconciliation untouched;
+// only acct-2's own next run may ever prune it. Fix round 1 (adversarial
+// review): a mutation removing `oo.account_id = ?` from the certifications
+// DELETE while leaving the placeholder bound left the ENTIRE
+// internal/storage suite green before this assertion existed — see the
+// mutation trace in the task report.
 func TestApply_PrunesUndeclaredUncertifiedOperationRows(t *testing.T) {
 	repo, db := newDiscoveryTestRepo(t)
 	ctx := context.Background()
+
+	insertAccount(t, db, "acct-2", "prov-1")
+	applySnapshot(t, repo, ctx, "acct-2", "prov-1", []intelligence.DiscoverySnapshotModel{
+		snapshotModel("m-1", []models.Operation{models.OperationChat, models.OperationTools}),
+	})
 
 	// Run 1: the model declares chat and tools.
 	applySnapshot(t, repo, ctx, "acct-1", "prov-1", []intelligence.DiscoverySnapshotModel{
@@ -968,6 +1027,20 @@ func TestApply_PrunesUndeclaredUncertifiedOperationRows(t *testing.T) {
 	}
 	if n := certificationCountFor(t, db, "acct-1", "m-1"); n != 1 {
 		t.Fatalf("certifications for m-1 = %d, want 1 — the pruned operation's certification row must go with it", n)
+	}
+
+	// acct-2's own row set for the SAME provider_model_id must be
+	// completely untouched by acct-1's reconciliation — the account_id
+	// predicate, not the operation set, is what must keep the two accounts
+	// apart. If this regresses, account B's certified rows can be silently
+	// deleted by account A's discovery run, orphaning B's operation rows;
+	// B's rows then vanish on B's own next run even though they were
+	// certified.
+	if got := operationsFor(t, db, "acct-2", "m-1"); !reflect.DeepEqual(got, []string{"chat", "tools"}) {
+		t.Fatalf("acct-2 operations = %v, want [chat tools] unchanged — acct-1's reconciliation must never cross into another account's rows for the same provider_model_id", got)
+	}
+	if n := certificationCountFor(t, db, "acct-2", "m-1"); n != 2 {
+		t.Fatalf("acct-2 certifications = %d, want 2 unchanged — acct-1's reconciliation must never delete another account's certification rows", n)
 	}
 }
 
