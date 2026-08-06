@@ -30,38 +30,3 @@ export async function pollJobToTerminal(jobId: string, options: PollOptions = {}
   }
   return job;
 }
-
-/**
- * Runs `worker` over `items` with at most `limit` in flight (the Model
- * Test Report's "Test All"). Failures are captured per item, never thrown
- * mid-run — one failed probe must not strand the remaining models
- * untested. `onSettled` reports progress (settled count so far).
- */
-export async function runWithConcurrency<T, R>(
-  items: readonly T[],
-  limit: number,
-  worker: (item: T) => Promise<R>,
-  onSettled?: (settledCount: number) => void,
-): Promise<PromiseSettledResult<R>[]> {
-  const results: PromiseSettledResult<R>[] = new Array(items.length);
-  let next = 0;
-  let settled = 0;
-
-  async function lane(): Promise<void> {
-    for (;;) {
-      const index = next++;
-      if (index >= items.length) return;
-      try {
-        results[index] = { status: "fulfilled", value: await worker(items[index]) };
-      } catch (reason) {
-        results[index] = { status: "rejected", reason };
-      }
-      settled++;
-      onSettled?.(settled);
-    }
-  }
-
-  const lanes = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane);
-  await Promise.all(lanes);
-  return results;
-}

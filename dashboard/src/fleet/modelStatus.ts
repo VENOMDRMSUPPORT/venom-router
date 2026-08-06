@@ -112,23 +112,3 @@ export const PROBEABLE_OPERATIONS: ReadonlySet<string> = new Set([
   "structured_output",
   "vision",
 ]);
-
-/** Every offering-operation id this model can be individually re-tested on:
- * one entry per capability whose operation is in PROBEABLE_OPERATIONS and
- * that carries an offering_operation_id, in PROBEABLE_OPERATIONS' declared
- * preference order (tools first). Never chat/streaming — the server rejects
- * them 422. Truth is NOT filtered on: an untested candidate, an already
- * failed capability, and an already-proven one are all legitimately
- * re-testable, matching each capability chip's own individual test action.
- * `[]` means nothing here is probeable (native/transport-only operations
- * have no offering_operations row, and a chat-only model has nothing the
- * probe endpoint accepts) — never a composed id. */
-export function probeTargets(offering: Pick<EffectiveOffering, "capabilities">): string[] {
-  const ids: string[] = [];
-  for (const operation of PROBEABLE_OPERATIONS) {
-    for (const c of offering.capabilities) {
-      if (c.operation === operation && c.offering_operation_id) ids.push(c.offering_operation_id);
-    }
-  }
-  return ids;
-}

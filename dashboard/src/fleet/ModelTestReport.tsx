@@ -1,19 +1,9 @@
 import { useMemo, useState, type ChangeEvent } from "react";
-import { toast } from "@venom/design-system";
 import { Badge, Button, Dialog, EmptyState, Input, Select } from "@venom/design-system/primitives";
-import { ContextWindowDisplay, TypedErrorDisplay } from "@venom/design-system/domain";
-import {
-  AuthApiError,
-  isSessionExpired,
-  startDiscovery,
-  startProbe,
-  toApiError,
-  type AccountProjection,
-  type EffectiveOffering,
-} from "../api/controlClient";
+import { ContextWindowDisplay } from "@venom/design-system/domain";
+import { type AccountProjection, type EffectiveOffering } from "../api/controlClient";
 import CapabilityChips from "./CapabilityChips";
-import { pollJobToTerminal, runWithConcurrency } from "./jobs";
-import { deriveModelStatus, isOfferingEnabled, probeTargets, type ModelStatus } from "./modelStatus";
+import { deriveModelStatus, isOfferingEnabled, type ModelStatus } from "./modelStatus";
 import ProviderLogo from "./ProviderLogo";
 
 /** The provenance-derived prefix mark on a context-window badge: "≈" when
@@ -53,10 +43,15 @@ export interface ModelTestReportProps {
   providerName: string;
   /** THIS account's offerings (one per provider_model_id). */
   offerings: EffectiveOffering[];
+  /** Unused now that this dialog is a report and triggers no server action
+   * of its own — kept because FleetOverview.tsx:517-530 (the only mount) still
+   * passes it, and that mount's signature is out of scope for this change. */
   csrfToken: string;
+  /** Unused for the same reason as csrfToken. */
   onSessionExpired: () => void;
   onClose: () => void;
-  /** Triggers the page-level refetch (providers + accounts + offerings). */
+  /** Unused for the same reason as csrfToken — a report triggers nothing
+   * that would need a refetch. */
   onRefetch: () => void;
 }
 
@@ -75,27 +70,21 @@ const STATUS_BADGE: Record<ModelStatus, { tone: "healthy" | "critical" | "unknow
   untested: { tone: "unknown", label: "UNTESTED" },
 };
 
-/** Probe concurrency for "Test All" — bounded so a large catalog cannot
- * stampede the provider (the server's own probe gates still apply). */
-const TEST_ALL_CONCURRENCY = 3;
-
 /** How many capability chips render before collapsing into "+N". */
 const CAPABILITY_CHIP_CAP = 6;
 
 /**
- * The per-account Model Test Report (image 3): four derived stat tiles
- * (WORKING / FAILED / UNTESTED / ENABLED), Refresh Models (discovery job
- * polled to terminal), Test All (bounded-concurrency probes over EVERY
- * probeable capability across every listed model — not just one per model),
- * search + status filter, and one row per model with context/quality/cost
- * facts, capability chips, and the derived status badge.
+ * The per-account Model Report (image 3): four derived stat tiles
+ * (WORKING / FAILED / UNTESTED / ENABLED), a search box and status filter
+ * over the account's discovered offerings, and one row per model with
+ * context/quality facts, capability chips, and the derived status badge.
  *
- * Chat is certified automatically the next time it succeeds in real use —
- * the server rejects a manual probe of it 422 — so it is never a clickable
- * chip; every OTHER capability chip (tools/context_window/structured_output/
- * vision) IS individually clickable to test just that one operation,
- * regardless of its current truth (untested, failed, or already-proven are
- * all legitimately re-testable) — see CapabilityChips' onTest.
+ * This is a REPORT, not a test console: every fact shown here — the status
+ * badge, the capability chips, the context-window provenance mark — is a
+ * truth the server already stated (a certified probe, or the provider's own
+ * declaration), never something this dialog triggers. To pull a fresh
+ * catalog or re-probe a capability, use the provider row's own actions on
+ * the Providers page.
  *
  * DELIBERATE DEVIATION from the documented UI: no per-model checkboxes,
  * no Enable All / Disable All, no "Save selection" — the backend has no
@@ -104,19 +93,10 @@ const CAPABILITY_CHIP_CAP = 6;
  * supported), reported, not toggled.
  */
 export default function ModelTestReport(props: ModelTestReportProps) {
-  const { open, account, providerName, offerings, csrfToken, onSessionExpired, onClose, onRefetch } = props;
+  const { open, account, providerName, offerings, onClose } = props;
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<StatusFilter>("all");
-  const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [actionError, setActionError] = useState<AuthApiError | null>(null);
-  /** The offering_operation_id a single capability chip is currently
-   * probing (Test All uses `progress` instead) — lets CapabilityChips show
-   * a spinner on exactly that chip. Reset unconditionally in runAction's
-   * finally, alongside busy/progress, since it is always null already for
-   * Refresh Models/Test All. */
-  const [probingOperationId, setProbingOperationId] = useState<string | null>(null);
 
   const stats = useMemo(() => {
     const counts = { working: 0, failed: 0, untested: 0, enabled: 0 };
@@ -139,125 +119,13 @@ export default function ModelTestReport(props: ModelTestReportProps) {
     });
   }, [offerings, search, filter]);
 
-  async function runAction(action: () => Promise<void>) {
-    setBusy(true);
-    setActionError(null);
-    try {
-      await action();
-      onRefetch();
-    } catch (err) {
-      if (isSessionExpired(err)) {
-        onSessionExpired();
-        return;
-      }
-      setActionError(toApiError(err));
-    } finally {
-      setBusy(false);
-      setProgress(null);
-      setProbingOperationId(null);
-    }
-  }
-
-  function handleRefreshModels() {
-    void runAction(async () => {
-      try {
-        const handle = await startDiscovery(account.id, csrfToken);
-        const job = await pollJobToTerminal(handle.job_id);
-        if (job.status !== "completed") {
-          throw new AuthApiError(0, {
-            code: job.error?.code ?? `job_${job.status}`,
-            message: job.error?.message ?? `The discovery job is ${job.status}.`,
-            request_id: "",
-            retryable: true,
-          });
-        }
-        toast.success("Discovery completed", {
-          detail: `Discovered models for ${account.provider}`,
-        });
-      } catch (err) {
-        toast.danger("Discovery failed", {
-          detail: err instanceof Error ? err.message : String(err),
-        });
-        throw err;
-      }
-    });
-  }
-
-  function handleTestAll() {
-    const targets = listed.flatMap((o) => probeTargets(o));
-    if (targets.length === 0) return;
-    setProgress({ done: 0, total: targets.length });
-    void runAction(async () => {
-      try {
-        const results = await runWithConcurrency(
-          targets,
-          TEST_ALL_CONCURRENCY,
-          async (offeringOperationID) => {
-            const handle = await startProbe(offeringOperationID, csrfToken);
-            await pollJobToTerminal(handle.job_id);
-          },
-          (done) => setProgress({ done, total: targets.length }),
-        );
-        const failed = results.filter((r) => r.status === "rejected");
-        const sessionExpired = failed.find((r) => r.status === "rejected" && isSessionExpired(r.reason));
-        if (sessionExpired) {
-          onSessionExpired();
-          return;
-        }
-        if (failed.length > 0) {
-          toast.danger("Model probe failed", {
-            detail: `${failed.length} of ${targets.length} probe(s) failed`,
-          });
-          throw new AuthApiError(0, {
-            code: "probe_batch_partial",
-            message: `${failed.length} of ${targets.length} probe(s) could not run. The rest completed; statuses below are refreshed.`,
-            request_id: "",
-            retryable: true,
-          });
-        }
-        toast.success("Model probe completed", {
-          detail: `Probe for all ${targets.length} capabilities passed`,
-        });
-      } catch (err) {
-        if (!(err instanceof AuthApiError && err.code === "probe_batch_partial")) {
-          toast.danger("Model probe failed", {
-            detail: err instanceof Error ? err.message : String(err),
-          });
-        }
-        throw err;
-      }
-    });
-  }
-
-  /** One capability chip's own test action (CapabilityChips' onTest) —
-   * probes exactly the operation the user clicked, not "the first
-   * probeable one for this model" (the old single-button-per-row
-   * behavior). */
-  function handleTestCapability(offeringOperationId: string, operation: string) {
-    setProbingOperationId(offeringOperationId);
-    void runAction(async () => {
-      try {
-        const handle = await startProbe(offeringOperationId, csrfToken);
-        await pollJobToTerminal(handle.job_id);
-        toast.success("Model probe completed", {
-          detail: `Probe for ${operation} passed`,
-        });
-      } catch (err) {
-        toast.danger("Model probe failed", {
-          detail: err instanceof Error ? err.message : String(err),
-        });
-        throw err;
-      }
-    });
-  }
-
   return (
     <Dialog
       open={open}
       onClose={onClose}
       wide
-      title={`Model Test Report: ${providerName}`}
-      description={`Test models for ${providerName} and review what this account can route.`}
+      title={`Model Report: ${providerName}`}
+      description={`What ${providerName} exposes on this account, and what each model has proven or declared it can do.`}
       footer={
         <Button variant="ghost" onClick={onClose}>
           Close
@@ -266,9 +134,8 @@ export default function ModelTestReport(props: ModelTestReportProps) {
     >
       <div className="flex flex-col gap-3">
         <p className="vn-caption">
-          Chat certifies itself automatically the next time it succeeds in real use — it can&apos;t be tested here.
-          Every other capability icon below (tools, vision, context window, structured output) is clickable: click
-          one to run a test for just that capability.
+          The models this account exposes, what each one can do, and where that fact came from — a certified probe,
+          or the provider&apos;s own declaration.
         </p>
 
         <div className="vnd-report-tiles">
@@ -294,17 +161,6 @@ export default function ModelTestReport(props: ModelTestReportProps) {
         </div>
 
         <div className="vnd-report-toolbar">
-          <Button variant="secondary" size="sm" icon="refresh-cw" disabled={busy} onClick={handleRefreshModels}>
-            Refresh Models
-          </Button>
-          <Button variant="secondary" size="sm" icon="play" disabled={busy} onClick={handleTestAll}>
-            Test All
-          </Button>
-          {progress ? (
-            <span className="vn-caption" role="status">
-              Testing {progress.done}/{progress.total}…
-            </span>
-          ) : null}
           <span className="vn-toolbar-spacer" style={{ flex: 1 }} />
           <Input
             type="search"
@@ -321,17 +177,13 @@ export default function ModelTestReport(props: ModelTestReportProps) {
           />
         </div>
 
-        {actionError ? (
-          <TypedErrorDisplay code={actionError.code} message={actionError.message} retryable={actionError.retryable} tone="critical" />
-        ) : null}
-
         {listed.length === 0 ? (
           <EmptyState
             icon="box"
             title={offerings.length === 0 ? "No models discovered yet" : "No models match"}
             description={
               offerings.length === 0
-                ? "Run Refresh Models to fetch this account's catalog from the provider."
+                ? "Use this account's \"Fetch models from provider\" action to pull its catalog."
                 : "Try a different search or status filter."
             }
           />
@@ -366,26 +218,7 @@ export default function ModelTestReport(props: ModelTestReportProps) {
                           Not rated
                         </Badge>
                       )}
-                      {offering.cost.is_free === true ? (
-                        <Badge tone="healthy" icon="hand-coins">
-                          Free
-                        </Badge>
-                      ) : offering.cost.is_free === false ? (
-                        <Badge tone="unknown" icon="credit-card">
-                          Paid
-                        </Badge>
-                      ) : (
-                        <Badge tone="unknown" icon="circle-help">
-                          Cost unknown
-                        </Badge>
-                      )}
-                      <CapabilityChips
-                        capabilities={offering.capabilities}
-                        cap={CAPABILITY_CHIP_CAP}
-                        onTest={handleTestCapability}
-                        disabled={busy}
-                        probingOperationId={probingOperationId}
-                      />
+                      <CapabilityChips capabilities={offering.capabilities} cap={CAPABILITY_CHIP_CAP} />
                     </div>
                   </div>
                   <span data-testid={`report-status-${offering.provider_model_id}`}>

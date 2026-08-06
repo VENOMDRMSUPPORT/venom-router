@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { assertNoAxeViolations } from "../test/axe";
 import { createFetchMock, jsonResponse } from "../test/fetchMock";
 import type { AccountProjection, EffectiveOffering, OfferingCapability } from "../api/controlClient";
@@ -131,8 +131,8 @@ describe("ModelTestReport — derived tiles and rows", () => {
   it("derives the four tiles from capability truths and the server's routable flag", async () => {
     renderReport();
 
-    const dialog = await screen.findByRole("dialog", { name: /model test report: opencode zen/i });
-    within(dialog).getByText(/test models for opencode zen and review what this account can route/i);
+    const dialog = await screen.findByRole("dialog", { name: /model report: opencode zen/i });
+    within(dialog).getByText(/what opencode zen exposes on this account/i);
 
     const tiles = dialog.querySelectorAll(".vnd-report-tile");
     expect(tiles).toHaveLength(4);
@@ -194,77 +194,18 @@ describe("ModelTestReport — derived tiles and rows", () => {
     await screen.findByRole("dialog");
     await assertNoAxeViolations(document.body);
   });
-});
 
-describe("ModelTestReport — actions", () => {
-  it("Refresh Models runs discovery for the account, polls the job, and refetches", async () => {
-    const { fetchMock, onRefetch } = renderReport();
-    await screen.findByRole("dialog");
-
-    fireEvent.click(screen.getByRole("button", { name: /refresh models/i }));
-
-    await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/accounts/acct-1/discover"))).toBe(true);
-      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/jobs/job-d"))).toBe(true);
-      expect(onRefetch).toHaveBeenCalled();
-    });
-  });
-
-  it("Test All probes EVERY probeable capability across every listed model — not just the first one per model", async () => {
-    const { fetchMock, onRefetch } = renderReport();
-    await screen.findByRole("dialog");
-
-    fireEvent.click(screen.getByRole("button", { name: /test all/i }));
-
-    await waitFor(() => expect(onRefetch).toHaveBeenCalled());
-    const probeCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("/probe"));
-    // model-a has TWO probeable capabilities (tools, context_window) — both
-    // must be probed, proving Test All no longer stops at the first match.
-    expect(probeCalls.map(([input]) => String(input)).sort()).toEqual([
-      "/api/control/v1/offerings/op-a/probe",
-      "/api/control/v1/offerings/op-a2/probe",
-      "/api/control/v1/offerings/op-c/probe",
-    ]);
-  });
-
-  it("renders no clickable capability chip for a model with no probeable operation (chat-only)", async () => {
+  it("renders no test or refresh control, and no cost chip — the modal is a report", async () => {
     renderReport();
-    await screen.findByRole("dialog");
+    await screen.findByText("zen/model-a");
 
-    const rowB = screen.getByTestId("report-row-zen/model-b");
-    expect(within(rowB).queryByRole("button")).toBeNull();
-    within(rowB).getByRole("img", { name: "chat" });
-  });
-
-  it("renders one clickable capability chip PER probeable capability on a model, not just one for the whole row", async () => {
-    renderReport();
-    await screen.findByRole("dialog");
-
-    const rowA = screen.getByTestId("report-row-zen/model-a");
-    within(rowA).getByRole("button", { name: /test tools/i });
-    within(rowA).getByRole("button", { name: /test context_window/i });
-  });
-
-  it("probes exactly the capability whose chip was clicked, on a failed (retestable) capability", async () => {
-    const { fetchMock, onRefetch } = renderReport();
-    await screen.findByRole("dialog");
-
-    fireEvent.click(within(screen.getByTestId("report-row-zen/model-c")).getByRole("button", { name: /test tools/i }));
-
-    await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/offerings/op-c/probe"))).toBe(true);
-      expect(onRefetch).toHaveBeenCalled();
-    });
-  });
-
-  it("probes only the ONE capability clicked, leaving the model's other probeable capability untouched", async () => {
-    const { fetchMock, onRefetch } = renderReport();
-    await screen.findByRole("dialog");
-
-    fireEvent.click(within(screen.getByTestId("report-row-zen/model-a")).getByRole("button", { name: /test tools/i }));
-
-    await waitFor(() => expect(onRefetch).toHaveBeenCalled());
-    const probeCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("/probe"));
-    expect(probeCalls.map(([input]) => String(input))).toEqual(["/api/control/v1/offerings/op-a/probe"]);
+    for (const label of [/refresh models/i, /test all/i]) {
+      expect(screen.queryByRole("button", { name: label })).toBeNull();
+    }
+    expect(screen.queryByText(/cost unknown/i)).toBeNull();
+    expect(screen.queryByText(/\bfree\b/i)).toBeNull();
+    expect(screen.queryByText(/click one to run a test/i)).toBeNull();
+    // The display controls stay.
+    screen.getByPlaceholderText(/search models/i);
   });
 });

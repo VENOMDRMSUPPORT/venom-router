@@ -844,7 +844,7 @@ describe("FleetOverview — Active Providers rows", () => {
     expect(row3Chip.getAttribute("title")).toBe("No live models");
 
     fireEvent.click(row1Chip);
-    await screen.findByRole("dialog", { name: /model test report: opencode zen/i });
+    await screen.findByRole("dialog", { name: /model report: opencode zen/i });
   });
 
   it("explains an empty Active view without offering a no-op search reset", async () => {
