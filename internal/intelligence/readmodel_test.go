@@ -573,3 +573,36 @@ func containsReason(reasons []string, target string) bool {
 	}
 	return false
 }
+
+// TestProject_CarriesTheOfferingTokenLimits proves MaxInputTokens and
+// MaxOutputTokens reach EffectiveOffering straight from the offering — they
+// have been persisted at discovery since the M4 schema and read by nobody
+// until now. They are distinct from EffectiveContextTokens (the context
+// window): a model can accept a 1M-token context while capping a single
+// reply far lower, so neither field may be derived from the other.
+// MUTATION: replacing either field's source with nil turns this RED.
+func TestProject_CarriesTheOfferingTokenLimits(t *testing.T) {
+	in := ProjectionInput{
+		ProviderID: "clinepass",
+		Offering: models.Offering{
+			Identity:        models.OfferingIdentity{AccountID: "a", ProviderModelID: "m"},
+			Availability:    models.AvailabilityAvailable,
+			ContextLength:   intPtr(1048576),
+			MaxInputTokens:  intPtr(900000),
+			MaxOutputTokens: intPtr(131072),
+		},
+	}
+	got := Project(in)
+	if got.MaxInputTokens == nil || *got.MaxInputTokens != 900000 {
+		t.Fatalf("MaxInputTokens = %v, want 900000 — the column has been written since discovery and read by nobody", got.MaxInputTokens)
+	}
+	if got.MaxOutputTokens == nil || *got.MaxOutputTokens != 131072 {
+		t.Fatalf("MaxOutputTokens = %v, want 131072", got.MaxOutputTokens)
+	}
+	if got.EffectiveContextTokens == nil || *got.EffectiveContextTokens != 1048576 {
+		t.Fatalf("EffectiveContextTokens = %v, want 1048576 from the offering's catalog-filled context length", got.EffectiveContextTokens)
+	}
+	if got.ContextProvenance != models.ContextProviderCap {
+		t.Fatalf("ContextProvenance = %q, want provider_cap", got.ContextProvenance)
+	}
+}

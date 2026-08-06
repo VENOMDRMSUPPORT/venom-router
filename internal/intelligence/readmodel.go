@@ -108,12 +108,19 @@ type EffectiveOffering struct {
 	Availability           models.Availability
 	EffectiveContextTokens *int
 	ContextProvenance      models.ContextProvenance
-	Capabilities           []EffectiveCapability
-	QualityScore           float64
-	QualityKnown           bool
-	Cost                   ResolvedCostFact
-	Classification         OfferingClassification
-	Tiers                  map[Tier]TierEligibility
+	// MaxInputTokens and MaxOutputTokens are the offering's own declared
+	// per-request limits, distinct from the context window: a model may accept
+	// a 1M-token context while capping a single reply at 131k. Both are nil
+	// when the provider and the catalog are silent. They were persisted at
+	// discovery and read by nobody until now.
+	MaxInputTokens  *int
+	MaxOutputTokens *int
+	Capabilities    []EffectiveCapability
+	QualityScore    float64
+	QualityKnown    bool
+	Cost            ResolvedCostFact
+	Classification  OfferingClassification
+	Tiers           map[Tier]TierEligibility
 }
 
 // Project builds THE single shared effective-offering projection (04 §3):
@@ -134,6 +141,8 @@ func Project(in ProjectionInput) EffectiveOffering {
 		Availability:           in.Offering.Availability,
 		EffectiveContextTokens: contextTokens,
 		ContextProvenance:      provenance,
+		MaxInputTokens:         in.Offering.MaxInputTokens,
+		MaxOutputTokens:        in.Offering.MaxOutputTokens,
 		Capabilities:           projectCapabilities(in.NativeCapabilities, in.Offering.Capabilities, in.TransportOperations, in.Certifications, in.ProvedOperations),
 		QualityScore:           models.QualityScore(in.Canonical.QualityRating),
 		QualityKnown:           in.Canonical.QualityRating != nil,

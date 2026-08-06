@@ -324,19 +324,28 @@ type tierJSON struct {
 // §3). effective_context_tokens is a *int so an unknown context renders
 // JSON null, NEVER 0 — the read-model's central truthfulness invariant.
 type effectiveOfferingJSON struct {
-	AccountID              string              `json:"account_id"`
-	ProviderID             string              `json:"provider_id"`
-	ProviderModelID        string              `json:"provider_model_id"`
-	DisplayName            string              `json:"display_name,omitempty"`
-	Availability           string              `json:"availability"`
-	EffectiveContextTokens *int                `json:"effective_context_tokens"`
-	ContextProvenance      string              `json:"context_provenance"`
-	Capabilities           []capabilityJSON    `json:"capabilities"`
-	QualityScore           float64             `json:"quality_score"`
-	QualityKnown           bool                `json:"quality_known"`
-	Cost                   costJSON            `json:"cost"`
-	Classification         string              `json:"classification"`
-	Tiers                  map[string]tierJSON `json:"tiers"`
+	AccountID              string `json:"account_id"`
+	ProviderID             string `json:"provider_id"`
+	ProviderModelID        string `json:"provider_model_id"`
+	DisplayName            string `json:"display_name,omitempty"`
+	Availability           string `json:"availability"`
+	EffectiveContextTokens *int   `json:"effective_context_tokens"`
+	ContextProvenance      string `json:"context_provenance"`
+	// MaxInputTokens and MaxOutputTokens are the offering's own declared
+	// per-request caps, distinct from EffectiveContextTokens (the context
+	// window) — a model may accept a 1M-token context while capping a
+	// single reply far lower. Both are *int and NOT omitempty for the same
+	// reason as effective_context_tokens: null means "we do not know this
+	// model's cap," and a missing key would be indistinguishable from a
+	// serialization bug.
+	MaxInputTokens  *int                `json:"max_input_tokens"`
+	MaxOutputTokens *int                `json:"max_output_tokens"`
+	Capabilities    []capabilityJSON    `json:"capabilities"`
+	QualityScore    float64             `json:"quality_score"`
+	QualityKnown    bool                `json:"quality_known"`
+	Cost            costJSON            `json:"cost"`
+	Classification  string              `json:"classification"`
+	Tiers           map[string]tierJSON `json:"tiers"`
 }
 
 func toEffectiveOfferingJSON(eo intelligence.EffectiveOffering) effectiveOfferingJSON {
@@ -384,6 +393,8 @@ func toEffectiveOfferingJSON(eo intelligence.EffectiveOffering) effectiveOfferin
 		Availability:           string(eo.Availability),
 		EffectiveContextTokens: eo.EffectiveContextTokens,
 		ContextProvenance:      string(eo.ContextProvenance),
+		MaxInputTokens:         eo.MaxInputTokens,
+		MaxOutputTokens:        eo.MaxOutputTokens,
 		Capabilities:           caps,
 		QualityScore:           eo.QualityScore,
 		QualityKnown:           eo.QualityKnown,

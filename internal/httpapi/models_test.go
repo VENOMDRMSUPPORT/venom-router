@@ -213,6 +213,82 @@ func TestModels_UnknownContextSerializesNull(t *testing.T) {
 	}
 }
 
+// --- TestModels_TokenLimitsSerializeNullWhenUnknown / ...WhenKnown ---
+
+// TestModels_TokenLimitsSerializeNullWhenUnknown proves max_input_tokens and
+// max_output_tokens render explicit JSON null when the offering carries no
+// value for them — the same "null means unknown, key is never missing"
+// invariant this file already applies to effective_context_tokens. A
+// naive `omitempty` here would make "we don't know the cap" indistinguishable
+// from "a bug dropped the key."
+func TestModels_TokenLimitsSerializeNullWhenUnknown(t *testing.T) {
+	clock := fixedModelsClock()
+	h, db := newTestModelsHandler(t, func() time.Time { return clock })
+
+	modelsSeedOffering(t, db, offeringSeed{
+		AccountID: "acct-tok-nil", ProviderID: "prov-tok-nil", ProviderModelID: "model-tok-nil", ModelID: "cm-tok-nil",
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeOfferings(rec, modelsRequest(http.MethodGet, "/api/control/v1/offerings?account_id=acct-tok-nil"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"max_input_tokens":null`) {
+		t.Fatalf("body missing explicit null for unknown max_input_tokens: %s", body)
+	}
+	if !strings.Contains(body, `"max_output_tokens":null`) {
+		t.Fatalf("body missing explicit null for unknown max_output_tokens: %s", body)
+	}
+}
+
+// TestModels_TokenLimitsSerializeValuesWhenKnown proves the offering's own
+// declared max_input_tokens/max_output_tokens reach the wire verbatim, and
+// distinctly from effective_context_tokens: this offering's context length
+// (1048576) and its output cap (131072) are different numbers, so a renderer
+// that collapsed one into the other would be caught rendering the wrong
+// value for at least one of them.
+func TestModels_TokenLimitsSerializeValuesWhenKnown(t *testing.T) {
+	clock := fixedModelsClock()
+	h, db := newTestModelsHandler(t, func() time.Time { return clock })
+
+	modelsSeedOffering(t, db, offeringSeed{
+		AccountID: "acct-tok-val", ProviderID: "prov-tok-val", ProviderModelID: "model-tok-val", ModelID: "cm-tok-val",
+		ContextLength:   modelsIntPtr(1048576),
+		MaxInputTokens:  modelsIntPtr(900000),
+		MaxOutputTokens: modelsIntPtr(131072),
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeOfferings(rec, modelsRequest(http.MethodGet, "/api/control/v1/offerings?account_id=acct-tok-val"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+	}
+
+	var env struct {
+		Data []effectiveOfferingJSON `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v; body = %q", err, rec.Body.String())
+	}
+	if len(env.Data) != 1 {
+		t.Fatalf("len(data) = %d, want 1", len(env.Data))
+	}
+
+	got := env.Data[0]
+	if got.MaxInputTokens == nil || *got.MaxInputTokens != 900000 {
+		t.Fatalf("MaxInputTokens = %v, want 900000", got.MaxInputTokens)
+	}
+	if got.MaxOutputTokens == nil || *got.MaxOutputTokens != 131072 {
+		t.Fatalf("MaxOutputTokens = %v, want 131072", got.MaxOutputTokens)
+	}
+	if got.EffectiveContextTokens == nil || *got.EffectiveContextTokens != 1048576 {
+		t.Fatalf("EffectiveContextTokens = %v, want 1048576 (must not be collapsed with MaxOutputTokens)", got.EffectiveContextTokens)
+	}
+}
+
 // TestModels_RenderedTiersComeFromProject closes the gap that
 // TestModels_MatchesProjectExactly leaves open: that test compares the
 // in-memory EffectiveOffering, so a re-derivation introduced in the JSON
