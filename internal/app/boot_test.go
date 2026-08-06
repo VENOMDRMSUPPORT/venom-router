@@ -396,6 +396,43 @@ func TestBoot_StartupOrderEnforced(t *testing.T) {
 	}
 }
 
+// TestBoot_RegistersModelQualificationTick is the automatic-model-
+// qualification design's composition-root mutation guard (task-2 brief,
+// Step 6): it inspects the REAL *Scheduler a full Boot() call assembles, not
+// a hand-built one — so deleting the "model_qualification" registration in
+// boot.go's scheduler tick list fails THIS test, proving the wiring itself
+// (the actual deliverable) is guarded, not merely the qualificationTick unit
+// tested in internal/httpapi.
+//
+// With the dashboard's benchmark trigger removed on the owner's instruction,
+// this scheduler tick is the ONLY writer of models.quality_rating left
+// anywhere in the process — its absence from the registered list is exactly
+// as serious as the endpoint deletion this task closes.
+func TestBoot_RegistersModelQualificationTick(t *testing.T) {
+	setDataDirEnv(t)
+
+	srv, err := Boot(context.Background(), BootConfig{Bind: "127.0.0.1:0", SPAHandler: fakeSPA()})
+	if err != nil {
+		t.Fatalf("Boot() error = %v", err)
+	}
+	defer func() {
+		if err := srv.Shutdown(context.Background()); err != nil {
+			t.Fatalf("Shutdown() error = %v", err)
+		}
+	}()
+
+	var names []string
+	for _, tick := range srv.scheduler.ticks {
+		names = append(names, tick.Name)
+	}
+	for _, name := range names {
+		if name == "model_qualification" {
+			return
+		}
+	}
+	t.Fatalf("registered scheduler ticks = %v, want \"model_qualification\" among them", names)
+}
+
 // TestBoot_FailClosedOnNonLoopbackBind is P2b-CAPI-001's fail-closed
 // proof: a syntactically valid but non-loopback bind address must never
 // reach net.Listen at all — Boot aborts first, so nothing is ever

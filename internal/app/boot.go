@@ -527,6 +527,24 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		release()
 		return nil, fmt.Errorf("app: build account maintenance tick: %w", err)
 	}
+	// The automatic model-qualification sweep (automatic-model-qualification
+	// design, 2026-08-06): the dashboard's benchmark trigger
+	// (POST /models/{id}/benchmark) was removed on the owner's instruction —
+	// they will never press a button — so this tick is now the ONLY writer of
+	// models.quality_rating anywhere in the process. Its own composition
+	// root, like the token-refresh/account-maintenance ticks: it builds the
+	// same production benchmarkStreamFn NewBenchmarkHandler builds, so it
+	// measures through the identical dispatch path the deleted trigger used.
+	qualificationRun, err := httpapi.BuildQualificationTick(db, kr, time.Now)
+	if err != nil {
+		_ = httpServer.Close()
+		if dataHTTP != nil {
+			_ = dataHTTP.Close()
+		}
+		closeDB()
+		release()
+		return nil, fmt.Errorf("app: build model qualification tick: %w", err)
+	}
 	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
 	scheduler := NewScheduler(cfg.SchedulerInterval, logger,
 		// token_refresh runs FIRST in each round so every later tick (health
@@ -540,6 +558,7 @@ func Boot(ctx context.Context, cfg BootConfig) (*Server, error) {
 		SchedulerTick{Name: "probe_recertify", Run: func(ctx context.Context) error { _, err := probeWorkers.RecertifyTick(ctx); return err }},
 		SchedulerTick{Name: "probe_reclaim", Run: func(ctx context.Context) error { _, err := probeWorkers.ReclaimTick(ctx); return err }},
 		SchedulerTick{Name: "model_usability", Run: usabilityRun},
+		SchedulerTick{Name: "model_qualification", Run: qualificationRun},
 	)
 	logger.Info("background scheduler started", observability.String("interval", scheduler.interval.String()))
 	scheduler.Start(schedulerCtx)
