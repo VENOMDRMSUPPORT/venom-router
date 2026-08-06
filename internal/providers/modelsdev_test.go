@@ -272,3 +272,36 @@ func TestModelsFromLiveIDs_KeepsImageOutputModelsAndDropsDeprecated(t *testing.T
 		t.Fatalf("capabilities = %v, want image_generation", out[0].Capabilities)
 	}
 }
+
+// TestModelsFromLiveIDs_SetsMaxInputTokens proves modelsFromLiveIDs carries
+// the parsed ModelsDevFacts.MaxInput through to DiscoveredModel.MaxInputTokens,
+// alongside ContextLength and MaxOutputTokens which it already set.
+// ollama-cloud/glm-5.1's real vendored fixture entry declares
+// "limit":{"context":200000,"input":190000,"output":32000} specifically to
+// exercise this leg.
+//
+// MUTATION: removing `dm.MaxInputTokens = f.MaxInput` from modelsFromLiveIDs
+// turns this RED (MaxInputTokens comes back nil instead of 190000) — this is
+// the exact column a prior task existed to surface, silently dropped for
+// every provider (ollama-cloud, nvidia-nim, and any future adapter) that
+// shares this discovery rule.
+func TestModelsFromLiveIDs_SetsMaxInputTokens(t *testing.T) {
+	facts, err := parseModelsDevFacts(modelsDevFixture, "ollama-cloud")
+	if err != nil {
+		t.Fatalf("parseModelsDevFacts: %v", err)
+	}
+	out := modelsFromLiveIDs([]string{"glm-5.1"}, facts)
+	if len(out) != 1 {
+		t.Fatalf("got %d models, want 1", len(out))
+	}
+	m := out[0]
+	if m.ContextLength == nil || *m.ContextLength != 200000 {
+		t.Fatalf("ContextLength = %v, want 200000", m.ContextLength)
+	}
+	if m.MaxInputTokens == nil || *m.MaxInputTokens != 190000 {
+		t.Fatalf("MaxInputTokens = %v, want 190000 (from limit.input) — this column must never be silently dropped", m.MaxInputTokens)
+	}
+	if m.MaxOutputTokens == nil || *m.MaxOutputTokens != 32000 {
+		t.Fatalf("MaxOutputTokens = %v, want 32000", m.MaxOutputTokens)
+	}
+}

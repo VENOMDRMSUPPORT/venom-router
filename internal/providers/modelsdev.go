@@ -310,7 +310,8 @@ func OperationsFromFacts(f ModelsDevFacts) []string {
 //     was wrong.)
 //   - every operation, INCLUDING "chat", comes from OperationsFromFacts for a
 //     known entry, which reads only explicit dataset fields;
-//   - limits come from limit.context / limit.output, nil when absent;
+//   - limits come from limit.context / limit.input / limit.output, nil when
+//     absent;
 //   - DisplayName is the entry's name when present, else the raw id;
 //   - a live id with NO models.dev entry (uncatalogued, or the whole dataset
 //     was unavailable so facts is empty) passes through as chat-only with nil
@@ -337,6 +338,7 @@ func modelsFromLiveIDs(liveIDs []string, facts map[string]ModelsDevFacts) []Disc
 		}
 		if known {
 			dm.ContextLength = f.Context
+			dm.MaxInputTokens = f.MaxInput
 			dm.MaxOutputTokens = f.Output
 		}
 		out = append(out, dm)
