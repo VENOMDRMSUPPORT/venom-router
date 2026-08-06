@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Badge,
   Button,
   Card,
   EmptyState,
   ErrorState,
-  IconButton,
   Spinner,
 } from "@venom/design-system/primitives";
 import {
@@ -17,12 +16,8 @@ import {
   type CertState as DSCertState,
 } from "@venom/design-system/domain";
 import {
-  getJob,
   isSessionExpired,
   listModelGroups,
-  startBenchmark,
-  startDiscovery,
-  startProbe,
   toApiError,
   type AuthApiError,
   type EffectiveOffering,
@@ -30,7 +25,6 @@ import {
   type ModelGroup,
   type OfferingCapability,
 } from "../api/controlClient";
-import ReviewQueueBanner from "./ReviewQueueBanner";
 import ProviderLogo from "../fleet/ProviderLogo";
 import CapabilityChips from "../fleet/CapabilityChips";
 
@@ -87,28 +81,6 @@ function notRoutableCopy(capability: OfferingCapability): { label: string; title
     };
   }
   return { label: "Not routable", title: "Not certified as supported yet" };
-}
-
-/** True when any of this offering's capabilities is not yet CERTIFIED as
- * supported — the certification-review predicate, matching exactly what the
- * review-census banner counts as `capability_not_certified` and what the
- * backlog empty-state promises ("every offering-operation is certified and
- * supported").
- *
- * Deliberately NOT full routability. End-to-end routability additionally
- * requires the capability to be EFFECTIVE (native × provider × transport, 04
- * §3), and this read model hardcodes native/transport as UNKNOWN this phase (no
- * transport registry yet — see internal/httpapi/models.go), so `routable` is
- * always false here. Keying "needs review" off routability therefore flagged
- * EVERY model forever, contradicting the banner's own "nothing is waiting".
- * Certification is the signal a human actually acts on; routability is shown
- * per-capability in the expanded view for what it honestly is. */
-function offeringNeedsReview(o: EffectiveOffering): boolean {
-  return o.capabilities.some((c) => !(c.state === "certified" && c.truth === "supported"));
-}
-
-function groupNeedsReview(g: ModelGroup): boolean {
-  return g.offerings.some(offeringNeedsReview);
 }
 
 /** The context to show on the collapsed group header: the largest EFFECTIVE
@@ -224,14 +196,6 @@ function benchmarkProvenanceTitle(latest: LatestBenchmark | null | undefined): s
   return `Local benchmark, ${day}`;
 }
 
-/** The in-flight/finished outcome of an async trigger. `note` carries the
- * honesty caveat a bare status cannot (see benchmarkNote). */
-interface JobOutcome {
-  label: string;
-  note?: string;
-  tone: "info" | "healthy" | "warning" | "critical";
-}
-
 /** One capability's cell: certification state, capability truth, and the
  * server's own routable verdict — trusted verbatim, never recomputed. */
 function CapabilityCell(props: { offeringKey: string; capability: OfferingCapability }) {
@@ -273,10 +237,8 @@ function OfferingRow(props: {
    * can never disagree about when the model was last measured — the run is a
    * per-model fact, not a per-offering one. */
   provenanceTitle: string;
-  busy: boolean;
-  onProbe: (offeringOperationID: string) => void;
 }) {
-  const { offering: o, provenanceTitle, busy, onProbe } = props;
+  const { offering: o, provenanceTitle } = props;
   const key = o.provider_model_id;
   const catalogOnly = o.availability === "catalog_only";
 
@@ -369,41 +331,11 @@ function OfferingRow(props: {
               No capability has been observed for this offering yet.
             </span>
           ) : (
-            o.capabilities.map((c) => {
-              // POST /offerings/{id}/probe is keyed by the OFFERING-OPERATION id,
-              // which the projection now reports (P6-CAPI-EXTRA-2). It is used
-              // VERBATIM: the real ids are minted randomly by DiscoveryRepo, so an
-              // id composed from provider_model_id would address a different row
-              // or 404.
-              //
-              // An ABSENT id is not a gap to work around — an operation reachable
-              // only through native/transport support has no offering_operations
-              // row and therefore nothing to probe. The control stays disabled with
-              // the reason stated.
-              const probeID = c.offering_operation_id;
-              return (
-                <div
-                  key={c.operation}
-                  className="flex flex-wrap items-center justify-between gap-2"
-                >
-                  <CapabilityCell offeringKey={key} capability={c} />
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={busy || !probeID}
-                    data-testid={`probe-${key}-${c.operation}`}
-                    title={
-                      probeID
-                        ? `Probe this operation's capability truth (${probeID}).`
-                        : "This operation has no offering-operation id, so there is nothing to probe."
-                    }
-                    onClick={probeID ? () => onProbe(probeID) : undefined}
-                  >
-                    {probeID ? "Probe" : "Probe — not available for this operation"}
-                  </Button>
-                </div>
-              );
-            })
+            o.capabilities.map((c) => (
+              <div key={c.operation} className="flex flex-wrap items-center justify-between gap-2">
+                <CapabilityCell offeringKey={key} capability={c} />
+              </div>
+            ))
           )}
         </div>
       </div>
@@ -432,24 +364,19 @@ function OfferingRow(props: {
  *   - `catalog_only` is a correct terminal classification, not a fault. It is
  *     shown as "never enters a tier", in an informational tone.
  *
- * And one it refuses to imply: a completed benchmark job is not UNCONDITIONALLY
- * a new rating. The local benchmark (Plan 3 of the local-benchmark-rating
- * design) writes models.quality_rating only when every request in its suite
- * succeeds; a partial failure still completes the job but withholds the
- * rating. GET /jobs/{id}'s result_ref is the single static
- * "/api/control/v1/models" reference either way, so this surface cannot tell
- * the two outcomes apart from the job read alone — see handleBenchmark's
- * completion note, which says so honestly instead of guessing.
+ * This surface is DISPLAY ONLY (owner requirement, 2026-08-06): it triggers no
+ * discovery, probe, or benchmark job itself. Capability and context facts
+ * arrive automatically on discovery; the owner never used the manual controls
+ * that used to sit here.
  */
 export default function ModelsSurface(props: ModelsSurfaceProps) {
-  const { csrfToken, onSessionExpired } = props;
+  // csrfToken is kept only to satisfy ModelsSurfaceProps (AppShell.tsx still
+  // passes it) — this surface issues no mutating calls, so it goes unused here.
+  const { onSessionExpired } = props;
 
   const [groups, setGroups] = useState<ModelGroup[] | null>(null);
   const [loadError, setLoadError] = useState<AuthApiError | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [backlogOnly, setBacklogOnly] = useState(false);
-  const [outcome, setOutcome] = useState<JobOutcome | null>(null);
-  const [busy, setBusy] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
@@ -477,123 +404,16 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
     };
   }, [reloadToken, onSessionExpired]);
 
-  /** Reports an accepted async trigger HONESTLY: 202 means the job exists, not
-   * that the work is done. */
-  const runTrigger = useCallback(
-    async (
-      kind: string,
-      trigger: () => Promise<{ job_id: string }>,
-      describe: (status: string) => JobOutcome,
-    ) => {
-      setBusy(true);
-      setOutcome({ label: `${kind}: starting…`, tone: "info" });
-      try {
-        const handle = await trigger();
-        // The 202 is an ACCEPTANCE. Report it as in-flight and let the caller's
-        // describe() decide what the terminal status is allowed to claim.
-        setOutcome(describe("running"));
-        const job = await getJob(handle.job_id);
-        setOutcome(describe(job.status));
-        if (job.status === "completed") setReloadToken((t) => t + 1);
-      } catch (err) {
-        if (isSessionExpired(err)) {
-          onSessionExpired();
-          return;
-        }
-        const apiError = toApiError(err);
-        setOutcome({
-          label: `${kind} could not start: ${apiError.message}`,
-          note:
-            apiError.code === "enrichment_disabled"
-              ? "Enrichment is disabled — this is a state conflict, not a permission problem. Turn enrichment on in Settings and try again."
-              : apiError.code,
-          tone: "critical",
-        });
-      } finally {
-        setBusy(false);
-      }
-    },
-    [onSessionExpired],
-  );
-
-  const handleDiscover = useCallback(
-    (accountId: string) =>
-      runTrigger(
-        "Discovery",
-        () => startDiscovery(accountId, csrfToken),
-        (status) => ({
-          label: `Discovery job ${status}`,
-          note:
-            status === "completed"
-              ? "The catalog below has been reloaded from the server."
-              : "Discovery runs in the background — this is the job's status, not a result.",
-          tone: status === "failed" ? "critical" : status === "completed" ? "healthy" : "info",
-        }),
-      ),
-    [csrfToken, runTrigger],
-  );
-
-  const handleProbe = useCallback(
-    (offeringOperationID: string) =>
-      runTrigger(
-        "Probe",
-        () => startProbe(offeringOperationID, csrfToken),
-        (status) => ({
-          label: `Probe job ${status}`,
-          note: "A probe measures capability truth; an infrastructure failure never flips it.",
-          tone: status === "failed" ? "critical" : status === "completed" ? "healthy" : "info",
-        }),
-      ),
-    [csrfToken, runTrigger],
-  );
-
-  const handleBenchmark = useCallback(
-    (modelId: string) =>
-      runTrigger(
-        "Benchmark",
-        () => startBenchmark(modelId, csrfToken),
-        (status) => ({
-          label: `Benchmark job ${status}`,
-          // THE honesty requirement of this card. The local benchmark
-          // (internal/httpapi/benchmark.go's runBenchmark) writes
-          // models.quality_rating ONLY when every request in its fixed suite
-          // succeeds; a partial failure still reaches job status `completed`
-          // but withholds the rating, leaving any existing one unchanged.
-          // GET /jobs/{id}'s result_ref is the single static
-          // "/api/control/v1/models" reference (09 §3.12: a reference, never
-          // inline content) in BOTH cases — this surface has no way to tell
-          // which outcome actually happened from the job read alone, so
-          // "completed" must not be narrated as a specific result it cannot
-          // verify. The catalog reload triggered on completion (below) shows
-          // whatever the real, current rating is either way.
-          note:
-            status === "completed"
-              ? "Completed — the catalog has been reloaded. A rating (Local benchmark) is written only when every request in the run succeeds; a partial failure records the measurement but withholds the rating, so any existing rating stays unchanged."
-              : "Benchmarks run in the background — this is the job's status, not a rating.",
-          tone: status === "failed" ? "critical" : "info",
-        }),
-      ),
-    [csrfToken, runTrigger],
-  );
-
-  const visibleGroups = useMemo(() => {
-    if (!groups) return null;
-    return backlogOnly ? groups.filter(groupNeedsReview) : groups;
-  }, [groups, backlogOnly]);
-
-  const banner = (
-    <ReviewQueueBanner
-      onSessionExpired={onSessionExpired}
-      onReviewBacklog={() => setBacklogOnly(true)}
-    />
-  );
+  // Plain alias — the load effect above is the only writer of `groups`. Kept
+  // as its own name so the render below reads the same as it did when this
+  // filtered to the review backlog.
+  const visibleGroups = groups;
 
   // An error is its OWN state. Falling through to the empty state would tell the
   // owner "you have no models" when the truth is "we could not ask".
   if (loadError) {
     return (
       <div className="flex flex-col gap-4">
-        {banner}
         <ErrorState
           code={loadError.code}
           title="Could not load live models"
@@ -610,47 +430,11 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
 
   return (
     <div className="flex flex-col gap-4">
-      {banner}
-
-      {outcome ? (
-        <Card data-testid="job-outcome">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div className="flex flex-col gap-1">
-              <Badge tone={outcome.tone} icon="activity">
-                {outcome.label}
-              </Badge>
-              {outcome.note ? <span className="vn-caption">{outcome.note}</span> : null}
-            </div>
-            <IconButton
-              icon="x"
-              label="Dismiss job status"
-              variant="ghost"
-              onClick={() => setOutcome(null)}
-            />
-          </div>
-        </Card>
-      ) : null}
-
-      {backlogOnly ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge tone="warning" icon="filter">
-            Showing the review backlog only
-          </Badge>
-          <Button size="sm" variant="ghost" onClick={() => setBacklogOnly(false)}>
-            Show the whole catalog
-          </Button>
-        </div>
-      ) : null}
-
       {visibleGroups.length === 0 ? (
         <EmptyState
           icon="box"
-          title={backlogOnly ? "No live models need review" : "No live models"}
-          description={
-            backlogOnly
-              ? "Every live offering-operation is certified and supported."
-              : "Models appear automatically when a healthy connected provider account is available."
-          }
+          title="No live models"
+          description="Models appear automatically when a healthy connected provider account is available."
         />
       ) : (
         visibleGroups.map((g) => {
@@ -695,34 +479,6 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
                       onClick={() => setExpanded((prev) => ({ ...prev, [g.model_id]: !isOpen }))}
                     >
                       {g.display_name || g.model_id}
-                    </Button>
-                    <span className="vn-caption">
-                      {g.offerings.length} offering{g.offerings.length === 1 ? "" : "s"}
-                    </span>
-                    {groupNeedsReview(g) ? (
-                      <Badge tone="warning" icon="triangle-alert">
-                        Needs review
-                      </Badge>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {firstOffering ? (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        disabled={busy}
-                        onClick={() => void handleDiscover(firstOffering.account_id)}
-                      >
-                        Discover
-                      </Button>
-                    ) : null}
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={busy}
-                      onClick={() => void handleBenchmark(g.model_id)}
-                    >
-                      Benchmark
                     </Button>
                   </div>
                 </div>
@@ -792,8 +548,6 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
                           key={`${o.account_id}:${o.provider_model_id}`}
                           offering={o}
                           provenanceTitle={provenanceTitle}
-                          busy={busy}
-                          onProbe={(id) => void handleProbe(id)}
                         />
                       ))
                     )}

@@ -866,26 +866,6 @@ export async function syncProvider(
   return resp.data;
 }
 
-/** POST /models/{id}/benchmark — triggers the canonical quality benchmark
- * (202 + job).
- *
- * HONESTY NOTE, load-bearing for P6-UI-002: this job can reach `succeeded`
- * WITHOUT producing a rating. The QualityIndex seam is nil in production
- * (internal/httpapi/controlmux.go), so the leaderboard always misses and the
- * handler completes the job without writing a rating — deliberately, rather
- * than fabricating one. A completed benchmark is therefore NOT evidence that a
- * rating changed, and must never be rendered as though it were.
- *
- * A 409 means enrichment is DISABLED — a state conflict the owner can resolve
- * in settings, not a permission problem. */
-export async function startBenchmark(modelId: string, csrfToken: string): Promise<AsyncJobHandle> {
-  const resp = await request<{ data: AsyncJobHandle }>(
-    `/models/${encodeURIComponent(modelId)}/benchmark`,
-    { method: "POST", headers: { [CSRF_HEADER]: csrfToken } },
-  );
-  return resp.data;
-}
-
 /** GET /jobs/{job_id}'s payload (internal/httpapi/jobs.go's jobJSON) — the
  * SINGLE canonical async-job status surface (09 §3.12); no per-resource status
  * route exists. `status` is storage.JobStatus's exact vocabulary. `error` is a
