@@ -9,20 +9,27 @@ import (
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 )
 
 // ProbeRunRepo implements intelligence.ProbeSpendReader,
-// intelligence.ProbeInFlightReader, and intelligence.ProbeCooldownReader
-// over the M6-enabling probe_runs / probe_run_costs tables
-// (00010_probe_runs.sql). It is the durable record of every probe
-// attempt this project ever runs — the safety list in 04 §2 (per-account
-// spend, per-provider concurrency, the context-probe cooldown) is
-// answerable only because every attempt is recorded here first.
+// intelligence.ProbeInFlightReader, intelligence.ProbeCooldownReader, and
+// (task-3 fix round) intelligence.ProbeCapabilityCooldownReader over the
+// M6-enabling probe_runs / probe_run_costs tables (00010_probe_runs.sql).
+// It is the durable record of every probe attempt this project ever runs —
+// the safety list in 04 §2 (per-account spend, per-provider concurrency,
+// the context-probe cooldown) is answerable only because every attempt is
+// recorded here first.
 type ProbeRunRepo struct {
 	db                   *DB
 	now                  func() time.Time
 	contextProbeCooldown time.Duration
+	// capabilityProbeCooldown is 0 (disabled) unless
+	// WithCapabilityProbeCooldown sets it — an OPT-IN, copy-returning field
+	// (mirrors ModelsHandler.WithProbeRuns's own pattern) so every existing
+	// NewProbeRunRepo call site is unaffected by its mere existence.
+	capabilityProbeCooldown time.Duration
 }
 
 // NewProbeRunRepo builds a repository over db's existing connection.
@@ -38,6 +45,17 @@ func NewProbeRunRepo(db *DB, now func() time.Time, contextProbeCooldown time.Dur
 		now = time.Now
 	}
 	return &ProbeRunRepo{db: db, now: now, contextProbeCooldown: contextProbeCooldown}
+}
+
+// WithCapabilityProbeCooldown returns a copy of r with the capability-probe
+// cooldown window set (task-3 fix round, CRITICAL 2b). d <= 0 leaves the
+// gate disabled (CapabilityProbeCooldownUntil always answers nil), which is
+// r's default before this method is ever called — every existing
+// NewProbeRunRepo call site is therefore unaffected.
+func (r *ProbeRunRepo) WithCapabilityProbeCooldown(d time.Duration) *ProbeRunRepo {
+	clone := *r
+	clone.capabilityProbeCooldown = d
+	return &clone
 }
 
 // ErrInvalidProbeRunParams is returned by Start for a structurally
@@ -239,7 +257,7 @@ func (r *ProbeRunRepo) ProbeCooldownUntil(ctx context.Context, offeringOperation
 		`SELECT started_at FROM probe_runs
 		 WHERE offering_operation_id = ? AND operation = ? AND execution = 'succeeded'
 		 ORDER BY started_at DESC LIMIT 1`,
-		offeringOperationID, string(intelligenceOperationContextWindow),
+		offeringOperationID, string(models.OperationContextWindow),
 	).Scan(&startedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -248,6 +266,44 @@ func (r *ProbeRunRepo) ProbeCooldownUntil(ctx context.Context, offeringOperation
 		return nil, fmt.Errorf("storage: probe cooldown for %q: %w", offeringOperationID, err)
 	}
 	until := time.Unix(startedAt, 0).UTC().Add(r.contextProbeCooldown)
+	return &until, nil
+}
+
+// CapabilityProbeCooldownUntil implements
+// intelligence.ProbeCapabilityCooldownReader (task-3 fix round, CRITICAL
+// 2b): the most recent probe_runs row for (offeringOperationID, operation)
+// — of ANY execution — plus r.capabilityProbeCooldown, or nil when no run
+// exists yet or the cooldown is disabled (capabilityProbeCooldown <= 0,
+// r's default before WithCapabilityProbeCooldown is called).
+//
+// Unlike ProbeCooldownUntil above, this deliberately does NOT filter on
+// execution = 'succeeded'. ProbeCooldownUntil's succeeded-only rule is
+// correct for the context probe because 04 §2 attaches ITS week-long window
+// to having actually read a limit. This cooldown exists for the opposite
+// reason: task-3's own failure mode is an INCONCLUSIVE or FAILED capability
+// probe being re-selected and re-attempted every 30s scheduler round
+// forever, because "no succeeded run yet" stays true on every single one of
+// those attempts. A cooldown gated on "succeeded" would never fire for the
+// exact case it exists to bound — it has to key off the last ATTEMPT,
+// whatever its outcome, or it is a no-op.
+func (r *ProbeRunRepo) CapabilityProbeCooldownUntil(ctx context.Context, offeringOperationID string, operation models.Operation) (*time.Time, error) {
+	if r.capabilityProbeCooldown <= 0 {
+		return nil, nil
+	}
+	var startedAt int64
+	err := r.db.Conn().QueryRowContext(ctx,
+		`SELECT started_at FROM probe_runs
+		 WHERE offering_operation_id = ? AND operation = ?
+		 ORDER BY started_at DESC LIMIT 1`,
+		offeringOperationID, string(operation),
+	).Scan(&startedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("storage: capability probe cooldown for %q: %w", offeringOperationID, err)
+	}
+	until := time.Unix(startedAt, 0).UTC().Add(r.capabilityProbeCooldown)
 	return &until, nil
 }
 
@@ -384,13 +440,6 @@ func (r *ProbeRunRepo) SucceededOfferingOperationIDs(ctx context.Context, thresh
 	return out, nil
 }
 
-// intelligenceOperationContextWindow mirrors models.OperationContextWindow's
-// wire value ("context_window") without importing internal/models into
-// this file's query-building path just for one string constant that this
-// package's other files already treat as plain TEXT (offering_operations
-// / probe_runs' own operation column has no FK to a models type).
-const intelligenceOperationContextWindow = "context_window"
-
 // ReclaimStale marks every probe_runs row still pending/running whose
 // started_at is older than olderThan as terminal_failure (finished_at =
 // olderThan's caller-supplied "now" instant), so a crashed process can
@@ -415,7 +464,8 @@ func (r *ProbeRunRepo) ReclaimStale(ctx context.Context, olderThan time.Time) (i
 // Compile-time proof ProbeRunRepo structurally satisfies every
 // intelligence port it is meant to adapt.
 var (
-	_ intelligence.ProbeSpendReader    = (*ProbeRunRepo)(nil)
-	_ intelligence.ProbeInFlightReader = (*ProbeRunRepo)(nil)
-	_ intelligence.ProbeCooldownReader = (*ProbeRunRepo)(nil)
+	_ intelligence.ProbeSpendReader              = (*ProbeRunRepo)(nil)
+	_ intelligence.ProbeInFlightReader           = (*ProbeRunRepo)(nil)
+	_ intelligence.ProbeCooldownReader           = (*ProbeRunRepo)(nil)
+	_ intelligence.ProbeCapabilityCooldownReader = (*ProbeRunRepo)(nil)
 )

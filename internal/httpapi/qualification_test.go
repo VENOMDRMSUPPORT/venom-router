@@ -11,7 +11,10 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -36,6 +39,14 @@ func withStream(stream benchmarkStreamFn) qualificationTickOption {
 	return func(tick *qualificationTick) { tick.stream = stream }
 }
 
+// withCapabilityProbeTransport wires transport directly — the seam a test
+// needs when it must also inspect the fake afterward (transport.callCount(),
+// fix round 1's Critical 2 tests: "was the transport actually re-invoked").
+// withCapabilityProbeResult below is the common case built on top of this.
+func withCapabilityProbeTransport(transport *fakeProbeTransport) qualificationTickOption {
+	return func(tick *qualificationTick) { tick.probeTransport = transport }
+}
+
 // withCapabilityProbeResult wires a fake, controllable intelligence.
 // ProbeTransport that returns res for every call — the ONE seam task 3's
 // capability-probe tests fake (fakeProbeTransport is probe_test.go's own
@@ -47,9 +58,26 @@ func withStream(stream benchmarkStreamFn) qualificationTickOption {
 // (fakeAlwaysAdmitReserver below), since a real reservation additionally
 // requires quota-window fixtures no test in this file otherwise needs.
 func withCapabilityProbeResult(res intelligence.ProbeResult) qualificationTickOption {
-	return func(tick *qualificationTick) {
-		tick.probeTransport = &fakeProbeTransport{available: true, result: res}
-	}
+	return withCapabilityProbeTransport(&fakeProbeTransport{available: true, result: res})
+}
+
+// withProbeGuardPolicy overrides the ProbeSafetyPolicy every capability
+// probe is admitted against — fix round 1's Critical 2(a) test uses this to
+// force a deterministic ADMISSION refusal (no cap at all configured), so it
+// can prove a refused attempt records no spend without depending on any
+// particular real cost number.
+func withProbeGuardPolicy(policy intelligence.ProbeSafetyPolicy) qualificationTickOption {
+	return func(tick *qualificationTick) { tick.probeGuardPolicy = policy }
+}
+
+// withNow overrides the tick's clock (and therefore the ProbeGuard built
+// fresh inside every probeOneCapability call, which is admitted against
+// THIS clock) — fix round 1's recertification test uses this to simulate
+// "enough real time has passed that the capability-probe cooldown
+// (qualificationCapabilityProbeCooldown) has cleared" without an actual
+// sleep.
+func withNow(now func() time.Time) qualificationTickOption {
+	return func(tick *qualificationTick) { tick.now = now }
 }
 
 // fakeAlwaysAdmitReserver is the one non-storage-backed capability-probe
@@ -91,8 +119,9 @@ func newQualificationTickForTest(t *testing.T, db *storage.DB, opts ...qualifica
 		now:     time.Now,
 		log:     observability.Default(),
 
-		db:               db,
-		probeRuns:        storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown),
+		db: db,
+		probeRuns: storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown).
+			WithCapabilityProbeCooldown(qualificationCapabilityProbeCooldown),
 		probeReserver:    fakeAlwaysAdmitReserver{},
 		probeGuardPolicy: intelligence.DefaultProbeSafetyPolicy(),
 		driver:           driver,
@@ -567,16 +596,356 @@ func TestQualificationTick_UpgradesADeclaredCapabilityToProbed(t *testing.T) {
 // transition table), so CertificationDriver.RecordAttempt's own state
 // machine rejects the write outright — never a second, bespoke "is this
 // outcome definitive" check added by this tick.
+//
+// MINOR 7 (fix round 1): the transport's own call count is asserted too. A
+// selection that silently selects nothing (a broken query, an accidentally
+// tautological filter) would ALSO leave the certification unchanged and
+// pass this test for the wrong reason — pinning "a probe was actually
+// attempted" closes that gap.
 func TestQualificationTick_RateLimitNeverDowngradesADeclaredCapability(t *testing.T) {
 	db := testControlDB(t)
 	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
 
-	tick := newQualificationTickForTest(t, db,
-		withCapabilityProbeResult(intelligence.ProbeResult{HTTPStatus: 429}))
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 429}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport))
 	_ = tick(context.Background())
+
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("capability probe transport calls = %d, want 1 — a broken/empty selection must not be able to pass this invariant vacuously", got)
+	}
 
 	state, truth := certificationOf(t, db, "acct-1", "m-1", "tools")
 	if state != "certified" || truth != "supported" {
 		t.Fatalf("certification = %s/%s, want certified/supported unchanged — 04 §2's hard rule is that a rate limit must never flip a capability to false", state, truth)
+	}
+}
+
+// provenanceOf reads GET /offerings' real "provenance" field for operation
+// on providerModelID — the SAME read model (ModelsHandler.ServeOfferings,
+// WithProbeRuns wired exactly as ControlMux wires it) models_test.go's own
+// TestModels_CapabilityProvenanceFromProbeRuns exercises, run here against
+// whatever this tick's own actions left in db. It is what "the read model
+// does/does not report probed" actually means, rather than re-deriving that
+// claim from probe_runs rows directly.
+func provenanceOf(t *testing.T, db *storage.DB, providerModelID, operation string) string {
+	t.Helper()
+	h := NewModelsHandler(storage.NewCatalogRepo(db), nil).
+		WithProbeRuns(storage.NewProbeRunRepo(db, nil, 7*24*time.Hour))
+
+	rec := httptest.NewRecorder()
+	h.ServeOfferings(rec, modelsRequest(http.MethodGet, "/api/control/v1/offerings"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ServeOfferings status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+
+	var env struct {
+		Data []struct {
+			ProviderModelID string `json:"provider_model_id"`
+			Capabilities    []struct {
+				Operation  string `json:"operation"`
+				Provenance string `json:"provenance"`
+			} `json:"capabilities"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode offerings: %v; body = %s", err, rec.Body.String())
+	}
+	for _, o := range env.Data {
+		if o.ProviderModelID != providerModelID {
+			continue
+		}
+		for _, c := range o.Capabilities {
+			if c.Operation == operation {
+				return c.Provenance
+			}
+		}
+	}
+	t.Fatalf("no capability %q found for provider model %q in offerings response", operation, providerModelID)
+	return ""
+}
+
+// probeRunCount is the total probe_runs row count for offeringOperationID,
+// of any execution — used to prove EITHER "an attempt happened" (rows > 0)
+// or "a refused attempt recorded nothing at all" (rows == 0).
+func probeRunCount(t *testing.T, db *storage.DB, offeringOperationID string) int {
+	t.Helper()
+	var n int
+	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM probe_runs WHERE offering_operation_id = ?`, offeringOperationID).Scan(&n); err != nil {
+		t.Fatalf("count probe runs for %q: %v", offeringOperationID, err)
+	}
+	return n
+}
+
+// probeRunCostRowCount is the total probe_run_costs row count across the
+// whole database — the exact rows intelligence.ProbeSpendReader's
+// ProbeSpendSince sums to enforce the PerAccount rolling cap (CRITICAL 2a:
+// "a refused attempt records no spend").
+func probeRunCostRowCount(t *testing.T, db *storage.DB) int {
+	t.Helper()
+	var n int
+	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM probe_run_costs`).Scan(&n); err != nil {
+		t.Fatalf("count probe_run_costs: %v", err)
+	}
+	return n
+}
+
+// TestQualificationTick_SemanticRejectionNeverRendersAsProbed is fix round
+// 1's CRITICAL 1 test: a provider that explicitly disowns a capability via
+// one of the three reliableUnsupportedCodes must never leave a SUCCEEDED
+// probe_runs row behind, and the read model must never render it "probed".
+// Before the fix, intelligence.ClassifyProbeSignal's own (correct)
+// Execution=ProbeSucceeded for a semantic rejection was written straight
+// into probe_runs.execution, so a proven-ABSENT capability rendered as
+// "measured supported" — strictly worse than the pre-task-3 "declared"
+// hedge, since the owner would then route real traffic into a capability
+// the provider just rejected.
+func TestQualificationTick_SemanticRejectionNeverRendersAsProbed(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 400, ProviderCode: "tool_use_not_supported"}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("capability probe transport calls = %d, want 1", got)
+	}
+
+	if hasSucceededProbeRun(t, db, "acct-1", "m-1", "tools") {
+		t.Fatal("a proven-absent capability must never be recorded as a succeeded probe run — that is exactly what would render the chip 'probed' while truth stays stuck at 'supported'")
+	}
+	if got := provenanceOf(t, db, "m-1", "tools"); got == "probed" {
+		t.Fatalf("read-model provenance = %q, want anything but \"probed\" — a provider that explicitly disowned this capability must never be surfaced as measured-supported", got)
+	}
+}
+
+// TestQualificationTick_RefusedCapabilityProbeRecordsNoSpend is fix round
+// 1's CRITICAL 2(a) test: when ProbeGuard.Admit refuses an attempt (here,
+// deliberately, by configuring a policy with NO per-probe caps at all —
+// checkCaps refuses any allocation whose unit has no configured cap), the
+// transport must never be called, AND neither a probe_runs row nor a
+// probe_run_costs row may exist afterward. Before the fix, probeRuns.Start
+// ran before the guard was even built, so a refused attempt still
+// permanently consumed the account's rolling probe-spend budget.
+func TestQualificationTick_RefusedCapabilityProbeRecordsNoSpend(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	policy := intelligence.DefaultProbeSafetyPolicy()
+	policy.PerProbe = nil // every allocation now has "no cap configured" -> refused
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport), withProbeGuardPolicy(policy))
+	_ = tick(context.Background())
+
+	if got := transport.callCount(); got != 0 {
+		t.Fatalf("capability probe transport calls = %d, want 0 — the guard must refuse before the transport is ever reached", got)
+	}
+
+	opID := offeringOperationIDFor(t, db, "acct-1", "m-1", "tools")
+	if n := probeRunCount(t, db, opID); n != 0 {
+		t.Fatalf("probe_runs rows = %d, want 0 — a refused attempt must record no evidence at all", n)
+	}
+	if n := probeRunCostRowCount(t, db); n != 0 {
+		t.Fatalf("probe_run_costs rows = %d, want 0 — a refused attempt must record no spend", n)
+	}
+}
+
+// TestQualificationTick_NonSucceedingCapabilityProbeIsNotRetriedNextRound is
+// fix round 1's CRITICAL 2(b) test: a candidate whose attempt did not
+// succeed (here, rate-limited) must not have its transport re-invoked on
+// the very next round. Before the fix, dueCapabilityProbes' own "no
+// succeeded run yet" selection re-picked the identical candidate every
+// round with no backoff at all — measured at 10 attempts over 10 rounds.
+func TestQualificationTick_NonSucceedingCapabilityProbeIsNotRetriedNextRound(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 429}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport))
+
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("round 1: %v", err)
+	}
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("transport calls after round 1 = %d, want 1", got)
+	}
+
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("round 2: %v", err)
+	}
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("transport calls after round 2 = %d, want STILL 1 — a non-succeeding attempt must not be retried on the very next round; the capability-probe cooldown must have refused it before the transport was ever reached", got)
+	}
+}
+
+// TestQualificationTick_ReProbesAfterRecertificationInvalidatesThePriorRun is
+// fix round 1's IMPORTANT 3 test: after a certification EXPIRES and is
+// re-certified from a bare declaration (simulated here by bumping
+// certified_at past the existing succeeded run's finished_at, exactly what
+// probe_recertify's real edge does), the tick must select this candidate
+// again — the old succeeded run predates the new certification and must not
+// count. Before the fix, dueCapabilityProbes only asked "does ANY succeeded
+// run exist", so it would never select this row again, and the read model
+// (which DOES apply the certified_at >= threshold) had already silently
+// fallen back to "declared" with no path back to "probed".
+func TestQualificationTick_ReProbesAfterRecertificationInvalidatesThePriorRun(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	firstTransport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(firstTransport))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("first tick: %v", err)
+	}
+	if !hasSucceededProbeRun(t, db, "acct-1", "m-1", "tools") {
+		t.Fatal("setup: the first probe must have succeeded")
+	}
+	if got := provenanceOf(t, db, "m-1", "tools"); got != "probed" {
+		t.Fatalf("setup: provenance = %q, want \"probed\" before simulating recertification", got)
+	}
+
+	// Simulate recertification: bump certified_at to AFTER the existing
+	// succeeded run's finished_at.
+	opID := offeringOperationIDFor(t, db, "acct-1", "m-1", "tools")
+	future := time.Now().Add(24 * time.Hour).Unix()
+	if _, err := db.Conn().Exec(`UPDATE certifications SET certified_at = ? WHERE offering_operation_id = ?`, future, opID); err != nil {
+		t.Fatalf("simulate recertification: %v", err)
+	}
+
+	if got := provenanceOf(t, db, "m-1", "tools"); got != "declared" {
+		t.Fatalf("provenance after recertification = %q, want \"declared\" — the stale pre-recertification run must no longer count", got)
+	}
+
+	// The capability-probe cooldown (qualificationCapabilityProbeCooldown,
+	// keyed off the LAST ATTEMPT regardless of outcome — see its own doc
+	// comment) is unconditional and would otherwise still be blocking this
+	// second attempt purely from real wall-clock proximity to the first one,
+	// which is not what this test is about: it exists to prove
+	// RE-SELECTION after recertification, not to race the cooldown. Advance
+	// the tick's own clock past BOTH the cooldown window AND the bumped
+	// certified_at above (derived FROM future, so it is unconditionally
+	// later, never independently computed and hoped to line up).
+	later := time.Unix(future, 0).Add(2 * qualificationCapabilityProbeCooldown)
+	secondTransport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}}
+	secondTick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(secondTransport), withNow(func() time.Time { return later }))
+	if err := secondTick(context.Background()); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+	if got := secondTransport.callCount(); got != 1 {
+		t.Fatalf("second tick's transport calls = %d, want 1 — the row must be selected again after recertification invalidated the prior run", got)
+	}
+	if got := provenanceOf(t, db, "m-1", "tools"); got != "probed" {
+		t.Fatalf("provenance after the fresh probe = %q, want \"probed\" again", got)
+	}
+}
+
+// TestQualificationTick_TerminalFailureSuspendsAnAlreadyCertifiedCapability
+// is fix round 1's IMPORTANT 4 test: a 401/403 is the ONE outcome that
+// legally moves an already certified/supported row (certified -> suspended,
+// edge 6) — pinned here as the deliberate, intended behaviour it is (not
+// incidental): recovery from a credential rejection is the review drainer's
+// job, and leaving a rejected credential's capability routable would be
+// worse than suspending it.
+func TestQualificationTick_TerminalFailureSuspendsAnAlreadyCertifiedCapability(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	tick := newQualificationTickForTest(t, db,
+		withCapabilityProbeResult(intelligence.ProbeResult{HTTPStatus: 401}))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	state, truth := certificationOf(t, db, "acct-1", "m-1", "tools")
+	if state != "suspended" {
+		t.Fatalf("certification state = %q, want \"suspended\" — a genuine credential-blocked outcome is the one legal write path from an infrastructure signal onto an already-certified row", state)
+	}
+	if truth != "supported" {
+		t.Fatalf("certification truth = %q, want \"supported\" unchanged — Transition's own default branch never touches Truth on the certified -> suspended edge", truth)
+	}
+}
+
+// TestQualificationTick_NeverProbesADisconnectedAccountsCapability is fix
+// round 1's IMPORTANT 5 test: dueCapabilityProbes must apply the SAME
+// liveness gate dueModels applies (CatalogRepo.ListOfferings' LiveOnly) —
+// a disconnected account's otherwise-eligible capability must never be
+// probed. Before the fix, dueCapabilityProbes filtered on nothing but the
+// certification row, so a disconnected/unhealthy account's capabilities
+// were probed anyway, wasting quota against an account that cannot even
+// serve the request.
+func TestQualificationTick_NeverProbesADisconnectedAccountsCapability(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	if _, err := db.Conn().Exec(`UPDATE accounts SET connection_state = 'disconnected' WHERE id = ?`, "acct-1"); err != nil {
+		t.Fatalf("simulate disconnected account: %v", err)
+	}
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if got := transport.callCount(); got != 0 {
+		t.Fatalf("capability probe transport calls = %d, want 0 — a disconnected account's capability must never be probed", got)
+	}
+	if hasSucceededProbeRun(t, db, "acct-1", "m-1", "tools") {
+		t.Fatal("no probe run of any kind should exist for a disconnected account's capability")
+	}
+}
+
+// TestQualificationTick_CapsHowManyCapabilityProbesOneRoundRuns is fix round
+// 1's MINOR 6(a) test: with more due capability probes than
+// qualificationCapabilityProbeCap, only that many are actually attempted in
+// one Run call. Mutation this pins: replacing the capped slice with the
+// full due list.
+func TestQualificationTick_CapsHowManyCapabilityProbesOneRoundRuns(t *testing.T) {
+	db := testControlDB(t)
+	total := qualificationCapabilityProbeCap + 3
+	for i := 0; i < total; i++ {
+		suffix := fmt.Sprintf("%03d", i)
+		seedCertifiedDeclaredCapability(t, db, "acct-cp-"+suffix, "prov-cp-"+suffix, "m-cp-"+suffix, "tools")
+	}
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if got := transport.callCount(); got != qualificationCapabilityProbeCap {
+		t.Fatalf("capability probe transport calls = %d, want %d — the per-round cap must bound the fan-out", got, qualificationCapabilityProbeCap)
+	}
+}
+
+// TestQualificationTick_NeverProbesChatOrContextWindow is fix round 1's
+// MINOR 6(b) test: chat and context_window must never be selected by this
+// pass, regardless of certification state. Mutation this pins: adding
+// OperationChat and OperationContextWindow to capabilityProbeOperations.
+func TestQualificationTick_NeverProbesChatOrContextWindow(t *testing.T) {
+	db := testControlDB(t)
+	// acct-chat's certified "chat" op incidentally also satisfies dueModels'
+	// OWN live-chat-offering gate (they share the same certified+supported
+	// chat basis) — this test seeds it purely to prove the CAPABILITY-probe
+	// pass never touches it, so a harmless withStream keeps the SIBLING
+	// benchmark-rating pass from panicking on a nil stream; it is not what
+	// this test is about.
+	seedCertifiedDeclaredCapability(t, db, "acct-chat", "prov-chat", "m-chat", "chat")
+	seedCertifiedDeclaredCapability(t, db, "acct-ctx", "prov-ctx", "m-ctx", "context_window")
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport),
+		withStream(func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
+			return benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}, nil
+		}))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if got := transport.callCount(); got != 0 {
+		t.Fatalf("capability probe transport calls = %d, want 0 — chat and context_window must never be probed by this pass", got)
 	}
 }

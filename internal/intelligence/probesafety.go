@@ -129,6 +129,28 @@ type ProbeCooldownReader interface {
 	ProbeCooldownUntil(ctx context.Context, offeringOperationID string) (*time.Time, error)
 }
 
+// ProbeCapabilityCooldownReader reads the capability-probe cooldown
+// deadline (if any) for one offering-operation + operation pair — the
+// automatic-model-qualification plan's task-3 fix-round addition
+// (CRITICAL 2b), following ProbeCooldownReader's own shape rather than
+// inventing a second mechanism.
+//
+// It exists because ProbeCooldownReader above is deliberately scoped to
+// models.OperationContextWindow only (both by Admit's own gate below and by
+// the storage adapter's query), and a capability probe (tools/
+// structured_output/vision) has no cooldown of its own: a selection that
+// re-picks "no succeeded run yet" every scheduler round, with no cooldown to
+// space attempts out, retries an inconclusive/failed candidate forever —
+// every 30s, indefinitely. Unlike the context-probe cooldown (which is set
+// ONLY by a SUCCEEDED run, because only a resolved answer should ever gate a
+// future attempt), a capability-probe cooldown deliberately keys off the
+// LAST ATTEMPT regardless of outcome — see the storage implementation's own
+// doc comment for why a succeeded-only cooldown would never fire for the
+// exact case this one exists to bound.
+type ProbeCapabilityCooldownReader interface {
+	CapabilityProbeCooldownUntil(ctx context.Context, offeringOperationID string, operation models.Operation) (*time.Time, error)
+}
+
 // ErrProbeRefused is the single shared error boundary every probe
 // admission refusal wraps (this repo already paid for having two — see
 // QUOTA-006/007/008's remediation). Callers should use errors.Is against
@@ -202,6 +224,26 @@ type ProbeGuard struct {
 	inflight ProbeInFlightReader
 	cooldown ProbeCooldownReader
 	now      func() time.Time
+
+	// capabilityCooldown is nil unless WithCapabilityCooldown sets it — the
+	// task-3 fix-round addition (CRITICAL 2b). nil disables the gate
+	// entirely, so every existing NewProbeGuard call site is unaffected by
+	// this field's mere existence: this package's established convention
+	// for an optional dependency (mirrors, e.g., ModelsHandler.probeRuns ==
+	// nil in internal/httpapi/models.go).
+	capabilityCooldown ProbeCapabilityCooldownReader
+}
+
+// WithCapabilityCooldown returns a copy of g with an OPTIONAL capability-
+// probe cooldown reader wired in (see ProbeCapabilityCooldownReader's own
+// doc comment for why this exists and why it is a separate port rather than
+// widening ProbeCooldownReader itself — the latter's context-probe-only
+// contract, and every test that pins it, stays untouched). A nil argument
+// (the zero value every existing caller already has) disables the gate.
+func (g *ProbeGuard) WithCapabilityCooldown(r ProbeCapabilityCooldownReader) *ProbeGuard {
+	clone := *g
+	clone.capabilityCooldown = r
+	return &clone
 }
 
 // NewProbeGuard builds a ProbeGuard. Construction fails closed: any nil
@@ -318,6 +360,23 @@ func (g *ProbeGuard) Admit(ctx context.Context, req ProbeAdmissionRequest) (Prob
 		}
 		if until != nil && now.Before(*until) {
 			return ProbeAdmission{}, refuse(RefusalCoolingDown, "context-probe cooldown is active")
+		}
+	}
+
+	// Capability-probe cooldown (task-3 fix-round CRITICAL 2b): only when a
+	// reader has been wired (WithCapabilityCooldown) AND req.Operation is one
+	// of the three capability-fixture operations — RequiredWitness's own
+	// three-value switch is reused here rather than a second, possibly
+	// drifting list, since it already IS the closed set this applies to.
+	if g.capabilityCooldown != nil {
+		if _, err := RequiredWitness(req.Operation); err == nil {
+			until, err := g.capabilityCooldown.CapabilityProbeCooldownUntil(ctx, req.OfferingOperationID, req.Operation)
+			if err != nil {
+				return ProbeAdmission{}, refuse(RefusalSafetyUnavailable, "capability cooldown read failed")
+			}
+			if until != nil && now.Before(*until) {
+				return ProbeAdmission{}, refuse(RefusalCoolingDown, "capability-probe cooldown is active")
+			}
 		}
 	}
 
