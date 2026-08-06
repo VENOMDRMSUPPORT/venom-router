@@ -347,10 +347,20 @@ func zenSuccessSeedAccount(t *testing.T, db *storage.DB, accountID string, clock
 // REAL opencode-zen adapter (catalog + models.dev seams faked, everything
 // else production code) is driven through POST /discover, and the applied
 // snapshot must persist offering_operations rows grounded in the entry's
-// explicit facts — chat for every surviving model, tools/vision only
-// where declared — plus the declared limits, and GET /offerings must
-// render each capability with its offering_operation_id (the probeable
-// handle the per-model Test control needs).
+// explicit facts — chat for every surviving model, tools/vision/
+// context_window/reasoning only where declared — plus the declared
+// limits, and GET /offerings must render each capability with its
+// offering_operation_id (the probeable handle the per-model Test control
+// needs).
+//
+// 2026-08-06: the zen adapter now delegates to the shared
+// OperationsFromFacts derivation (internal/providers/modelsdev.go)
+// instead of the deleted zen-local zenCapabilities, which had hand-rolled
+// a narrower mapping that read only tool_call and image input. Both
+// fixture entries below explicitly declare `limit.context` and
+// `reasoning:true`, so "context_window" and "reasoning" are now
+// catalog-backed facts that must surface — dropping them (the old
+// behavior) is exactly the audited defect this task fixes.
 //
 // Before the adapter reported capabilities, this test failed at the very
 // first operations assertion: DiscoverModels returned Capabilities nil,
@@ -369,8 +379,12 @@ func TestDiscover_ZenSuccessPersistsExplicitOperationsAndLimits(t *testing.T) {
 	}
 	// The live dataset's shape (2026-08-02): every free model declares
 	// tool_call:true and reasoning:true; only one has "image" in
-	// modalities.input; limit = {context, output}. reasoning must map to
-	// NOTHING. paid-x is priced and must not survive.
+	// modalities.input; limit = {context, output}. reasoning:true and the
+	// declared limit.context now DO map to "reasoning" and
+	// "context_window" respectively (OperationsFromFacts, shared with
+	// every other models.dev-backed adapter) — the exact two operations
+	// the pre-fix zen-local mapping silently dropped. paid-x is priced and
+	// must not survive.
 	modelsDevUp := func(_ context.Context) ([]byte, error) {
 		return []byte(`{"opencode":{"models":{
 			"tooled-free":{"cost":{"input":0,"output":0},"tool_call":true,"reasoning":true,"limit":{"context":262144,"output":32768}},
@@ -404,9 +418,13 @@ func TestDiscover_ZenSuccessPersistsExplicitOperationsAndLimits(t *testing.T) {
 
 	// The defect pin: the applied snapshot created offering_operations
 	// rows, exactly the explicitly-grounded set per model and no other.
+	// Both fixture entries declare limit.context and reasoning:true, so
+	// "context_window" and "reasoning" are now present too (grounded in
+	// those explicit fields) — the pre-fix zen-local mapping dropped both.
+	// Lists are alphabetical to match the query's ORDER BY operation.
 	wantOps := map[string][]string{
-		"tooled-free": {"chat", "tools"},
-		"seeing-free": {"chat", "tools", "vision"},
+		"tooled-free": {"chat", "context_window", "reasoning", "tools"},
+		"seeing-free": {"chat", "context_window", "reasoning", "tools", "vision"},
 	}
 	for modelID, want := range wantOps {
 		rows, err := db.Conn().Query(
@@ -427,7 +445,7 @@ func TestDiscover_ZenSuccessPersistsExplicitOperationsAndLimits(t *testing.T) {
 		}
 		_ = rows.Close()
 		if len(got) != len(want) {
-			t.Fatalf("%s operations = %v, want %v (chat always; tools/vision only when declared; reasoning never)", modelID, got, want)
+			t.Fatalf("%s operations = %v, want %v (chat always; tools/vision/context_window/reasoning only when declared)", modelID, got, want)
 		}
 		for i := range want {
 			if got[i] != want[i] {

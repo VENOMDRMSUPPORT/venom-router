@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -264,6 +265,76 @@ func fixtureZenCatalogProbe(ids ...string) ModelsProbe {
 	}
 }
 
+// discoverZenModels drives the REAL adapter's DiscoverModels through its
+// injected models-list and models.dev seams: liveIDs becomes the zen
+// /v1/models catalog, dataset becomes the full models.dev response body
+// verbatim. Callers must not construct DiscoveredModel values by hand —
+// the derivation itself is what is under test.
+func discoverZenModels(t *testing.T, liveIDs []string, dataset []byte) []DiscoveredModel {
+	t.Helper()
+	zen := fixtureZenCatalogProbe(liveIDs...)
+	modelsDev := func(ctx context.Context) ([]byte, error) {
+		return dataset, nil
+	}
+	adapter := NewOpenCodeZenAdapter(nil, zen, modelsDev, nil)
+	models, err := adapter.DiscoverModels(context.Background(), StoredCredentials{Value: "k"})
+	if err != nil {
+		t.Fatalf("DiscoverModels: %v", err)
+	}
+	return models
+}
+
+// TestOpenCodeZen_DiscoveryEmitsEveryCatalogBackedOperation is the audit
+// regression pin: the owner's live opencode-zen models were all missing
+// context_window and reasoning, and three were also missing
+// structured_output, because zenCapabilities hand-rolled a derivation
+// that read only tool_call and image input. Every one of those fields is
+// declared explicitly in the same models.dev entry the adapter already
+// reads, so the shared OperationsFromFacts derivation (modelsdev.go) must
+// surface all of them.
+func TestOpenCodeZen_DiscoveryEmitsEveryCatalogBackedOperation(t *testing.T) {
+	// Two free entries taken from the live dataset's shape: one declaring
+	// structured_output and reasoning, one declaring neither.
+	dataset := []byte(`{"opencode":{"models":{
+		"rich-free":{"id":"rich-free","name":"Rich","tool_call":true,"structured_output":true,"reasoning":true,
+			"modalities":{"input":["text","image"],"output":["text"]},
+			"limit":{"context":200000,"input":160000,"output":32000},
+			"cost":{"input":0,"output":0}},
+		"plain-free":{"id":"plain-free","name":"Plain","tool_call":true,"structured_output":false,"reasoning":false,
+			"modalities":{"input":["text"],"output":["text"]},
+			"limit":{"context":256000,"output":64000},
+			"cost":{"input":0,"output":0}}
+	}}}`)
+
+	got := discoverZenModels(t, []string{"rich-free", "plain-free"}, dataset)
+	byID := map[string]DiscoveredModel{}
+	for _, m := range got {
+		byID[m.ProviderModelID] = m
+	}
+
+	rich := byID["rich-free"]
+	for _, want := range []string{"chat", "tools", "structured_output", "vision", "context_window", "reasoning"} {
+		if !slices.Contains(rich.Capabilities, want) {
+			t.Fatalf("rich-free capabilities = %v, want %q present — the dataset declares it explicitly", rich.Capabilities, want)
+		}
+	}
+	if rich.MaxInputTokens == nil || *rich.MaxInputTokens != 160000 {
+		t.Fatalf("rich-free MaxInputTokens = %v, want 160000 from limit.input", rich.MaxInputTokens)
+	}
+
+	plain := byID["plain-free"]
+	for _, notWant := range []string{"structured_output", "vision", "reasoning", "image_generation"} {
+		if slices.Contains(plain.Capabilities, notWant) {
+			t.Fatalf("plain-free capabilities = %v, want %q ABSENT — the dataset does not declare it", plain.Capabilities, notWant)
+		}
+	}
+	for _, want := range []string{"chat", "tools", "context_window"} {
+		if !slices.Contains(plain.Capabilities, want) {
+			t.Fatalf("plain-free capabilities = %v, want %q present", plain.Capabilities, want)
+		}
+	}
+}
+
 // TestOpenCodeZenAdapter_DiscoverModels_IntersectsFreeSetExactly is the
 // intersection matrix: only a model that zen serves AND models.dev prices
 // at an explicit zero AND does not mark deprecated survives. Paid,
@@ -293,12 +364,20 @@ func TestOpenCodeZenAdapter_DiscoverModels_IntersectsFreeSetExactly(t *testing.T
 
 // TestOpenCodeZenAdapter_DiscoverModels_MapsExplicitCapabilitiesAndLimits
 // is the per-model mapping matrix over the models.dev facts a surviving
-// free model carries:
+// free model carries, via the SHARED OperationsFromFacts derivation
+// (modelsdev.go):
 //
-//   - "chat" always (a chat-completions gateway's model IS a chat model);
+//   - "chat" always here (every fixture entry's modalities.output either
+//     declares "text" or is absent, so OutputDeclaresNonTextOnly is false
+//     in every case below — a chat-completions gateway's model IS a chat
+//     model);
 //   - "tools" only on an explicit tool_call:true (false/absent -> omitted);
 //   - "vision" only when modalities.input explicitly contains "image";
-//   - reasoning:true is IGNORED (outside the operation vocabulary);
+//   - "context_window" only when the entry declares `limit.context`
+//     (absent -> omitted, e.g. "bare"/"tooled");
+//   - reasoning:true now DOES surface as the "reasoning" capability —
+//     OperationsFromFacts maps it, unlike the deleted zen-local
+//     zenCapabilities which dropped it;
 //   - limits come from the entry's `limit` object (context/input/output)
 //     when present, and stay nil when absent — never a fabricated 0.
 //
@@ -348,9 +427,14 @@ func TestOpenCodeZenAdapter_DiscoverModels_MapsExplicitCapabilitiesAndLimits(t *
 		}
 	}
 	assertCaps("bare", "chat")
-	assertCaps("tooled", "chat", "tools")
-	assertCaps("sighted", "chat", "vision")
-	assertCaps("limited", "chat", "tools")
+	// tooled declares reasoning:true explicitly -> "reasoning" now surfaces
+	// (the audited bug: the deleted zenCapabilities dropped this field).
+	assertCaps("tooled", "chat", "tools", "reasoning")
+	// sighted declares limit.context:200000 -> "context_window" surfaces,
+	// and reasoning:true -> "reasoning" surfaces.
+	assertCaps("sighted", "chat", "vision", "context_window", "reasoning")
+	// limited declares limit.context:256000 -> "context_window" surfaces.
+	assertCaps("limited", "chat", "tools", "context_window")
 
 	assertLimit := func(id, name string, got *int, want *int) {
 		t.Helper()
@@ -376,12 +460,15 @@ func TestOpenCodeZenAdapter_DiscoverModels_MapsExplicitCapabilitiesAndLimits(t *
 	assertLimit("limited", "MaxInputTokens", byID["limited"].MaxInputTokens, intPtr(160000))
 	assertLimit("limited", "MaxOutputTokens", byID["limited"].MaxOutputTokens, intPtr(32000))
 
-	// No capability outside the explicit mapping may ever appear —
-	// "reasoning" in particular has no operation in the vocabulary.
+	// No capability outside what this fixture set actually declares may
+	// ever appear. None of these entries declare structured_output or an
+	// "image" output modality, so those two stay excluded even though
+	// OperationsFromFacts supports them in general.
+	grounded := []string{"chat", "tools", "vision", "context_window", "reasoning"}
 	for id, m := range byID {
 		for _, c := range m.Capabilities {
-			if c != "chat" && c != "tools" && c != "vision" {
-				t.Fatalf("%s carries unexpected capability %q — only chat/tools/vision are explicitly grounded", id, c)
+			if !slices.Contains(grounded, c) {
+				t.Fatalf("%s carries unexpected capability %q — not grounded in this fixture's dataset fields", id, c)
 			}
 		}
 	}

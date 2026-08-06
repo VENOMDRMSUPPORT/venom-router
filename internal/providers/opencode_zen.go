@@ -91,40 +91,11 @@ type OpenCodeZenAdapter struct {
 	// The parsed models.dev free-set cache (mutex-guarded; the clock is
 	// injected so tests need no timers). fetchedAt is the zero time until
 	// the first successful parse. Each entry carries the surviving model's
-	// explicit models.dev facts (zenModelFacts), not just membership.
+	// explicit models.dev facts as the SHARED ModelsDevFacts type
+	// (modelsdev.go), not just membership.
 	mu             sync.Mutex
-	freeSet        map[string]zenModelFacts
+	freeSet        map[string]ModelsDevFacts
 	freeSetFetched time.Time
-}
-
-// zenModelFacts is what the models.dev parse retains per surviving free
-// model beyond membership itself: the EXPLICIT per-model fields the
-// dataset declares (03 §3 documents models.dev as zen's per-model fact
-// source). Absent fields stay zero/nil — DiscoverModels only reports what
-// is explicitly present, never a guess.
-type zenModelFacts struct {
-	// ToolCall mirrors the entry's explicit `tool_call` boolean
-	// (absent/false -> false -> the "tools" capability is omitted).
-	ToolCall bool
-	// ImageInput is true when the entry's `modalities.input` array
-	// explicitly contains "image" (-> the "vision" capability).
-	ImageInput bool
-	// OutputDeclaresNonTextOnly mirrors modelsdev.go's
-	// declaresNonTextOnlyOutput: true only when `modalities.output` is
-	// EXPLICITLY non-empty and excludes "text" (the pure image/media output
-	// case). An absent or empty output-modality list, or one that includes
-	// "text" (alone or alongside other modalities), is false — same
-	// vacuous-assume-text convention modelsdev.go uses. This is what grounds
-	// zenCapabilities' "chat" decision instead of asserting it
-	// unconditionally.
-	OutputDeclaresNonTextOnly bool
-	// Context/Input/Output mirror the entry's `limit` object
-	// ({context, input?, output} in the live dataset, verified
-	// 2026-08-02); each is nil when the field is absent — never
-	// 0-as-unknown.
-	Context *int
-	Input   *int
-	Output  *int
 }
 
 // NewOpenCodeZenAdapter builds the adapter over the three injected HTTP
@@ -177,11 +148,21 @@ type openCodeZenModelsResponse struct {
 // job fails loudly — never the unfiltered list, never a silent empty.
 //
 // Each surviving model is reported with the EXPLICIT models.dev facts the
-// same parsed entry already carries: capabilities via zenCapabilities
-// (chat always; tools/vision only when the dataset declares them) and the
-// declared limits (nil when absent — never 0-as-unknown). DiscoveredModel's
-// contract ("Capabilities: only from explicit provider fields") holds:
-// models.dev is zen's documented per-model fact source (03 §3).
+// same parsed entry already carries: capabilities via the SHARED
+// OperationsFromFacts derivation (modelsdev.go) — the one place every
+// operation grounded in an explicit dataset field is mapped, already used
+// by the evidence-required OpenAI-compatible adapters — and the declared
+// limits (nil when absent — never 0-as-unknown). zen's models.dev entries
+// carry the same fields as every other provider's; a second, zen-local
+// copy of that mapping (the former zenCapabilities) only created a second
+// place to drift, which is exactly how context_window, reasoning and
+// structured_output ended up missing from every one of the owner's zen
+// models despite being declared right there in the dataset. The one thing
+// that IS zen-specific — the free-only cost filter — stays in
+// parseModelsDevFreeSet below; it is not part of this shared derivation.
+// DiscoveredModel's contract ("Capabilities: only from explicit provider
+// fields") holds: models.dev is zen's documented per-model fact source
+// (03 §3).
 func (a *OpenCodeZenAdapter) DiscoverModels(ctx context.Context, creds StoredCredentials) ([]DiscoveredModel, error) {
 	body, err := a.modelsProbe(ctx, OpenCodeZenBaseURL, creds.Value)
 	if err != nil {
@@ -207,57 +188,13 @@ func (a *OpenCodeZenAdapter) DiscoverModels(ctx context.Context, creds StoredCre
 		models = append(models, DiscoveredModel{
 			ProviderModelID: m.ID,
 			DisplayName:     m.ID,
-			Capabilities:    zenCapabilities(facts),
+			Capabilities:    OperationsFromFacts(facts),
 			ContextLength:   facts.Context,
-			MaxInputTokens:  facts.Input,
+			MaxInputTokens:  facts.MaxInput,
 			MaxOutputTokens: facts.Output,
 		})
 	}
 	return models, nil
-}
-
-// zenCapabilities maps one surviving model's explicit models.dev facts
-// onto the fixed operation vocabulary (internal/models Operations).
-//
-//   - "chat" is grounded in the entry's own declared output modalities, the
-//     same rule modelsdev.go's OperationsFromFacts/declaresNonTextOnlyOutput
-//     use, NOT asserted unconditionally: modalities.output absent/empty is
-//     vacuously assumed to support text (unknown output must not make a
-//     chat model vanish); modalities.output explicitly containing "text"
-//     gets chat; modalities.output explicitly non-empty and excluding
-//     "text" (pure image/media output) does NOT get chat. (Zen's gateway
-//     serving exactly the OpenAI-compatible POST /v1/chat/completions
-//     surface (03 §3) is true of every listed model, but that says the
-//     gateway CAN carry a chat request — it does not make an entry the
-//     dataset itself declares as image-only output an actual chat model.
-//     Asserting chat unconditionally here was the same bug modelsdev.go's
-//     OperationsFromFacts was fixed for; zen has its own parse and was
-//     missed.)
-//   - "tools" only when the entry declares `tool_call: true`.
-//   - "vision" only when `modalities.input` explicitly contains "image".
-//
-// Nothing else is mapped: the dataset's `reasoning` flag has no operation
-// in the vocabulary and is deliberately dropped, and streaming /
-// structured_output / context_window / image_generation have no explicit
-// per-model models.dev field grounded in THIS parse — asserting any of
-// them here would be fabrication.
-//
-// The literals spell internal/models' operation vocabulary (ParseOperation
-// fails closed on anything else); they are duplicated here rather than
-// imported because internal/providers imports no internal package
-// (layering — same reason fingerprintAPIKey is duplicated).
-func zenCapabilities(facts zenModelFacts) []string {
-	var caps []string
-	if !facts.OutputDeclaresNonTextOnly {
-		caps = append(caps, "chat")
-	}
-	if facts.ToolCall {
-		caps = append(caps, "tools")
-	}
-	if facts.ImageInput {
-		caps = append(caps, "vision")
-	}
-	return caps
 }
 
 // freeModelSet returns the current models.dev free set for opencode-zen,
@@ -266,7 +203,7 @@ func zenCapabilities(facts zenModelFacts) []string {
 // ErrModelsDevUnavailable (wrapping the cause) — a STALE cache is
 // deliberately not a fallback: serving day-old cost facts to a free-only
 // account is the exact failure 03 §3's contract exists to prevent.
-func (a *OpenCodeZenAdapter) freeModelSet(ctx context.Context) (map[string]zenModelFacts, error) {
+func (a *OpenCodeZenAdapter) freeModelSet(ctx context.Context) (map[string]ModelsDevFacts, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -297,15 +234,20 @@ func (a *OpenCodeZenAdapter) freeModelSet(ctx context.Context) (map[string]zenMo
 // on the OTHER side: an absent limit is unknown and stays nil, never a
 // fabricated 0. (Field names verified against the live dataset
 // 2026-08-02: `tool_call` boolean, `modalities.input` string array,
-// `limit` = {context, input?, output}.)
+// `limit` = {context, input?, output}; `name`, `structured_output` and
+// `reasoning` added 2026-08-06 once the audit showed every zen model was
+// missing them despite the dataset declaring them explicitly.)
 type modelsDevModel struct {
 	Cost *struct {
 		Input  *float64 `json:"input"`
 		Output *float64 `json:"output"`
 	} `json:"cost"`
-	Status     string `json:"status"`
-	ToolCall   bool   `json:"tool_call"`
-	Modalities struct {
+	Name             string `json:"name"`
+	Status           string `json:"status"`
+	ToolCall         bool   `json:"tool_call"`
+	StructuredOutput bool   `json:"structured_output"`
+	Reasoning        bool   `json:"reasoning"`
+	Modalities       struct {
 		Input  []string `json:"input"`
 		Output []string `json:"output"`
 	} `json:"modalities"`
@@ -318,11 +260,20 @@ type modelsDevModel struct {
 
 // parseModelsDevFreeSet parses the full models.dev dataset body and
 // returns the opencode model ids that are EXPLICITLY zero-cost and not
-// deprecated, each carrying its explicit per-model facts (zenModelFacts).
-// A dataset without the opencode entry is a parse-level failure (the
-// shape this adapter depends on has drifted), never an authoritative
-// "nothing is free".
-func parseModelsDevFreeSet(body []byte) (map[string]zenModelFacts, error) {
+// deprecated, each carrying its explicit per-model facts as the SHARED
+// ModelsDevFacts type (modelsdev.go) — the same fact type and field
+// mapping every other provider's models.dev-backed discovery uses. A
+// dataset without the opencode entry is a parse-level failure (the shape
+// this adapter depends on has drifted), never an authoritative "nothing
+// is free".
+//
+// The free-only cost filter directly below (an EXPLICIT {input: 0,
+// output: 0}, never an absent/unknown cost) is zen's own owner-policy
+// contract (03 §3: "a free account must never surface paid models") and
+// deliberately stays here rather than moving into modelsdev.go's shared
+// parse — see that file's header comment for why the two parses are not
+// unified.
+func parseModelsDevFreeSet(body []byte) (map[string]ModelsDevFacts, error) {
 	var dataset map[string]struct {
 		Models map[string]modelsDevModel `json:"models"`
 	}
@@ -334,7 +285,7 @@ func parseModelsDevFreeSet(body []byte) (map[string]zenModelFacts, error) {
 		return nil, fmt.Errorf("models.dev dataset has no %q provider entry", modelsDevOpenCodeKey)
 	}
 
-	freeSet := make(map[string]zenModelFacts)
+	freeSet := make(map[string]ModelsDevFacts)
 	for id, m := range entry.Models {
 		if m.Status == "deprecated" {
 			continue
@@ -343,12 +294,18 @@ func parseModelsDevFreeSet(body []byte) (map[string]zenModelFacts, error) {
 			continue // unknown cost is NOT free
 		}
 		if *m.Cost.Input == 0 && *m.Cost.Output == 0 {
-			freeSet[id] = zenModelFacts{
+			freeSet[id] = ModelsDevFacts{
+				DisplayName:               m.Name,
 				ToolCall:                  m.ToolCall,
+				StructuredOutput:          m.StructuredOutput,
+				Reasoning:                 m.Reasoning,
 				ImageInput:                containsImageModality(m.Modalities.Input),
+				ImageOutput:               containsImageModality(m.Modalities.Output),
+				OutputAllText:             allTextModalities(m.Modalities.Output),
 				OutputDeclaresNonTextOnly: declaresNonTextOnlyOutput(m.Modalities.Output),
+				Deprecated:                m.Status == "deprecated",
 				Context:                   m.Limit.Context,
-				Input:                     m.Limit.Input,
+				MaxInput:                  m.Limit.Input,
 				Output:                    m.Limit.Output,
 			}
 		}
