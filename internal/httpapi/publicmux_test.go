@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -233,5 +234,41 @@ func TestModels_HandlerIsDBFree(t *testing.T) {
 	}
 	if _, ids, _ := decodeModelsList(t); len(ids) != 3 {
 		t.Fatalf("DB-free handler returned %d models, want 3", len(ids))
+	}
+}
+
+// providerIDsOf returns reg's registered provider ids, sorted, via
+// providers.Registry.IDs().
+func providerIDsOf(reg *providers.Registry) []providers.ProviderID {
+	return reg.IDs()
+}
+
+// TestPublicMux_FallbackRegistryMatchesTheCompositionRoot proves publicMux's
+// fallback registry (built when no *providers.Registry is injected) is not a
+// second, hand-maintained copy of newProviderRegistry's registration list.
+// publicmux.go used to repeat that list inline; task-6 widened
+// providers.RegisterClinePass's signature and only the wrapper
+// (registerClinePass in clinepass_seams.go) absorbed it, so both hand-written
+// lists still happened to compile — pure luck. A real drift (a provider added
+// or dropped in one list but not the other) would ship silently. This test
+// pins that the fallback registry and the composition root register the
+// EXACT same provider ids, so any future divergence fails loudly here instead
+// of at runtime on one code path only.
+//
+// Deterministic despite registerAntigravityIfConfigured being env-gated: both
+// sides are built by calling newProviderRegistry() (want directly, got via
+// publicMuxFallbackRegistry's delegation) in the same process during the same
+// test, so whatever antigravity's env state happens to be, it is identical on
+// both sides — the comparison never depends on the environment being any
+// particular way, only on it being the SAME way for both calls, which it
+// always is.
+func TestPublicMux_FallbackRegistryMatchesTheCompositionRoot(t *testing.T) {
+	want := newProviderRegistry()
+	got := publicMuxFallbackRegistry()
+
+	wantIDs := providerIDsOf(want)
+	gotIDs := providerIDsOf(got)
+	if !reflect.DeepEqual(wantIDs, gotIDs) {
+		t.Fatalf("fallback registry = %v, want %v — two hand-maintained lists drift; there must be one", gotIDs, wantIDs)
 	}
 }

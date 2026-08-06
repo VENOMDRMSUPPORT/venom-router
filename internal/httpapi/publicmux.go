@@ -107,15 +107,7 @@ func publicMux(db *storage.DB, kr *secrets.Keyring, reg *providers.Registry, now
 	var chat http.Handler
 	if kr != nil {
 		if reg == nil {
-			reg = providers.NewRegistry()
-			_ = registerOpenCodeZen(reg)
-			_ = registerOllamaCloud(reg)
-			_ = registerAgnesAI(reg)
-			_ = registerNvidiaNIM(reg)
-			_ = registerGeminiCLI(reg)
-			_ = registerClaudeCode(reg)
-			_ = registerClinePass(reg)
-			_ = registerAntigravityIfConfigured(reg)
+			reg = publicMuxFallbackRegistry()
 		}
 		chat = buildChatCompletionsHandler(db, kr, reg)
 	}
@@ -123,4 +115,13 @@ func publicMux(db *storage.DB, kr *secrets.Keyring, reg *providers.Registry, now
 	// Per-path per-IP ingress limiter (P5-PAPI-005, 05 §6): same contract as the
 	// control listener, independent of the per-key RPM vk auth enforces here.
 	return newIngressLimiter(0, 0, nil).Middleware(mux)
+}
+
+// publicMuxFallbackRegistry builds the provider registry publicMux uses when
+// none was injected. It delegates to the ONE composition list rather than
+// repeating it: a second hand-maintained list drifts the moment a provider is
+// added or a registration signature changes (see
+// TestPublicMux_FallbackRegistryMatchesTheCompositionRoot).
+func publicMuxFallbackRegistry() *providers.Registry {
+	return newProviderRegistry()
 }

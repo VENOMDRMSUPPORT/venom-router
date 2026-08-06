@@ -1,6 +1,9 @@
 package providers
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // AuthMode identifies which primary auth adapter a provider Definition
 // registers. A provider has exactly one, never both (03 §1).
@@ -162,4 +165,15 @@ func (r *Registry) IdentityAdapter(id ProviderID) (adapter IdentityAdapter, ok b
 		return nil, false
 	}
 	return def.Identity, true
+}
+
+// IDs returns every registered provider id, sorted, so two registries can be
+// compared and a composition can be asserted against.
+func (r *Registry) IDs() []ProviderID {
+	out := make([]ProviderID, 0, len(r.defs))
+	for id := range r.defs {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }
