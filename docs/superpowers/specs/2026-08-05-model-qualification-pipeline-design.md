@@ -668,6 +668,29 @@ both the model and the provider support it: we cannot route what we cannot send.
 
 ---
 
+## 9.1 Delivered so far, and what the next plan inherits
+
+Phases 1 and 2 shipped as `docs/superpowers/plans/2026-08-06-catalog-resolution-and-routability.md`
+(commits `44042ea..af6431c`, nine tasks plus a final-review fix wave). ClinePass
+models now report their catalog capability set and a real context window, and
+`routable` is a real value rather than a hardcoded `false`.
+
+**Known gaps carried forward, each a deliberate decision rather than an oversight:**
+
+| Gap | Why it is deferred |
+|---|---|
+| `vision` is routable on `anthropic_messages` and `google_generate_content`, but those codecs accept only the inline base64 + media-type image form and reject a URL-only part. A client posting an OpenAI-standard `image_url` with an `http(s)` URL gets a typed request-feature-unsupported failure. | The honest fix is to normalize URL images to base64 before dispatch, which means our server fetches client-controlled URLs — an SSRF surface that needs its own design decision, not an inline patch. |
+| `structured_output` is carriable only over the two OpenAI-shaped codecs; on anthropic and google it is certified but never routable. | Closing it means mapping the operation onto each provider's native mechanism (Anthropic uses tools; Gemini uses `responseSchema`). Separate work. |
+| `reasoning` is certified but never routable in any build. | The transport seam has no way to express a reasoning request. Recorded at `internal/httpapi/models.go`'s `transportOperationsFor`. |
+| Only ClinePass consumes the catalog through a provider-verified key. gemini-cli, claude-code and agnes-ai are still on their own wire metadata alone. | ClinePass was the deliberate pilot; replication is mechanical now that the shape is reviewed. agnes-ai has no models.dev entry at all (§4.1.1). |
+| gemini-cli declares `thinking` on its wire and we still ignore it. | Belongs with the adapter-replication work above. |
+| `CandidateOperations` now has zero production producers. | The mechanism, its parsing, and the storage guard are all still correct and are kept; only the docs were updated to say it is currently unused. |
+
+**Still unbuilt from this spec:** Phase 3 (probe-port widening and the automatic
+qualification pass that produces `performance_score`), Phase 4 (deletion and
+unification across both UI surfaces, cost chip removal, score renaming), and
+Phase 5 (the remaining documentation corrections).
+
 ## 10. Documents amended by this work
 
 - `docs/superpowers/plans/2026-08-05-hybrid-capabilities-and-context.md:15` —
