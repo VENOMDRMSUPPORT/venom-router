@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/providers"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
@@ -243,32 +245,73 @@ func providerIDsOf(reg *providers.Registry) []providers.ProviderID {
 	return reg.IDs()
 }
 
-// TestPublicMux_FallbackRegistryMatchesTheCompositionRoot proves publicMux's
-// fallback registry (built when no *providers.Registry is injected) is not a
-// second, hand-maintained copy of newProviderRegistry's registration list.
-// publicmux.go used to repeat that list inline; task-6 widened
-// providers.RegisterClinePass's signature and only the wrapper
-// (registerClinePass in clinepass_seams.go) absorbed it, so both hand-written
-// lists still happened to compile — pure luck. A real drift (a provider added
-// or dropped in one list but not the other) would ship silently. This test
-// pins that the fallback registry and the composition root register the
-// EXACT same provider ids, so any future divergence fails loudly here instead
-// of at runtime on one code path only.
+// expectedCompositionRootProviderIDs is an INDEPENDENT, literal statement of
+// which providers newProviderRegistry() is expected to register — written by
+// hand, not derived from newProviderRegistry() or anything it calls. That
+// independence is what makes it capable of catching a real regression (a
+// `_ = registerX(reg)` line deleted from newProviderRegistry): a test that
+// instead re-derives its expectation from production code under test would
+// merely restate whatever that code currently does, and could never fail no
+// matter what that code did (X == X, no matter what X is).
 //
-// Deterministic despite registerAntigravityIfConfigured being env-gated: both
-// sides are built by calling newProviderRegistry() (want directly, got via
-// publicMuxFallbackRegistry's delegation) in the same process during the same
-// test, so whatever antigravity's env state happens to be, it is identical on
-// both sides — the comparison never depends on the environment being any
-// particular way, only on it being the SAME way for both calls, which it
-// always is.
-func TestPublicMux_FallbackRegistryMatchesTheCompositionRoot(t *testing.T) {
-	want := newProviderRegistry()
-	got := publicMuxFallbackRegistry()
+// antigravity is env-gated (registerAntigravityIfConfigured registers it
+// only when VENOM_ANTIGRAVITY_CLIENT_ID/_SECRET are both set) — this list
+// reflects that condition by calling the SAME predicate production uses
+// (platform.AntigravityOAuthClientCredentials), rather than hardcoding
+// antigravity's presence or absence, or skipping the assertion when the
+// env-gate is closed. That keeps this test non-vacuous in CI regardless of
+// which way the gate currently falls, while every OTHER entry stays an
+// unconditional literal — only antigravity is genuinely environment-
+// dependent, so it is the only one given that treatment.
+func expectedCompositionRootProviderIDs() []providers.ProviderID {
+	ids := []providers.ProviderID{
+		providers.OpenCodeZenID,
+		providers.OllamaCloudID,
+		providers.AgnesAIID,
+		providers.NvidiaNIMID,
+		providers.GeminiCLIID,
+		providers.ClaudeCodeID,
+		providers.ClinePassID,
+	}
+	if _, _, ok := platform.AntigravityOAuthClientCredentials(); ok {
+		ids = append(ids, providers.AntigravityID)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
 
-	wantIDs := providerIDsOf(want)
-	gotIDs := providerIDsOf(got)
-	if !reflect.DeepEqual(wantIDs, gotIDs) {
-		t.Fatalf("fallback registry = %v, want %v — two hand-maintained lists drift; there must be one", gotIDs, wantIDs)
+// TestNewProviderRegistry_RegistersExactlyTheExpectedProviderSet pins the
+// composition root's (newProviderRegistry's) registered provider set against
+// the independent literal expectation in expectedCompositionRootProviderIDs.
+// This replaces an earlier version of this test that compared
+// newProviderRegistry() against publicMuxFallbackRegistry() — whose entire
+// body is `return newProviderRegistry()` — which was a tautology (X == X)
+// structurally incapable of failing for any real defect, once the fallback
+// list had already been collapsed into a one-line delegation. Now, deleting
+// any single `_ = registerX(reg)` line from newProviderRegistry fails this
+// test directly (see the mutation trace in task-9-report.md).
+func TestNewProviderRegistry_RegistersExactlyTheExpectedProviderSet(t *testing.T) {
+	got := providerIDsOf(newProviderRegistry())
+	want := expectedCompositionRootProviderIDs()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("newProviderRegistry() registered ids = %v, want %v", got, want)
+	}
+}
+
+// TestPublicMuxFallbackRegistry_DelegatesToCompositionRoot is DOCUMENTATION
+// of publicMuxFallbackRegistry's delegation, not a drift guard: once the
+// fallback registry's entire body is `return newProviderRegistry()`, there is
+// no second hand-maintained list left for it to drift from, so this
+// assertion can never do anything
+// TestNewProviderRegistry_RegistersExactlyTheExpectedProviderSet does not
+// already do on its own. It exists purely to pin the shape of the
+// delegation itself (e.g. a future edit that starts building a *separate*
+// registry inline again, rather than calling newProviderRegistry, would
+// break this immediately even before it drifted in content).
+func TestPublicMuxFallbackRegistry_DelegatesToCompositionRoot(t *testing.T) {
+	want := providerIDsOf(newProviderRegistry())
+	got := providerIDsOf(publicMuxFallbackRegistry())
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("publicMuxFallbackRegistry() ids = %v, want %v (it must delegate to newProviderRegistry, not repeat its list)", got, want)
 	}
 }
