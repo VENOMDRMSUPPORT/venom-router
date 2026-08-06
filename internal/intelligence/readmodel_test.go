@@ -263,6 +263,50 @@ func TestProject_CapabilityIntersection(t *testing.T) {
 	}
 }
 
+// TestProject_TransportAloneNeverAddsACapabilityRow proves transport
+// support is used only to NARROW the effective/intersection computation,
+// never to introduce a capability row the offering never declared and was
+// never certified for. A chat-only offering (native=[chat],
+// provider-declared=[chat]) behind a fully-capable transport that can
+// carry every operation must still emit exactly one capability row: chat.
+// Before the fix, transport was unioned in alongside native/provider/certs,
+// so every operation the transport could carry appeared as a permanent,
+// unprobeable, non-routable row (state=discovered, truth=unknown, no
+// offering_operation_id) regardless of whether the offering ever declared
+// or was certified for it.
+//
+// MUTATION: reintroducing `for _, op := range transport { union[op] = true }`
+// in projectCapabilities turns this RED (5 rows instead of 1).
+func TestProject_TransportAloneNeverAddsACapabilityRow(t *testing.T) {
+	in := baseInput()
+	in.NativeCapabilities = []models.Operation{models.OperationChat}
+	in.Offering.Capabilities = []models.Operation{models.OperationChat}
+	in.TransportOperations = []models.Operation{
+		models.OperationChat,
+		models.OperationStreaming,
+		models.OperationTools,
+		models.OperationStructuredOutput,
+		models.OperationVision,
+	}
+	in.Certifications = map[models.Operation]models.Certification{}
+
+	out := Project(in)
+
+	if len(out.Capabilities) != 1 {
+		ops := make([]string, len(out.Capabilities))
+		for i, c := range out.Capabilities {
+			ops[i] = string(c.Operation)
+		}
+		t.Fatalf("Capabilities = %v (len %d), want exactly [chat] (len 1) — transport must never introduce an operation the offering never declared or was certified for", ops, len(out.Capabilities))
+	}
+	if out.Capabilities[0].Operation != models.OperationChat {
+		t.Fatalf("Capabilities[0].Operation = %q, want chat", out.Capabilities[0].Operation)
+	}
+	if !out.Capabilities[0].Effective {
+		t.Fatalf("chat Effective = false, want true (declared natively, by the provider, and carriable by transport)")
+	}
+}
+
 // TestProject_RoutableRequiresCertifiedSupportedAndEffective proves
 // Routable requires BOTH the certified+supported combination AND
 // Effective. MUTATION: dropping the && Effective conjunct turns this RED.

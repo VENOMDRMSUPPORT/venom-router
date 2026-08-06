@@ -159,9 +159,10 @@ func Project(in ProjectionInput) EffectiveOffering {
 }
 
 // projectCapabilities emits one EffectiveCapability per operation in the
-// union of native/provider/transport support, in models.Operations()
-// order (deterministic regardless of any map iteration elsewhere). A nil
-// native or nil transport set means UNKNOWN — nothing is effective for any
+// union of native support, provider exposure, and certification rows — NOT
+// transport (see the comment inline below) — in models.Operations() order
+// (deterministic regardless of any map iteration elsewhere). A nil native
+// or nil transport set means UNKNOWN — nothing is effective for any
 // operation, fail closed, never "everything supported." proved carries the
 // per-operation "a succeeded probe run exists" fact (task-5's provenance
 // derivation); it is independent of native/providerExposed/transport/
@@ -175,9 +176,18 @@ func projectCapabilities(native, providerExposed, transport []models.Operation, 
 	for _, op := range providerExposed {
 		union[op] = true
 	}
-	for _, op := range transport {
-		union[op] = true
-	}
+	// transport is deliberately NOT unioned in here. Transport support is a
+	// fact about our code (what our own serialization can carry), not a fact
+	// about the offering — it can only ever NARROW what an offering exposes
+	// (see the effective/intersection computation below), never introduce an
+	// operation the offering never declared and was never certified for. An
+	// operation appears in this projection iff it is natively supported,
+	// provider-exposed, or has a certification row. Unioning transport in
+	// here made every offering emit a permanent, unprobeable, non-routable
+	// row for every operation its transport happened to be able to carry —
+	// fleet-wide grey chips with no offering_operation_id, since transport
+	// support alone never earns a certification row.
+	//
 	// A CANDIDATE operation (discovery.go's DiscoveredModel.CandidateOperations)
 	// has a real offering_operations row and certification entry but was
 	// deliberately left out of providerExposed/native/transport — the adapter
