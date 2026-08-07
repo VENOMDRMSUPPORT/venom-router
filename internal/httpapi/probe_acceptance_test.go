@@ -351,7 +351,7 @@ func assertInfraFailureLeftCapabilityUnknown(t *testing.T, f *p3cGateFixture, wa
 	for {
 		var ok bool
 		var err error
-		gotExecution, ok, err = f.probeRuns.LatestExecution(context.Background(), f.opID)
+		gotExecution, ok, err = f.probeRuns.LatestExecution(context.Background(), f.opID, models.OperationTools)
 		if err != nil || !ok {
 			t.Fatalf("LatestExecution: ok=%v err=%v", ok, err)
 		}

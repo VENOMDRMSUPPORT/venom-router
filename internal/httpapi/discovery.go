@@ -439,10 +439,18 @@ func (h *DiscoveryHandler) ServeCertification(w http.ResponseWriter, r *http.Req
 		s := op.CertifiedAt.Format(time.RFC3339)
 		resp.CertifiedAt = &s
 	}
+	// opOperation is op's OWN operation (parsed once, above, into a typed
+	// value would duplicate state/truth's fallback pattern for no benefit
+	// here: an unparseable operation string means this row's own identity is
+	// corrupt, in which case reporting no probe_execution — rather than
+	// guessing — is the only honest choice, mirroring every other fail-
+	// closed parse in this handler).
 	if h.probeRuns != nil {
-		if execution, ok, err := h.probeRuns.LatestExecution(r.Context(), op.ID); err == nil && ok {
-			e := string(execution)
-			resp.ProbeExecution = &e
+		if opOperation, perr := models.ParseOperation(op.Operation); perr == nil {
+			if execution, ok, err := h.probeRuns.LatestExecution(r.Context(), op.ID, opOperation); err == nil && ok {
+				e := string(execution)
+				resp.ProbeExecution = &e
+			}
 		}
 	}
 	writeData(w, http.StatusOK, resp)

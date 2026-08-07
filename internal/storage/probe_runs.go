@@ -308,14 +308,31 @@ func (r *ProbeRunRepo) CapabilityProbeCooldownUntil(ctx context.Context, offerin
 }
 
 // LatestExecution returns the most recent probe_runs row's execution
-// value for offeringOperationID (04 §2's "probe execution" dimension,
-// surfaced by P3c-CAPI-001's certification read) — ok is false when no
-// probe has ever run for this offering-operation.
-func (r *ProbeRunRepo) LatestExecution(ctx context.Context, offeringOperationID string) (intelligence.ProbeExecution, bool, error) {
+// value for (offeringOperationID, operation) (04 §2's "probe execution"
+// dimension, surfaced by P3c-CAPI-001's certification read) — ok is false
+// when no probe of THAT operation has ever run for this offering-operation.
+//
+// The operation filter is load-bearing, not incidental (automatic-model-
+// qualification, task 4, fix round 1): offering_operation_id alone stopped
+// being a reliable proxy for "which operation was probed" once
+// qualification.go's context-window probe started anchoring its own
+// bookkeeping on an offering's CHAT offering_operation row id (no
+// context_window row exists for a genuinely uncatalogued model — see
+// contextProbeCandidate's own doc comment in qualification.go). Before that
+// change, this method's only caller ever asked about a row this SAME method
+// could only ever see written by ITS OWN operation (POST
+// /offerings/{id}/probe's own {id} always addresses one operation's own
+// certification row, and only tools/structured_output/vision probes had a
+// caller). Without this filter, GET /offerings/{chatOpID}/certification
+// would surface a context probe's retryable_failure/inconclusive/succeeded
+// execution as if it were the CHAT capability's own probe result — a chat
+// offering that is certified, supported, and working would read as if a
+// probe had just failed against it.
+func (r *ProbeRunRepo) LatestExecution(ctx context.Context, offeringOperationID string, operation models.Operation) (intelligence.ProbeExecution, bool, error) {
 	var execution string
 	err := r.db.Conn().QueryRowContext(ctx,
-		`SELECT execution FROM probe_runs WHERE offering_operation_id = ? ORDER BY started_at DESC LIMIT 1`,
-		offeringOperationID,
+		`SELECT execution FROM probe_runs WHERE offering_operation_id = ? AND operation = ? ORDER BY started_at DESC LIMIT 1`,
+		offeringOperationID, string(operation),
 	).Scan(&execution)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil

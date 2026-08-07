@@ -120,6 +120,15 @@ func withContextProbeGuardPolicy(policy intelligence.ProbeSafetyPolicy) qualific
 	return func(tick *qualificationTick) { tick.contextProbeGuardPolicy = policy }
 }
 
+// withContextProbeCap overrides the tick's per-round context-probe cap
+// (fix round 1, MINOR 1) — used by the mutation-sensitive selection test to
+// ensure a 2-candidate fixture is never itself truncated by
+// qualificationContextProbeCap's own production value of 1, which would
+// otherwise mask the very assertion the mutation is meant to trip.
+func withContextProbeCap(n int) qualificationTickOption {
+	return func(tick *qualificationTick) { tick.contextProbeCap = n }
+}
+
 // fakeAlwaysAdmitReserver is the one non-storage-backed capability-probe
 // dependency this file's tests use: a real reservation
 // (storage.QuotaReservationRepo.Reserve) fails closed with
@@ -183,6 +192,7 @@ func buildQualificationTickForTest(t *testing.T, db *storage.DB, opts ...qualifi
 
 		discovery:               storage.NewDiscoveryRepo(db, newOAuthTransactionID),
 		contextProbeGuardPolicy: contextProbeGuardPolicy,
+		contextProbeCap:         qualificationContextProbeCap,
 	}
 	// Task 4: see BuildQualificationTick's own identical assignment for why
 	// this is a bound method value assigned after construction rather than
@@ -1207,6 +1217,16 @@ func probeRunExecutionOf(t *testing.T, db *storage.DB, offeringOperationID, oper
 // already gave for free. This is the exact cline-pass/qwen3.8-max scenario
 // the task brief names: absent from models.dev, reading "ctx unknown"
 // forever without this pass.
+//
+// withContextProbeCap(10) (fix round 1, MINOR 1) keeps
+// qualificationContextProbeCap's own production value of 1 from truncating
+// this fixture's 2 candidates down to 1 before the "known" candidate's
+// filter is even applied. Without this, removing the "context is nil"
+// filter (the brief's own prescribed mutation) makes "known" (acct-1) sort
+// before "unknown" (acct-2) and get admitted by the cap FIRST, so the test
+// fails on the FIRST assertion ("unknown" never probed) rather than the
+// second one (the mutation's own point: "known" must never be re-probed) —
+// the reviewer had to raise the cap to reach the intended assertion at all.
 func TestQualificationTick_MeasuresContextOnlyWhenTheCatalogDidNot(t *testing.T) {
 	db := testControlDB(t)
 	seedLiveChatOffering(t, db, "acct-1", "prov-1", "known")            // context_length set (8192)
@@ -1219,6 +1239,7 @@ func TestQualificationTick_MeasuresContextOnlyWhenTheCatalogDidNot(t *testing.T)
 			return 200000, true
 		}),
 		harmlessStream(),
+		withContextProbeCap(10),
 	)
 	if err := tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
@@ -1355,9 +1376,20 @@ func TestQualificationTick_NonResolvingContextProbeIsNotRetriedNextRound(t *test
 // TestQualificationTick_CapsHowManyContextProbesOneRoundRuns proves
 // qualificationContextProbeCap: with more due context probes than the cap,
 // only that many are actually attempted in one Run call.
+//
+// wantCalls is a LITERAL (fix round 1, MINOR 2), not
+// qualificationContextProbeCap re-read: comparing production's own output
+// against production's own constant can only ever catch the cap SLICE being
+// removed entirely, never the constant being changed to a different (still
+// enforced) wrong value — the identical tautology task-2's fix round 1
+// found and fixed for qualificationPerRoundCap's own scale guard. 1 is
+// qualificationContextProbeCap's actual value as of this test, hand-pinned
+// here independently.
 func TestQualificationTick_CapsHowManyContextProbesOneRoundRuns(t *testing.T) {
+	const wantCalls = 1
+
 	db := testControlDB(t)
-	total := qualificationContextProbeCap + 2
+	total := wantCalls + 2
 	for i := 0; i < total; i++ {
 		suffix := fmt.Sprintf("%03d", i)
 		seedLiveChatOfferingNoContext(t, db, "acct-ctxcap-"+suffix, "prov-ctxcap-"+suffix, "m-ctxcap-"+suffix)
@@ -1372,7 +1404,119 @@ func TestQualificationTick_CapsHowManyContextProbesOneRoundRuns(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	if got := transport.callCount(); got != qualificationContextProbeCap {
-		t.Fatalf("context probe transport calls = %d, want %d — the per-round cap must bound the fan-out", got, qualificationContextProbeCap)
+	if got := transport.callCount(); got != wantCalls {
+		t.Fatalf("context probe transport calls = %d, want %d — the per-round cap must bound the fan-out", got, wantCalls)
+	}
+}
+
+// --- Task 4, fix round 1 ---
+
+// certificationProbeExecutionOf reads GET /offerings/{id}/certification's
+// real "probe_execution" field for offeringOperationID — the SAME read
+// model (DiscoveryHandler.ServeCertification, WithProbeRuns wired exactly
+// as ControlMux wires it) discovery.go's own doc comment describes. nil
+// means "no probe of THIS row's own operation has ever run" (the field is
+// omitempty) — fix round 1's IMPORTANT 2 fix is precisely what makes that
+// statement true once a DIFFERENT operation (context_window, anchored on
+// this same offering-operation id) has a probe_runs row of its own.
+func certificationProbeExecutionOf(t *testing.T, db *storage.DB, offeringOperationID string) *string {
+	t.Helper()
+	h := NewDiscoveryHandler(nil, nil, storage.NewCatalogRepo(db), nil, nil, nil, nil, nil, nil, nil, nil).
+		WithProbeRuns(storage.NewProbeRunRepo(db, nil, 7*24*time.Hour))
+	mux := newTestDiscoveryMux(h)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, discoveryRequest(http.MethodGet, "/api/control/v1/offerings/"+offeringOperationID+"/certification"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ServeCertification status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+
+	var env struct {
+		Data certificationJSON `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode certification: %v; body = %s", err, rec.Body.String())
+	}
+	return env.Data.ProbeExecution
+}
+
+// TestQualificationTick_ContextProbeTransportErrorRecordsAnAttemptAndIsNotRetriedNextRound
+// is fix round 1's IMPORTANT 1 test: when cp.Run fails on the TRANSPORT
+// path (not a guard refusal — intelligence.RefusalOf(err) is false), Admit
+// has already reserved this attempt's cost, so the tick must record a
+// terminal_failure probe_runs row (with its own probe_run_costs rows) so
+// (a) hasRecentContextProbeAttempt's own selection-level cooldown engages
+// on the very next round, and (b) ProbeSpendSince can see the recorded
+// spend. Before this fix, a transport error recorded nothing at all, so the
+// SAME candidate returned every 30 seconds forever with no probe_runs
+// evidence and no visible spend to ever self-limit it.
+func TestQualificationTick_ContextProbeTransportErrorRecordsAnAttemptAndIsNotRetriedNextRound(t *testing.T) {
+	db := testControlDB(t)
+	seedLiveChatOfferingNoContext(t, db, "acct-1", "prov-1", "unknown")
+
+	transport := &fakeProbeTransport{available: true, err: fmt.Errorf("boom: transport unavailable")}
+	tick := newQualificationTickForTest(t, db, withContextProbeTransport(transport), harmlessStream())
+
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("round 1: %v", err)
+	}
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("transport calls after round 1 = %d, want 1", got)
+	}
+
+	chatOpID := offeringOperationIDFor(t, db, "acct-1", "unknown", "chat")
+	if n := probeRunCount(t, db, chatOpID); n != 1 {
+		t.Fatalf("probe_runs rows = %d, want 1 — Admit already reserved this attempt's cost before the transport failed; the attempt must be recorded so the cooldown engages", n)
+	}
+	if got := probeRunExecutionOf(t, db, chatOpID, "context_window"); got != "terminal_failure" {
+		t.Fatalf("probe_runs.execution = %q, want terminal_failure", got)
+	}
+	// probeEstimateAllocations(OperationContextWindow) emits one row per
+	// quota.Unit (requests/concurrency/input_tokens/output_tokens) for a
+	// SINGLE probe_runs row — the same multi-row shape the success path
+	// already writes — so this asserts "something was recorded", not a
+	// specific count that would just re-derive quota.Estimate's own unit
+	// count.
+	if n := probeRunCostRowCount(t, db); n == 0 {
+		t.Fatalf("probe_run_costs rows = %d, want > 0 — the reservation Admit already made must be visible to ProbeSpendSince, or the PerAccount cap can never self-limit a persistently failing provider", n)
+	}
+	if got := nativeContextTokensOf(t, db, "unknown"); got != nil {
+		t.Fatalf("native_context_tokens = %v, want nil — nothing was ever extracted", *got)
+	}
+
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("round 2: %v", err)
+	}
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("transport calls after round 2 = %d, want STILL 1 — a transport-error attempt must not be retried on the very next round", got)
+	}
+}
+
+// TestQualificationTick_ContextProbeExecutionNeverSurfacesAsTheChatCertifications
+// is fix round 1's IMPORTANT 2 test: a context probe is anchored on the
+// offering's CHAT offering_operation row id (contextProbeCandidate's own
+// doc comment), so GET /offerings/{chatOpID}/certification — the CHAT
+// capability's own certification read — must NEVER report the context
+// probe's own execution as if it belonged to chat. Before fix round 1,
+// storage.ProbeRunRepo.LatestExecution carried no operation filter, so a
+// rate-limited context probe would render a certified, supported, working
+// chat capability as if a probe had just failed against it.
+func TestQualificationTick_ContextProbeExecutionNeverSurfacesAsTheChatCertifications(t *testing.T) {
+	db := testControlDB(t)
+	seedLiveChatOfferingNoContext(t, db, "acct-1", "prov-1", "unknown")
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 429}}
+	tick := newQualificationTickForTest(t, db, withContextProbeTransport(transport), harmlessStream())
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	chatOpID := offeringOperationIDFor(t, db, "acct-1", "unknown", "chat")
+	if got := probeRunExecutionOf(t, db, chatOpID, "context_window"); got != "retryable_failure" {
+		t.Fatalf("setup: probe_runs.execution for context_window = %q, want retryable_failure — the context probe really did run and record something on this row id", got)
+	}
+
+	if got := certificationProbeExecutionOf(t, db, chatOpID); got != nil {
+		t.Fatalf("GET /offerings/%s/certification probe_execution = %q, want nil — a context probe's own execution must never surface as the CHAT certification's probe result", chatOpID, *got)
 	}
 }

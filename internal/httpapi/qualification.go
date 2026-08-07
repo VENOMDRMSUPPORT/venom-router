@@ -215,6 +215,15 @@ type qualificationTick struct {
 	// probeOneContextWindow's doc comment for why this is "through the
 	// policy, per probe", never a bypass of ProbeGuard itself.
 	contextProbeGuardPolicy intelligence.ProbeSafetyPolicy
+	// contextProbeCap bounds how many context-window probes ONE round of
+	// probeContextWindows will run. Defaults to qualificationContextProbeCap
+	// in both BuildQualificationTick and buildQualificationTickForTest — a
+	// tick FIELD rather than the bare package constant solely so
+	// withContextProbeCap (test-only) can raise it for a test whose own
+	// fixture would otherwise collide with the production default (fix
+	// round 1, MINOR 1): a fleet-wide production round never needs a value
+	// other than the constant, so every real caller gets it unconditionally.
+	contextProbeCap int
 	// probeContext is the seam probeOneContextWindow calls for each candidate
 	// dueContextProbes selects: run the actual measurement and report the
 	// extracted limit, or (0, false) when nothing was learned (a refusal, a
@@ -730,10 +739,27 @@ func (t *qualificationTick) probeOneCapability(ctx context.Context, c capability
 		OfferingOperationID: c.OfferingOperationID, Operation: c.Operation,
 	})
 	if err != nil {
-		// A guard refusal (cap/cooldown/concurrency) or a transport error:
-		// nothing was learned and nothing was spent — see CRITICAL 2(a)
-		// above. Neither a probe_runs row nor a probe_run_costs row is ever
-		// written for this attempt.
+		// CORRECTED (task-4 fix round 1, IMPORTANT 1b): this comment
+		// previously claimed "nothing was learned and nothing was spent"
+		// for BOTH a guard refusal and a transport error. That is only true
+		// for the refusal — see CRITICAL 2(a) above, ReserveProbe is never
+		// reached on that path. A TRANSPORT error is different: by the time
+		// cp.Run's own transport call fails, guard.Admit has ALREADY
+		// returned successfully and ReserveProbe has ALREADY reserved this
+		// attempt's (small, fixture-sized) cost, and — same as the false
+		// claim's other half — no probe_runs/probe_run_costs row is written
+		// here to show for it. That means qualificationCapabilityProbeCooldown
+		// (ProbeGuard.WithCapabilityCooldown, keyed off the last probe_runs
+		// row of ANY execution) ALSO never engages for a transport error
+		// specifically, since no such row exists for it to find — this
+		// path has the SAME unbounded-reselection exposure task-4's own
+		// runContextProbe closed for the context-window probe (see that
+		// method's own error-handling doc comment), not a smaller one by
+		// design. Left OPEN here deliberately: fix round 1's own scope for
+		// this capability-probe site is correcting this comment so it stops
+		// asserting a false invariant, not re-opening task-3's already
+		// twice-reviewed production behavior — the fix, if made, belongs to
+		// a task-3 follow-up.
 		return fmt.Errorf("run capability probe: %w", err)
 	}
 
@@ -1006,9 +1032,11 @@ func (t *qualificationTick) probeContextWindows(ctx context.Context) {
 		return
 	}
 
+	roundCap := t.contextProbeCap
+
 	probe := due
-	if len(probe) > qualificationContextProbeCap {
-		probe = due[:qualificationContextProbeCap]
+	if len(probe) > roundCap {
+		probe = due[:roundCap]
 	}
 	if skipped := len(due) - len(probe); skipped > 0 {
 		skippedIDs := make([]string, 0, skipped)
@@ -1019,7 +1047,7 @@ func (t *qualificationTick) probeContextWindows(ctx context.Context) {
 		// comment for why a cap nobody can see is a dishonesty this project
 		// keeps fixing.
 		t.log.Info("model qualification: context-probe per-round cap reached, deferring the rest to a later round",
-			observability.Int("cap", qualificationContextProbeCap),
+			observability.Int("cap", roundCap),
 			observability.Int("due", len(due)),
 			observability.Int("deferred", skipped),
 			observability.String("deferred_model_ids", fmt.Sprintf("%v", skippedIDs)),
@@ -1085,10 +1113,16 @@ func (t *qualificationTick) probeOneContextWindow(ctx context.Context, c context
 // Start/Finish bookkeeping follows the SAME "Start strictly after a
 // successful Admit" ordering task-3's CRITICAL 2(a) fix established (see
 // probeOneCapability's own doc comment): cp.Run calls guard.Admit
-// internally, and probeRuns.Start is only ever reached once cp.Run has
-// already returned without error — a refused attempt (missing opt-in, a
-// cap, the cooldown, concurrency) never writes a probe_runs row and never
-// records spend.
+// internally, and the SUCCESS path's probeRuns.Start below is only ever
+// reached once cp.Run has already returned without error — a REFUSED
+// attempt (missing opt-in, a cap, the cooldown, concurrency) never writes a
+// probe_runs row and never records spend, because ReserveProbe (Admit's own
+// last step) was never reached either. A TRANSPORT error is a DIFFERENT
+// fact from a refusal — Admit already succeeded and already reserved this
+// attempt's cost by the time the transport call itself fails — and fix
+// round 1's own error-handling block above records it accordingly (a
+// terminal_failure row, not silence); see that block's own doc comment for
+// the full reasoning and the residual gap it does not close.
 //
 // rules=nil (NewContextProbe's third argument) is deliberate, not a
 // forgotten parameter: a repo-wide search of this codebase — and, for
@@ -1122,10 +1156,57 @@ func (t *qualificationTick) runContextProbe(ctx context.Context, c contextProbeC
 		OfferingOperationID: c.ChatOfferingOperationID, Operation: models.OperationContextWindow,
 	})
 	if err != nil {
-		// A guard refusal (opt-in/cap/cooldown/concurrency) or a transport
-		// error: nothing was learned and nothing was spent. Neither a
-		// probe_runs row nor a probe_run_costs row is ever written for this
-		// attempt — see this method's own doc comment.
+		// cp.Run returns a non-nil error on TWO structurally different
+		// paths, and they are NOT the same fact (fix round 1, IMPORTANT 1):
+		//
+		//   - guard.Admit itself refuses (opt-in/cap/cooldown/concurrency):
+		//     ReserveProbe, Admit's own last step, is never reached. Nothing
+		//     was spent — intelligence.RefusalOf(err) succeeds on this path
+		//     (err is/wraps a *intelligence.ProbeRefusedError), and nothing
+		//     is recorded, exactly like a refused capability probe.
+		//   - the TRANSPORT call itself fails (ErrProbeTransportUnavailable
+		//     for a provider registered but absent from
+		//     liveProviderBaseURLs, no active credential, a keyring
+		//     failure, a network error): by this point Admit has ALREADY
+		//     returned successfully, which means ReserveProbe has ALREADY
+		//     reserved this attempt's 3,000,000 declared input tokens
+		//     against the account's real quota window.
+		//     intelligence.RefusalOf(err) returns false here — this is not
+		//     a *ProbeRefusedError at all, just a wrapped transport error —
+		//     which is exactly how the two are told apart below.
+		//
+		// Recording NOTHING on the second path (the pre-fix-round-1 shape,
+		// inherited verbatim from probeOneCapability's identical bug — see
+		// that method's own doc comment for the corrected version of this
+		// same claim) left a REAL 3,000,000-token reservation outstanding
+		// with no probe_runs row to show for it: hasRecentContextProbeAttempt
+		// would find nothing, so the SAME candidate becomes due again on the
+		// very next 30s round, forever, and ProbeSpendSince (which sums
+		// probe_run_costs, never quota_reservations directly) would never
+		// see this spend either, so the PerAccount rolling cap could not
+		// even self-limit the loop. A transport error is therefore now
+		// recorded as a terminal_failure probe_runs row (with the SAME
+		// estimated allocation Admit itself just reserved, independently
+		// reconstructed via probeEstimateAllocations exactly as the success
+		// path below already does) so BOTH consequences are closed: the
+		// selection-level cooldown engages, and the recorded spend is
+		// visible to the account cap. There is no reservation id to attach
+		// here (cp.Run's own zero-value ContextProbeReport on this path
+		// never surfaces the one Admit already obtained) — a residual gap
+		// in the reservation ledger's own traceability, not something this
+		// bookkeeping fix can close from the httpapi layer.
+		if _, refused := intelligence.RefusalOf(err); !refused {
+			runID := t.newID()
+			if startErr := t.probeRuns.Start(ctx, storage.ProbeRunParams{
+				ID: runID, OfferingOperationID: c.ChatOfferingOperationID, AccountID: c.AccountID, ProviderID: c.ProviderID,
+				Operation: string(models.OperationContextWindow), Class: intelligence.ProbeExpensive,
+				Allocations: probeEstimateAllocations(models.OperationContextWindow), StartedAt: startedAt,
+			}); startErr != nil {
+				t.log.Warn("model qualification: recording a failed context probe transport attempt failed", observability.Err(startErr))
+				return 0, false
+			}
+			_ = t.probeRuns.Finish(context.WithoutCancel(ctx), runID, intelligence.ProbeTerminalFailure, t.now())
+		}
 		return 0, false
 	}
 
@@ -1262,6 +1343,7 @@ func BuildQualificationTick(db *storage.DB, kr *secrets.Keyring, now func() time
 
 		discovery:               storage.NewDiscoveryRepo(db, newOAuthTransactionID),
 		contextProbeGuardPolicy: contextProbeGuardPolicy,
+		contextProbeCap:         qualificationContextProbeCap,
 	}
 	// Task 4: probeContext is a bound method value, assigned after
 	// construction (it needs tick itself as its receiver) rather than
