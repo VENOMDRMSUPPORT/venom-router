@@ -203,6 +203,32 @@ func TestContextProbe_SendsExactlyOneOversizedRequest(t *testing.T) {
 	if call.Operation != models.OperationContextWindow {
 		t.Errorf("Operation = %q, want %q", call.Operation, models.OperationContextWindow)
 	}
+	// Whole-branch review, FIX 2 (Critical): DeclaredInputTokens above is a
+	// QUOTA-ACCOUNTING number only — probeadapters.go's Probe never
+	// serializes it onto the wire; it maps req.Messages, and only
+	// req.Messages, onto the outbound request body. Before this fix,
+	// nothing in Run ever set req.Messages, so the provider received
+	// "messages": [] and rejected with "at least one message is required"
+	// — a MALFORMED-REQUEST error carrying no context-length signal at
+	// all, never the genuine context-length rejection this probe exists to
+	// elicit. This assertion is exactly what a canned-result fake (every
+	// other test in this file) cannot catch: it inspects the REQUEST the
+	// transport actually received, not the result it was told to return.
+	if len(call.Messages) == 0 {
+		t.Fatal("call.Messages is empty — the provider would see \"messages\": [] and reject for a missing body, never a genuine context-length error")
+	}
+	// No real provider's context window is anywhere near this small in
+	// characters of text, so a body under this size cannot plausibly
+	// trigger a genuine context-length rejection — it can only ever
+	// trigger a content-shape rejection unrelated to context length.
+	const minPlausibleOversizedBodyBytes = 1_000_000
+	gotSize := 0
+	for _, m := range call.Messages {
+		gotSize += len(m.Content)
+	}
+	if gotSize < minPlausibleOversizedBodyBytes {
+		t.Fatalf("total message content size = %d bytes, want >= %d — the request must be genuinely oversized, not merely DECLARED oversized via DeclaredInputTokens", gotSize, minPlausibleOversizedBodyBytes)
+	}
 }
 
 func contextProbeSignalRows() []struct {

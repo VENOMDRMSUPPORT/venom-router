@@ -24,6 +24,34 @@ const (
 	ProbeSnippetMaxRunes        = 200
 )
 
+// oversizedContextProbeFillerWord is repeated to build the context probe's
+// actual oversized message body (whole-branch review, FIX 2). It is a
+// single lowercase word plus a trailing space — never punctuation or a
+// digit — deliberately so the filler text itself can never be
+// misread as a context-limit number by ExtractContextLimit's own rung 4
+// (a number within genericKeywordDistance of a keyword) if a provider ever
+// echoes a fragment of the oversized request back inside its rejection.
+const oversizedContextProbeFillerWord = "a "
+
+// oversizedContextProbeContent builds the message body ContextProbe.Run
+// actually sends: filler text repeated ContextProbeInputTokens times — the
+// SAME constant ContextProbeInputTokens above declares to the quota
+// accounting, never a second, independently chosen size that could drift
+// from it. This is deliberate, not cosmetic: DeclaredInputTokens is quota
+// bookkeeping ONLY (ProbeGuard reads it to reserve headroom; probeadapters.go's
+// Probe never serializes it onto the wire), so without an actually large
+// body the provider receives an empty "messages": [] request and rejects
+// it with a missing-body error carrying no context-length signal — not the
+// genuine context-length rejection this probe exists to elicit (measured:
+// "400 messages: at least one message is required", RungNoSignal, no
+// extraction ever possible). Built fresh per call, never a package-level
+// var, so importing this package never pays this allocation — only an
+// actual context-probe attempt (already the single most expensive probe in
+// the system, 04 §2) does.
+func oversizedContextProbeContent() string {
+	return strings.Repeat(oversizedContextProbeFillerWord, ContextProbeInputTokens)
+}
+
 // ContextLimitRung is which rung of the extraction ladder produced a
 // context-limit reading, first hit wins (04 §2).
 type ContextLimitRung string
@@ -280,6 +308,13 @@ func (p *ContextProbe) Run(ctx context.Context, req ProbeRequest) (ContextProbeR
 	req.Operation = models.OperationContextWindow
 	req.DeclaredInputTokens = ContextProbeInputTokens
 	req.MaxOutputTokens = ContextProbeMaxOutputTokens
+	// FIX 2 (whole-branch review, Critical): the request must actually BE
+	// oversized, not merely CLAIM to be via DeclaredInputTokens above — see
+	// oversizedContextProbeContent's own doc comment for why the two are
+	// not the same fact. Always overwritten here, exactly like the three
+	// fields above are unconditionally overwritten regardless of whatever
+	// the caller passed in req.Messages.
+	req.Messages = []ProbeMessage{{Role: "user", Content: oversizedContextProbeContent()}}
 
 	now := p.now()
 	inputTokens := ContextProbeInputTokens
