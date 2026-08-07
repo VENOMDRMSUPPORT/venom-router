@@ -102,10 +102,10 @@ func NewModelsHandler(catalog *storage.CatalogRepo, now func() time.Time) *Model
 
 // collectOfferingOperationThresholds gathers every offering_operations row
 // id present across rows' certified operations, deduplicated, mapped to
-// THAT id's own certification's certified_at (Unix seconds; 0 when the
-// operation has no certified_at at all) — the batched per-id threshold set
-// task-5's provenance lookup queries with, ONE query per page rather than
-// one per offering-operation.
+// THAT id's own operation string plus its certification's certified_at
+// (Unix seconds; 0 when the operation has no certified_at at all) — the
+// batched per-id threshold set task-5's provenance lookup queries with, ONE
+// query per page rather than one per offering-operation.
 //
 // The threshold is load-bearing (whole-branch-review fix, 2026-08-05): a
 // succeeded probe_runs row only proves the CURRENT certification when it
@@ -113,8 +113,16 @@ func NewModelsHandler(catalog *storage.CatalogRepo, now func() time.Time) *Model
 // threshold, a stale succeeded run from a PRIOR (now-expired,
 // re-certified-from-declaration) certification could launder the new one as
 // "probed" purely because some older probe happened to have succeeded once.
-func collectOfferingOperationThresholds(rows []storage.CatalogOfferingRow) map[string]int64 {
-	thresholds := make(map[string]int64)
+//
+// The operation is load-bearing too (whole-branch-review fix, MINOR — see
+// storage.OfferingOperationThreshold's own doc comment): a single
+// offering_operation_id can carry probe_runs rows for TWO different
+// operations (Task 4's context-window probe deliberately anchors on a live
+// offering's CHAT id), so this id's own requested operation is what tells
+// SucceededOfferingOperationIDs which of those rows actually counts as
+// evidence for IT — never "any operation sharing this id".
+func collectOfferingOperationThresholds(rows []storage.CatalogOfferingRow) map[string]storage.OfferingOperationThreshold {
+	thresholds := make(map[string]storage.OfferingOperationThreshold)
 	for _, row := range rows {
 		for _, op := range row.Operations {
 			if op.ID == "" {
@@ -127,7 +135,7 @@ func collectOfferingOperationThresholds(rows []storage.CatalogOfferingRow) map[s
 			if op.CertifiedAt != nil {
 				threshold = op.CertifiedAt.Unix()
 			}
-			thresholds[op.ID] = threshold
+			thresholds[op.ID] = storage.OfferingOperationThreshold{Operation: op.Operation, Threshold: threshold}
 		}
 	}
 	return thresholds

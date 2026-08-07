@@ -459,7 +459,7 @@ func (h *ProbeHandler) runProbe(ctx context.Context, jobID, offeringOperationID,
 		return
 	}
 
-	attempts, err := h.probeRuns.CountAttempts(ctx, offeringOperationID)
+	attempts, err := h.probeRuns.CountAttempts(ctx, offeringOperationID, op)
 	if err != nil {
 		h.failJob(jobID, "internal", "attempt count lookup failed")
 		return

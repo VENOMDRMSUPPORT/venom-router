@@ -348,38 +348,77 @@ func (r *ProbeRunRepo) LatestExecution(ctx context.Context, offeringOperationID 
 }
 
 // CountAttempts returns how many probe_runs rows already exist for
-// offeringOperationID — the basis P3c-CAPI-001's handler uses to derive
-// intelligence.CertificationDriver.RecordAttempt's `attempts` parameter
-// (that attempt's own ordinal is this count plus one, computed by the
-// caller BEFORE calling Start for the current attempt).
-func (r *ProbeRunRepo) CountAttempts(ctx context.Context, offeringOperationID string) (int, error) {
+// (offeringOperationID, operation) — the basis P3c-CAPI-001's handler uses
+// to derive intelligence.CertificationDriver.RecordAttempt's `attempts`
+// parameter (that attempt's own ordinal is this count plus one, computed by
+// the caller BEFORE calling Start for the current attempt). Deliberately
+// ALL-TIME, never windowed: this feeds models.RetryPolicy.Attempts against
+// a FIXED total retry budget (04 §5 edge 3, DefaultProbeRetryBudget), not a
+// rate — a budget that reset itself after some window would let a
+// persistently-failing candidate retry forever, exactly the treadmill this
+// project keeps closing elsewhere.
+//
+// operation is load-bearing (whole-branch review, MINOR — the same family
+// as SucceededOfferingOperationIDs' own identical fix, see
+// OfferingOperationThreshold's doc comment): a single offering_operation_id
+// can carry probe_runs rows for TWO different operations, because Task 4's
+// context-window probe deliberately anchors on a live offering's own CHAT
+// id. Without this filter, a context-probe attempt on that shared id would
+// inflate the CAPABILITY probe's own attempt count (or vice versa),
+// mirroring LatestExecution's own operation filter — which this method
+// lacked before this fix, unlike its sibling.
+func (r *ProbeRunRepo) CountAttempts(ctx context.Context, offeringOperationID string, operation models.Operation) (int, error) {
 	var count int
 	if err := r.db.Conn().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM probe_runs WHERE offering_operation_id = ?`,
-		offeringOperationID,
+		`SELECT COUNT(*) FROM probe_runs WHERE offering_operation_id = ? AND operation = ?`,
+		offeringOperationID, string(operation),
 	).Scan(&count); err != nil {
 		return 0, fmt.Errorf("storage: count probe attempts for %q: %w", offeringOperationID, err)
 	}
 	return count, nil
 }
 
+// OfferingOperationThreshold is one requested entry for
+// SucceededOfferingOperationIDs (whole-branch review, MINOR — the
+// SucceededOfferingOperationIDs/CountAttempts family): the OPERATION whose
+// success must be checked, alongside the earliest finished_at (Unix
+// seconds) that still counts. Operation is load-bearing, not decorative:
+// probe_runs.offering_operation_id is not a 1:1 key of "which capability
+// this row is evidence for" — Task 4's context-window probe deliberately
+// reuses a LIVE offering's CHAT offering_operation_id as its own FK anchor
+// (contextProbeCandidate's own doc comment, qualification.go), so a single
+// offering_operation_id can carry BOTH a chat probe_runs row (operation=
+// 'chat') and a context_window probe_runs row (operation='context_window').
+// Without this field, a succeeded context-probe attempt would silently mark
+// that SAME id's CHAT capability "proved" too, purely because they share an
+// id — a context-probe row anchored on the chat op marking chat "proved".
+type OfferingOperationThreshold struct {
+	Operation string
+	Threshold int64
+}
+
 // SucceededOfferingOperationIDs returns the subset of ids in thresholds that
-// have a SUCCEEDED probe_runs row finishing AT OR AFTER that id's threshold
-// — the batched (task-5) query the httpapi assembler uses to derive
-// capability provenance ("probed" vs "declared") for one page of offerings
-// at a time, ONE query per page rather than one per offering-operation (no
-// N+1).
+// have a SUCCEEDED probe_runs row, for THAT SAME id's own requested
+// operation, finishing AT OR AFTER that id's threshold — the batched
+// (task-5) query the httpapi assembler uses to derive capability provenance
+// ("probed" vs "declared") for one page of offerings at a time, ONE query
+// per page rather than one per offering-operation (no N+1).
 //
-// thresholds maps offering_operation_id -> the CURRENT certification's
-// certified_at (Unix seconds). This is the whole-branch-review fix
-// (2026-08-05): the prior version matched ANY succeeded run ever, untied to
-// the certification it was meant to corroborate. That let an
-// out-of-cooldown certification EXPIRE, get re-certified from a bare
+// thresholds maps offering_operation_id -> {the operation this id's
+// certification is actually FOR, the CURRENT certification's certified_at
+// (Unix seconds)}. The certified_at-threshold half is the whole-branch-
+// review fix (2026-08-05): the prior version matched ANY succeeded run
+// ever, untied to the certification it was meant to corroborate. That let
+// an out-of-cooldown certification EXPIRE, get re-certified from a bare
 // DECLARATION (no new probe), and still surface as "probed" purely because
 // some OLDER, pre-expiry probe run happened to have succeeded once — stale
 // evidence laundering a certification it never actually attested to. A run
 // only counts when it finished no earlier than the certification it is
-// being asked to corroborate.
+// being asked to corroborate. The operation half is a LATER whole-branch-
+// review fix (MINOR, see OfferingOperationThreshold's own doc comment):
+// without it, this method's own sibling LatestExecution's operation filter
+// had no counterpart here, so a context-probe success anchored on a chat
+// offering_operation_id could mark chat "proved".
 //
 // A threshold of 0 (or negative) is the fail-closed "this id was never
 // really certified" sentinel: it counts nothing, ever, regardless of any
@@ -390,18 +429,20 @@ func (r *ProbeRunRepo) CountAttempts(ctx context.Context, offeringOperationID st
 // "probed".
 //
 // An empty input returns an empty, non-nil map without touching the
-// database; an id with no succeeded run, only a failed run, a threshold of
-// 0, or a succeeded run that finished before its threshold is simply absent
-// from the result — never present with a false value. An id never passed in
-// thresholds is likewise never present, however its own probe history reads.
+// database; an id with no succeeded run for the REQUESTED operation, only a
+// failed run, a threshold of 0, or a succeeded run that finished before its
+// threshold is simply absent from the result — never present with a false
+// value. An id never passed in thresholds is likewise never present,
+// however its own probe history reads.
 //
 // Implementation note: an IN (...) query cannot carry a PER-ROW threshold,
-// so this fetches MAX(finished_at) grouped by offering_operation_id for the
-// requested ids in ONE query, then compares each id's max against
-// thresholds[id] here in Go — simpler than a joined VALUES/json_each table
-// and exactly as correct, since each id's threshold is only ever compared
-// against ITS OWN max.
-func (r *ProbeRunRepo) SucceededOfferingOperationIDs(ctx context.Context, thresholds map[string]int64) (map[string]bool, error) {
+// so this fetches MAX(finished_at) grouped by (offering_operation_id,
+// operation) for the requested ids in ONE query, then compares each id's
+// REQUESTED-operation max against thresholds[id].Threshold here in Go —
+// simpler than a joined VALUES/json_each table and exactly as correct,
+// since each id's threshold is only ever compared against ITS OWN,
+// operation-matched max.
+func (r *ProbeRunRepo) SucceededOfferingOperationIDs(ctx context.Context, thresholds map[string]OfferingOperationThreshold) (map[string]bool, error) {
 	out := make(map[string]bool, len(thresholds))
 	if len(thresholds) == 0 {
 		return out, nil
@@ -410,8 +451,8 @@ func (r *ProbeRunRepo) SucceededOfferingOperationIDs(ctx context.Context, thresh
 	ids := make([]string, 0, len(thresholds))
 	placeholders := make([]string, 0, len(thresholds))
 	args := make([]any, 0, len(thresholds))
-	for id, threshold := range thresholds {
-		if threshold <= 0 {
+	for id, t := range thresholds {
+		if t.Threshold <= 0 {
 			// Fail closed: never query for an id whose threshold can never
 			// be satisfied anyway (see doc comment above).
 			continue
@@ -431,10 +472,10 @@ func (r *ProbeRunRepo) SucceededOfferingOperationIDs(ctx context.Context, thresh
 	// under modernc.org/sqlite's placeholder ceiling of 32766. Never remove
 	// the caller-side page bound on the assumption this query can absorb an
 	// unbounded id list.
-	query := `SELECT offering_operation_id, MAX(finished_at) FROM probe_runs
+	query := `SELECT offering_operation_id, operation, MAX(finished_at) FROM probe_runs
 		 WHERE execution = 'succeeded' AND offering_operation_id IN (` +
 		strings.Join(placeholders, ",") + `)
-		 GROUP BY offering_operation_id`
+		 GROUP BY offering_operation_id, operation`
 	rows, err := r.db.Conn().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("storage: succeeded offering-operation ids: %w", err)
@@ -442,12 +483,20 @@ func (r *ProbeRunRepo) SucceededOfferingOperationIDs(ctx context.Context, thresh
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
-		var id string
+		var id, operation string
 		var maxFinished sql.NullInt64
-		if err := rows.Scan(&id, &maxFinished); err != nil {
+		if err := rows.Scan(&id, &operation, &maxFinished); err != nil {
 			return nil, fmt.Errorf("storage: succeeded offering-operation ids: scan: %w", err)
 		}
-		if maxFinished.Valid && maxFinished.Int64 >= thresholds[id] {
+		want, requested := thresholds[id]
+		if !requested || operation != want.Operation {
+			// A succeeded run for a DIFFERENT operation than this id was
+			// requested for (e.g. a context-probe row anchored on a chat
+			// offering_operation_id) must never count towards this id's
+			// own requested operation's provenance.
+			continue
+		}
+		if maxFinished.Valid && maxFinished.Int64 >= want.Threshold {
 			out[id] = true
 		}
 	}

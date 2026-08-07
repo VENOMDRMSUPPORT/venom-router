@@ -464,13 +464,13 @@ func TestProbeRunRepo_SucceededOfferingOperationIDs(t *testing.T) {
 	// below.
 	finishSucceeded("run-unrequested", notRequestedOpID, "acct-unreq", "prov-unreq", now)
 
-	thresholds := map[string]int64{
-		atOpID:            now.Unix(),
-		afterOpID:         now.Unix(),
-		staleOpID:         now.Unix(),
-		zeroThresholdOpID: 0,
-		failedOpID:        now.Unix(),
-		noRunOpID:         now.Unix(),
+	thresholds := map[string]OfferingOperationThreshold{
+		atOpID:            {Operation: "tools", Threshold: now.Unix()},
+		afterOpID:         {Operation: "tools", Threshold: now.Unix()},
+		staleOpID:         {Operation: "tools", Threshold: now.Unix()},
+		zeroThresholdOpID: {Operation: "tools", Threshold: 0},
+		failedOpID:        {Operation: "tools", Threshold: now.Unix()},
+		noRunOpID:         {Operation: "tools", Threshold: now.Unix()},
 	}
 
 	got, err := repo.SucceededOfferingOperationIDs(ctx, thresholds)
@@ -511,6 +511,71 @@ func TestProbeRunRepo_SucceededOfferingOperationIDs(t *testing.T) {
 	}
 	if len(empty) != 0 {
 		t.Fatalf("SucceededOfferingOperationIDs(nil) = %+v, want empty", empty)
+	}
+}
+
+// TestProbeRunRepo_SucceededOfferingOperationIDs_OperationMustMatch is
+// whole-branch review's MINOR finding (the SucceededOfferingOperationIDs/
+// CountAttempts family): a single offering_operation_id can carry
+// probe_runs rows for TWO different operations, because Task 4's
+// context-window probe deliberately anchors on a LIVE offering's own CHAT
+// offering_operation_id (contextProbeCandidate's own doc comment,
+// qualification.go) rather than a dedicated context_window row. Before
+// this fix, SucceededOfferingOperationIDs' query grouped by
+// offering_operation_id alone — with no operation filter at all, unlike
+// its sibling LatestExecution — so a SUCCEEDED context-probe run on that
+// shared id would silently mark the id's CHAT capability "proved" too,
+// even though chat was never actually probed by it.
+func TestProbeRunRepo_SucceededOfferingOperationIDs_OperationMustMatch(t *testing.T) {
+	now := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+	db := migratedCatalogDB(t)
+	repo := NewProbeRunRepo(db, fixedClock(now), 7*24*time.Hour)
+	ctx := context.Background()
+
+	// seedOfferingOperationChain seeds a CHAT offering_operations row —
+	// exactly the id Task 4's context probe reuses as its own FK anchor.
+	chatOpID := seedOfferingOperationChain(t, db, "acct-shared", "prov-shared", "model-shared", "pm-shared")
+
+	// A context-window probe SUCCEEDED against this SAME id — the anchoring
+	// Task 4 deliberately performs — but chat itself was never probed.
+	if err := repo.Start(ctx, ProbeRunParams{
+		ID: "run-ctxwin", OfferingOperationID: chatOpID, AccountID: "acct-shared", ProviderID: "prov-shared",
+		Operation: "context_window", Class: intelligence.ProbeExpensive, StartedAt: now,
+	}); err != nil {
+		t.Fatalf("start context-window run: %v", err)
+	}
+	if err := repo.Finish(ctx, "run-ctxwin", intelligence.ProbeSucceeded, now); err != nil {
+		t.Fatalf("finish context-window run: %v", err)
+	}
+
+	got, err := repo.SucceededOfferingOperationIDs(ctx, map[string]OfferingOperationThreshold{
+		chatOpID: {Operation: "chat", Threshold: now.Unix()},
+	})
+	if err != nil {
+		t.Fatalf("SucceededOfferingOperationIDs: %v", err)
+	}
+	if got[chatOpID] {
+		t.Fatalf("chatOpID present in result, want absent — the succeeded run was for context_window, never chat, and must not launder chat's own provenance: %+v", got)
+	}
+
+	// Positive control: a succeeded CHAT run on the same id DOES count.
+	if err := repo.Start(ctx, ProbeRunParams{
+		ID: "run-chat", OfferingOperationID: chatOpID, AccountID: "acct-shared", ProviderID: "prov-shared",
+		Operation: "chat", Class: intelligence.ProbeStandard, StartedAt: now,
+	}); err != nil {
+		t.Fatalf("start chat run: %v", err)
+	}
+	if err := repo.Finish(ctx, "run-chat", intelligence.ProbeSucceeded, now); err != nil {
+		t.Fatalf("finish chat run: %v", err)
+	}
+	got, err = repo.SucceededOfferingOperationIDs(ctx, map[string]OfferingOperationThreshold{
+		chatOpID: {Operation: "chat", Threshold: now.Unix()},
+	})
+	if err != nil {
+		t.Fatalf("SucceededOfferingOperationIDs: %v", err)
+	}
+	if !got[chatOpID] {
+		t.Fatalf("chatOpID absent from result, want present — a genuine succeeded CHAT run now exists for it: %+v", got)
 	}
 }
 
