@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 )
 
 // defaultCatalogListLimit bounds a ListOfferings call that did not supply a
@@ -398,6 +400,24 @@ type NonChatOperationToCertify struct {
 // task-3-report.md) before this SQL-side filter was written; had it been
 // unavailable, the fallback would be filtering in Go after fetching the
 // offering's declared capabilities_json separately.
+//
+// Whole-branch review, FIX 3 (Critical): a row whose certifications.evidence_ref
+// carries intelligence.SuspensionCapabilityContradiction is EXCLUDED, even
+// though it otherwise matches every other condition (status='probing',
+// declared in capabilities_json). That marker means a REAL capability probe
+// already returned a definitive, evidence-bearing rejection for this exact
+// offering-operation (qualification.go's probeOneCapability, which stamps
+// it via CertificationDriver.Suspend before the row is later drained back
+// to `probing` by the review drainer's own legitimate ReProbe edge). The
+// declaration this query otherwise treats as sufficient evidence is a
+// STATIC fact that has not changed — re-certifying supported from it alone
+// would silently overturn a probe's own definitive finding within the very
+// same scheduler round that finding was recorded in, which is exactly the
+// treadmill this fix exists to close. Every OTHER suspension reason
+// (credential_blocked, protocol_failure, …) says nothing about whether the
+// capability is actually supported, so those rows are deliberately left
+// selectable here — the drain's legitimate job of resurrecting a row
+// stranded for an unrelated, since-cleared reason must keep working.
 func (r *CatalogRepo) ListNonChatOperationsToCertify(ctx context.Context, accountID string) ([]NonChatOperationToCertify, error) {
 	rows, err := r.db.Conn().QueryContext(ctx,
 		`SELECT oo.id, oo.operation
@@ -406,12 +426,13 @@ func (r *CatalogRepo) ListNonChatOperationsToCertify(ctx context.Context, accoun
 		 JOIN account_model_offerings amo
 		   ON amo.account_id = oo.account_id AND amo.provider_model_id = oo.provider_model_id
 		 WHERE oo.account_id = ? AND oo.operation != 'chat' AND c.status = 'probing'
+		   AND (c.evidence_ref IS NULL OR c.evidence_ref != ?)
 		   AND EXISTS (
 		     SELECT 1 FROM json_each(amo.capabilities_json)
 		     WHERE json_each.value = oo.operation
 		   )
 		 ORDER BY oo.provider_model_id ASC, oo.operation ASC`,
-		accountID,
+		accountID, string(intelligence.SuspensionCapabilityContradiction),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("storage: list non-chat operations to certify for %q: %w", accountID, err)

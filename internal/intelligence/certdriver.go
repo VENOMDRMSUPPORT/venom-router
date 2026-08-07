@@ -338,6 +338,31 @@ func (d *CertificationDriver) transitionAndCommit(ctx context.Context, offeringO
 		return current, fmt.Errorf("intelligence: certification transition %s -> %s rejected for %q: %w", current.State, target, offeringOperationID, txErr)
 	}
 
+	// Whole-branch review, FIX 3 (Critical): stamp WHY this row was
+	// suspended into EvidenceRef — a field every transition already
+	// carries forward unchanged (models.Certification.Transition never
+	// touches it), so once set here it durably survives the very edges
+	// this fix exists to outlast: suspended -> probing (edge 8, ReProbe)
+	// resets Truth to unknown but leaves EvidenceRef alone, and a
+	// subsequent probing -> probing/-> suspended retry does the same.
+	// Without this, a definitive negative (SuspensionCapabilityContradiction)
+	// suspends the row, but the very next scheduler round's probe_drain
+	// ReProbes it back to probing with no memory of WHY, and the
+	// declared-capability certification step (storage.CatalogRepo.
+	// ListNonChatOperationsToCertify + httpapi's certifyDeclaredCapabilities)
+	// blindly re-certifies it supported from nothing but its static
+	// declaration — laundering the exact evidence this suspension exists to
+	// act on. A fresh, EVIDENCE-BEARING certified transition (probing ->
+	// certified, edge 4, or the administrative Resume, edge 7) clears it:
+	// once the row is legitimately certified again, no stale marker should
+	// linger to block a FUTURE, unrelated suspension/re-declaration cycle.
+	switch {
+	case suspension != "":
+		next.EvidenceRef = string(suspension)
+	case target == models.CertCertified:
+		next.EvidenceRef = ""
+	}
+
 	if casErr := d.store.CompareAndSwap(ctx, current, next); casErr != nil {
 		return current, fmt.Errorf("intelligence: compare-and-swap certification %q: %w", offeringOperationID, casErr)
 	}
