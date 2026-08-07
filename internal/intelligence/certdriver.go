@@ -356,6 +356,27 @@ func (d *CertificationDriver) transitionAndCommit(ctx context.Context, offeringO
 	// certified, edge 4, or the administrative Resume, edge 7) clears it:
 	// once the row is legitimately certified again, no stale marker should
 	// linger to block a FUTURE, unrelated suspension/re-declaration cycle.
+	// KNOWN LIMITATIONS (whole-branch review, re-review — flagged, not
+	// redesigned, per that review's own instruction):
+	//
+	//  1. Semantic overload. models.Certification's own doc comment
+	//     documents EvidenceRef as "an evidence reference (an id/reference
+	//     only — never inline evidence content or secret material)" — a
+	//     pointer to WHERE the evidence lives, not the fact itself. This
+	//     stamp instead writes the raw SuspensionReason string directly
+	//     into it, repurposing the field as a durable STATE marker. It is
+	//     also PUBLICLY exposed as `evidence_ref` in API responses
+	//     (internal/httpapi/discovery.go's DiscoveryOperation JSON, and
+	//     models.go's certification projection) — a field that was
+	//     ALWAYS EMPTY before this fix (nothing ever wrote to it) now
+	//     emits suspension-reason values to any caller of those endpoints.
+	//  2. Latent clobber. The `target == models.CertCertified` branch
+	//     unconditionally clears EvidenceRef to "" on every fresh
+	//     certified transition. If ANY future caller ever legitimately
+	//     populates EvidenceRef with a real evidence reference (its
+	//     documented, original purpose) at the SAME time it certifies,
+	//     this branch silently discards it — there is no such caller
+	//     today, so this is latent, not live.
 	switch {
 	case suspension != "":
 		next.EvidenceRef = string(suspension)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 )
 
@@ -389,6 +390,70 @@ func TestProbeRunRepo_ReclaimStale(t *testing.T) {
 	}
 	if inFlight != 1 {
 		t.Fatalf("InFlightProbes after reclaim = %d, want 1 (only the fresh run)", inFlight)
+	}
+}
+
+// TestProbeRunRepo_CountAttempts_FiltersByOperation is whole-branch
+// review's re-review fold-in: CountAttempts feeds
+// intelligence.CertificationDriver.RecordAttempt's `attempts` parameter
+// against a FIXED total retry budget (04 §5 edge 3) — deliberately
+// all-time, never windowed, since a budget that reset itself would let a
+// persistently-failing candidate retry forever. The operation filter
+// mirrors LatestExecution's own (a single offering_operation_id can carry
+// probe_runs rows for two different operations, because the context-window
+// probe deliberately anchors on a live offering's own CHAT id); neither of
+// today's two call sites (probe.go's runProbe, qualification.go's
+// probeOneCapability) currently reaches a shared-id row, so this pins the
+// method's own contract directly rather than relying on a live symptom.
+func TestProbeRunRepo_CountAttempts_FiltersByOperation(t *testing.T) {
+	now := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+	db := migratedCatalogDB(t)
+	repo := NewProbeRunRepo(db, fixedClock(now), 7*24*time.Hour)
+	ctx := context.Background()
+
+	opID := seedOfferingOperationChain(t, db, "acct-counta", "prov-counta", "model-counta", "pm-counta")
+
+	// Two attempts recorded for a DIFFERENT operation (context_window,
+	// anchored on this SAME chat offering_operation_id, exactly like
+	// Task 4's real anchoring) must never inflate this id's own "chat"
+	// attempt count.
+	for i, id := range []string{"run-ctx-1", "run-ctx-2"} {
+		if err := repo.Start(ctx, ProbeRunParams{
+			ID: id, OfferingOperationID: opID, AccountID: "acct-counta", ProviderID: "prov-counta",
+			Operation: "context_window", Class: intelligence.ProbeExpensive, StartedAt: now.Add(time.Duration(i) * time.Minute),
+		}); err != nil {
+			t.Fatalf("start context_window run %d: %v", i, err)
+		}
+		if err := repo.Finish(ctx, id, intelligence.ProbeInconclusive, now); err != nil {
+			t.Fatalf("finish context_window run %d: %v", i, err)
+		}
+	}
+
+	if got, err := repo.CountAttempts(ctx, opID, models.OperationChat); err != nil {
+		t.Fatalf("CountAttempts(chat): %v", err)
+	} else if got != 0 {
+		t.Fatalf("CountAttempts(chat) = %d, want 0 — two context_window attempts on the same id must never count as chat attempts", got)
+	}
+
+	// One genuine chat attempt now DOES count.
+	if err := repo.Start(ctx, ProbeRunParams{
+		ID: "run-chat-1", OfferingOperationID: opID, AccountID: "acct-counta", ProviderID: "prov-counta",
+		Operation: "chat", Class: intelligence.ProbeStandard, StartedAt: now,
+	}); err != nil {
+		t.Fatalf("start chat run: %v", err)
+	}
+	if err := repo.Finish(ctx, "run-chat-1", intelligence.ProbeSucceeded, now); err != nil {
+		t.Fatalf("finish chat run: %v", err)
+	}
+	if got, err := repo.CountAttempts(ctx, opID, models.OperationChat); err != nil {
+		t.Fatalf("CountAttempts(chat): %v", err)
+	} else if got != 1 {
+		t.Fatalf("CountAttempts(chat) = %d, want 1 (the one genuine chat attempt, still ignoring the two context_window rows)", got)
+	}
+	if got, err := repo.CountAttempts(ctx, opID, models.OperationContextWindow); err != nil {
+		t.Fatalf("CountAttempts(context_window): %v", err)
+	} else if got != 2 {
+		t.Fatalf("CountAttempts(context_window) = %d, want 2 (unaffected by the later chat attempt)", got)
 	}
 }
 

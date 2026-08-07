@@ -87,13 +87,26 @@ const qualificationFreshnessTTL = 24 * time.Hour
 // then launders into a suspended-then-relaundered certification. Applied to
 // EACH of this tick's three independent phases (capability probes, context
 // probes, performance scoring) SEPARATELY, never once around the whole
-// Run() — mirroring usabilityTick.sweepBudget's identical "a phase that
-// burns its whole budget must not shorten what's left for the phases after
-// it" reasoning: these three phases have independent selections, guard
-// policies, and write targets already (Run's own doc comment), so there is
-// no reason a slow capability-probe phase should also starve the
-// context-probe or performance-scoring phases that follow it in the same
-// round.
+// Run() — mirroring usabilityTick.sweepBudget's "a phase that burns its
+// whole budget must not shorten what's left for the phases after it"
+// REASONING, not its actual ceiling: these three phases have independent
+// selections, guard policies, and write targets already (Run's own doc
+// comment), so there is no reason a slow capability-probe phase should
+// also starve the context-probe or performance-scoring phases that follow
+// it in the same round.
+//
+// CORRECTION (whole-branch review, re-review): the resulting worst-case
+// ceiling is NOT the same as usability's. This tick's three phases run
+// SEQUENTIALLY, one after another, so the round's own worst case is
+// 3 * 25s = 75 seconds. usabilityTick applies the identical 25s budget at
+// only TWO phase boundaries (the list phase, then every per-provider
+// lane — but the lanes themselves run in PARALLEL, not sequentially), so
+// its own worst case per round is 2 * 25s = 50 seconds. 75s already
+// exceeds the scheduler's own 30-second interval by 45 seconds — a
+// looser ceiling than usability's 50s figure, and still not "no round
+// ever overruns the interval." It bounds how far ONE round's damage can
+// spread to LATER ticks and LATER rounds (this constant's own DECISION
+// paragraph above), never a guarantee that a round finishes inside 30s.
 const qualificationTickBudget = 25 * time.Second
 
 // qualificationPerRoundCap bounds how many models ONE tick round will
@@ -612,6 +625,16 @@ func (t *qualificationTick) dueCapabilityProbes(ctx context.Context) ([]capabili
 	// list were never reached. Excluding a cooling-down row here means the
 	// cap is spent only on candidates that can actually be attempted this
 	// round.
+	//
+	// This is a SNAPSHOT, not a substitute for ProbeGuard's own live
+	// WithCapabilityCooldown gate (buildQualificationTick's own doc
+	// comment on that wiring has the reachable divergence and the test
+	// that pins it): this exclusion is evaluated ONCE, before the round's
+	// sequential candidate loop starts, so it can never see a probe_runs
+	// row written by a concurrent actor (e.g. the owner's manual probe
+	// endpoint) after this query ran but before this tick's own loop
+	// reaches that candidate. Both checks stay wired, each closing a
+	// different half of the same window.
 	query := `SELECT oo.id, oo.operation, oo.account_id, oo.provider_id, oo.provider_model_id
 		FROM offering_operations oo
 		JOIN certifications c ON c.offering_operation_id = oo.id
@@ -1543,6 +1566,26 @@ func buildQualificationTick(db *storage.DB, kr *secrets.Keyring, now func() time
 	}
 	probeTransport := newProbeTransportAdapter(probeTransports, probeBaseURLs, credentialRepo, credentialService)
 
+	// WithCapabilityProbeCooldown looks redundant with FIX 5's own
+	// dueCapabilityProbes SELECTION-time exclusion (the NOT EXISTS over
+	// probe_runs.started_at) — both key off the SAME
+	// qualificationCapabilityProbeCooldown window — but they are NOT the
+	// same check, and re-review confirmed a live, reachable divergence:
+	// FIX 5's exclusion is a SNAPSHOT taken once at the top of the round,
+	// before the sequential per-candidate loop runs; this guard is read
+	// LIVE at each candidate's own Admit call. A concurrent writer with no
+	// coordination with an in-progress round — the owner's manual POST
+	// /offerings/{id}/probe endpoint chief among them — can write a fresh
+	// probe_runs row for a candidate's offering-operation AFTER the
+	// snapshot already included it in this round but BEFORE this tick's
+	// own sequential loop reaches it. Only this live guard catches that;
+	// FIX 5's snapshot cannot. See
+	// TestQualificationTick_CapabilityProbeCooldownGuardCatchesAConcurrentWrite
+	// (qualification_test.go) for the pinned reproduction and its
+	// mutation trace — deleting this wiring leaves that test red while
+	// every other capability-probe cooldown test stays green (masked by
+	// FIX 5), which is exactly why this line must never be removed on the
+	// assumption FIX 5 alone covers it.
 	probeRuns := storage.NewProbeRunRepo(db, now, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown).
 		WithCapabilityProbeCooldown(qualificationCapabilityProbeCooldown)
 	probeReserver := newProbeReserverAdapter(storage.NewQuotaReservationRepo(db, now))

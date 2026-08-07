@@ -314,6 +314,24 @@ func (p *ContextProbe) Run(ctx context.Context, req ProbeRequest) (ContextProbeR
 	// not the same fact. Always overwritten here, exactly like the three
 	// fields above are unconditionally overwritten regardless of whatever
 	// the caller passed in req.Messages.
+	//
+	// RESIDUAL SPEND RISK (whole-branch review, re-review — flagged, not
+	// closed further here): this fix opens a real, if narrow, spend path.
+	// If a provider ACCEPTS this ~6MB body outright (a 2xx response —
+	// classifyContextProbeResult's own SignalMalformedRequest branch,
+	// "we learned nothing definite and must not invent a limit"), the
+	// owner is billed for roughly ContextProbeInputTokens (3,000,000)
+	// input tokens and the probe learns NOTHING (no limit is ever
+	// extracted from a 2xx). Before this fix, that could never happen —
+	// there was no body large enough to bill for. This is bounded, not
+	// unbounded: it can only fire on a request the owner already opted
+	// into (contextProbePolicy's ExpensiveProbesEnabled gate, FIX 4b),
+	// against the same PerAccountWindow rolling cap ProbeGuard.Admit
+	// already enforces for every other probe, at
+	// qualificationContextProbeCap (1) attempt per 30-second round, and
+	// qualificationContextProbeCooldown (7 days) apart per offering once
+	// attempted — so the worst case is one accidental full-price probe
+	// every 7 days per uncatalogued model, never a runaway loop.
 	req.Messages = []ProbeMessage{{Role: "user", Content: oversizedContextProbeContent()}}
 
 	now := p.now()

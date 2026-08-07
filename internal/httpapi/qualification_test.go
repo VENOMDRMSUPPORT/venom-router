@@ -1616,6 +1616,98 @@ func TestQualificationTick_CoolingDownCapabilityNeverConsumesTheRoundCap(t *test
 	}
 }
 
+// TestQualificationTick_CapabilityProbeCooldownGuardCatchesAConcurrentWrite
+// is the whole-branch review's own re-review finding (GAP A): deleting
+// `.WithCapabilityProbeCooldown(...)` from buildQualificationTick's
+// production wiring leaves the full package green, because FIX 5's own
+// dueCapabilityProbes exclusion (the NOT EXISTS over probe_runs.started_at,
+// keyed on offering_operation_id alone) already enforces the identical
+// window at SELECTION time — but the two are NOT equivalent, and this test
+// pins the one case where they diverge.
+//
+// dueCapabilityProbes' exclusion is a SNAPSHOT taken once, before the
+// round's sequential per-candidate loop begins. ProbeGuard's own
+// WithCapabilityCooldown gate (backed by
+// storage.ProbeRunRepo.CapabilityProbeCooldownUntil, filtered on
+// (offering_operation_id, operation)) is instead read LIVE, at each
+// candidate's own Admit call. Between the snapshot and a LATER candidate's
+// Admit, a genuinely concurrent writer that has no coordination with an
+// in-progress qualification round at all — the owner's manual POST
+// /offerings/{id}/probe endpoint chief among them — can write a fresh
+// probe_runs row for that same offering-operation. FIX 5's own exclusion,
+// already evaluated, can never see a write that happens after it ran; the
+// repo-level guard, re-evaluated live for every candidate, does.
+//
+// This test simulates exactly that: two candidates are seeded so the
+// round's sequential loop processes the first, then the second.
+// Candidate #1's own transport call (via its onProbe hook) writes a
+// probe_runs row directly for candidate #2 — standing in for a concurrent
+// manual probe landing on it moments after dueCapabilityProbes' own
+// selection already decided candidate #2 belongs in this round. Candidate
+// #2 must still be refused by its OWN, live Admit call.
+func TestQualificationTick_CapabilityProbeCooldownGuardCatchesAConcurrentWrite(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-cw-1", "prov-cw-1", "m-cw-1", "tools")
+	seedCertifiedDeclaredCapability(t, db, "acct-cw-2", "prov-cw-2", "m-cw-2", "tools")
+
+	// dueCapabilityProbes orders by oo.id ASC — resolve which seeded row
+	// this round processes SECOND, so the injected concurrent write lands
+	// on the right candidate.
+	rows, err := db.Conn().Query(`SELECT id, account_id, provider_model_id FROM offering_operations WHERE operation = 'tools' ORDER BY id ASC`)
+	if err != nil {
+		t.Fatalf("query offering_operation ids: %v", err)
+	}
+	type opRow struct{ id, accountID, providerModelID string }
+	var opRows []opRow
+	for rows.Next() {
+		var r opRow
+		if err := rows.Scan(&r.id, &r.accountID, &r.providerModelID); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		opRows = append(opRows, r)
+	}
+	_ = rows.Close()
+	if len(opRows) != 2 {
+		t.Fatalf("setup: want 2 offering-operations, found %d", len(opRows))
+	}
+	second := opRows[1]
+
+	probeRuns := storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown)
+	var injected int32
+	transport := &fakeProbeTransport{
+		available: true,
+		result:    intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall},
+		onProbe: func() {
+			// Fires during the FIRST candidate's own transport call — the
+			// concurrent write happens strictly AFTER dueCapabilityProbes'
+			// own selection already ran (it ran once, before this loop
+			// started), which is exactly the ordering FIX 5's snapshot
+			// cannot see.
+			if atomic.CompareAndSwapInt32(&injected, 0, 1) {
+				runID := "run-concurrent-manual-probe"
+				if err := probeRuns.Start(context.Background(), storage.ProbeRunParams{
+					ID: runID, OfferingOperationID: second.id, AccountID: second.accountID, ProviderID: "prov-cw-2",
+					Operation: "tools", Class: intelligence.ProbeStandard, StartedAt: time.Now(),
+				}); err != nil {
+					t.Fatalf("inject concurrent probe run: %v", err)
+				}
+				if err := probeRuns.Finish(context.Background(), runID, intelligence.ProbeInconclusive, time.Now()); err != nil {
+					t.Fatalf("finish concurrent probe run: %v", err)
+				}
+			}
+		},
+	}
+
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("transport calls = %d, want 1 — the first candidate's own attempt, and NOTHING for the second: despite FIX 5's own selection already having included it in this round, the second candidate's OWN live Admit call must refuse it once the concurrent write lands", got)
+	}
+}
+
 // TestQualificationTick_SelectionNeverIncludesChatOrContextWindow is fix
 // round 2's ITEM 2 test, replacing the transport-call-count assertion below
 // as the thing that actually pins capabilityProbeOperations: it asserts on
@@ -2141,6 +2233,76 @@ func TestQualificationTick_ProbeExpensiveEnabledStillRunsTheRealContextProbe(t *
 	}
 	if got := nativeContextTokensOf(t, db, "unknown"); got == nil || *got != 128000 {
 		t.Fatalf("native_context_tokens = %v, want 128000", got)
+	}
+}
+
+// TestQualificationTick_CapabilityProbePolicyHonoursMaxInFlightPerProviderSetting
+// is the whole-branch review's own re-review finding (GAP B): every
+// existing withSettings test in this file exercises the CONTEXT-probe half
+// of FIX 4b (enrichment_enabled, probe_expensive_enabled) — nothing
+// exercised the CAPABILITY-probe half at all, so making
+// capabilityProbePolicy ignore t.settings entirely left the whole package
+// green. The original finding named probe_max_in_flight_per_provider and
+// probe_per_account_window_seconds specifically as inert for capability
+// probes; this test pins the first of those two.
+//
+// A genuinely in-flight (started, never finished) probe_runs row is seeded
+// for a DIFFERENT operation (vision) on the SAME account+provider as the
+// operation under test (tools) — standing in for a concurrent probe
+// already running against that provider (the manual endpoint, or another
+// model on the same account/provider). It is deliberately a DIFFERENT
+// offering-operation id than the one under test: InFlightProbes counts by
+// provider_id across the whole provider, not by offering-operation, but a
+// row against the SAME id the test candidate uses would also trip FIX 5's
+// own dueCapabilityProbes cooldown exclusion and remove that candidate
+// from selection entirely before the guard is ever reached — confounding
+// this test with a different mechanism (the "vision" row trips that SAME
+// exclusion for ITSELF instead, which is fine: it is never meant to be
+// probed in this test, only to occupy the provider's in-flight slot). The
+// DEFAULT policy's MaxInFlightPerProvider (1), which
+// buildQualificationTickForTest's own static probeGuardPolicy fallback
+// still carries, is already saturated by that one busy row alone. The
+// REAL owner setting is raised to 2. If capabilityProbePolicy actually
+// consults t.settings, the raised cap admits the test candidate's attempt
+// (1 existing + this one = 2); if it silently falls back to the static
+// field, the attempt is refused before the transport is ever reached.
+func TestQualificationTick_CapabilityProbePolicyHonoursMaxInFlightPerProviderSetting(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedOffering(t, db, seedArgs{
+		AccountID: "acct-inflight", ProviderID: "prov-inflight", ModelID: "m-inflight",
+		Capabilities: []string{"tools", "vision"}, Certified: []string{"tools", "vision"},
+	})
+	windowRepo := storage.NewQuotaWindowRepo(db, nil, nil)
+	if err := windowRepo.EnsureLocalSafetyWindows(context.Background(), "acct-inflight", generousLocalSafetySpecs(t)); err != nil {
+		t.Fatalf("EnsureLocalSafetyWindows: %v", err)
+	}
+	busyOpID := offeringOperationIDFor(t, db, "acct-inflight", "m-inflight", "vision")
+
+	probeRuns := storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown)
+	if err := probeRuns.Start(context.Background(), storage.ProbeRunParams{
+		ID: "run-already-inflight", OfferingOperationID: busyOpID, AccountID: "acct-inflight", ProviderID: "prov-inflight",
+		Operation: "vision", Class: intelligence.ProbeStandard, StartedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed in-flight probe run: %v", err)
+	}
+
+	raised := 2
+	if err := storage.NewSettingsRepo(db).PutSettings(context.Background(), storage.SettingsUpdate{
+		Theme: storage.DefaultTheme, Density: storage.DefaultDensity,
+		Accent: storage.DefaultAccent, RadiusPx: storage.DefaultRadiusPx, SpacingScale: storage.DefaultSpacingScale,
+		ProbeMaxInFlightPerProvider: &raised,
+	}, time.Now()); err != nil {
+		t.Fatalf("PutSettings: %v", err)
+	}
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport), withSettings(db))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("capability probe transport calls = %d, want 1 — the owner's REAL probe_max_in_flight_per_provider=2 setting must reach the capability-probe guard (1 pre-existing in-flight run + this attempt = 2, within the raised cap); falling back to the static default (1) would refuse it", got)
 	}
 }
 
