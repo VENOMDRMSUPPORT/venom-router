@@ -12,6 +12,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -936,6 +937,144 @@ func TestQualificationTick_NonSucceedingCapabilityProbeIsNotRetriedNextRound(t *
 	}
 	if got := transport.callCount(); got != 1 {
 		t.Fatalf("transport calls after round 2 = %d, want STILL 1 — a non-succeeding attempt must not be retried on the very next round; the capability-probe cooldown must have refused it before the transport was ever reached", got)
+	}
+}
+
+// --- Task 4, fix round 2: the identical loop closed on the capability path ---
+
+// TestQualificationTick_CapabilityProbeTransportErrorRecordsAnAttemptAndIsNotRetriedNextRound
+// is fix round 2's CRITICAL test, shape 1: a TRANSPORT failure (not a guard
+// refusal — intelligence.RefusalOf(err) is false) happens AFTER
+// guard.Admit already succeeded and ReserveProbe already reserved this
+// attempt's cost. Before this fix, probeOneCapability recorded nothing for
+// this path (byte-identical to before fix round 1's comment-only edit), so
+// qualificationCapabilityProbeCooldown never had a probe_runs row to find
+// (CapabilityProbeCooldownUntil hits sql.ErrNoRows and returns (nil, nil)),
+// Admit's own "until != nil" cooldown gate was a silent no-op, and the SAME
+// candidate was due again in 30 seconds, indefinitely, with a fresh
+// reservation every round — a live loop, not a dormant one, per the
+// reviewer's own trace through this file, CapabilityProbeCooldownUntil, and
+// Admit's capability-cooldown gate.
+func TestQualificationTick_CapabilityProbeTransportErrorRecordsAnAttemptAndIsNotRetriedNextRound(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	transport := &fakeProbeTransport{available: true, err: fmt.Errorf("boom: capability transport unavailable")}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport))
+
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("round 1: %v", err)
+	}
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("transport calls after round 1 = %d, want 1", got)
+	}
+
+	opID := offeringOperationIDFor(t, db, "acct-1", "m-1", "tools")
+	if n := probeRunCount(t, db, opID); n != 1 {
+		t.Fatalf("probe_runs rows = %d, want 1 — Admit already reserved this attempt's cost before the transport failed; the attempt must be recorded so the cooldown engages", n)
+	}
+	if got := probeRunExecutionOf(t, db, opID, "tools"); got != "terminal_failure" {
+		t.Fatalf("probe_runs.execution = %q, want terminal_failure", got)
+	}
+	if n := probeRunCostRowCount(t, db); n == 0 {
+		t.Fatalf("probe_run_costs rows = %d, want > 0 — the reservation Admit already made must be visible to ProbeSpendSince", n)
+	}
+	state, truth := certificationOf(t, db, "acct-1", "m-1", "tools")
+	if state != "certified" || truth != "supported" {
+		t.Fatalf("certification = %s/%s, want certified/supported unchanged — a transport error must never flip a capability's truth", state, truth)
+	}
+
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("round 2: %v", err)
+	}
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("transport calls after round 2 = %d, want STILL 1 — a transport-error attempt must not be retried on the very next round", got)
+	}
+}
+
+// TestQualificationTick_RefusedCapabilityProbeIsNotRetriedNextRoundEither is
+// fix round 2's shape 2 test: the OTHER half of the three-way split — a
+// guard REFUSAL — must, across MULTIPLE rounds, keep recording nothing at
+// all (no accumulating probe_runs/probe_run_costs rows), since nothing is
+// ever reserved for a refused attempt in the first place. This is not the
+// same claim as "the transport is never retried because a cooldown
+// engaged" (there is no cooldown to engage here, and none is needed): a
+// refusal costs nothing to repeat, unlike a transport failure, which is
+// exactly why the three-way split treats them differently.
+func TestQualificationTick_RefusedCapabilityProbeIsNotRetriedNextRoundEither(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	policy := intelligence.DefaultProbeSafetyPolicy()
+	policy.PerProbe = nil // every allocation now has "no cap configured" -> refused
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport), withProbeGuardPolicy(policy))
+
+	for round := 1; round <= 2; round++ {
+		_ = tick(context.Background())
+		if got := transport.callCount(); got != 0 {
+			t.Fatalf("round %d: capability probe transport calls = %d, want 0 — the guard must refuse before the transport is ever reached", round, got)
+		}
+	}
+
+	opID := offeringOperationIDFor(t, db, "acct-1", "m-1", "tools")
+	if n := probeRunCount(t, db, opID); n != 0 {
+		t.Fatalf("probe_runs rows = %d, want 0 across both rounds — a refused attempt must record no evidence at all, ever", n)
+	}
+	if n := probeRunCostRowCount(t, db); n != 0 {
+		t.Fatalf("probe_run_costs rows = %d, want 0 across both rounds — a refused attempt must record no spend, ever", n)
+	}
+}
+
+// TestQualificationTick_PreAdmitCapabilityErrorRecordsNoSpendAndIsUnreachableByReselection
+// is fix round 2's shape 3 test — THE trap the reviewer named: a pre-Admit
+// error (CapabilityFixture/RequiredWitness fail for an operation outside
+// tools/structured_output/vision) must record NOTHING, exactly like a
+// refusal, and NOT like a transport failure. A verbatim copy of
+// runContextProbe's two-way intelligence.RefusalOf split cannot tell this
+// case apart from a genuine transport failure (neither pre-Admit function
+// returns a *ProbeRefusedError), so it would wrongly record a
+// terminal_failure row and cost allocations for an attempt where
+// guard.Admit — and therefore ReserveProbe — was never even called.
+//
+// probeOneCapability is called DIRECTLY with Operation: models.OperationChat
+// (never a fixture-supported operation) rather than through a full tick()
+// round: dueCapabilityProbes' own selection (capabilityProbeOperations,
+// exactly {tools, structured_output, vision} — pinned against silent
+// widening by TestQualificationTick_SelectionNeverIncludesChatOrContextWindow)
+// can never select chat in the first place, so this pre-Admit path has no
+// reachable path to a 30-second re-selection loop to bound: nothing ever
+// selects it, so nothing ever re-selects it either. This test proves the
+// METHOD's own discrimination is correct in isolation; the selection-level
+// unreachability is proved by the pre-existing test named above.
+func TestQualificationTick_PreAdmitCapabilityErrorRecordsNoSpendAndIsUnreachableByReselection(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+	opID := offeringOperationIDFor(t, db, "acct-1", "m-1", "tools")
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}}
+	tick := buildQualificationTickForTest(t, db, withCapabilityProbeTransport(transport))
+
+	err := tick.probeOneCapability(context.Background(), capabilityProbeCandidate{
+		OfferingOperationID: opID, Operation: models.OperationChat,
+		AccountID: "acct-1", ProviderID: "prov-1", ProviderModelID: "m-1",
+	})
+	if err == nil {
+		t.Fatal("probeOneCapability(chat) err = nil, want ErrNoCapabilityFixture — chat has no capability fixture")
+	}
+	if !errors.Is(err, intelligence.ErrNoCapabilityFixture) {
+		t.Fatalf("probeOneCapability(chat) err = %v, want it to wrap intelligence.ErrNoCapabilityFixture", err)
+	}
+
+	if got := transport.callCount(); got != 0 {
+		t.Fatalf("capability probe transport calls = %d, want 0 — a pre-Admit error must never reach the transport", got)
+	}
+	if n := probeRunCount(t, db, opID); n != 0 {
+		t.Fatalf("probe_runs rows = %d, want 0 — guard.Admit was never called, so ReserveProbe never reserved anything to record", n)
+	}
+	if n := probeRunCostRowCount(t, db); n != 0 {
+		t.Fatalf("probe_run_costs rows = %d, want 0 — a pre-Admit error must never be recorded as spend", n)
 	}
 }
 

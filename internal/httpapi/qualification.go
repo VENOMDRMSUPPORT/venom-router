@@ -32,6 +32,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -739,27 +740,85 @@ func (t *qualificationTick) probeOneCapability(ctx context.Context, c capability
 		OfferingOperationID: c.OfferingOperationID, Operation: c.Operation,
 	})
 	if err != nil {
-		// CORRECTED (task-4 fix round 1, IMPORTANT 1b): this comment
-		// previously claimed "nothing was learned and nothing was spent"
-		// for BOTH a guard refusal and a transport error. That is only true
-		// for the refusal — see CRITICAL 2(a) above, ReserveProbe is never
-		// reached on that path. A TRANSPORT error is different: by the time
-		// cp.Run's own transport call fails, guard.Admit has ALREADY
-		// returned successfully and ReserveProbe has ALREADY reserved this
-		// attempt's (small, fixture-sized) cost, and — same as the false
-		// claim's other half — no probe_runs/probe_run_costs row is written
-		// here to show for it. That means qualificationCapabilityProbeCooldown
-		// (ProbeGuard.WithCapabilityCooldown, keyed off the last probe_runs
-		// row of ANY execution) ALSO never engages for a transport error
-		// specifically, since no such row exists for it to find — this
-		// path has the SAME unbounded-reselection exposure task-4's own
-		// runContextProbe closed for the context-window probe (see that
-		// method's own error-handling doc comment), not a smaller one by
-		// design. Left OPEN here deliberately: fix round 1's own scope for
-		// this capability-probe site is correcting this comment so it stops
-		// asserting a false invariant, not re-opening task-3's already
-		// twice-reviewed production behavior — the fix, if made, belongs to
-		// a task-3 follow-up.
+		// THREE-WAY discrimination (task-4 fix round 2, CRITICAL — closing
+		// what fix round 1 documented but left open). cp.Run returns a
+		// non-nil error on THREE structurally different paths, not the two
+		// runContextProbe's own fix (fix round 1) discriminates:
+		// CapabilityProbe.Run (capabilityprobe.go:219-226) calls
+		// CapabilityFixture and RequiredWitness BEFORE guard.Admit is ever
+		// reached, and either can fail for an operation outside the fixed
+		// tools/structured_output/vision set. A VERBATIM copy of
+		// runContextProbe's two-way intelligence.RefusalOf split would be
+		// WRONG here: neither CapabilityFixture nor RequiredWitness returns
+		// a *ProbeRefusedError, so RefusalOf(err) would report false for
+		// that case too, indistinguishable from a genuine transport
+		// failure — misclassifying "nothing was ever attempted" as
+		// "transport failed after spend" and recording a terminal_failure
+		// row plus cost allocations for an attempt where Admit was never
+		// even called and ReserveProbe never reserved anything. That would
+		// be a NEW defect of the exact same family this fix exists to
+		// close: a record that CLAIMS spend that never happened.
+		//
+		// The three cases, in the order checked:
+		//  1. errors.Is(err, intelligence.ErrNoCapabilityFixture): NOTHING
+		//     attempted. CapabilityFixture/RequiredWitness both return
+		//     this exact exported sentinel (capabilityprobe.go:57) for any
+		//     operation outside the three this batch supports —
+		//     guard.Admit was never called, ReserveProbe never reached.
+		//     Record nothing; this is the pre-Admit case the verbatim
+		//     two-way copy would have gotten wrong.
+		//     UNBOUNDED-LOOP CHECK (the reviewer's own required second
+		//     half): this branch is unreachable from dueCapabilityProbes'
+		//     own selection in practice — capabilityProbeOperations is
+		//     defined as exactly {tools, structured_output, vision}
+		//     (qualification.go), the SAME three operations
+		//     CapabilityFixture/RequiredWitness support, and
+		//     TestQualificationTick_SelectionNeverIncludesChatOrContextWindow
+		//     already pins that list against silent widening. A candidate
+		//     that can never be selected can never be RE-selected, so
+		//     there is no 30-second-loop risk to bound here the way
+		//     hasRecentContextProbeAttempt bounds the context-probe path —
+		//     nothing reaches this branch to loop on.
+		//  2. intelligence.RefusalOf(err) succeeds: guard.Admit itself
+		//     refused (cap/cooldown/concurrency/opt-in). ReserveProbe is
+		//     never reached either — CRITICAL 2(a), task 3. Record
+		//     nothing (unchanged from before this fix).
+		//  3. Neither of the above: the TRANSPORT call itself failed,
+		//     AFTER Admit already succeeded and ReserveProbe already
+		//     reserved this attempt's (small, fixture-sized) cost — the
+		//     CRITICAL this fix round exists to close. Record a
+		//     terminal_failure probe_runs row (with the SAME
+		//     probeEstimateAllocations allocations Admit itself just
+		//     reserved) so qualificationCapabilityProbeCooldown
+		//     (ProbeGuard.WithCapabilityCooldown / storage.ProbeRunRepo.
+		//     CapabilityProbeCooldownUntil, keyed off the last probe_runs
+		//     row of ANY execution) has a row to find on the very next
+		//     round — otherwise Admit succeeds, quota is reserved, the
+		//     transport call fails, nothing is recorded, the cooldown
+		//     query hits sql.ErrNoRows and returns (nil, nil), Admit's own
+		//     "until != nil" gate is a silent no-op, and the identical row
+		//     is due again in 30 seconds, indefinitely, with a fresh
+		//     reservation every round — exactly the live loop the review
+		//     traced through this file, CapabilityProbeCooldownUntil, and
+		//     Admit's own gate before this fix.
+		if errors.Is(err, intelligence.ErrNoCapabilityFixture) {
+			return fmt.Errorf("run capability probe: %w", err)
+		}
+		if _, refused := intelligence.RefusalOf(err); !refused {
+			runID := t.newID()
+			if startErr := t.probeRuns.Start(ctx, storage.ProbeRunParams{
+				ID: runID, OfferingOperationID: c.OfferingOperationID, AccountID: c.AccountID, ProviderID: c.ProviderID,
+				Operation: string(c.Operation), Class: intelligence.ProbeStandard,
+				Allocations: probeEstimateAllocations(c.Operation), StartedAt: startedAt,
+			}); startErr != nil {
+				t.log.Warn("model qualification: recording a failed capability probe transport attempt failed",
+					observability.String("offering_operation_id", c.OfferingOperationID),
+					observability.String("operation", string(c.Operation)),
+					observability.Err(startErr))
+				return fmt.Errorf("run capability probe: %w", err)
+			}
+			_ = t.probeRuns.Finish(context.WithoutCancel(ctx), runID, intelligence.ProbeTerminalFailure, t.now())
+		}
 		return fmt.Errorf("run capability probe: %w", err)
 	}
 
