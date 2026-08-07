@@ -14,18 +14,58 @@ export interface CapabilityTruthBadgeProps {
 }
 /** CapabilityTruthBadge — unknown = missing evidence (dashed); unsupported = confirmed absence (quiet, not an alarm). */
 export declare function CapabilityTruthBadge(props: CapabilityTruthBadgeProps): React.JSX.Element;
+/** How a certified+supported capability was earned: "probed" when a real
+ * runtime measurement proved it, "declared" when it was certified straight
+ * from the provider's own catalog metadata with no probe evidence, and ""
+ * when the capability is not certified+supported at all — provenance only
+ * qualifies an EARNED certification, so "" carries no provenance treatment.
+ * Mirrors the API's OfferingCapability.provenance verbatim (dashboard's
+ * controlClient.ts). */
+export type CapabilityProvenance = "probed" | "declared" | "";
 export interface CapabilityIconProps {
     /** A domain capability concept (chat, tools, vision, …) or custom glyph name. */
     capability: string;
     truth?: CapabilityTruth;
+    /** Owner requirement (2026-08-05, restored 2026-08-06 after a wholesale
+     * component deletion silently dropped it): a "declared" capability must
+     * read apart from a "probed" one WITHOUT hovering — never colour alone.
+     * Rendered as `data-provenance` (the CSS hook for the dotted-border
+     * treatment on "declared" — see css/components-domain.css, chosen
+     * specifically because it does not collide with data-truth="unknown"'s own
+     * dashed border) AND as a real accessible carrier (`aria-label` +
+     * `tabIndex`, not `title` alone — see the chip's own JSX below), so the
+     * distinction survives for keyboard and screen-reader users too, not only
+     * sighted mouse-hover ones. Omit (or pass "") for a capability with no
+     * provenance to show. */
+    provenance?: CapabilityProvenance;
     showLabel?: boolean;
 }
-/** CapabilityIcon — one capability chip: icon + short label + truth treatment. */
+/** CapabilityIcon — one capability chip: icon + short label + truth treatment
+ * + (when earned) a declared/probed provenance treatment.
+ *
+ * The truth/provenance distinction (`title`) used to live ONLY on a `title`
+ * attribute of this plain `<span>` — no role, no tabindex, no aria-label
+ * (whole-branch review, 2026-08-06). A keyboard-only user has no way to
+ * reveal a native `title` tooltip, and `title` on a generic element is not
+ * reliably exposed to assistive tech at all. `tabIndex={0}` puts the chip in
+ * the tab order; `aria-label` gives it a real accessible name carrying the
+ * SAME text as `title`, so a screen reader announces it on focus without
+ * requiring a hover. `role="img"` (the same role CertificationTimeline and
+ * MetadataConfidenceIndicator already use for this exact shape — a small
+ * glyph plus a summary that doesn't line up 1:1 with its visible text)
+ * matters beyond convention here: a plain `<span>`'s implicit role is
+ * "generic", which the ARIA spec marks "name from: prohibited" — `aria-label`
+ * on a bare `<span>` can be dropped by the accessibility tree entirely. */
 export declare function CapabilityIcon(props: CapabilityIconProps): React.JSX.Element;
 export type CapabilityTruths = Record<string, CapabilityTruth>;
+export type CapabilityProvenances = Record<string, CapabilityProvenance>;
 export interface ModelCapabilitySetProps {
     /** Pass {chat:"supported", tools:"unknown", ...}. */
     truths?: CapabilityTruths;
+    /** Pass {tools:"declared", vision:"probed", ...} — same shape as `truths`,
+     * looked up by the same capability key. Missing/omitted reads as "" (no
+     * provenance treatment), matching CapabilityIcon's own default. */
+    provenances?: CapabilityProvenances;
     capabilities?: string[];
     showLabels?: boolean;
 }
