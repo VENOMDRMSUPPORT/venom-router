@@ -3,8 +3,12 @@
 package tray
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -30,13 +34,36 @@ func (winRunner) Start(spec ProcessSpec) (ProcessHandle, error) {
 	cmd.Dir = spec.Dir
 	cmd.Env = append(os.Environ(), spec.ExtraEnv...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
+	tail := &tailWriter{limit: 4096}
+	var output *os.File
+	if spec.OutputPath != "" {
+		if err := os.MkdirAll(filepath.Dir(spec.OutputPath), 0o700); err != nil {
+			return nil, fmt.Errorf("tray: create dev log directory: %w", err)
+		}
+		var err error
+		output, err = os.OpenFile(spec.OutputPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return nil, fmt.Errorf("tray: open dev log: %w", err)
+		}
+		cmd.Stdout = io.MultiWriter(output, tail)
+		cmd.Stderr = io.MultiWriter(output, tail)
+	} else {
+		cmd.Stdout = tail
+		cmd.Stderr = tail
+	}
 
 	job, err := newKillOnCloseJob()
 	if err != nil {
+		if output != nil {
+			_ = output.Close()
+		}
 		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
 		_ = windows.CloseHandle(job)
+		if output != nil {
+			_ = output.Close()
+		}
 		return nil, err
 	}
 	if err := assignToJob(job, cmd.Process.Pid); err != nil {
@@ -44,9 +71,38 @@ func (winRunner) Start(spec ProcessSpec) (ProcessHandle, error) {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		_ = windows.CloseHandle(job)
+		if output != nil {
+			_ = output.Close()
+		}
 		return nil, err
 	}
-	return &winHandle{cmd: cmd, job: job}, nil
+	return &winHandle{cmd: cmd, job: job, output: output, tail: tail}, nil
+}
+
+type tailWriter struct {
+	mu    sync.Mutex
+	buf   []byte
+	limit int
+}
+
+func (w *tailWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buf = append(w.buf, p...)
+	if len(w.buf) > w.limit {
+		w.buf = append([]byte(nil), w.buf[len(w.buf)-w.limit:]...)
+	}
+	return len(p), nil
+}
+
+func (w *tailWriter) detail() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	detail := strings.Join(strings.Fields(string(w.buf)), " ")
+	if len(detail) > 240 {
+		detail = detail[len(detail)-240:]
+	}
+	return detail
 }
 
 func newKillOnCloseJob() (windows.Handle, error) {
@@ -84,11 +140,24 @@ func assignToJob(job windows.Handle, pid int) error {
 type winHandle struct {
 	cmd      *exec.Cmd
 	job      windows.Handle
+	output   *os.File
+	tail     *tailWriter
 	killOnce sync.Once
 	killErr  error
 }
 
-func (h *winHandle) Wait() error { return h.cmd.Wait() }
+func (h *winHandle) Wait() error {
+	err := h.cmd.Wait()
+	if h.output != nil {
+		_ = h.output.Close()
+	}
+	if err != nil {
+		if detail := h.tail.detail(); detail != "" {
+			return fmt.Errorf("%w: %s", err, detail)
+		}
+	}
+	return err
+}
 
 // Kill closes the job handle; kill-on-close terminates the whole tree.
 func (h *winHandle) Kill() error {

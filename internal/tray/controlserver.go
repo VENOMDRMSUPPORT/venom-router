@@ -31,12 +31,14 @@ const controlTokenHeader = "X-Control-Token"
 // Dev states are the human titles ("Stopped"/"Starting"/"Running"/"Error") so
 // the page can render and compare them directly.
 type ControlState struct {
-	Prod         string `json:"prod"` // "running" | "stopped" | "error"
-	DevAvailable bool   `json:"devAvailable"`
-	DevOverall   string `json:"devOverall"`
-	DevBackend   string `json:"devBackend"`
-	DevFrontend  string `json:"devFrontend"`
-	Autostart    bool   `json:"autostart"`
+	Prod            string `json:"prod"` // "running" | "stopped" | "error"
+	DevAvailable    bool   `json:"devAvailable"`
+	DevOverall      string `json:"devOverall"`
+	DevBackend      string `json:"devBackend"`
+	DevFrontend     string `json:"devFrontend"`
+	DevError        string `json:"devError,omitempty"`
+	DevLogAvailable bool   `json:"devLogAvailable"`
+	Autostart       bool   `json:"autostart"`
 }
 
 // TrayControls is the set of operations the control window drives. It is
@@ -52,6 +54,7 @@ type TrayControls interface {
 	StopDev()
 	OpenProdDashboard()
 	OpenDevDashboard()
+	OpenDevLogs()
 	OpenLogs()
 	SetAutostart(enabled bool) error
 	Quit()
@@ -119,6 +122,9 @@ func newControlHandler(controls TrayControls, token, selfOrigin string) http.Han
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		// The page embeds a per-startup control token. Reusing it after a tray
+		// restart makes every button fail authentication with no visible effect.
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = io.WriteString(w, strings.ReplaceAll(controlPageTemplate, "__VENOM_CONTROL_TOKEN__", token))
 	})
@@ -128,6 +134,9 @@ func newControlHandler(controls TrayControls, token, selfOrigin string) http.Han
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		// This is a live lifecycle snapshot polled by the control window. Edge
+		// otherwise may reuse the initial Stopped response after Start succeeds.
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(controls.State())
 	})
@@ -138,6 +147,7 @@ func newControlHandler(controls TrayControls, token, selfOrigin string) http.Han
 	mux.Handle("/dev/start", postAction(controls.StartDev))
 	mux.Handle("/dev/stop", postAction(controls.StopDev))
 	mux.Handle("/dev/open", postAction(controls.OpenDevDashboard))
+	mux.Handle("/dev/logs", postAction(controls.OpenDevLogs))
 	mux.Handle("/logs", postAction(controls.OpenLogs))
 	mux.Handle("/quit", postAction(controls.Quit))
 

@@ -193,10 +193,11 @@ func runTrayLoop(parent context.Context, stdout io.Writer) error {
 
 	devRoot := tray.ResolveDevRoot()
 	dev := tray.NewDevSupervisor(tray.DevSupervisorOptions{
-		Root:   devRoot,
-		Runner: tray.NewProcessRunner(),
-		Probe:  tray.DefaultHealthProbe,
-		Logger: logger,
+		Root:    devRoot,
+		Runner:  tray.NewProcessRunner(),
+		Probe:   tray.DefaultHealthProbe,
+		Logger:  logger,
+		LogPath: filepath.Join(filepath.Dir(logPath), "development.log"),
 	})
 	if devRoot == "" {
 		devRoot = "unavailable"

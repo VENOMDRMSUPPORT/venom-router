@@ -3,6 +3,10 @@
 package tray
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -12,6 +16,30 @@ func TestWinRunner_StartFailsForMissingExecutable(t *testing.T) {
 	_, err := r.Start(ProcessSpec{Name: "definitely-not-a-real-binary-xyz", Args: nil, Dir: t.TempDir()})
 	if err == nil {
 		t.Fatal("Start() of a nonexistent executable succeeded, want error")
+	}
+}
+
+func TestWinRunner_CapturesFailureOutput(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "development.log")
+	h, err := NewProcessRunner().Start(ProcessSpec{
+		Name:       "cmd",
+		Args:       []string{"/c", "echo actionable failure 1>&2 & exit /b 7"},
+		Dir:        t.TempDir(),
+		OutputPath: logPath,
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	err = h.Wait()
+	if err == nil || !strings.Contains(err.Error(), "actionable failure") {
+		t.Fatalf("Wait() error = %v, want captured actionable detail", err)
+	}
+	body, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile() error = %v", readErr)
+	}
+	if !bytes.Contains(body, []byte("actionable failure")) {
+		t.Fatalf("development log = %q, want child stderr", body)
 	}
 }
 

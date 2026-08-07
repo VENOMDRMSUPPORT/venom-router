@@ -257,12 +257,12 @@ func TestDevSupervisor_StartSpawnsFrontendWithApprovedSpec(t *testing.T) {
 	if fe.Dir != filepath.Join("C:", "repo", "dashboard") {
 		t.Errorf("frontend dir = %q", fe.Dir)
 	}
-	if fe.Name != "cmd" {
-		t.Errorf("frontend command = %q, want cmd (npm runs through cmd /c on Windows)", fe.Name)
+	if fe.Name != "node" {
+		t.Errorf("frontend command = %q, want node (the dependency-free managed bootstrap)", fe.Name)
 	}
 	// --host 127.0.0.1 pins vite to the IPv4 loopback the health probe and
 	// dashboard URL use (Node otherwise resolves localhost to ::1 only).
-	wantArgs := []string{"/c", "npm", "run", "dev", "--", "--port", "8088", "--strictPort", "--host", "127.0.0.1"}
+	wantArgs := []string{"scripts/dev-bootstrap.mjs", "--port", "8088", "--strictPort", "--host", "127.0.0.1"}
 	if strings.Join(fe.Args, " ") != strings.Join(wantArgs, " ") {
 		t.Errorf("frontend args = %v, want %v", fe.Args, wantArgs)
 	}
@@ -374,9 +374,9 @@ func TestDevSupervisor_RefreshLeavesStartingWhileUnhealthy(t *testing.T) {
 }
 
 // TestDevSupervisor_SpawnFailureMarksError pins that a failed spawn of the
-// frontend surfaces as Error (for example npm/cmd missing on PATH).
+// frontend surfaces as Error (for example node missing on PATH).
 func TestDevSupervisor_SpawnFailureMarksError(t *testing.T) {
-	r := &fakeRunner{failFor: map[string]error{"cmd": errors.New("no npm")}}
+	r := &fakeRunner{failFor: map[string]error{"node": errors.New("no node")}}
 	s := newTestSupervisor(t, r, probeAlways(false))
 
 	s.Start()
@@ -399,6 +399,20 @@ func TestDevSupervisor_UnexpectedExitMarksError(t *testing.T) {
 
 	eventually(t, func() bool { return s.Status().Frontend == DevError },
 		"frontend never reached Error after its process exited")
+}
+
+func TestDevSupervisor_UnexpectedFrontendExitRetainsDetail(t *testing.T) {
+	r := &fakeRunner{}
+	s := newTestSupervisor(t, r, probeAlways(false))
+	s.Start()
+
+	r.handle(0).exit(errors.New("exit status 1: Vite executable is still missing"))
+	eventually(t, func() bool { return s.Status().Frontend == DevError },
+		"frontend never reached Error")
+
+	if got := s.Status().FrontendDetail; !strings.Contains(got, "Vite executable") {
+		t.Fatalf("frontend detail = %q, want actionable child failure", got)
+	}
 }
 
 func TestDevSupervisor_StopKillsFrontendAndStaysStopped(t *testing.T) {

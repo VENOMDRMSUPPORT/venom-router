@@ -26,6 +26,7 @@
   .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .title { font-weight: 600; }
   .status { font-size: 12px; color: var(--muted); }
+  .error-detail { display: none; margin-top: 8px; font-size: 12px; color: var(--err); overflow-wrap: anywhere; }
   .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
   .b-running { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
   .b-starting { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
@@ -66,10 +67,12 @@
       <span id="dev-badge" class="badge b-stopped">…</span>
     </div>
     <div class="status" id="dev-status">loading…</div>
+    <div class="error-detail" id="dev-error"></div>
     <div class="actions">
       <button id="dev-open" class="primary">Open Dashboard</button>
       <button id="dev-start">Start</button>
       <button id="dev-stop">Stop</button>
+      <button id="dev-logs">View Development Log</button>
     </div>
   </div>
 
@@ -129,6 +132,10 @@ async function refresh() {
   document.getElementById("dev-open").disabled = !(st.devFrontend === "Running" && st.devBackend === "Running");
   document.getElementById("dev-start").disabled = !st.devAvailable || devActive;
   document.getElementById("dev-stop").disabled = !devActive;
+  const devError = document.getElementById("dev-error");
+  devError.textContent = st.devError || "";
+  devError.style.display = st.devError ? "block" : "none";
+  document.getElementById("dev-logs").style.display = st.devLogAvailable ? "inline-block" : "none";
 
   document.getElementById("autostart").checked = !!st.autostart;
 }
@@ -139,6 +146,7 @@ document.getElementById("prod-stop").onclick  = () => post("/prod/stop");
 document.getElementById("dev-open").onclick    = () => post("/dev/open");
 document.getElementById("dev-start").onclick   = () => post("/dev/start");
 document.getElementById("dev-stop").onclick    = () => post("/dev/stop");
+document.getElementById("dev-logs").onclick    = () => post("/dev/logs");
 document.getElementById("logs").onclick        = () => post("/logs");
 document.getElementById("autostart").onchange  = (e) => post("/autostart", { enabled: e.target.checked });
 document.getElementById("quit").onclick = () => {

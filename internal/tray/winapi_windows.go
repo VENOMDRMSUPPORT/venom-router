@@ -5,6 +5,7 @@ package tray
 import (
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -26,6 +27,7 @@ var (
 	procIsIconic                 = user32.NewProc("IsIconic")
 	procSetForegroundWindow      = user32.NewProc("SetForegroundWindow")
 	procBringWindowToTop         = user32.NewProc("BringWindowToTop")
+	procPostMessageW             = user32.NewProc("PostMessageW")
 	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
 	procGetWindowThreadProcessID = user32.NewProc("GetWindowThreadProcessId")
 	procAttachThreadInput        = user32.NewProc("AttachThreadInput")
@@ -34,6 +36,7 @@ var (
 const (
 	swHide    = 0
 	swRestore = 9
+	wmClose   = 0x0010
 	wmQuit    = 0x0012
 
 	// classNameMax / windowTextMax are the buffer sizes for the two window
@@ -138,6 +141,26 @@ func focusControlWindow() bool {
 	}
 	_, _, _ = procBringWindowToTop.Call(hwnd)
 	return true
+}
+
+// retireControlWindow closes the one chromeless control window Chromium may
+// have kept alive after the previous venom.exe exited. Its page points at that
+// process's now-dead ephemeral port, so reusing it makes every button inert.
+// Wait briefly for WM_CLOSE to take effect before launching the replacement;
+// otherwise Chromium can race us and focus the dying window again.
+func retireControlWindow() {
+	hwnd := findWindowMatching(isControlWindow)
+	if hwnd == 0 {
+		return
+	}
+	_, _, _ = procPostMessageW.Call(hwnd, uintptr(wmClose), 0, 0)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if findWindowMatching(isControlWindow) == 0 {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 // forceForeground retries SetForegroundWindow while sharing an input queue with

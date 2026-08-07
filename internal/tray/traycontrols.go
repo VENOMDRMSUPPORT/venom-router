@@ -18,13 +18,19 @@ var _ TrayControls = (*trayControlsAdapter)(nil)
 
 func (a *trayControlsAdapter) State() ControlState {
 	dv := a.dev.Status()
+	devError := dv.FrontendDetail
+	if devError == "" {
+		devError = dv.BackendDetail
+	}
 	return ControlState{
-		Prod:         prodStateName(a.c.Status().State),
-		DevAvailable: a.dev.Available(),
-		DevOverall:   dv.Overall.title(),
-		DevBackend:   dv.Backend.title(),
-		DevFrontend:  dv.Frontend.title(),
-		Autostart:    autostartEnabled(),
+		Prod:            prodStateName(a.c.Status().State),
+		DevAvailable:    a.dev.Available(),
+		DevOverall:      dv.Overall.title(),
+		DevBackend:      dv.Backend.title(),
+		DevFrontend:     dv.Frontend.title(),
+		DevError:        devError,
+		DevLogAvailable: dv.LogPath != "",
+		Autostart:       autostartEnabled(),
 	}
 }
 
@@ -35,6 +41,7 @@ func (a *trayControlsAdapter) StopDev()   { go ExitDevMode(a.ctx, a.c, a.dev) }
 
 func (a *trayControlsAdapter) OpenProdDashboard() { a.c.OpenDashboard() }
 func (a *trayControlsAdapter) OpenDevDashboard()  { a.c.OpenURL(a.dev.DashboardURL()) }
+func (a *trayControlsAdapter) OpenDevLogs()       { a.c.OpenURL(a.dev.LogPath()) }
 func (a *trayControlsAdapter) OpenLogs()          { a.c.OpenLogs() }
 
 func (a *trayControlsAdapter) SetAutostart(enabled bool) error {

@@ -36,6 +36,13 @@ func resolveAppWindowCommand(candidates []browserCandidate, url string) (name st
 	return "", nil, false
 }
 
+// replaceControlWindow retires any Chromium app-window inherited from an
+// earlier venom.exe process before opening this process's control URL.
+func replaceControlWindow(retire func(), open func() error) error {
+	retire()
+	return open()
+}
+
 // controlWindowTitle is the control page's document title, which Chromium uses
 // verbatim as the app-window's caption. It is the handle the tray identifies its
 // own already-open window by, so it must stay in lock-step with the <title> in
@@ -89,8 +96,9 @@ func (o tapOutcome) String() string {
 // appWindowGate serialises tray taps and remembers the last spawn, so that the
 // window is opened at most once no matter how often the icon is clicked.
 type appWindowGate struct {
-	mu        sync.Mutex
-	lastSpawn time.Time // zero until a spawn has succeeded
+	mu             sync.Mutex
+	lastSpawn      time.Time // zero until a spawn has succeeded
+	sessionStarted bool      // false until this venom process owns a window
 }
 
 // resolveTap decides and performs what a single tray left-click does: raise the
@@ -103,6 +111,19 @@ type appWindowGate struct {
 func (g *appWindowGate) resolveTap(now time.Time, focus func() bool, spawn func() error) (tapOutcome, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
+	// A same-titled Chromium app-window can outlive the venom.exe process that
+	// created it. The first tap of a new tray session must therefore never focus
+	// an inherited window; its URL points at the previous ephemeral control port.
+	// The Windows spawn closure retires that stale window before opening ours.
+	if !g.sessionStarted {
+		if err := spawn(); err != nil {
+			return tapSpawned, err
+		}
+		g.sessionStarted = true
+		g.lastSpawn = now
+		return tapSpawned, nil
+	}
 
 	if focus() {
 		return tapFocused, nil

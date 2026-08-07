@@ -22,7 +22,11 @@ func openOrFocusControlWindow(url string) (tapOutcome, error) {
 	return controlWindowGate.resolveTap(
 		time.Now(),
 		focusControlWindow,
-		func() error { return openControlWindow(url) },
+		func() error {
+			return replaceControlWindow(retireControlWindow, func() error {
+				return openControlWindow(url)
+			})
+		},
 	)
 }
 

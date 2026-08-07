@@ -25,6 +25,7 @@ func (f *fakeControls) StartDev()           { f.rec("StartDev") }
 func (f *fakeControls) StopDev()            { f.rec("StopDev") }
 func (f *fakeControls) OpenProdDashboard()  { f.rec("OpenProdDashboard") }
 func (f *fakeControls) OpenDevDashboard()   { f.rec("OpenDevDashboard") }
+func (f *fakeControls) OpenDevLogs()        { f.rec("OpenDevLogs") }
 func (f *fakeControls) OpenLogs()           { f.rec("OpenLogs") }
 func (f *fakeControls) SetAutostart(enabled bool) error {
 	f.rec("SetAutostart")
@@ -60,6 +61,7 @@ func TestControlServer_PostRoutesDispatch(t *testing.T) {
 		{"/dev/start", "StartDev"},
 		{"/dev/stop", "StopDev"},
 		{"/dev/open", "OpenDevDashboard"},
+		{"/dev/logs", "OpenDevLogs"},
 		{"/logs", "OpenLogs"},
 		{"/quit", "Quit"},
 	}
@@ -171,17 +173,22 @@ func TestControlServer_GetRootServesPageWithToken(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), testToken) {
 		t.Error("served page does not contain the session token")
 	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("cache-control = %q, want no-store so a restarted app cannot reuse an expired control token", got)
+	}
 }
 
 // TestControlServer_StateReturnsJSON pins the /state snapshot shape.
 func TestControlServer_StateReturnsJSON(t *testing.T) {
 	f := &fakeControls{state: ControlState{
-		Prod:         "running",
-		DevAvailable: true,
-		DevOverall:   "Stopped",
-		DevBackend:   "Stopped",
-		DevFrontend:  "Stopped",
-		Autostart:    true,
+		Prod:            "running",
+		DevAvailable:    true,
+		DevOverall:      "Stopped",
+		DevBackend:      "Stopped",
+		DevFrontend:     "Stopped",
+		DevError:        "",
+		DevLogAvailable: true,
+		Autostart:       true,
 	}}
 	h := newControlHandler(f, testToken, testOrigin)
 
@@ -200,5 +207,8 @@ func TestControlServer_StateReturnsJSON(t *testing.T) {
 	}
 	if got != f.state {
 		t.Errorf("state = %+v, want %+v", got, f.state)
+	}
+	if cacheControl := rr.Header().Get("Cache-Control"); cacheControl != "no-store" {
+		t.Errorf("cache-control = %q, want no-store so polling observes lifecycle changes", cacheControl)
 	}
 }

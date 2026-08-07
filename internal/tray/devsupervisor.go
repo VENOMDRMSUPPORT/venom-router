@@ -13,10 +13,12 @@ import (
 )
 
 // Development-environment constants (design 2026-08-02, one shared database).
-// The dev section is a Windows desktop affordance running a single child, the
-// vite frontend; it proxies /api to the PRODUCTION backend on 8081, so there
-// is no dev backend and no separate database. The frontend spec deliberately
-// runs npm through cmd /c. Ports are fixed by the approved design.
+// The dev section is a Windows desktop affordance running a watched source
+// backend on 8081 and the Vite frontend on 8088. Vite proxies /api to that
+// backend, which keeps using the canonical production data directory rather
+// than a separate development database. The dependency-free Node bootstrap
+// validates/repairs dashboard dependencies before it starts npm/vite.
+// Ports are fixed by the approved design.
 const (
 	devFrontendURL = "http://127.0.0.1:8088/"
 	devBackendURL  = "http://127.0.0.1:8081/health"
@@ -62,6 +64,8 @@ type ProcessSpec struct {
 	Name     string
 	Args     []string
 	ExtraEnv []string // KEY=VALUE entries appended to the parent env
+	// OutputPath, when non-empty, receives append-only child stdout/stderr.
+	OutputPath string
 }
 
 // ProcessHandle is a started child as the supervisor sees it.
@@ -103,9 +107,12 @@ func DefaultHealthProbe(ctx context.Context, url string) bool {
 // are exposed individually so the menu's enablement logic (Open follows the
 // frontend/vite specifically) and any per-child diagnostics read consistently.
 type DevStatusView struct {
-	Overall  DevComponentState
-	Backend  DevComponentState
-	Frontend DevComponentState
+	Overall        DevComponentState
+	Backend        DevComponentState
+	Frontend       DevComponentState
+	BackendDetail  string
+	FrontendDetail string
+	LogPath        string
 }
 
 // combineDevState reduces the two child states to the section's Overall, worst
@@ -138,11 +145,14 @@ type DevSupervisorOptions struct {
 	Runner ProcessRunner
 	Probe  HealthProbe
 	Logger *observability.Logger
+	// LogPath receives append-only stdout/stderr from both dev children.
+	LogPath string
 }
 
 type devComponent struct {
 	state  DevComponentState
 	handle ProcessHandle
+	detail string
 	// gen invalidates stale watcher goroutines and in-flight starts: Stop
 	// bumps it, so a Wait() return from a deliberately killed process can
 	// never flip Stopped to Error.
@@ -158,10 +168,11 @@ type devComponent struct {
 // DevSupervisor drives the single dev child (the vite frontend) through
 // ProcessRunner. Platform-neutral; no syscalls, no os/exec.
 type DevSupervisor struct {
-	root   string
-	runner ProcessRunner
-	probe  HealthProbe
-	log    *observability.Logger
+	root    string
+	runner  ProcessRunner
+	probe   HealthProbe
+	log     *observability.Logger
+	logPath string
 
 	mu       sync.Mutex
 	frontend devComponent
@@ -177,10 +188,11 @@ type DevSupervisor struct {
 // NewDevSupervisor builds a DevSupervisor, filling defaults.
 func NewDevSupervisor(opts DevSupervisorOptions) *DevSupervisor {
 	s := &DevSupervisor{
-		root:   opts.Root,
-		runner: opts.Runner,
-		probe:  opts.Probe,
-		log:    opts.Logger,
+		root:    opts.Root,
+		runner:  opts.Runner,
+		probe:   opts.Probe,
+		log:     opts.Logger,
+		logPath: opts.LogPath,
 	}
 	if s.log == nil {
 		s.log = observability.Default()
@@ -246,15 +258,20 @@ func (s *DevSupervisor) Available() bool { return s.root != "" }
 // DashboardURL is the dev frontend (vite) URL.
 func (s *DevSupervisor) DashboardURL() string { return devFrontendURL }
 
-// Status returns the current snapshot. With one component, Overall mirrors
-// the frontend state.
+// LogPath is the dedicated append-only development child log.
+func (s *DevSupervisor) LogPath() string { return s.logPath }
+
+// Status returns one consistent snapshot of both development components.
 func (s *DevSupervisor) Status() DevStatusView {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return DevStatusView{
-		Overall:  combineDevState(s.backend.state, s.frontend.state),
-		Backend:  s.backend.state,
-		Frontend: s.frontend.state,
+		Overall:        combineDevState(s.backend.state, s.frontend.state),
+		Backend:        s.backend.state,
+		Frontend:       s.frontend.state,
+		BackendDetail:  s.backend.detail,
+		FrontendDetail: s.frontend.detail,
+		LogPath:        s.logPath,
 	}
 }
 
@@ -268,10 +285,11 @@ func (s *DevSupervisor) StatusLine() string {
 
 func (s *DevSupervisor) frontendSpec() ProcessSpec {
 	return ProcessSpec{
-		Dir:      filepath.Join(s.root, "dashboard"),
-		Name:     "cmd",
-		Args:     []string{"/c", "npm", "run", "dev", "--", "--port", "8088", "--strictPort", "--host", "127.0.0.1"},
-		ExtraEnv: []string{devAPITarget},
+		Dir:        filepath.Join(s.root, "dashboard"),
+		Name:       "node",
+		Args:       []string{"scripts/dev-bootstrap.mjs", "--port", "8088", "--strictPort", "--host", "127.0.0.1"},
+		ExtraEnv:   []string{devAPITarget},
+		OutputPath: s.logPath,
 	}
 }
 
@@ -284,9 +302,10 @@ func (s *DevSupervisor) frontendSpec() ProcessSpec {
 // needing cmd /c).
 func (s *DevSupervisor) backendSpec() ProcessSpec {
 	return ProcessSpec{
-		Dir:  s.root,
-		Name: "go",
-		Args: []string{"run", "github.com/air-verse/air@latest", "-c", ".air.toml"},
+		Dir:        s.root,
+		Name:       "go",
+		Args:       []string{"run", "github.com/air-verse/air@latest", "-c", ".air.toml"},
+		OutputPath: s.logPath,
 	}
 }
 
@@ -339,6 +358,7 @@ func (s *DevSupervisor) startComponent(c *devComponent, name string, spec Proces
 		return
 	}
 	c.gen++
+	c.detail = ""
 	gen := c.gen
 	s.mu.Unlock()
 
@@ -355,6 +375,7 @@ func (s *DevSupervisor) startComponent(c *devComponent, name string, spec Proces
 	}
 	if err != nil {
 		c.state = DevError
+		c.detail = err.Error()
 		s.log.Error("tray: dev component failed to start",
 			observability.String("component", name),
 			observability.String("err", err.Error()))
@@ -362,6 +383,7 @@ func (s *DevSupervisor) startComponent(c *devComponent, name string, spec Proces
 	}
 	c.state = DevStarting
 	c.handle = h
+	c.detail = ""
 	exited := make(chan struct{})
 	c.exited = exited
 	go s.watch(c, name, h, gen, exited)
@@ -387,6 +409,7 @@ func (s *DevSupervisor) watch(c *devComponent, name string, h ProcessHandle, gen
 	if err != nil {
 		detail = err.Error()
 	}
+	c.detail = detail
 	s.log.Error("tray: dev component exited unexpectedly",
 		observability.String("component", name),
 		observability.String("err", detail))
@@ -403,6 +426,7 @@ func (s *DevSupervisor) stopComponent(c *devComponent, wait bool) {
 	exited := c.exited
 	c.handle = nil
 	c.state = DevStopped
+	c.detail = ""
 	s.mu.Unlock()
 	if h == nil {
 		return

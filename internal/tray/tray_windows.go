@@ -43,7 +43,12 @@ func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller, 
 	} else {
 		server.Start()
 		controlURL = server.URL()
+		// A Chromium --app window is a separate process and can survive the
+		// previous tray instance. Retire it now so the owner cannot keep using a
+		// page whose ephemeral control server and token no longer exist.
+		retireControlWindow()
 		defer func() {
+			retireControlWindow()
 			sctx, scancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer scancel()
 			_ = server.Shutdown(sctx)

@@ -2,7 +2,7 @@
 
 How the venom tray app splits Production from Development, which ports belong
 to what, and how the dev child is contained. Accurate to the code as of
-2026-08-02 (`internal/tray/devsupervisor.go` and friends).
+2026-08-07 (`internal/tray/devsupervisor.go` and friends).
 
 ## Two tray sections
 
@@ -11,9 +11,14 @@ to what, and how the dev child is contained. Accurate to the code as of
   Start/Stop/Restart Production.
 - **Development** — live-reload development. Menu items: Open Development
   Dashboard, Start/Stop/Restart Development, plus a `Dev Status:` info line
-  (Stopped / Starting / Running / Error). Development runs **only** the vite
-  frontend; it proxies `/api` to the production backend on 8081, so it uses
-  the single production database (there is no separate dev backend).
+  (Stopped / Starting / Running / Error). Development stops the embedded
+  production server, starts the Vite frontend plus a watched source backend on
+  8081, and keeps using the single canonical database.
+
+Before Vite starts, a dependency-free bootstrap validates the dashboard's
+lockfile, local Vite executable, and `Design_System/package.json`. A missing,
+partial, or lockfile-stale installation is repaired once with deterministic
+`npm ci`; subsequent starts take a no-network fast path.
 
 ## The key fact: edits under `dashboard/` do NOT appear on 8081
 
@@ -65,12 +70,12 @@ The tray logs the resolved value at boot as `tray: dev root` in
 
 ## One shared database: dev uses production state
 
-Development runs no backend of its own. The vite frontend proxies `/api` to
-the production server on 8081, so development reads and writes the **single**
-production database, keyring, and single-instance lock. There is no separate
-dev database, keyring, or lock, and no `<dataDir>\dev` data dir. The owner
-account created through the production dashboard is therefore the same account
-the dev dashboard logs into.
+Development replaces the embedded production process with a watched source
+backend on the same 8081 bind. The Vite frontend proxies `/api` to that backend,
+so development reads and writes the **single** production database, keyring,
+and single-instance lock. There is no separate dev database, keyring, or lock,
+and no `<dataDir>\dev` data dir. The owner account created through the production
+dashboard is therefore the same account the dev dashboard logs into.
 
 - Production (and now dev) data dir on Windows: `%LOCALAPPDATA%\venom-router`.
 - `%LOCALAPPDATA%\VenomRouter` (no hyphen) belongs to a **separate legacy
@@ -81,22 +86,43 @@ the dev dashboard logs into.
 
 ## Containment: no orphaned dev processes
 
-On Windows the dev child is spawned inside its own Job Object configured
+On Windows each dev child is spawned inside its own Job Object configured
 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
 (`internal/tray/devprocess_windows.go`). Stop Development — or the tray
 process exiting or dying, which closes the job handle — terminates the
 **entire** process tree, including npm/vite's node children. The child is also
 spawned with `CREATE_NO_WINDOW`, so no console pops.
 
+## Dependency repair and frontend diagnostics
+
+The tray starts `dashboard/scripts/dev-bootstrap.mjs`, not Vite directly. A
+valid install requires both `node_modules/.bin/vite.cmd` and
+`node_modules/.venom-dev-install.sha256` matching the SHA-256 of
+`dashboard/package-lock.json`. When either is missing or stale, the bootstrap
+runs `npm ci --prefer-offline --no-audit --no-fund` and writes the stamp only
+after Vite is present.
+
+`@venom/design-system` is a Windows junction from dashboard `node_modules` to
+the protected source directory. Immediately before a repair the bootstrap
+unlinks that junction entry without following it, then verifies the source
+`Design_System/package.json` still exists. This keeps npm's destructive
+`node_modules` cleanup outside the source tree.
+
+Frontend and watched-backend stdout/stderr are appended to
+`%LOCALAPPDATA%\venom-router\logs\development.log`. Unexpected child exits
+retain a short actionable detail in the Development card, whose **View
+Development Log** button opens the full child log. The main structured Venom
+log remains separate.
+
 ## The vite `/api` proxy
 
 `dashboard/vite.config.ts` proxies `/api` to the control plane. The target is
 `VENOM_DEV_API_TARGET` when set; the tray's Development section sets it to
-`http://127.0.0.1:8081`, so dev traffic hits the production backend and its
+`http://127.0.0.1:8081`, so dev traffic hits the watched source backend and its
 single database. A manual `npm run dev` (without the tray) also defaults to
-`http://127.0.0.1:8081` — the same production/standalone bind. Because dev has
-no backend of its own, the production server must be running for the dev
-frontend's `/api` calls to succeed.
+`http://127.0.0.1:8081` — the same production/standalone bind. When Vite is
+started manually instead of through the tray, a backend must already be
+listening there for the frontend's `/api` calls to succeed.
 
 ## Build and icon
 

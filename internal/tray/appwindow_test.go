@@ -88,8 +88,24 @@ func TestIsControlWindow(t *testing.T) {
 func TestResolveTapReusesOneWindow(t *testing.T) {
 	t0 := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
-	t.Run("an existing window is focused, never duplicated", func(t *testing.T) {
+	t.Run("the first tap belongs to this tray session, never an inherited window", func(t *testing.T) {
 		g := &appWindowGate{}
+		focusCalls := 0
+		spawns := 0
+		got, err := g.resolveTap(t0, func() bool { focusCalls++; return true }, func() error { spawns++; return nil })
+		if err != nil || got != tapSpawned {
+			t.Fatalf("outcome = %v err = %v, want tapSpawned nil", got, err)
+		}
+		if focusCalls != 0 {
+			t.Errorf("focus calls = %d, want 0 — a same-titled window inherited from an exited tray is stale", focusCalls)
+		}
+		if spawns != 1 {
+			t.Errorf("spawns = %d, want 1 current-session window", spawns)
+		}
+	})
+
+	t.Run("an existing window is focused, never duplicated", func(t *testing.T) {
+		g := &appWindowGate{sessionStarted: true}
 		spawns := 0
 		got, err := g.resolveTap(t0, func() bool { return true }, func() error { spawns++; return nil })
 		if err != nil {
@@ -176,6 +192,24 @@ func TestResolveTapReusesOneWindow(t *testing.T) {
 			t.Errorf("retry: outcome = %v spawns = %d err = %v, want tapSpawned 2 nil", got, spawns, err)
 		}
 	})
+}
+
+// TestReplaceControlWindowRetiresStaleBeforeOpening guards the cross-process
+// boundary: Chromium can keep the old app-window alive after venom.exe exits,
+// so opening the new ephemeral URL before retiring that window lets Chromium
+// reuse the dead page and makes every control button appear unresponsive.
+func TestReplaceControlWindowRetiresStaleBeforeOpening(t *testing.T) {
+	var events []string
+	err := replaceControlWindow(
+		func() { events = append(events, "retire") },
+		func() error { events = append(events, "open"); return nil },
+	)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if got := strings.Join(events, ","); got != "retire,open" {
+		t.Errorf("events = %q, want retire,open", got)
+	}
 }
 
 // TestControlPageTitleMatchesConstant guards the one coupling the focus path
