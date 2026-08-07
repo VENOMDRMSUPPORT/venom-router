@@ -55,16 +55,21 @@ func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller, 
 		systray.SetTitle("Venom Router")
 		systray.SetTooltip("Venom Router")
 
-		// Left-click opens the control window (app-window of the control page);
-		// right-click still shows the menu below (we leave the secondary tap
-		// unset, so systray's default menu appears). When the control server is
+		// Left-click opens the control window (app-window of the control page),
+		// or raises the one already open — the window is a singleton, so
+		// clicking the icon repeatedly never stacks duplicates; right-click
+		// still shows the menu below (we leave the secondary tap unset, so
+		// systray's default menu appears). When the control server is
 		// unavailable, leaving the tap unset makes left-click show the menu too.
 		if controlURL != "" {
 			systray.SetOnTapped(func() {
 				go func() {
-					if err := openControlWindow(controlURL); err != nil {
+					outcome, err := openOrFocusControlWindow(controlURL)
+					if err != nil {
 						c.log.Error("tray: open control window failed", observability.String("err", err.Error()))
+						return
 					}
+					c.log.Debug("tray: control window tap", observability.String("outcome", outcome.String()))
 				}()
 			})
 		}

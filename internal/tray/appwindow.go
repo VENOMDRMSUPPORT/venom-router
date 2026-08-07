@@ -1,9 +1,17 @@
 package tray
 
+import (
+	"strings"
+	"sync"
+	"time"
+)
+
 // This file is the platform-neutral core of the tray's app-window launcher:
-// choosing which installed browser to open the control page with, in
-// chromeless "app" mode. The OS-specific executable resolution and the actual
-// process spawn live in appwindow_windows.go.
+// choosing which installed browser to open the control page with in chromeless
+// "app" mode, recognising a control window that is already open, and deciding
+// what a single tray left-click should therefore do. The OS-specific executable
+// resolution, window enumeration and process spawn live in
+// appwindow_windows.go / winapi_windows.go.
 
 // browserCandidate is a browser we may launch in app-window mode. Path is the
 // resolved executable path, or "" when that browser is not installed.
@@ -26,4 +34,85 @@ func resolveAppWindowCommand(candidates []browserCandidate, url string) (name st
 		return c.Path, []string{"--app=" + url, "--window-size=" + appWindowSize}, true
 	}
 	return "", nil, false
+}
+
+// controlWindowTitle is the control page's document title, which Chromium uses
+// verbatim as the app-window's caption. It is the handle the tray identifies its
+// own already-open window by, so it must stay in lock-step with the <title> in
+// controlpage.html (TestControlPageTitleMatchesConstant guards that) and must
+// not be a prefix of any other Venom window title — the dashboard's is
+// "Venom Router — Dashboard".
+const controlWindowTitle = "Venom Router Control"
+
+// chromiumWindowClassPrefix is the window class Chromium gives its top-level
+// windows; the trailing digit is a class generation ("Chrome_WidgetWin_1"), so
+// only the prefix is stable.
+const chromiumWindowClassPrefix = "Chrome_WidgetWin_"
+
+// appWindowSpawnCooldown is how long after a spawn a tap that still cannot see
+// the window is assumed to be racing that spawn rather than reporting a closed
+// window. Generous enough for a cold Chromium start, short enough that closing
+// the window and immediately clicking again feels responsive.
+const appWindowSpawnCooldown = 3 * time.Second
+
+// isControlWindow reports whether a top-level window is the tray's own control
+// app-window. Class, exact title and visibility must all agree: title-only
+// matching would let a tap raise an unrelated browser window showing a
+// same-titled page and then treat it as the control window.
+func isControlWindow(class, title string, visible bool) bool {
+	return visible &&
+		strings.HasPrefix(class, chromiumWindowClassPrefix) &&
+		title == controlWindowTitle
+}
+
+// tapOutcome is what one tray left-click did, for logging and tests.
+type tapOutcome int
+
+const (
+	tapFocused tapOutcome = iota // an existing control window was raised
+	tapSpawned                   // a new control window was launched
+	tapDropped                   // ignored: a spawn is still in flight
+)
+
+func (o tapOutcome) String() string {
+	switch o {
+	case tapFocused:
+		return "focused"
+	case tapSpawned:
+		return "spawned"
+	case tapDropped:
+		return "dropped"
+	}
+	return "unknown"
+}
+
+// appWindowGate serialises tray taps and remembers the last spawn, so that the
+// window is opened at most once no matter how often the icon is clicked.
+type appWindowGate struct {
+	mu        sync.Mutex
+	lastSpawn time.Time // zero until a spawn has succeeded
+}
+
+// resolveTap decides and performs what a single tray left-click does: raise the
+// existing control window if focus finds one, else spawn a new one, unless a
+// spawn from the last appWindowSpawnCooldown has not had time to produce an
+// enumerable window yet — in which case the tap is dropped.
+//
+// A spawn that fails deliberately does NOT arm the cooldown: it produced no
+// window, so the owner's next click must be free to try again.
+func (g *appWindowGate) resolveTap(now time.Time, focus func() bool, spawn func() error) (tapOutcome, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if focus() {
+		return tapFocused, nil
+	}
+	if !g.lastSpawn.IsZero() && now.Sub(g.lastSpawn) < appWindowSpawnCooldown {
+		return tapDropped, nil
+	}
+	if err := spawn(); err != nil {
+		return tapSpawned, err
+	}
+	g.lastSpawn = now
+	return tapSpawned, nil
 }

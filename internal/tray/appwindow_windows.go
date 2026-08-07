@@ -5,9 +5,26 @@ package tray
 import (
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/platform"
 )
+
+// controlWindowGate is the process-wide gate that keeps the tray to a single
+// control window across every left-click.
+var controlWindowGate appWindowGate
+
+// openOrFocusControlWindow is what a tray left-click does: raise the control
+// window if one is already open, else open it — never a second one. Chromium
+// does not de-duplicate --app= windows by URL, so without this every click
+// would stack another identical window.
+func openOrFocusControlWindow(url string) (tapOutcome, error) {
+	return controlWindowGate.resolveTap(
+		time.Now(),
+		focusControlWindow,
+		func() error { return openControlWindow(url) },
+	)
+}
 
 // openControlWindow opens url as a chromeless app-window using an installed
 // Edge or Chrome; if neither is found it falls back to the default browser (a
