@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { assertNoAxeViolations } from "../test/axe";
 import { createFetchMock, jsonResponse } from "../test/fetchMock";
 import type {
@@ -15,7 +15,6 @@ const PROVIDERS_URL = "GET /api/control/v1/providers";
 const ACCOUNTS_URL = "GET /api/control/v1/accounts?limit=200";
 const MODELS_URL = "GET /api/control/v1/models?limit=200";
 const POLICY_URL = "GET /api/control/v1/routing/policy";
-const CENSUS_URL = "GET /api/control/v1/certifications/review";
 const ROUTES_URL = "GET /api/control/v1/diagnostics/routes?limit=10";
 
 function provider(overrides: Partial<Provider> = {}): Provider {
@@ -130,47 +129,45 @@ function routeEntry(overrides: Partial<RouteDecisionEntry> = {}): RouteDecisionE
   };
 }
 
-function censusBody(count = 0) {
-  return {
-    data: {
-      scanned: 1,
-      limit: 50,
-      truncated: false,
-      evaluated_reasons: ["capability_not_certified"],
-      not_evaluated_reasons: [
-        "identity_unresolved",
-        "context_unverified",
-        "funding_unknown",
-        "no_healthy_account",
-        "quota_exhausted",
-        "quota_insufficient",
-        "cooling_down",
-      ],
-      by_reason: [{ reason: "capability_not_certified", count }],
-    },
-  };
-}
-
 /** Every card's fetch, all succeeding. Individual tests override one route to
- * prove per-card isolation. */
+ * prove per-card isolation.
+ *
+ * There is deliberately NO handler for GET /certifications/review — the
+ * certification-review census was deleted (2026-08-07). Note that the omission
+ * is NOT on its own an assertion: createFetchMock throws on an unmapped call,
+ * but the deleted banner CAUGHT that throw and rendered an error state, so a
+ * re-mount would have gone unnoticed. The census-deletion tests below assert on
+ * the fetch calls themselves for exactly that reason. */
 function handlers(overrides: Record<string, () => Response> = {}) {
   return {
     [PROVIDERS_URL]: () => jsonResponse(200, { data: { providers: [provider()] } }),
     [ACCOUNTS_URL]: () => jsonResponse(200, { data: { accounts: [account()] } }),
     [MODELS_URL]: () => jsonResponse(200, { data: [modelGroup()] }),
     [POLICY_URL]: () => jsonResponse(200, { data: { tiers: TIERS } }),
-    [CENSUS_URL]: () => jsonResponse(200, censusBody()),
     [ROUTES_URL]: () => jsonResponse(200, { data: [routeEntry()] }),
     ...overrides,
   };
 }
 
-function mockAll(overrides: Record<string, () => Response> = {}): void {
-  vi.stubGlobal("fetch", createFetchMock(handlers(overrides)));
+function mockAll(overrides: Record<string, () => Response> = {}): ReturnType<typeof createFetchMock> {
+  const mock = createFetchMock(handlers(overrides));
+  vi.stubGlobal("fetch", mock);
+  return mock;
+}
+
+/** Every URL the surface actually requested, in call order. */
+function requestedURLs(mock: ReturnType<typeof createFetchMock>): string[] {
+  return mock.mock.calls.map((call: unknown[]) => String(call[0]));
 }
 
 function renderSurface() {
   return render(<OverviewSurface csrfToken="overview-csrf" onSessionExpired={vi.fn()} />);
+}
+
+/** mockAll + renderSurface, for the tests that need the rendered container. */
+function mockAllAndRender() {
+  mockAll();
+  return renderSurface();
 }
 
 /** A 500 envelope for a card whose failure is under test. */
@@ -357,32 +354,57 @@ describe("OverviewSurface — per-card isolation", () => {
   });
 });
 
-describe("OverviewSurface — review banner", () => {
-  it("shows the review banner when the backlog is non-empty", async () => {
-    mockAll({ [CENSUS_URL]: () => jsonResponse(200, censusBody(3)) });
+// The certification-review census was deleted on 2026-08-07: model
+// qualification became fully automatic (internal/httpapi/qualification.go's
+// 30s tick), so no certification waits on a human review any more and the
+// banner counted a queue that no longer exists.
+//
+// MUTATION NOTE — read before weakening any of this. The first version of these
+// tests asserted only on rendered text and stayed GREEN when the banner was
+// re-mounted. The reason is the banner's own error handling: with no census
+// handler registered, its fetch threw, it caught the throw, and it rendered
+// "Could not load the review census — the certification backlog is unknown"
+// instead of its heading, matching none of the strings under test. So the
+// load-bearing assertion here is on the FETCH CALLS: a surface that does not ask
+// for the census cannot render it, whatever its error branch would have said.
+describe("OverviewSurface — the deleted review census", () => {
+  it("never requests the census endpoint at all", async () => {
+    const fetchMock = mockAll();
     renderSurface();
 
-    const banner = await screen.findByTestId("review-queue-banner");
-    expect(banner.textContent ?? "").toMatch(/3/);
-    expect(within(banner).getByText("capability_not_certified")).toBeTruthy();
+    await screen.findByTestId("activity-req-1");
+    const asked = requestedURLs(fetchMock).filter((url) => url.includes("/certifications/review"));
+    expect(asked).toEqual([]);
   });
 
-  // Whole-branch review (2026-08-06): Overview has no catalog of its own to
-  // filter down to the backlog, so it mounts the banner with no
-  // onReviewBacklog. Before this fix that prop was required and Overview
-  // passed a no-op, so the owner saw a real "Review the backlog" button that
-  // could never do anything whenever their backlog was non-empty.
-  it("never renders the backlog action, even with a real backlog — Overview has nothing for it to do", async () => {
-    mockAll({ [CENSUS_URL]: () => jsonResponse(200, censusBody(3)) });
-    renderSurface();
+  it("renders no review-backlog banner, in any of its states", async () => {
+    const { container } = mockAllAndRender();
 
-    await screen.findByTestId("review-queue-banner");
-    expect(screen.queryByRole("button", { name: /review the backlog/i })).toBeNull();
+    await screen.findByTestId("activity-req-1");
+    expect(screen.queryByTestId("review-queue-banner")).toBeNull();
+    // Covers the loaded heading ("Certification review backlog"), the all-clear
+    // ("Certification review: nothing is waiting") AND the error branch
+    // ("Could not load the review census … the certification backlog is
+    // unknown") — the last of which is what a text-only assertion missed.
+    expect(container.textContent ?? "").not.toMatch(
+      /review census|review backlog|certification backlog|certification review/i,
+    );
   });
 
-  it("does not show the backlog call to action when the backlog is empty", async () => {
-    mockAll({ [CENSUS_URL]: () => jsonResponse(200, censusBody(0)) });
-    renderSurface();
+  it("renders no raw admission reason code and no console-is-stale apology", async () => {
+    const { container } = mockAllAndRender();
+
+    await screen.findByTestId("activity-req-1");
+    const text = container.textContent ?? "";
+    // The codes the owner actually saw rendered raw on this page.
+    expect(text).not.toContain("capability_not_certified");
+    expect(text).not.toContain("context_unknown");
+    expect(text).not.toContain("quota_unknown");
+    expect(text).not.toMatch(/unrecognized reason code/i);
+  });
+
+  it("offers no backlog action", async () => {
+    mockAllAndRender();
 
     await screen.findByTestId("overview-card-fleet");
     expect(screen.queryByRole("button", { name: /review the backlog/i })).toBeNull();
@@ -402,7 +424,7 @@ describe("OverviewSurface — secrets and accessibility", () => {
   });
 
   it("has no axe violations with every card populated", async () => {
-    mockAll({ [CENSUS_URL]: () => jsonResponse(200, censusBody(2)) });
+    mockAll();
     const { container } = renderSurface();
     await screen.findByTestId("activity-req-1");
     await assertNoAxeViolations(container);

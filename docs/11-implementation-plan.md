@@ -2342,6 +2342,8 @@ Deps: P5-CAPI-001, P5-PAPI-002. Parallel-with: other UI. Blocks: P6 gate.
 DoD: quick start + catalog; one generator per shape; key not persisted.
 
 #### P6-UI-012 — Review-queue banner + model-catalog completion
+**WITHDRAWN 2026-08-07.** The banner, its `GET /certifications/review` census, and the storage query behind it were deleted. Model qualification became fully automatic (`internal/httpapi/qualification.go`'s 30s tick), so no certification waits on a human review and the census counted a queue that no longer exists. The model-catalog completion half of this task shipped and stands. Kept here as the historical record; the shipped record is `internal/httpapi/controlmux_test.go`'s `TestControlMux_ReviewCensusRouteIsGone`.
+
 Purpose: surface the certification review backlog.
 References: [`07 §5/§6`](07-design-system.md), [`04 §5`](04-model-intelligence.md#5-certification).
 Preconditions: P3c-CERT-005, P6-UI-002. Backend contract: review count read.

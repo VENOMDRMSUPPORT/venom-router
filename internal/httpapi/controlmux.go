@@ -414,12 +414,10 @@ func ControlMux(allowedHost string, spa http.Handler, db *storage.DB, kr *secret
 	discoveryHandlerWithProbes := discoveryHandler.WithProbeRuns(probeRunRepo)
 	mux.Handle("/api/control/v1/offerings/{id}/certification", gated(discoveryHandlerWithProbes.ServeCertification))
 
-	// Routing-admission census (P6-CAPI-EXTRA, enables P6-UI-012, 04 §5): GET
-	// /certifications/review — "the review count grouped by reason". It shares
-	// certRepo with the probe/certification routes above rather than building its
-	// own, and reports which admission reasons it could NOT evaluate rather than
-	// counting them as zero (see reviewcensus.go's header).
-	mux.Handle("/api/control/v1/certifications/review", gated(NewReviewCensusHandler(certRepo).ServeCensus))
+	// NOTE: there is deliberately no GET /certifications/review here. The
+	// routing-admission census (P6-CAPI-EXTRA / P6-UI-012) was deleted on
+	// 2026-08-07 — see controlmux_test.go's TestControlMux_ReviewCensusRouteIsGone
+	// for why, and for the test that keeps it gone.
 
 	// Consumption read model (P6-CAPI-EXTRA-2, enables P6-UI-005, 05 §4/§7): GET
 	// /usage over the M7 usage_records table the public data plane writes. Read-only

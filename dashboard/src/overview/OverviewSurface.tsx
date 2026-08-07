@@ -17,7 +17,6 @@ import {
   type TierPolicy,
 } from "../api/controlClient";
 import { pathForRoute } from "../shell/route";
-import ReviewQueueBanner from "../models/ReviewQueueBanner";
 
 export interface OverviewSurfaceProps {
   csrfToken: string;
@@ -309,16 +308,6 @@ export default function OverviewSurface(props: OverviewSurfaceProps) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* P6-UI-012. The Models surface no longer mounts this banner itself
-          (Task 1 made that page display-only); Overview is its only mount
-          now. Its own all-clear/error states are its business, not this
-          page's. No `onReviewBacklog` is passed — Overview has no catalog of
-          its own to filter down to the backlog, and the banner renders no
-          "Review the backlog" button at all when the handler is absent, even
-          with a real backlog, rather than offering an action that would do
-          nothing. */}
-      <ReviewQueueBanner onSessionExpired={onSessionExpired} />
-
       {onOpenQuickStart ? (
         <Card data-testid="overview-quick-start">
           <div className="flex flex-wrap items-center justify-between gap-3">

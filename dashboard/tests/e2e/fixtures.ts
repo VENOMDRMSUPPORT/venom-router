@@ -377,20 +377,6 @@ export const RECONCILIATION = data([
   },
 ]);
 
-// --- Review census ----------------------------------------------------------
-
-export const REVIEW_CENSUS = data({
-  scanned: 12,
-  limit: 500,
-  truncated: false,
-  evaluated_reasons: ["context_unknown", "cost_conflict"],
-  not_evaluated_reasons: ["quota_unknown"],
-  by_reason: [
-    { reason: "context_unknown", count: 2 },
-    { reason: "cost_conflict", count: 1 },
-  ],
-});
-
 // --- Usage ------------------------------------------------------------------
 
 function metric(sum: number | null, average: number | null, known: number, unknown: number) {
@@ -529,7 +515,6 @@ export const CONTROL_ROUTES: readonly RouteStub[] = [
   get(`${BASE}/jobs/{job_id}`, JOB_COMPLETED),
 
   get(`${BASE}/routing/policy`, ROUTING_POLICY),
-  get(`${BASE}/certifications/review`, REVIEW_CENSUS),
   get(`${BASE}/usage`, USAGE),
 
   get(`${BASE}/diagnostics/routes`, ROUTE_DECISIONS),

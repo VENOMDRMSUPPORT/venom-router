@@ -47,29 +47,11 @@ function baseHandlers(overrides: Record<string, () => Response> = {}) {
     "GET /api/control/v1/providers": () => jsonResponse(200, { data: { providers: [] } }),
     "GET /api/control/v1/accounts?limit=200": () => jsonResponse(200, { data: { accounts: [] } }),
     "GET /api/control/v1/offerings?limit=200": () => jsonResponse(200, { data: [] }),
-    // Same rationale for the Models destination (P6-UI-002) and the
-    // review-queue banner it renders (P6-UI-012) — their own behavior is
-    // covered in src/models/*.test.tsx.
+    // Same rationale for the Models destination (P6-UI-002) — its own behavior
+    // is covered in src/models/*.test.tsx. No /certifications/review stub: that
+    // census was deleted (2026-08-07), and createFetchMock throws on unmapped
+    // calls, so its absence here fails loudly if anything fetches it again.
     "GET /api/control/v1/models?limit=200": () => jsonResponse(200, { data: [] }),
-    "GET /api/control/v1/certifications/review": () =>
-      jsonResponse(200, {
-        data: {
-          scanned: 0,
-          limit: 50,
-          truncated: false,
-          evaluated_reasons: ["capability_not_certified"],
-          not_evaluated_reasons: [
-            "identity_unresolved",
-            "context_unverified",
-            "funding_unknown",
-            "no_healthy_account",
-            "quota_exhausted",
-            "quota_insufficient",
-            "cooling_down",
-          ],
-          by_reason: [{ reason: "capability_not_certified", count: 0 }],
-        },
-      }),
     // The Routing destination (P6-UI-003) — the three tier policies exactly as
     // internal/routing's shipped table serves them.
     "GET /api/control/v1/routing/policy": () =>

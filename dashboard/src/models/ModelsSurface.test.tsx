@@ -7,7 +7,6 @@ import ModelsSurface from "./ModelsSurface";
 
 const CSRF_TOKEN = "models-csrf-token";
 const MODELS_URL = "GET /api/control/v1/models?limit=200";
-const CENSUS_URL = "GET /api/control/v1/certifications/review";
 
 function capability(overrides: Partial<OfferingCapability> = {}): OfferingCapability {
   return {
@@ -71,42 +70,14 @@ function group(overrides: Partial<ModelGroup> = {}): ModelGroup {
   };
 }
 
-/** The census payload the review banner reads. Defaults to an all-clear so
- * model-catalog tests are not coupled to the banner's own behaviour. */
-function censusBody(
-  byReason: { reason: string; count: number }[] = [
-    { reason: "capability_not_certified", count: 0 },
-  ],
-) {
-  return {
-    data: {
-      scanned: 1,
-      limit: 50,
-      truncated: false,
-      evaluated_reasons: ["capability_not_certified"],
-      not_evaluated_reasons: [
-        "identity_unresolved",
-        "context_unverified",
-        "funding_unknown",
-        "no_healthy_account",
-        "quota_exhausted",
-        "quota_insufficient",
-        "cooling_down",
-      ],
-      by_reason: byReason,
-    },
-  };
-}
-
 function mockModels(
   groups: ModelGroup[],
   extra: Record<string, () => Response> = {},
 ): ReturnType<typeof createFetchMock> {
-  // No CENSUS_URL stub here: ModelsSurface no longer mounts ReviewQueueBanner
-  // and therefore never fetches GET /certifications/review itself. The census
-  // stub still lives on the handful of tests below that build their own
-  // fetch mock directly (pagination/loading/error), left untouched by this
-  // fix round per its stated scope.
+  // No census stub anywhere in this file: the certification-review census was
+  // deleted (2026-08-07) and this surface never fetched it after it stopped
+  // mounting the banner. createFetchMock throws on unmapped calls, so the
+  // omission is an assertion.
   const mock = createFetchMock({
     [MODELS_URL]: () => jsonResponse(200, { data: groups }),
     ...extra,
@@ -878,7 +849,6 @@ describe("ModelsSurface — pagination honesty", () => {
         jsonResponse(200, {
           data: [group({ model_id: "page-2", display_name: "Page Two Model" })],
         }),
-      [CENSUS_URL]: () => jsonResponse(200, censusBody()),
     });
     vi.stubGlobal("fetch", mock);
     renderSurface();
@@ -919,7 +889,6 @@ describe("ModelsSurface — loading, empty, error", () => {
               retryable: true,
             },
           }),
-        [CENSUS_URL]: () => jsonResponse(200, censusBody()),
       }),
     );
     const { container } = renderSurface();
@@ -943,7 +912,6 @@ describe("ModelsSurface — loading, empty, error", () => {
               retryable: false,
             },
           }),
-        [CENSUS_URL]: () => jsonResponse(200, censusBody()),
       }),
     );
     render(<ModelsSurface csrfToken={CSRF_TOKEN} onSessionExpired={onSessionExpired} />);

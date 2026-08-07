@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/secrets"
@@ -153,6 +154,60 @@ func TestControlMux_SPAFallbackRouteBehindGate(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /providers/42/edit status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+// TestControlMux_ReviewCensusRouteIsGone proves GET
+// /api/control/v1/certifications/review is NOT registered on the mux.
+//
+// The certification-review census (P6-CAPI-EXTRA / P6-UI-012) was deleted on
+// 2026-08-07: model qualification became fully automatic (qualification.go's
+// 30s tick), so no certification waits on a human review any more and the
+// census counted a queue that does not exist. A caller-less HTTP endpoint is a
+// named smell in this repo, so the route went with the UI.
+//
+// WHY NOT A 404 ASSERTION: ControlMux mounts the SPA at "/" as a catch-all
+// (see TestControlMux_SPAFallbackRouteBehindGate), so an unregistered path is
+// answered by the SPA handler, never by a 404. "Unregistered" is therefore
+// proved the only way it can be — the request reaches the SPA catch-all
+// instead of a JSON handler:
+//
+//   - registered + gated, unauthenticated -> 401 JSON  (what it used to do)
+//   - registered + gated, authenticated   -> 200 census JSON
+//   - unregistered (now)                  -> the SPA handler's own output
+//
+// Re-adding the mux.Handle line in controlmux.go turns every check below RED.
+func TestControlMux_ReviewCensusRouteIsGone(t *testing.T) {
+	const path = "/api/control/v1/certifications/review"
+	mux := ControlMux(testAllowedHost, fakeSPA(), testControlDB(t), testKeyring(t))
+
+	// 1. Unauthenticated: a gated route answers 401. The SPA does not.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, newAuthRequest(t, http.MethodGet, path, nil))
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatalf("GET %s returned 401 — the route is still registered behind `gated`", path)
+	}
+
+	// 2. Authenticated: the only way to catch a re-registration that answers
+	// the owner rather than the gate.
+	cookie, csrfToken := setupOwnerWithCSRF(t, mux)
+	req := newAuthRequest(t, http.MethodGet, path, nil)
+	req.AddCookie(cookie)
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	for _, marker := range []string{"evaluated_reasons", "not_evaluated_reasons", "by_reason", "capability_not_certified"} {
+		if strings.Contains(body, marker) {
+			t.Fatalf("GET %s served a census payload (found %q) — the endpoint is back: %s", path, marker, body)
+		}
+	}
+
+	// 3. And it lands on the SPA catch-all, which is what "unregistered" means
+	// on this mux — not merely "returned something that isn't a census".
+	if !strings.Contains(body, "fake dashboard") {
+		t.Fatalf("GET %s status = %d, body = %q — want the SPA catch-all's output, i.e. no route registered for this path", path, rec.Code, body)
 	}
 }
 
