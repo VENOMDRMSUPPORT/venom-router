@@ -137,8 +137,9 @@ func (a *probeTransportAdapter) Available(providerID string) bool {
 }
 
 // probeWitnessOf classifies resp per this batch's rule (§3): a non-empty
-// ToolCalls is tool_call; content that parses as a JSON OBJECT is
-// structured_json; content naming the vision fixture's expected colour
+// ToolCalls is tool_call; content that parses as a JSON OBJECT AND CARRIES
+// THE FIXTURE'S OWN EXPECTED FIELD (intelligence.StructuredOutputFixtureField)
+// is structured_json; content naming the vision fixture's expected colour
 // (intelligence.VisionFixtureColour), case-insensitively, is vision_answer;
 // anything else is text_only. The vision check is necessarily a CONTENT
 // assertion, not a structural one — this transport has no way to tell a
@@ -146,13 +147,31 @@ func (a *probeTransportAdapter) Available(providerID string) bool {
 // is exactly why WitnessVisionAnswer was dead before the adapter was given
 // the fixture's expected answer to check against. All classification stays
 // here, in one place.
+//
+// Whole-branch review, FIX 7 (Important): the structured-output check used
+// to accept ANYTHING that unmarshalled into map[string]any with a nil
+// error — including the literal JSON null (json.Unmarshal("null", ...)
+// returns a nil error AND a nil map, never an error) and any object
+// entirely unrelated to what the fixture actually asked for. The fixture
+// (intelligence.CapabilityFixture, OperationStructuredOutput) ALSO sets
+// ResponseFormat: "json_object" on the same request — many providers
+// enforce valid-JSON-object output at the API level regardless of whether
+// the model understood the prompt at all — so the old check was
+// self-fulfilling: the witness was, in effect, guaranteed by the REQUEST
+// itself on any provider honouring that response-format directive, proving
+// nothing about whether the model actually followed a structured-output
+// instruction (04 §4.2). The witness now requires BOTH that the response
+// parses as a genuine (non-nil) JSON object AND that it carries the exact
+// field the fixture asked for.
 func probeWitnessOf(resp *execution.NormalizedResponse) intelligence.ProbeWitness {
 	if len(resp.ToolCalls) > 0 {
 		return intelligence.WitnessToolCall
 	}
 	var asObject map[string]any
-	if json.Unmarshal([]byte(resp.Message.Content), &asObject) == nil {
-		return intelligence.WitnessStructuredJSON
+	if err := json.Unmarshal([]byte(resp.Message.Content), &asObject); err == nil && asObject != nil {
+		if _, hasFixtureField := asObject[intelligence.StructuredOutputFixtureField]; hasFixtureField {
+			return intelligence.WitnessStructuredJSON
+		}
 	}
 	if strings.Contains(strings.ToLower(resp.Message.Content), strings.ToLower(intelligence.VisionFixtureColour)) {
 		return intelligence.WitnessVisionAnswer

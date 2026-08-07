@@ -40,6 +40,22 @@ const VisionFixtureColour = "magenta"
 // own decoder before being committed here (see task-1-report.md).
 const visionFixtureImageBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAGElEQVR4nGL5z/CfAQaYGJAAbg4gAAD//2U8AgmWdSNJAAAAAElFTkSuQmCC"
 
+// StructuredOutputFixtureField is the exact field name the structured-
+// output fixture's own prompt asks the model to return
+// (VisionFixtureColour's own pattern, applied here — whole-branch review,
+// FIX 7). It is exported so the probe adapter (internal/httpapi) can check
+// a structured-output response's PARSED content for this specific key,
+// case-sensitively, to classify intelligence.WitnessStructuredJSON — a
+// witness that stays honest only because the adapter checks for the exact
+// field this fixture asked for, not merely "the content parses as any JSON
+// object at all" (04 §4.2: without this, ResponseFormat: "json_object"
+// alone — many providers enforce that wire-level contract regardless of
+// whether the model understood the prompt — would make the witness
+// self-fulfilling: any object the provider's own json_object mode produces
+// would certify the capability, proving nothing about whether the MODEL
+// actually followed a structured-output instruction).
+const StructuredOutputFixtureField = "ok"
+
 // toolsFixtureAddTool is the tools fixture's declared function tool — a
 // minimal, real JSON Schema for a two-argument add function. A tools probe
 // that asks the model to "use the add tool if one is available" while
@@ -79,7 +95,7 @@ func CapabilityFixture(op models.Operation) (messages []ProbeMessage, tools []Pr
 		}, []ProbeTool{toolsFixtureAddTool}, "", capabilityProbeMaxOutputTokens, nil
 	case models.OperationStructuredOutput:
 		return []ProbeMessage{
-			{Role: "user", Content: `Return a JSON object with exactly one field "ok" set to true.`},
+			{Role: "user", Content: fmt.Sprintf(`Return a JSON object with exactly one field %q set to true.`, StructuredOutputFixtureField)},
 		}, nil, "json_object", capabilityProbeMaxOutputTokens, nil
 	case models.OperationVision:
 		return []ProbeMessage{

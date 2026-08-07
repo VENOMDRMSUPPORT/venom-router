@@ -226,12 +226,45 @@ func TestProbeWitnessOf_ClassifiesToolCallResponse(t *testing.T) {
 	}
 }
 
-// TestProbeWitnessOf_ClassifiesStructuredJSON proves a JSON-object
-// content response (no tool calls) classifies as WitnessStructuredJSON.
+// TestProbeWitnessOf_ClassifiesStructuredJSON proves a JSON-object content
+// response CARRYING THE FIXTURE'S OWN EXPECTED FIELD (no tool calls)
+// classifies as WitnessStructuredJSON.
 func TestProbeWitnessOf_ClassifiesStructuredJSON(t *testing.T) {
 	resp := &execution.NormalizedResponse{Message: execution.Message{Role: "assistant", Content: `{"ok":true}`}}
 	if got := probeWitnessOf(resp); got != intelligence.WitnessStructuredJSON {
 		t.Fatalf("probeWitnessOf() = %q, want %q", got, intelligence.WitnessStructuredJSON)
+	}
+}
+
+// TestProbeWitnessOf_NullNeverClassifiesAsStructuredJSON is whole-branch
+// review FIX 7's own test: json.Unmarshal of the literal string "null"
+// into a map[string]any succeeds with a nil error AND a nil map — before
+// this fix, probeWitnessOf's check was bare "did Unmarshal return nil",
+// which "null" satisfies just as well as a genuine JSON object, silently
+// certifying structured_output from a response that carries no object at
+// all.
+func TestProbeWitnessOf_NullNeverClassifiesAsStructuredJSON(t *testing.T) {
+	resp := &execution.NormalizedResponse{Message: execution.Message{Role: "assistant", Content: "null"}}
+	if got := probeWitnessOf(resp); got == intelligence.WitnessStructuredJSON {
+		t.Fatalf("probeWitnessOf() = %q, want NOT %q — a bare JSON null is not a structured-output witness", got, intelligence.WitnessStructuredJSON)
+	}
+}
+
+// TestProbeWitnessOf_ObjectWithoutTheFixtureFieldNeverClassifiesAsStructuredJSON
+// is FIX 7's central self-fulfilling-witness test (04 §4.2): the fixture's
+// own prompt (intelligence.CapabilityFixture, OperationStructuredOutput)
+// asks specifically for a field named intelligence.StructuredOutputFixtureField
+// ("ok"). ResponseFormat: "json_object" is ALSO set on that same fixture —
+// many providers enforce valid-JSON-object output at the API level
+// regardless of whether the model understood the prompt at all — so before
+// this fix, ANY well-formed JSON object (unrelated to what was actually
+// asked) satisfied "did Unmarshal return nil" and certified the capability.
+// A response that parses as an object but never carries the field the
+// fixture asked for must NOT classify as WitnessStructuredJSON.
+func TestProbeWitnessOf_ObjectWithoutTheFixtureFieldNeverClassifiesAsStructuredJSON(t *testing.T) {
+	resp := &execution.NormalizedResponse{Message: execution.Message{Role: "assistant", Content: `{"unrelated":"value"}`}}
+	if got := probeWitnessOf(resp); got == intelligence.WitnessStructuredJSON {
+		t.Fatalf("probeWitnessOf() = %q, want NOT %q — the response never carries the %q field the fixture actually asked for", got, intelligence.WitnessStructuredJSON, intelligence.StructuredOutputFixtureField)
 	}
 }
 
