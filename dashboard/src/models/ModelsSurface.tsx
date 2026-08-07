@@ -337,11 +337,6 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
     };
   }, [reloadToken, onSessionExpired]);
 
-  // Plain alias — the load effect above is the only writer of `groups`. Kept
-  // as its own name so the render below reads the same as it did when this
-  // filtered to the review backlog.
-  const visibleGroups = groups;
-
   // An error is its OWN state. Falling through to the empty state would tell the
   // owner "you have no models" when the truth is "we could not ask".
   if (loadError) {
@@ -357,20 +352,20 @@ export default function ModelsSurface(props: ModelsSurfaceProps) {
     );
   }
 
-  if (visibleGroups === null) {
+  if (groups === null) {
     return <Spinner label="Loading live models…" />;
   }
 
   return (
     <div className="flex flex-col gap-4">
-      {visibleGroups.length === 0 ? (
+      {groups.length === 0 ? (
         <EmptyState
           icon="box"
           title="No live models"
           description="Models appear automatically when a healthy connected provider account is available."
         />
       ) : (
-        visibleGroups.map((g) => {
+        groups.map((g) => {
           const isOpen = expanded[g.model_id] ?? false;
           const firstOffering = g.offerings[0];
           const ctx = groupContext(g);
