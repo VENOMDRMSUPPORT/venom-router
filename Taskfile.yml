@@ -45,10 +45,17 @@ tasks:
       GUI-subsystem process — PowerShell users who need blocking should use
       `Start-Process -Wait` or a console build via plain `go build`. Plain
       `go build ./cmd/venom` (dev/CI) stays console-subsystem — CI is
-      untouched.
+      untouched. The GUI subsystem is then VERIFIED, not assumed: the exe's PE
+      Subsystem field is read back and must be 2, because dist/ is .gitignore'd
+      and CI can therefore never catch a console build that reached dist/ (it
+      did, on 2026-08-06). The verifier's own header arithmetic is unit-tested
+      by the `node --test` step right before it, and it also sweeps the
+      linker's dist/*.exe~ leftovers.
     cmds:
       - task: dashboard:build-embed
       - go build -ldflags "-H windowsgui" -o dist/venom.exe ./cmd/venom
+      - node --test '.github/scripts/*.test.mjs'
+      - node .github/scripts/verify-bundle.mjs
       - 'echo "built dist/venom.exe — double-click it to start Venom in the tray"'
 
   lint:
