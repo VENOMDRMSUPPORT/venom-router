@@ -17,12 +17,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/intelligence"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/models"
-	"github.com/VENOMDRMSUPPORT/venom-router/internal/observability"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/quota"
 	"github.com/VENOMDRMSUPPORT/venom-router/internal/storage"
 )
@@ -130,6 +131,47 @@ func withContextProbeCap(n int) qualificationTickOption {
 	return func(tick *qualificationTick) { tick.contextProbeCap = n }
 }
 
+// withTickBudget overrides the per-phase deadline Run() applies to each of
+// its three phases (whole-branch review, FIX 6) — mirrors
+// usabilityTick.budget's own test-injection field exactly (see
+// qualificationTick.tickBudget's own doc comment).
+func withTickBudget(d time.Duration) qualificationTickOption {
+	return func(tick *qualificationTick) { tick.tickBudget = d }
+}
+
+// withSettings wires tick.settings to a REAL operationalSettings resolver
+// over db — the same production seam BuildQualificationTick wires
+// (whole-branch review, FIX 4) — so a test can prove the owner-settings
+// gates (enrichment_enabled, probe_expensive_enabled, and the probe
+// concurrency/window caps) actually reach this tick, rather than merely
+// asserting on the probeGuardPolicy/contextProbeGuardPolicy FIELDS this
+// file's other tests set directly. Every other test in this file leaves
+// tick.settings nil (buildQualificationTickForTest's own default), so
+// wiring it is the deliberate, explicit signal that a test means to
+// exercise the real gate.
+func withSettings(db *storage.DB) qualificationTickOption {
+	return func(tick *qualificationTick) {
+		tick.settings = newOperationalSettings(storage.NewSettingsRepo(db))
+	}
+}
+
+// putOperationalSettings writes the owner_settings row's enrichment and
+// probe-expensive toggles directly through the REAL storage.SettingsRepo
+// write path (PutSettings) — never a raw INSERT — so a FIX 4 test's fixture
+// can never encode a shape production itself does not produce.
+func putOperationalSettings(t *testing.T, db *storage.DB, enrichmentEnabled, probeExpensiveEnabled bool) {
+	t.Helper()
+	repo := storage.NewSettingsRepo(db)
+	if err := repo.PutSettings(context.Background(), storage.SettingsUpdate{
+		Theme: storage.DefaultTheme, Density: storage.DefaultDensity,
+		Accent: storage.DefaultAccent, RadiusPx: storage.DefaultRadiusPx, SpacingScale: storage.DefaultSpacingScale,
+		EnrichmentEnabled:     &enrichmentEnabled,
+		ProbeExpensiveEnabled: &probeExpensiveEnabled,
+	}, time.Now()); err != nil {
+		t.Fatalf("PutSettings: %v", err)
+	}
+}
+
 // fakeAlwaysAdmitReserver is the one non-storage-backed capability-probe
 // dependency this file's tests use: a real reservation
 // (storage.QuotaReservationRepo.Reserve) fails closed with
@@ -143,15 +185,31 @@ func (fakeAlwaysAdmitReserver) ReserveProbe(_ context.Context, _, requestID, att
 	return "res-" + requestID + "-" + attemptID, nil
 }
 
-// buildQualificationTickForTest builds a qualificationTick directly
-// (bypassing BuildQualificationTick's production credential/dispatcher
-// composition) so a test can inject a fake benchmarkStreamFn (withStream)
-// and/or a fake capability-probe transport (withCapabilityProbeResult) and
-// drive real-clock freshness/certification logic without any network I/O —
-// the same shape as benchmark_test.go injecting a fake stream into
-// NewBenchmarkHandler. Every capability-probe dependency besides the
-// transport and the reservation is wired over the REAL repos against db,
-// exactly as BuildQualificationTick wires them in production.
+// buildQualificationTickForTest builds a qualificationTick by calling
+// buildQualificationTick — the REAL production composition root
+// (qualification.go) — and overriding ONLY the three seams that would
+// otherwise perform real network I/O or need quota-window fixtures no test
+// in this file sets up: the benchmark stream, the capability/context probe
+// transport, and the quota reserver. A test injects a fake benchmarkStreamFn
+// (withStream) and/or a fake capability-probe transport
+// (withCapabilityProbeResult) and drives real-clock freshness/certification
+// logic without any network I/O — the same shape as benchmark_test.go
+// injecting a fake stream into NewBenchmarkHandler.
+//
+// Whole-branch review, FIX 1 (Critical): this function used to hand-build
+// the tick struct field by field, independently of buildQualificationTick.
+// The two constructions had drifted — four production field assignments
+// (contextProbeGuardPolicy.ExpensiveProbesEnabled — since replaced by FIX
+// 4b's settings-based resolution, see below —, contextProbeCap,
+// tick.probeContext, and the capability-probe cooldown) had no test
+// coverage at all, because this function never went anywhere near the code
+// that sets them. Routing through buildQualificationTick itself means every
+// field this file's tests do not explicitly override (via the opts below)
+// is EXACTLY what production sets it to — deleting contextProbeCap,
+// tick.probeContext, or the capability-probe cooldown assignment in
+// qualification.go now fails a test in this file instead of leaving the
+// whole suite green (manually verified, each in isolation, when this fix
+// landed — see the final fix report's FIX 1 section for the traces).
 //
 // It returns the raw *qualificationTick (fix round 2, item 2): most tests
 // only need the bound tick.Run value newQualificationTickForTest below
@@ -161,44 +219,42 @@ func (fakeAlwaysAdmitReserver) ReserveProbe(_ context.Context, _, requestID, att
 func buildQualificationTickForTest(t *testing.T, db *storage.DB, opts ...qualificationTickOption) *qualificationTick {
 	t.Helper()
 
-	certRepo := storage.NewCertificationRepo(db, nil)
-	certAuditor := newCertificationAuditorAdapter(newAuditEmitter(db, nil))
-	driver, err := intelligence.NewCertificationDriver(certRepo, certAuditor, intelligence.DefaultProbeRetryBudget, nil)
+	kr := testKeyring(t)
+	tick, err := buildQualificationTick(db, kr, time.Now)
 	if err != nil {
-		t.Fatalf("NewCertificationDriver: %v", err)
+		t.Fatalf("buildQualificationTick: %v", err)
 	}
 
-	// contextProbeGuardPolicy defaults to ExpensiveProbesEnabled=true —
-	// mirroring BuildQualificationTick's own production wiring exactly, so a
-	// test exercising the REAL runContextProbe path (rather than replacing
+	// Override ONLY the network-touching seams — never any of the safety
+	// wiring (cooldowns, caps, the probeContext assignment) this fix
+	// exists to keep test-visible.
+	tick.stream = nil
+	tick.probeTransport = nil
+	tick.probeReserver = fakeAlwaysAdmitReserver{}
+	// FIX 4 (whole-branch review): t.settings is production's REAL
+	// owner-settings resolver (buildQualificationTick wires it to the
+	// actual storage.SettingsRepo over this same db). Nil it here for the
+	// SAME reason stream/probeTransport/probeReserver are nil'd above —
+	// every EXISTING test in this file drives probeGuardPolicy/
+	// contextProbeGuardPolicy directly (via withProbeGuardPolicy/
+	// withContextProbeGuardPolicy, or this function's own convenience
+	// default just below) and none of them seed a settings row, so a
+	// live resolver would silently override every one of those tests back
+	// to storage.DefaultSettingsRow()'s off-by-default values. A test that
+	// means to prove the settings gate itself wires this seam explicitly
+	// (withSettings).
+	tick.settings = nil
+	// Test-only convenience default (does NOT mirror production — see
+	// t.settings' own doc comment above for how production actually
+	// decides this value now): ExpensiveProbesEnabled=true, so a test
+	// exercising the REAL runContextProbe path (rather than replacing
 	// probeContext wholesale via withContextProbe) gets this task's own
-	// narrow opt-in by default. withContextProbeGuardPolicy overrides it to
-	// prove the negative case.
-	contextProbeGuardPolicy := intelligence.DefaultProbeSafetyPolicy()
-	contextProbeGuardPolicy.ExpensiveProbesEnabled = true
+	// narrow opt-in without needing to seed a settings row just to keep
+	// testing context-probe SELECTION, which is what most of those tests
+	// are actually about. withContextProbeGuardPolicy overrides it to
+	// prove the negative case; withSettings proves the real gate.
+	tick.contextProbeGuardPolicy.ExpensiveProbesEnabled = true
 
-	tick := &qualificationTick{
-		catalog: storage.NewCatalogRepo(db),
-		runs:    storage.NewBenchmarkRunRepo(db, nil),
-		newID:   newOAuthTransactionID,
-		now:     time.Now,
-		log:     observability.Default(),
-
-		db: db,
-		probeRuns: storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown).
-			WithCapabilityProbeCooldown(qualificationCapabilityProbeCooldown),
-		probeReserver:    fakeAlwaysAdmitReserver{},
-		probeGuardPolicy: intelligence.DefaultProbeSafetyPolicy(),
-		driver:           driver,
-
-		discovery:               storage.NewDiscoveryRepo(db, newOAuthTransactionID),
-		contextProbeGuardPolicy: contextProbeGuardPolicy,
-		contextProbeCap:         qualificationContextProbeCap,
-	}
-	// Task 4: see BuildQualificationTick's own identical assignment for why
-	// this is a bound method value assigned after construction rather than
-	// inline in the struct literal above.
-	tick.probeContext = tick.runContextProbe
 	for _, opt := range opts {
 		opt(tick)
 	}
@@ -514,7 +570,20 @@ func TestQualificationTick_NeverFabricatesARatingFromAPartialRun(t *testing.T) {
 // qualificationPerRoundCap are actually streamed in one Run call — a fleet of
 // many never-measured models must not stampede one provider in a single
 // tick.
+//
+// wantSamples is a LITERAL (whole-branch review, MINOR — the same
+// tautology TestQualificationTick_CapsHowManyContextProbesOneRoundRuns's
+// own doc comment already names and fixes for the CONTEXT-probe cap, never
+// actually applied here): comparing production's own output against
+// production's own constants (qualificationPerRoundCap *
+// benchmarkDefaultRequests) can only ever catch the cap slice being
+// removed entirely, never either constant being changed to a different
+// (still enforced) wrong value. 15 = 5 (qualificationPerRoundCap's actual
+// value as of this test) * 3 (benchmarkDefaultRequests's actual value as
+// of this test), hand-pinned here independently.
 func TestQualificationTick_CapsHowManyModelsOneRoundMeasures(t *testing.T) {
+	const wantSamples = 15
+
 	db := testControlDB(t)
 	total := qualificationPerRoundCap + 3
 	for i := 0; i < total; i++ {
@@ -533,10 +602,8 @@ func TestQualificationTick_CapsHowManyModelsOneRoundMeasures(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	wantSamples := qualificationPerRoundCap * benchmarkDefaultRequests
 	if streamed != wantSamples {
-		t.Fatalf("streamed %d times, want %d (%d models * %d requests) — the per-round cap must bound the fan-out",
-			streamed, wantSamples, qualificationPerRoundCap, benchmarkDefaultRequests)
+		t.Fatalf("streamed %d times, want %d — the per-round cap must bound the fan-out", streamed, wantSamples)
 	}
 }
 
@@ -572,8 +639,13 @@ func TestQualificationTick_HandlesAFleetLargerThanOnePage(t *testing.T) {
 	}
 
 	// The per-round cap still applies across a multi-page fleet — pagination
-	// must not let the cap silently widen.
-	wantSamples := qualificationPerRoundCap * benchmarkDefaultRequests
+	// must not let the cap silently widen. wantSamples is a LITERAL
+	// (whole-branch review, MINOR — see TestQualificationTick_
+	// CapsHowManyModelsOneRoundMeasures' own identical fix's doc comment
+	// for why comparing production's output against production's own
+	// constants is a tautology): 15 = qualificationPerRoundCap (5) *
+	// benchmarkDefaultRequests (3), hand-pinned independently.
+	const wantSamples = 15
 	if streamed != wantSamples {
 		t.Fatalf("streamed %d times, want %d — the per-round cap must hold across a fleet spanning multiple ListOfferings pages", streamed, wantSamples)
 	}
@@ -594,6 +666,46 @@ func TestBuildQualificationTick_ConstructsAWorkingTick(t *testing.T) {
 	}
 	if err := run(context.Background()); err != nil {
 		t.Fatalf("run() on an empty fleet: %v", err)
+	}
+}
+
+// TestBuildQualificationTick_HonoursTheRealEnrichmentGate strengthens the
+// composition-root proof above (whole-branch review, FIX 4a): the test
+// above runs against an EMPTY fleet and asserts only err == nil — deleting
+// buildQualificationTick's settings wiring entirely would leave that test
+// green, because an empty fleet never reaches the gate's own effect. This
+// test seeds one live, due model through the REAL production composition
+// (BuildQualificationTick itself, never buildQualificationTickForTest's
+// test-only overrides) and proves that, on a fresh install
+// (enrichment_enabled = false, the untouched default), NO benchmark_runs
+// row is ever inserted for it — the gate must be reachable from
+// BuildQualificationTick's own wiring, not merely provable through the
+// test-only seam the other tests in this file drive.
+func TestBuildQualificationTick_HonoursTheRealEnrichmentGate(t *testing.T) {
+	db := testControlDB(t)
+	kr := testKeyring(t)
+	seedLiveChatOffering(t, db, "acct-1", "prov-1", "m-1")
+
+	run, err := BuildQualificationTick(db, kr, nil)
+	if err != nil {
+		t.Fatalf("BuildQualificationTick: %v", err)
+	}
+	if err := run(context.Background()); err != nil {
+		t.Fatalf("run(): %v", err)
+	}
+
+	// canonicalModelIDForProviderModel: "m-1" above is the PROVIDER's own
+	// model id (seedLiveChatOffering's own naming), never the internal
+	// canonical models.id benchmark_runs.model_id actually stores — using
+	// the wrong id here would make this assertion pass unconditionally,
+	// regardless of whether the gate fired.
+	modelID := canonicalModelIDForProviderModel(t, db, "m-1")
+	var n int
+	if err := db.Conn().QueryRow(`SELECT COUNT(*) FROM benchmark_runs WHERE model_id = ?`, modelID).Scan(&n); err != nil {
+		t.Fatalf("count benchmark_runs: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("benchmark_runs rows for %q = %d, want 0 — enrichment_enabled is false on a fresh install, and BuildQualificationTick's own real composition must honour that, not just what a test can override", modelID, n)
 	}
 }
 
@@ -877,6 +989,174 @@ func TestQualificationTick_DefinitiveNegativeSuspendsAndStopsTheTreadmill(t *tes
 	}
 	if got := transport.callCount(); got != 1 {
 		t.Fatalf("transport calls after round 2 = %d, want STILL 1 — a suspended row must never be re-selected; the treadmill must be terminated, not merely slowed by the cooldown", got)
+	}
+}
+
+// TestQualificationTick_SuspendedCapabilityNeverReselectedEvenPastTheCooldown
+// isolates dueCapabilityProbes' own `c.status = 'certified'` filter from
+// qualificationCapabilityProbeCooldown (whole-branch review, FIX 3's own
+// pinning requirement). The treadmill test above runs its second round on
+// the real clock, mere milliseconds after the first — well within the
+// 1-hour capability-probe cooldown — so it cannot tell the two mechanisms
+// apart: deleting the status filter from dueCapabilityProbes' query
+// entirely still leaves that test green, because the cooldown alone
+// happens to block the second attempt too. This test advances the tick's
+// own clock past the cooldown before the second round, so ONLY the status
+// filter can be what stops reselection.
+func TestQualificationTick_SuspendedCapabilityNeverReselectedEvenPastTheCooldown(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	now := time.Now()
+	firstTransport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 400, ProviderCode: "tool_use_not_supported"}}
+	firstTick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(firstTransport), withNow(func() time.Time { return now }))
+	if err := firstTick(context.Background()); err != nil {
+		t.Fatalf("round 1: %v", err)
+	}
+	if got := firstTransport.callCount(); got != 1 {
+		t.Fatalf("transport calls after round 1 = %d, want 1", got)
+	}
+	if state, _ := certificationOf(t, db, "acct-1", "m-1", "tools"); state != "suspended" {
+		t.Fatalf("setup: certification state = %q, want \"suspended\"", state)
+	}
+
+	later := now.Add(2 * qualificationCapabilityProbeCooldown) // past the cooldown too
+	secondTransport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 400, ProviderCode: "tool_use_not_supported"}}
+	secondTick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(secondTransport), withNow(func() time.Time { return later }))
+	if err := secondTick(context.Background()); err != nil {
+		t.Fatalf("round 2: %v", err)
+	}
+	if got := secondTransport.callCount(); got != 0 {
+		t.Fatalf("transport calls after round 2 (run PAST the cooldown window) = %d, want 0 — dueCapabilityProbes' own `c.status = 'certified'` filter, not merely the cooldown, must be what keeps a suspended row unreachable", got)
+	}
+}
+
+// TestQualificationTick_DefinitiveNegativeSurvivesReDrainAndDeclaredRecertification
+// is the whole-branch review's FIX 3 (Critical): the certified -> suspended
+// move above does NOT, by itself, stop the certification from being
+// silently reversed within the very same 30-second scheduler round.
+// Ticks run sequentially in registration order (boot.go): probe_drain runs
+// BEFORE model_qualification's own next round, and its ReviewDrainer
+// ReProbes ANY suspended/expired/observed row (edge 8: suspended ->
+// probing, resetting Truth to unknown) with no memory of WHY it was
+// suspended. model_usability's declared-capability step then runs
+// ListNonChatOperationsToCertify, which selects any non-chat row merely
+// sitting in `probing` whose operation is declared in the offering's
+// capabilities_json — a purely static fact — and certifyDeclaredCapabilities
+// blindly re-certifies it supported, with a fresh certified_at, from
+// nothing but that stale declaration. Every candidate a definitive-negative
+// probe can ever suspend is, by construction, already in capabilities_json
+// (that is how it became certified/supported in the first place), so
+// re-certification was GUARANTEED, not incidental — laundering the exact
+// evidence the suspend above exists to act on.
+//
+// This test drives the REAL production paths for both other ticks — never
+// a hand-rolled substitute — exactly as boot.go composes them:
+// BuildSchedulerWorkers.DrainTick (the same call boot.go's "probe_drain"
+// tick makes) for the drain, and the same
+// ListNonChatOperationsToCertify + certifyDeclaredCapabilities pair
+// usability_assembler.go's verifier calls for the declared-capability step.
+func TestQualificationTick_DefinitiveNegativeSurvivesReDrainAndDeclaredRecertification(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	// Round 1 (model_qualification): a definitive semantic rejection
+	// suspends the capability — unchanged behaviour from fix round 2.
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 400, ProviderCode: "tool_use_not_supported"}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("qualification tick: %v", err)
+	}
+	if state, truth := certificationOf(t, db, "acct-1", "m-1", "tools"); state != "suspended" || truth != "supported" {
+		t.Fatalf("setup: certification = (%q, %q), want (suspended, supported)", state, truth)
+	}
+
+	// probe_drain: the REAL ReviewDrainer, built exactly as boot.go builds
+	// it. A suspended row's own ReProbe edge (8) is a LEGITIMATE thing for
+	// the drain to keep doing — this must still happen.
+	_, probeWorkers, err := BuildSchedulerWorkers(db, "test-owner", time.Now, newOAuthTransactionID)
+	if err != nil {
+		t.Fatalf("BuildSchedulerWorkers: %v", err)
+	}
+	if _, err := probeWorkers.DrainTick(context.Background()); err != nil {
+		t.Fatalf("DrainTick: %v", err)
+	}
+	if state, truth := certificationOf(t, db, "acct-1", "m-1", "tools"); state != "probing" || truth != "unknown" {
+		t.Fatalf("after probe_drain, certification = (%q, %q), want (probing, unknown) — the drain's own re-probe edge is legitimate and must still run", state, truth)
+	}
+
+	// model_usability's declared-capability step: the REAL functions, called
+	// exactly as usability_assembler.go's verifier calls them.
+	certRepo := storage.NewCertificationRepo(db, nil)
+	certAuditor := newCertificationAuditorAdapter(newAuditEmitter(db, nil))
+	driver, err := intelligence.NewCertificationDriver(certRepo, certAuditor, intelligence.DefaultProbeRetryBudget, nil)
+	if err != nil {
+		t.Fatalf("NewCertificationDriver: %v", err)
+	}
+	catalog := storage.NewCatalogRepo(db)
+	declaredRows, err := catalog.ListNonChatOperationsToCertify(context.Background(), "acct-1")
+	if err != nil {
+		t.Fatalf("ListNonChatOperationsToCertify: %v", err)
+	}
+	caps := make([]declaredCapability, len(declaredRows))
+	for i, r := range declaredRows {
+		caps[i] = declaredCapability{OfferingOperationID: r.OfferingOperationID, Operation: r.Operation}
+	}
+	certified := certifyDeclaredCapabilities(context.Background(), driver, caps)
+
+	if certified != 0 {
+		t.Fatalf("certifyDeclaredCapabilities certified %d rows, want 0 — a capability a probe just DEFINITIVELY disproved must never be blindly re-certified from its declaration alone", certified)
+	}
+	if state, truth := certificationOf(t, db, "acct-1", "m-1", "tools"); state != "probing" || truth != "unknown" {
+		t.Fatalf("certification after the declared-capability pass = (%q, %q), want STILL (probing, unknown) — the definitive negative must survive both probe_drain and declared re-certification within the same round", state, truth)
+	}
+}
+
+// TestQualificationTick_NonContradictionSuspensionStillReCertifiesFromDeclaration
+// is FIX 3's own required negative-control: the fix above must not break
+// the drain's LEGITIMATE job of resurrecting a row suspended for a reason
+// that says nothing about whether the capability is actually supported
+// (here, a credential rejection) — once the drain moves it back to
+// probing, the declared-capability step must still be able to re-certify
+// it from declaration exactly as before this fix.
+func TestQualificationTick_NonContradictionSuspensionStillReCertifiesFromDeclaration(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	certRepo := storage.NewCertificationRepo(db, nil)
+	certAuditor := newCertificationAuditorAdapter(newAuditEmitter(db, nil))
+	driver, err := intelligence.NewCertificationDriver(certRepo, certAuditor, intelligence.DefaultProbeRetryBudget, nil)
+	if err != nil {
+		t.Fatalf("NewCertificationDriver: %v", err)
+	}
+	opID := offeringOperationIDFor(t, db, "acct-1", "m-1", "tools")
+	if _, err := driver.Suspend(context.Background(), opID, intelligence.SuspensionCredentialBlocked); err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+
+	_, probeWorkers, err := BuildSchedulerWorkers(db, "test-owner", time.Now, newOAuthTransactionID)
+	if err != nil {
+		t.Fatalf("BuildSchedulerWorkers: %v", err)
+	}
+	if _, err := probeWorkers.DrainTick(context.Background()); err != nil {
+		t.Fatalf("DrainTick: %v", err)
+	}
+
+	catalog := storage.NewCatalogRepo(db)
+	declaredRows, err := catalog.ListNonChatOperationsToCertify(context.Background(), "acct-1")
+	if err != nil {
+		t.Fatalf("ListNonChatOperationsToCertify: %v", err)
+	}
+	caps := make([]declaredCapability, len(declaredRows))
+	for i, r := range declaredRows {
+		caps[i] = declaredCapability{OfferingOperationID: r.OfferingOperationID, Operation: r.Operation}
+	}
+	certified := certifyDeclaredCapabilities(context.Background(), driver, caps)
+	if certified != 1 {
+		t.Fatalf("certifyDeclaredCapabilities certified %d rows, want 1 — a credential-related suspension (which says nothing about whether the capability is actually supported) must still be re-certifiable from declaration once the drain moves it back to probing", certified)
+	}
+	if state, truth := certificationOf(t, db, "acct-1", "m-1", "tools"); state != "certified" || truth != "supported" {
+		t.Fatalf("certification = (%q, %q), want (certified, supported)", state, truth)
 	}
 }
 
@@ -1230,7 +1510,18 @@ func TestQualificationTick_NeverProbesAWithdrawnOfferingsCapability(t *testing.T
 // qualificationCapabilityProbeCap, only that many are actually attempted in
 // one Run call. Mutation this pins: replacing the capped slice with the
 // full due list.
+//
+// wantCalls is a LITERAL (whole-branch review, MINOR — the SAME tautology
+// TestQualificationTick_CapsHowManyContextProbesOneRoundRuns's own doc
+// comment already names for the context-probe cap, never actually applied
+// here): comparing production's own output against production's own
+// constant can only ever catch the cap slice being removed entirely, never
+// the constant being changed to a different (still enforced) wrong value.
+// 5 is qualificationCapabilityProbeCap's actual value as of this test,
+// hand-pinned here independently.
 func TestQualificationTick_CapsHowManyCapabilityProbesOneRoundRuns(t *testing.T) {
+	const wantCalls = 5
+
 	db := testControlDB(t)
 	total := qualificationCapabilityProbeCap + 3
 	for i := 0; i < total; i++ {
@@ -1244,8 +1535,84 @@ func TestQualificationTick_CapsHowManyCapabilityProbesOneRoundRuns(t *testing.T)
 		t.Fatalf("tick: %v", err)
 	}
 
-	if got := transport.callCount(); got != qualificationCapabilityProbeCap {
-		t.Fatalf("capability probe transport calls = %d, want %d — the per-round cap must bound the fan-out", got, qualificationCapabilityProbeCap)
+	if got := transport.callCount(); got != wantCalls {
+		t.Fatalf("capability probe transport calls = %d, want %d — the per-round cap must bound the fan-out", got, wantCalls)
+	}
+}
+
+// TestQualificationTick_CoolingDownCapabilityNeverConsumesTheRoundCap is
+// FIX 5 (Important, whole-branch review): dueCapabilityProbes' selection
+// (oo.id ASC, shrinking only on SUCCESS) used to let a candidate that is
+// currently COOLING DOWN — an attempt was already recorded for it within
+// qualificationCapabilityProbeCooldown — still occupy one of
+// qualificationCapabilityProbeCap's slots, even though probeOneCapability
+// was guaranteed to refuse it a moment later (ProbeGuard.
+// WithCapabilityCooldown). Sorting first among the due candidates, it
+// would consume the SAME slot every round, forever, crowding out
+// candidates further down the list that could actually be attempted. This
+// test seeds cap+1 candidates, marks the one that sorts FIRST as already
+// cooling down, and proves the round spends its cap on the OTHER
+// candidates instead of wasting a slot re-selecting the blocked one.
+func TestQualificationTick_CoolingDownCapabilityNeverConsumesTheRoundCap(t *testing.T) {
+	// wantCalls is a LITERAL, never qualificationCapabilityProbeCap
+	// re-read (whole-branch review, MINOR — the same tautology named
+	// elsewhere in this file): comparing production's own output against
+	// production's own constant can only ever catch the cap slice being
+	// removed entirely. 5 is the constant's actual value as of this test,
+	// hand-pinned independently.
+	const wantCalls = 5
+
+	db := testControlDB(t)
+	total := qualificationCapabilityProbeCap + 1
+	for i := 0; i < total; i++ {
+		suffix := fmt.Sprintf("%03d", i)
+		seedCertifiedDeclaredCapability(t, db, "acct-cd-"+suffix, "prov-cd-"+suffix, "m-cd-"+suffix, "tools")
+	}
+
+	rows, err := db.Conn().Query(`SELECT id, account_id, provider_model_id FROM offering_operations WHERE operation = 'tools' ORDER BY id ASC`)
+	if err != nil {
+		t.Fatalf("query offering_operation ids: %v", err)
+	}
+	type opRow struct{ id, accountID, providerModelID string }
+	var opRows []opRow
+	for rows.Next() {
+		var r opRow
+		if err := rows.Scan(&r.id, &r.accountID, &r.providerModelID); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		opRows = append(opRows, r)
+	}
+	_ = rows.Close()
+	if len(opRows) != total {
+		t.Fatalf("setup: seeded %d offering-operations, found %d", total, len(opRows))
+	}
+	coolingDown := opRows[0] // dueCapabilityProbes' own ORDER BY oo.id ASC
+
+	// Seed a genuine (non-succeeded) attempt via the REAL ProbeRunRepo.Start/
+	// Finish write path — never a raw INSERT — moments ago, well inside
+	// qualificationCapabilityProbeCooldown.
+	probeRuns := storage.NewProbeRunRepo(db, nil, intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown)
+	if err := probeRuns.Start(context.Background(), storage.ProbeRunParams{
+		ID: "run-cooling-down", OfferingOperationID: coolingDown.id, AccountID: coolingDown.accountID,
+		ProviderID: "prov-cd-000", Operation: "tools", Class: intelligence.ProbeStandard, StartedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed cooling-down probe run: %v", err)
+	}
+	if err := probeRuns.Finish(context.Background(), "run-cooling-down", intelligence.ProbeInconclusive, time.Now()); err != nil {
+		t.Fatalf("finish cooling-down probe run: %v", err)
+	}
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if hasSucceededProbeRun(t, db, coolingDown.accountID, coolingDown.providerModelID, "tools") {
+		t.Fatal("the cooling-down candidate was probed this round, want it excluded from selection entirely")
+	}
+	if got := transport.callCount(); got != wantCalls {
+		t.Fatalf("transport calls = %d, want %d — the cap must be spent on candidates that can actually be attempted this round, not wasted re-selecting the cooling-down one", got, wantCalls)
 	}
 }
 
@@ -1520,10 +1887,16 @@ func TestQualificationTick_NonResolvingContextProbeIsNotRetriedNextRound(t *test
 // qualificationContextProbeCap re-read: comparing production's own output
 // against production's own constant can only ever catch the cap SLICE being
 // removed entirely, never the constant being changed to a different (still
-// enforced) wrong value — the identical tautology task-2's fix round 1
-// found and fixed for qualificationPerRoundCap's own scale guard. 1 is
-// qualificationContextProbeCap's actual value as of this test, hand-pinned
-// here independently.
+// enforced) wrong value. CORRECTION (whole-branch review): this comment
+// used to claim task-2's fix round 1 "found and fixed" the identical
+// tautology for qualificationPerRoundCap's own per-round-cap test — that
+// claim was FALSE. Task-2's fix round 1 only fixed a DIFFERENT tautology
+// (the 0..1-vs-0-100 rating SCALE guard); TestQualificationTick_
+// CapsHowManyModelsOneRoundMeasures and TestQualificationTick_
+// HandlesAFleetLargerThanOnePage both still compared production's output
+// against qualificationPerRoundCap * benchmarkDefaultRequests directly
+// until this fix hand-pinned them too. 1 is qualificationContextProbeCap's
+// actual value as of this test, hand-pinned here independently.
 func TestQualificationTick_CapsHowManyContextProbesOneRoundRuns(t *testing.T) {
 	const wantCalls = 1
 
@@ -1657,5 +2030,269 @@ func TestQualificationTick_ContextProbeExecutionNeverSurfacesAsTheChatCertificat
 
 	if got := certificationProbeExecutionOf(t, db, chatOpID); got != nil {
 		t.Fatalf("GET /offerings/%s/certification probe_execution = %q, want nil — a context probe's own execution must never surface as the CHAT certification's probe result", chatOpID, *got)
+	}
+}
+
+// --- Whole-branch review, FIX 4: the two owner-consent gates ---------------
+
+// TestQualificationTick_EnrichmentDisabledSkipsThePerformanceScoringPass is
+// FIX 4a's own test: enrichment_enabled is FALSE on a fresh install
+// (storage.DefaultSettingsRow), and ServeBenchmark (benchmark.go) already
+// refuses to run real inference unless the owner has explicitly flipped it
+// on. Before this fix, this tick never consulted settings at all — a fresh
+// install would start spending the owner's real inference quota through the
+// identical dispatch path 30 seconds after boot, with no button and no
+// setting able to stop it. withSettings wires the REAL storage.SettingsRepo
+// (never a fake); the row is left untouched (the fresh-install default), so
+// stream must NEVER be called.
+func TestQualificationTick_EnrichmentDisabledSkipsThePerformanceScoringPass(t *testing.T) {
+	db := testControlDB(t)
+	seedLiveChatOffering(t, db, "acct-1", "prov-1", "m-1")
+
+	calls := 0
+	stream := func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
+		calls++
+		return benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}, nil
+	}
+	tick := newQualificationTickForTest(t, db, withStream(stream), withSettings(db))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if calls != 0 {
+		t.Fatalf("stream was called %d times, want 0 — enrichment_enabled is false on a fresh install and the performance-scoring pass must not spend real inference quota without it", calls)
+	}
+	if got := qualityRatingOf(t, db, "m-1"); got != nil {
+		t.Fatalf("models.quality_rating = %v, want nil — nothing was measured", got)
+	}
+}
+
+// TestQualificationTick_EnrichmentEnabledStillRunsThePerformanceScoringPass
+// is the positive control for the test above: once the owner has
+// explicitly flipped enrichment_enabled on (through the REAL
+// storage.SettingsRepo write path, never a raw INSERT), the
+// performance-scoring pass must run exactly as it always has.
+func TestQualificationTick_EnrichmentEnabledStillRunsThePerformanceScoringPass(t *testing.T) {
+	db := testControlDB(t)
+	seedLiveChatOffering(t, db, "acct-1", "prov-1", "m-1")
+	putOperationalSettings(t, db, true, false)
+
+	calls := 0
+	stream := func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
+		calls++
+		return benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}, nil
+	}
+	tick := newQualificationTickForTest(t, db, withStream(stream), withSettings(db))
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if calls == 0 {
+		t.Fatal("stream was never called, want at least one call — enrichment_enabled is true, so the performance-scoring pass must run")
+	}
+	if got := qualityRatingOf(t, db, "m-1"); got == nil {
+		t.Fatal("models.quality_rating = nil, want a measured rating")
+	}
+}
+
+// TestQualificationTick_ProbeExpensiveDisabledRefusesTheRealContextProbeGuard
+// is FIX 4b's own test for the context-probe half: probe_expensive_enabled
+// is FALSE on a fresh install (04 §2: opt-in), and before this fix
+// BuildQualificationTick force-flipped it true on a copy of the default
+// policy regardless of what the owner actually configured. withSettings
+// wires the REAL resolver over an untouched (fresh-install-default) row, so
+// the context probe's OWN guard — not a hand-set contextProbeGuardPolicy
+// field — must refuse it before the transport is ever reached.
+func TestQualificationTick_ProbeExpensiveDisabledRefusesTheRealContextProbeGuard(t *testing.T) {
+	db := testControlDB(t)
+	seedLiveChatOfferingNoContext(t, db, "acct-1", "prov-1", "unknown")
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 400, ProviderCode: "context_length_exceeded", Message: "maximum context length is 128000 tokens"}}
+	tick := newQualificationTickForTest(t, db, withContextProbeTransport(transport), withSettings(db), harmlessStream())
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if got := transport.callCount(); got != 0 {
+		t.Fatalf("context probe transport calls = %d, want 0 — probe_expensive_enabled is false on a fresh install; the REAL settings-backed guard must refuse before the transport is ever reached", got)
+	}
+	if got := nativeContextTokensOf(t, db, "unknown"); got != nil {
+		t.Fatalf("native_context_tokens = %v, want nil — nothing was learned", got)
+	}
+}
+
+// TestQualificationTick_ProbeExpensiveEnabledStillRunsTheRealContextProbe is
+// the positive control: once the owner has explicitly flipped
+// probe_expensive_enabled on, the context probe must still run through the
+// REAL settings-backed guard exactly as it always has.
+func TestQualificationTick_ProbeExpensiveEnabledStillRunsTheRealContextProbe(t *testing.T) {
+	db := testControlDB(t)
+	seedLiveChatOfferingNoContext(t, db, "acct-1", "prov-1", "unknown")
+	putOperationalSettings(t, db, false, true)
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 400, ProviderCode: "context_length_exceeded", Message: "maximum context length is 128000 tokens"}}
+	tick := newQualificationTickForTest(t, db, withContextProbeTransport(transport), withSettings(db), harmlessStream())
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("context probe transport calls = %d, want 1 — probe_expensive_enabled is explicitly true, so the REAL settings-backed guard must admit the attempt", got)
+	}
+	if got := nativeContextTokensOf(t, db, "unknown"); got == nil || *got != 128000 {
+		t.Fatalf("native_context_tokens = %v, want 128000", got)
+	}
+}
+
+// --- Whole-branch review, FIX 6: a per-phase wall-clock budget -------------
+
+// TestQualificationTick_CapabilityProbePhaseGetsItsOwnDeadline is FIX 6's own
+// test for the capability-probe phase: the ctx that reaches the transport
+// must carry a deadline roughly tickBudget from when the phase started —
+// proof the phase itself is bounded, mirroring
+// TestUsabilityTick_ListPhaseIsDeadlineBounded's identical
+// deadline-inspection technique (usability_tick_test.go) rather than an
+// actual timed-out sleep, which would be flaky.
+func TestQualificationTick_CapabilityProbePhaseGetsItsOwnDeadline(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-1", "prov-1", "m-1", "tools")
+
+	const budget = 3 * time.Second
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall}}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport), withTickBudget(budget))
+
+	start := time.Now()
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	end := time.Now()
+
+	dl, ok := transport.deadline()
+	if !ok {
+		t.Fatal("capability-probe transport ran with no deadline — the phase must be bounded (FIX 6)")
+	}
+	if dl.Before(start.Add(budget)) || dl.After(end.Add(budget)) {
+		t.Fatalf("capability-probe deadline = %v, want one %v budget from an instant in [%v, %v]", dl, budget, start, end)
+	}
+}
+
+// TestQualificationTick_ContextProbePhaseGetsItsOwnDeadline is the context-
+// probe phase's own counterpart.
+func TestQualificationTick_ContextProbePhaseGetsItsOwnDeadline(t *testing.T) {
+	db := testControlDB(t)
+	seedLiveChatOfferingNoContext(t, db, "acct-1", "prov-1", "unknown")
+
+	const budget = 3 * time.Second
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 400, ProviderCode: "context_length_exceeded", Message: "maximum context length is 128000 tokens"}}
+	tick := newQualificationTickForTest(t, db, withContextProbeTransport(transport), withTickBudget(budget), harmlessStream())
+
+	start := time.Now()
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	end := time.Now()
+
+	dl, ok := transport.deadline()
+	if !ok {
+		t.Fatal("context-probe transport ran with no deadline — the phase must be bounded (FIX 6)")
+	}
+	if dl.Before(start.Add(budget)) || dl.After(end.Add(budget)) {
+		t.Fatalf("context-probe deadline = %v, want one %v budget from an instant in [%v, %v]", dl, budget, start, end)
+	}
+}
+
+// TestQualificationTick_PerformanceScoringPhaseGetsItsOwnDeadline is the
+// performance-scoring (benchmark) phase's own counterpart.
+func TestQualificationTick_PerformanceScoringPhaseGetsItsOwnDeadline(t *testing.T) {
+	db := testControlDB(t)
+	seedLiveChatOffering(t, db, "acct-1", "prov-1", "m-1")
+	putOperationalSettings(t, db, true, false)
+
+	const budget = 3 * time.Second
+	var (
+		mu   sync.Mutex
+		dl   time.Time
+		hasD bool
+	)
+	stream := func(ctx context.Context, _, _, _, _ string, _ int) (benchmarkSample, error) {
+		d, ok := ctx.Deadline()
+		mu.Lock()
+		dl, hasD = d, ok
+		mu.Unlock()
+		return benchmarkSample{OK: true, TTFT: 10 * time.Millisecond, TokensPerSec: 40}, nil
+	}
+	tick := newQualificationTickForTest(t, db, withStream(stream), withSettings(db), withTickBudget(budget))
+
+	start := time.Now()
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	end := time.Now()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !hasD {
+		t.Fatal("performance-scoring pass ran with no deadline — the phase must be bounded (FIX 6)")
+	}
+	if dl.Before(start.Add(budget)) || dl.After(end.Add(budget)) {
+		t.Fatalf("performance-scoring deadline = %v, want one %v budget from an instant in [%v, %v]", dl, budget, start, end)
+	}
+}
+
+// TestQualificationTick_ContextProbePhaseGetsAFreshBudgetAfterCapabilityPhase
+// pins that the capability-probe phase's deadline is RELEASED before the
+// context-probe phase starts — mirroring
+// TestUsabilityTick_LanesGetAFullBudgetAfterTheListPhase's identical
+// "a later phase must get a full, independent budget rather than an
+// earlier phase's leftover" proof. The SAME fake transport instance backs
+// BOTH phases here (as it does in production — one probeTransportAdapter),
+// so ctxAt(0)/ctxAt(1) isolate each phase's own call.
+func TestQualificationTick_ContextProbePhaseGetsAFreshBudgetAfterCapabilityPhase(t *testing.T) {
+	db := testControlDB(t)
+	seedCertifiedDeclaredCapability(t, db, "acct-cap", "prov-cap", "m-cap", "tools")
+	seedLiveChatOfferingNoContext(t, db, "acct-ctx", "prov-ctx", "unknown")
+
+	const (
+		budget   = 1 * time.Second
+		capBurns = budget / 2
+	)
+	var sawFirstCall int32
+	transport := &fakeProbeTransport{
+		available: true,
+		result:    intelligence.ProbeResult{HTTPStatus: 200, Witness: intelligence.WitnessToolCall},
+		// Sleep ONLY on the capability phase's own call, never the context
+		// phase's — a second sleep there would eat into the very deadline
+		// this test measures, confounding the result with wall-clock
+		// elapsed AFTER the ctx (a fixed instant) was already captured.
+		onProbe: func() {
+			if atomic.CompareAndSwapInt32(&sawFirstCall, 0, 1) {
+				time.Sleep(capBurns)
+			}
+		},
+	}
+	tick := newQualificationTickForTest(t, db, withCapabilityProbeTransport(transport), withTickBudget(budget), harmlessStream())
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if got := transport.callCount(); got != 2 {
+		t.Fatalf("transport calls = %d, want 2 (one capability probe, one context probe)", got)
+	}
+	ctxProbeCtx, ok := transport.ctxAt(1)
+	if !ok {
+		t.Fatal("context-probe call was never recorded")
+	}
+	dl, hasD := ctxProbeCtx.Deadline()
+	if !hasD {
+		t.Fatal("context-probe phase ran with no deadline")
+	}
+	// The context-probe phase's own budget starts when THAT phase starts,
+	// after the capability phase already burned capBurns (half a budget)
+	// sleeping inside its own onProbe hook. A phase that inherited the
+	// capability phase's leftover deadline would have at most
+	// budget-capBurns left; a phase with its OWN fresh budget has close to
+	// the whole budget still ahead of it.
+	if remaining := time.Until(dl); remaining <= budget-capBurns/2 {
+		t.Fatalf("context-probe phase had %v left of a %v budget: it inherited the capability phase's deadline instead of getting its own", remaining, budget)
 	}
 }

@@ -41,6 +41,18 @@ type fakeProbeTransport struct {
 	// probe is genuinely in flight — so a test can interrogate live state
 	// that only holds for the duration of the transport call.
 	onProbe func()
+	// lastCtx captures the ctx Probe was actually called with (whole-branch
+	// review, FIX 6) — so a test can inspect the DEADLINE that reached the
+	// transport, mirroring usability_tick_test.go's identical technique for
+	// proving usabilityTick's own per-phase budget without waiting out a
+	// real timeout.
+	lastCtx context.Context
+	// ctxs records EVERY ctx Probe was called with, in order — needed when
+	// a single fake instance backs TWO independent phases in the same
+	// round (capability probes then context probes both read
+	// tick.probeTransport), so a test can compare each call's OWN deadline
+	// rather than only the most recent one.
+	ctxs []context.Context
 }
 
 func (f *fakeProbeTransport) Available(_ string) bool {
@@ -49,16 +61,40 @@ func (f *fakeProbeTransport) Available(_ string) bool {
 	return f.available
 }
 
-func (f *fakeProbeTransport) Probe(_ context.Context, _ intelligence.ProbeRequest) (intelligence.ProbeResult, error) {
+func (f *fakeProbeTransport) Probe(ctx context.Context, _ intelligence.ProbeRequest) (intelligence.ProbeResult, error) {
 	f.mu.Lock()
 	hook := f.onProbe
 	f.calls++
+	f.lastCtx = ctx
+	f.ctxs = append(f.ctxs, ctx)
 	result, err := f.result, f.err
 	f.mu.Unlock()
 	if hook != nil {
 		hook()
 	}
 	return result, err
+}
+
+// ctxAt returns the ctx of the i-th Probe call (0-indexed), and whether
+// that many calls were made at all.
+func (f *fakeProbeTransport) ctxAt(i int) (context.Context, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if i < 0 || i >= len(f.ctxs) {
+		return nil, false
+	}
+	return f.ctxs[i], true
+}
+
+// deadline returns the deadline of the ctx the most recent Probe call
+// received, and whether one was set at all.
+func (f *fakeProbeTransport) deadline() (time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.lastCtx == nil {
+		return time.Time{}, false
+	}
+	return f.lastCtx.Deadline()
 }
 
 func (f *fakeProbeTransport) callCount() int {

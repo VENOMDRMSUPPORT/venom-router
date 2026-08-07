@@ -63,6 +63,39 @@ import (
 // decision to tighten or loosen it has exactly one place to change.
 const qualificationFreshnessTTL = 24 * time.Hour
 
+// qualificationTickBudget caps how long any ONE PHASE of this tick's round
+// may run (whole-branch review, FIX 6 — Important).
+//
+// DECISION: 25 seconds — usabilitySweepBudget's OWN value
+// (usability_wiring.go), reused verbatim rather than independently chosen.
+// That constant's own doc comment states the identical hazard this tick
+// shares: "the boot scheduler runs ticks SEQUENTIALLY on a 30s interval and
+// hands the tick the root context with no per-tick timeout of its own... an
+// unbounded sweep... would starve the quota/probe ticks." The ledger that
+// first shipped this tick claimed its own worst case was "the same shape as
+// the pre-existing model_usability tick" — that premise was false:
+// model_usability bounds itself at usabilitySweepBudget TWICE OVER (the list
+// phase, and each parallel per-provider lane) precisely because of this
+// hazard, while this tick bounded NOTHING. Measured worst case for one
+// round, unbounded: 5 capability probes + 1 context probe + 5 models * 3
+// benchmark requests, each up to a full per-request timeout, sequential —
+// up to roughly 630 seconds. token_refresh is registered FIRST in boot.go
+// SPECIFICALLY so every later tick (including this one, and the NEXT
+// round's token_refresh) works on a fresh credential; a 630-second round
+// delays that next refresh by the same amount, letting a token expire and
+// turning every subsequent request into a 401 — which FIX 3's own chain
+// then launders into a suspended-then-relaundered certification. Applied to
+// EACH of this tick's three independent phases (capability probes, context
+// probes, performance scoring) SEPARATELY, never once around the whole
+// Run() — mirroring usabilityTick.sweepBudget's identical "a phase that
+// burns its whole budget must not shorten what's left for the phases after
+// it" reasoning: these three phases have independent selections, guard
+// policies, and write targets already (Run's own doc comment), so there is
+// no reason a slow capability-probe phase should also starve the
+// context-probe or performance-scoring phases that follow it in the same
+// round.
+const qualificationTickBudget = 25 * time.Second
+
 // qualificationPerRoundCap bounds how many models ONE tick round will
 // measure.
 //
@@ -165,6 +198,25 @@ type qualificationTick struct {
 	now     func() time.Time
 	log     *observability.Logger
 
+	// settings resolves the owner's operational-settings row FRESH at the
+	// top of every Run() (whole-branch review, FIX 4) — never cached, per
+	// operationalSettings' own contract ("a settings change invisible
+	// until restart is exactly the failure the stored setting is meant to
+	// remove"). Production (buildQualificationTick) always wires this to
+	// the REAL storage.SettingsRepo, exactly like controlmux.go's
+	// buildProbeHandler already does for the manual probe endpoint (that
+	// function's own doc comment: "the whole point of making the probe
+	// caps owner-configurable is that ops.probePolicy — not
+	// intelligence.DefaultProbeSafetyPolicy() — is what reaches the
+	// admission gate"). nil in buildQualificationTickForTest's default
+	// wiring (mirroring stream/probeTransport/probeReserver being nil'd
+	// there too) so every EXISTING test's explicit probeGuardPolicy/
+	// contextProbeGuardPolicy field overrides are never silently
+	// superseded by a settings row that test never set up; a test that
+	// means to prove the gate itself wires this seam explicitly
+	// (withSettings).
+	settings *operationalSettings
+
 	// db backs dueCapabilityProbes' own raw query: none of catalog/runs above
 	// is shaped for the offering_operations/certifications/probe_runs
 	// three-way join a "certified/supported, no succeeded probe run yet"
@@ -237,6 +289,23 @@ type qualificationTick struct {
 	// this file's own tests exercise — the extraction ladder itself is
 	// already unit-tested in intelligence/contextprobe_test.go.
 	probeContext func(ctx context.Context, c contextProbeCandidate) (limit int, ok bool)
+
+	// tickBudget caps how long any ONE PHASE of Run() may run — see
+	// qualificationTickBudget's own doc comment (FIX 6, whole-branch
+	// review) for the hazard this closes. Mirrors usabilityTick.budget's
+	// identical test-injection pattern EXACTLY (usability_tick.go): zero
+	// means qualificationTickBudget; it is a field only so a test can pin
+	// the deadline behaviour without waiting out the production budget.
+	tickBudget time.Duration
+}
+
+// phaseBudget is the deadline one phase of this tick's round may consume —
+// usabilityTick.sweepBudget's identical counterpart (FIX 6).
+func (t *qualificationTick) phaseBudget() time.Duration {
+	if t.tickBudget <= 0 {
+		return qualificationTickBudget
+	}
+	return t.tickBudget
 }
 
 // capabilityCertDriver is the two-method slice of *intelligence.
@@ -271,20 +340,54 @@ type qualificationCandidate struct {
 // stop the rest of the round from being measured, mirroring runBenchmarkSuite's
 // own "one bad sample never loses the others" discipline one level up.
 func (t *qualificationTick) Run(ctx context.Context) error {
+	// Whole-branch review, FIX 6 (Important): each of this tick's three
+	// independent phases gets its OWN qualificationTickBudget deadline,
+	// never one shared around the whole round — see that constant's own
+	// doc comment for the hazard (an unbounded round starving every other
+	// scheduler tick behind it, including the NEXT round's own
+	// token_refresh) and why this mirrors usabilityTick.sweepBudget's
+	// identical per-phase discipline rather than the single shared budget
+	// a shortcut might reach for.
+
 	// Task 3: upgrade declared capabilities to measured ones. Run first (its
 	// own failure is logged, never fatal to the round — see probeCapabilities'
 	// own doc comment) so the performance-scoring pass below still runs
 	// exactly as it always has, regardless of whether any capability probing
 	// was due this round.
-	t.probeCapabilities(ctx)
+	capCtx, cancelCap := context.WithTimeout(ctx, t.phaseBudget())
+	t.probeCapabilities(capCtx)
+	cancelCap()
 
 	// Task 4: measure the context window for offerings no catalog covers.
 	// Independent of both passes above (own selection, own guard policy, own
 	// write target — models.native_context_tokens, never quality_rating or a
 	// certification row) — its own failure is likewise logged, never fatal.
-	t.probeContextWindows(ctx)
+	ctxProbeCtx, cancelCtxProbe := context.WithTimeout(ctx, t.phaseBudget())
+	t.probeContextWindows(ctxProbeCtx)
+	cancelCtxProbe()
 
-	due, err := t.dueModels(ctx)
+	scoreCtx, cancelScore := context.WithTimeout(ctx, t.phaseBudget())
+	defer cancelScore()
+
+	// Whole-branch review, FIX 4a (Critical): the performance-scoring pass
+	// below spends the owner's real inference quota through the identical
+	// dispatch path ServeBenchmark used to (buildBenchmarkStreamFn,
+	// runBenchmarkSuite) — and ServeBenchmark refuses with 409 unless
+	// settings.EnrichmentEnabled is true, which is FALSE on a fresh install
+	// (storage.DefaultSettingsRow) and documented as "off by default;
+	// owner-enabled" (04 §2b). This tick must honour the identical gate,
+	// or a fresh install starts running real paid inference on the
+	// owner's own account 30 seconds after boot with no button and no
+	// setting to stop it. See t.enrichmentEnabled's own doc comment for
+	// why this never runs during a test that has not explicitly wired
+	// t.settings.
+	if !t.enrichmentEnabled(scoreCtx) {
+		t.log.Info("model qualification: enrichment_enabled is off, skipping this round's performance-scoring pass",
+			observability.String("setting", "enrichment_enabled"))
+		return nil
+	}
+
+	due, err := t.dueModels(scoreCtx)
 	if err != nil {
 		return fmt.Errorf("httpapi: model qualification: list due models: %w", err)
 	}
@@ -315,7 +418,7 @@ func (t *qualificationTick) Run(ctx context.Context) error {
 	}
 
 	for _, candidate := range measure {
-		if err := t.measureOne(ctx, candidate); err != nil {
+		if err := t.measureOne(scoreCtx, candidate); err != nil {
 			t.log.Warn("model qualification: measuring one model failed, continuing with the rest of the round",
 				observability.String("model_id", candidate.ModelID),
 				observability.Err(err),
@@ -493,6 +596,22 @@ func (t *qualificationTick) dueCapabilityProbes(ctx context.Context) ([]capabili
 		args[i] = string(op)
 	}
 
+	// Whole-branch review, FIX 5 (Important): the cooldown clause below
+	// excludes a candidate CURRENTLY COOLING DOWN (an attempt was already
+	// recorded for it within qualificationCapabilityProbeCooldown) from
+	// the SELECTION itself, not merely from a later Admit() refusal.
+	// Before this fix, dueCapabilityProbes' own filter only asked "no
+	// succeeded run yet" — a cooling-down candidate still satisfies that,
+	// so it was still returned, still consumed one of
+	// qualificationCapabilityProbeCap's slots in probeCapabilities' own
+	// due[:cap] slice, and was then refused for nothing by
+	// ProbeGuard.WithCapabilityCooldown inside probeOneCapability. Ordered
+	// `oo.id ASC` with the set only shrinking on SUCCESS, a handful of
+	// permanently-inconclusive candidates sorting first could occupy every
+	// slot the cap has, every round, forever — candidates further down the
+	// list were never reached. Excluding a cooling-down row here means the
+	// cap is spent only on candidates that can actually be attempted this
+	// round.
 	query := `SELECT oo.id, oo.operation, oo.account_id, oo.provider_id, oo.provider_model_id
 		FROM offering_operations oo
 		JOIN certifications c ON c.offering_operation_id = oo.id
@@ -513,7 +632,12 @@ func (t *qualificationTick) dueCapabilityProbes(ctx context.Context) ([]capabili
 		    WHERE pr.offering_operation_id = oo.id AND pr.execution = 'succeeded'
 		      AND pr.finished_at >= c.certified_at
 		  )
+		  AND NOT EXISTS (
+		    SELECT 1 FROM probe_runs pr2
+		    WHERE pr2.offering_operation_id = oo.id AND pr2.started_at >= ?
+		  )
 		ORDER BY oo.id ASC`
+	args = append(args, t.now().Add(-qualificationCapabilityProbeCooldown).Unix())
 
 	rows, err := t.db.Conn().QueryContext(ctx, query, args...)
 	if err != nil {
@@ -718,12 +842,62 @@ func (t *qualificationTick) probeCapabilities(ctx context.Context) {
 // (models/certification.go, certdriver.go's SuspensionReason set) — it is
 // not something to work around here.
 //
+// enrichmentEnabled resolves the owner's enrichment_enabled toggle
+// (whole-branch review, FIX 4a). t.settings == nil — every EXISTING test's
+// default wiring (buildQualificationTickForTest nils it, mirroring
+// stream/probeTransport/probeReserver) — leaves this pass UNGATED, so no
+// pre-existing test needs to start seeding a settings row just to keep
+// exercising the performance-scoring pass it already tests; a test that
+// means to prove the gate itself wires t.settings explicitly (withSettings).
+func (t *qualificationTick) enrichmentEnabled(ctx context.Context) bool {
+	if t.settings == nil {
+		return true
+	}
+	return t.settings.row(ctx).EnrichmentEnabled
+}
+
+// capabilityProbePolicy resolves the probe safety policy a capability-probe
+// attempt is admitted against (whole-branch review, FIX 4b): the owner's
+// LIVE operational settings when t.settings is wired (production, via
+// operationalSettings.probePolicy — the exact same resolver
+// controlmux.go's buildProbeHandler already uses for the manual probe
+// endpoint), or t.probeGuardPolicy exactly as constructed/overridden
+// otherwise (every existing test). Before this fix, BuildQualificationTick
+// passed the bare intelligence.DefaultProbeSafetyPolicy() unconditionally,
+// so probe_max_in_flight_per_provider and probe_per_account_window_seconds
+// were inert for every capability probe this tick ever ran — controlmux.go
+// itself carries an explicit, test-pinned warning against exactly this
+// substitution (buildProbeHandler's own doc comment).
+func (t *qualificationTick) capabilityProbePolicy(ctx context.Context) intelligence.ProbeSafetyPolicy {
+	if t.settings != nil {
+		return t.settings.probePolicy(ctx)
+	}
+	return t.probeGuardPolicy
+}
+
+// contextProbePolicy is capabilityProbePolicy's context-probe counterpart —
+// see that method's own doc comment. Both resolve through the SAME
+// operationalSettings.probePolicy call when t.settings is wired: there is
+// only one owner-configurable probe safety policy in this process, never
+// two independently-drifting copies of it. Before this fix,
+// BuildQualificationTick force-enabled ExpensiveProbesEnabled on a COPY of
+// the default policy regardless of the owner's actual probe_expensive_enabled
+// setting (04 §2: opt-in, false by default) — this method's t.settings
+// branch is what makes the context probe honour a "no" the same way the
+// manual endpoint already does.
+func (t *qualificationTick) contextProbePolicy(ctx context.Context) intelligence.ProbeSafetyPolicy {
+	if t.settings != nil {
+		return t.settings.probePolicy(ctx)
+	}
+	return t.contextProbeGuardPolicy
+}
+
 // A rejection from RecordAttempt (or a failure from Suspend) is logged,
 // never returned as this function's own error — the probe attempt itself
 // already succeeded (the run row is real evidence), so there is nothing to
 // retry or warn the caller about beyond what the log line already says.
 func (t *qualificationTick) probeOneCapability(ctx context.Context, c capabilityProbeCandidate) error {
-	guard, err := intelligence.NewProbeGuard(t.probeGuardPolicy, t.probeReserver, t.probeRuns, t.probeRuns, t.probeRuns, t.now)
+	guard, err := intelligence.NewProbeGuard(t.capabilityProbePolicy(ctx), t.probeReserver, t.probeRuns, t.probeRuns, t.probeRuns, t.now)
 	if err != nil {
 		return fmt.Errorf("build probe guard: %w", err)
 	}
@@ -828,7 +1002,7 @@ func (t *qualificationTick) probeOneCapability(ctx context.Context, c capability
 		runExecution = intelligence.ProbeInconclusive
 	}
 
-	attempts, err := t.probeRuns.CountAttempts(ctx, c.OfferingOperationID)
+	attempts, err := t.probeRuns.CountAttempts(ctx, c.OfferingOperationID, c.Operation)
 	if err != nil {
 		return fmt.Errorf("count probe attempts: %w", err)
 	}
@@ -1197,7 +1371,7 @@ func (t *qualificationTick) probeOneContextWindow(ctx context.Context, c context
 // probe.go:526 — this task revives the CALLER, not a rung with nothing to
 // revive.
 func (t *qualificationTick) runContextProbe(ctx context.Context, c contextProbeCandidate) (int, bool) {
-	guard, err := intelligence.NewProbeGuard(t.contextProbeGuardPolicy, t.probeReserver, t.probeRuns, t.probeRuns, t.probeRuns, t.now)
+	guard, err := intelligence.NewProbeGuard(t.contextProbePolicy(ctx), t.probeReserver, t.probeRuns, t.probeRuns, t.probeRuns, t.now)
 	if err != nil {
 		t.log.Warn("model qualification: context probe guard construction failed", observability.Err(err))
 		return 0, false
@@ -1297,13 +1471,36 @@ func (t *qualificationTick) runContextProbe(ctx context.Context, c contextProbeC
 }
 
 // BuildQualificationTick constructs the automatic-qualification sweep the
-// boot scheduler runs. Its own composition root, mirroring
-// BuildTokenRefreshTick/BuildAccountMaintenanceTick: it builds the SAME
-// production benchmarkStreamFn NewBenchmarkHandler builds
-// (buildBenchmarkStreamFn, composed from the shared provider registry +
-// credential repo/service), so the tick executes real streamed inference
-// through the identical dispatch path the owner-triggered endpoint used to,
-// never a second dispatcher. now defaults to time.Now.
+// boot scheduler runs. It is a thin wrapper over buildQualificationTick
+// (the real composition root) that hands back only the bound tick.Run
+// value — see buildQualificationTick's own doc comment for what it builds
+// and why.
+//
+// buildQualificationTick is split out (whole-branch review, FIX 1) so
+// buildQualificationTickForTest (qualification_test.go) can call the SAME
+// composition root and override only its network-touching seams (stream,
+// probeTransport, probeReserver), instead of maintaining a second, hand-
+// written copy of this wiring that could — and, before this fix, silently
+// did — drift from what production actually builds: four of this
+// function's own field assignments could each be deleted with the whole
+// test suite staying green, because buildQualificationTickForTest never
+// called this function at all.
+func BuildQualificationTick(db *storage.DB, kr *secrets.Keyring, now func() time.Time) (func(context.Context) error, error) {
+	tick, err := buildQualificationTick(db, kr, now)
+	if err != nil {
+		return nil, err
+	}
+	return tick.Run, nil
+}
+
+// buildQualificationTick is the automatic-qualification sweep's actual
+// composition root, mirroring BuildTokenRefreshTick/
+// BuildAccountMaintenanceTick: it builds the SAME production
+// benchmarkStreamFn NewBenchmarkHandler builds (buildBenchmarkStreamFn,
+// composed from the shared provider registry + credential repo/service), so
+// the tick executes real streamed inference through the identical dispatch
+// path the owner-triggered endpoint used to, never a second dispatcher. now
+// defaults to time.Now.
 //
 // Task 3 additionally builds the SAME capability-probe composition
 // ControlMux wires for the callerless POST /offerings/{id}/probe endpoint
@@ -1311,7 +1508,7 @@ func (t *qualificationTick) runContextProbe(ctx context.Context, c contextProbeC
 // probeTransportAdapter itself) — independently, exactly like
 // buildBenchmarkStreamFn above is independently composed rather than shared
 // as one instance with NewBenchmarkHandler's own build.
-func BuildQualificationTick(db *storage.DB, kr *secrets.Keyring, now func() time.Time) (func(context.Context) error, error) {
+func buildQualificationTick(db *storage.DB, kr *secrets.Keyring, now func() time.Time) (*qualificationTick, error) {
 	if now == nil {
 		now = time.Now
 	}
@@ -1363,8 +1560,19 @@ func BuildQualificationTick(db *storage.DB, kr *secrets.Keyring, now func() time
 	// narrow path through the policy, per probe" and not a bypass of
 	// ProbeGuard: every other gate (cost caps, concurrency, and the
 	// 7-day ContextProbeCooldown) is left at its conservative default.
+	//
+	// Whole-branch review, FIX 4b (Critical): this used to be
+	// DefaultProbeSafetyPolicy() with ExpensiveProbesEnabled FORCE-FLIPPED
+	// true regardless of the owner's actual probe_expensive_enabled
+	// setting (04 §2: opt-in, false on a fresh install) — silently
+	// widening what the owner had explicitly left off. It is now the
+	// same conservative default probeGuardPolicy below starts from;
+	// t.settings (assigned below) is what actually decides the LIVE value
+	// each Run(), through capabilityProbePolicy/contextProbePolicy — see
+	// those methods' own doc comments. This value only matters as the
+	// defensive fallback for the (production-unreachable) case t.settings
+	// is nil.
 	contextProbeGuardPolicy := intelligence.DefaultProbeSafetyPolicy()
-	contextProbeGuardPolicy.ExpensiveProbesEnabled = true
 
 	tick := &qualificationTick{
 		catalog: storage.NewCatalogRepo(db),
@@ -1373,6 +1581,13 @@ func BuildQualificationTick(db *storage.DB, kr *secrets.Keyring, now func() time
 		newID:   newOAuthTransactionID,
 		now:     now,
 		log:     observability.Default(),
+
+		// settings: the REAL owner-settings resolver — see t.settings' own
+		// doc comment (FIX 4) for why this is what makes both the
+		// enrichment gate (measureOne) and the probe safety policy
+		// (capability + context probes) honour what the owner actually
+		// configured, instead of the hardcoded values this fix replaces.
+		settings: newOperationalSettings(storage.NewSettingsRepo(db)),
 
 		db:            db,
 		probeRuns:     probeRuns,
@@ -1410,5 +1625,5 @@ func BuildQualificationTick(db *storage.DB, kr *secrets.Keyring, now func() time
 	// buildQualificationTickForTest's own default wiring below does the
 	// identical assignment for its test builds.
 	tick.probeContext = tick.runContextProbe
-	return tick.Run, nil
+	return tick, nil
 }
