@@ -200,6 +200,33 @@ type qualificationTick struct {
 	// own doc comment for why the two read as one policy with Important 4's
 	// terminal-failure suspend, not two.
 	driver capabilityCertDriver
+
+	// discovery is consulted ONLY by the context-probe write-back
+	// (probeOneContextWindow, task 4) — every other pass in this file never
+	// touches it. nativeContextWriter (probe.go) is reused verbatim rather
+	// than declaring a second identical interface; ControlMux's own
+	// ProbeHandler already wires the same *storage.DiscoveryRepo through it.
+	discovery nativeContextWriter
+	// contextProbeGuardPolicy is the safety policy every context-window probe
+	// attempt (task 4) is admitted against. It is a SEPARATE value from
+	// probeGuardPolicy above, differing in exactly one field
+	// (ExpensiveProbesEnabled) — see BuildQualificationTick's own assignment
+	// for why flipping it globally would be a needless widening, and
+	// probeOneContextWindow's doc comment for why this is "through the
+	// policy, per probe", never a bypass of ProbeGuard itself.
+	contextProbeGuardPolicy intelligence.ProbeSafetyPolicy
+	// probeContext is the seam probeOneContextWindow calls for each candidate
+	// dueContextProbes selects: run the actual measurement and report the
+	// extracted limit, or (0, false) when nothing was learned (a refusal, a
+	// transport failure, or a definitive/inconclusive result with no
+	// positive ladder hit — RungNoSignal). The production implementation
+	// (runContextProbe) builds intelligence.ContextProbe through
+	// intelligence.ProbeGuard exactly like probeOneCapability builds
+	// CapabilityProbe; a test replaces this whole seam (withContextProbe)
+	// with a deterministic fake, since dueContextProbes' SELECTION is what
+	// this file's own tests exercise — the extraction ladder itself is
+	// already unit-tested in intelligence/contextprobe_test.go.
+	probeContext func(ctx context.Context, c contextProbeCandidate) (limit int, ok bool)
 }
 
 // capabilityCertDriver is the two-method slice of *intelligence.
@@ -240,6 +267,12 @@ func (t *qualificationTick) Run(ctx context.Context) error {
 	// exactly as it always has, regardless of whether any capability probing
 	// was due this round.
 	t.probeCapabilities(ctx)
+
+	// Task 4: measure the context window for offerings no catalog covers.
+	// Independent of both passes above (own selection, own guard policy, own
+	// write target — models.native_context_tokens, never quality_rating or a
+	// certification row) — its own failure is likewise logged, never fatal.
+	t.probeContextWindows(ctx)
 
 	due, err := t.dueModels(ctx)
 	if err != nil {
@@ -761,6 +794,368 @@ func (t *qualificationTick) probeOneCapability(ctx context.Context, c capability
 	return nil
 }
 
+// --- Task 4: measure the context window for offerings no catalog covers ---
+
+// qualificationContextProbeCap bounds how many context-window probes ONE
+// tick round will run.
+//
+// DECISION: 1. This is the single most expensive probe in the system —
+// intelligence.ContextProbeInputTokens declares 3,000,000 input tokens by
+// construction (it works by sending a deliberately oversized request and
+// reading the real limit out of the provider's rejection), against a
+// DefaultProbeSafetyPolicy PerAccount rolling cap of 20,000,000 input
+// tokens per 24h window. qualificationPerRoundCap/
+// qualificationCapabilityProbeCap both use 5 because THEIR fixtures are
+// tiny; reusing 5 here would let a single 30-second round alone reserve up
+// to 15,000,000 of that account's entire daily probe-input-token
+// allowance, crowding out every other probe (capability AND any other
+// context probe) for the rest of the day. 1 keeps one round's fan-out to
+// exactly the bounded catch-up this project's other caps already document,
+// while a large backlog of never-measured, genuinely-uncatalogued models
+// still drains — one per round — rather than never draining (cap 0) or
+// never protecting the account's daily budget (an unbounded cap).
+const qualificationContextProbeCap = 1
+
+// qualificationContextProbeCooldown bounds how soon THIS tick may re-select
+// the SAME offering for a context probe, regardless of the previous
+// attempt's outcome — mirroring qualificationCapabilityProbeCooldown's own
+// "keyed off the last ATTEMPT, not the last SUCCESS" reasoning (see that
+// constant's doc comment for why a succeeded-only cooldown never fires for
+// the case it exists to bound).
+//
+// This is deliberately NOT the same protection as
+// intelligence.ProbeGuard's own context-probe cooldown
+// (ProbeCooldownReader.ProbeCooldownUntil). That gate is keyed off the most
+// recent SUCCEEDED context-window run ONLY (storage.ProbeRunRepo.
+// ProbeCooldownUntil's own doc comment: "only a succeeded context probe
+// ever sets the cooldown... an infra failure must remain re-attemptable
+// under the probe's own retry budget rather than being locked out for a
+// week"). A model that never resolves (rate-limited, inconclusive,
+// terminal failure) sets it NEVER, so dueContextProbes' own "effective
+// context is nil" selection would otherwise re-pick the identical
+// candidate on every subsequent 30s round forever — exactly task-3's own
+// CRITICAL 2(b) gap (a capability that never succeeds, re-probed with no
+// backoff), reproduced here for a probe an order of magnitude more
+// expensive.
+//
+// Nor can ProbeGuard.WithCapabilityCooldown (task-3's fix for that exact
+// gap) be reused for this: its OWN gate inside Admit is scoped to
+// RequiredWitness's three capability operations only
+// (intelligence/probesafety.go: "if _, err := RequiredWitness(req.
+// Operation); err == nil") — RequiredWitness(OperationContextWindow)
+// returns ErrNoCapabilityFixture (capabilityprobe.go:110-112), so wiring
+// that guard method for a context-window request would compile, run, and
+// silently do NOTHING. This was verified by reading ProbeGuard.Admit's own
+// source rather than assumed — the task-4 brief explicitly calls out that
+// the previous task's assumption ("the capability path already has a
+// cooldown") turned out to be false, and the same discipline applies here.
+//
+// dueContextProbes therefore enforces this backoff itself, directly in its
+// own selection query, against ANY prior probe_runs attempt regardless of
+// execution. The DURATION reused is the SAME
+// intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown value
+// Admit's own succeeded-only gate already uses for the resolved case (04
+// §2's "7-day cooldown") — one canonical 7-day duration, never a second,
+// independently-chosen magic number.
+var qualificationContextProbeCooldown = intelligence.DefaultProbeSafetyPolicy().ContextProbeCooldown
+
+// contextProbeCandidate is one live-offering model whose EFFECTIVE context
+// (models.EffectiveContext: the canonical native fact merged with the
+// offering's provider-declared cap) is unknown — there is no catalog fact
+// and no prior verified probe result to read a context badge from.
+//
+// ChatOfferingOperationID anchors this probe's admission/bookkeeping
+// identity. context_window has no offering_operations row of its own for a
+// genuinely uncatalogued model: providers.OperationsFromFacts only emits
+// "context_window" when models.dev declared a Context value, so an
+// uncatalogued model (the cline-pass/qwen3.8-max case this task exists for)
+// never gets that row from discovery, and probe_runs.offering_operation_id
+// is a REAL foreign key (00010_probe_runs.sql: "REFERENCES
+// offering_operations(id)", enforced — this project runs with
+// foreign_keys=ON, storage.go:35) that cannot reference a row that does not
+// exist. Every LiveOnly candidate is, BY CONSTRUCTION, guaranteed to have a
+// certified+supported "chat" offering_operations row (that is exactly what
+// LiveOnly's own EXISTS clause requires, catalog.go:131-140) — reusing that
+// row's id as the context probe's admission/bookkeeping anchor is therefore
+// a deliberate, always-satisfiable choice, not a workaround: the "operation"
+// COLUMN on every probe_runs/cooldown row this probe ever writes is still
+// the honest "context_window" literal throughout, only the FK anchor is
+// borrowed from the offering's other, guaranteed-to-exist operation row.
+type contextProbeCandidate struct {
+	ModelID                 string
+	AccountID               string
+	ProviderID              string
+	ProviderModelID         string
+	ChatOfferingOperationID string
+}
+
+// chatOfferingOperationIDOf finds row's own "chat" CatalogOperationRow id —
+// see contextProbeCandidate's own doc comment for why this is always
+// present for a LiveOnly row (defensive only: this is never expected to
+// return false in production).
+func chatOfferingOperationIDOf(row storage.CatalogOfferingRow) (string, bool) {
+	for _, op := range row.Operations {
+		if op.Operation == string(models.OperationChat) {
+			return op.ID, true
+		}
+	}
+	return "", false
+}
+
+// hasRecentContextProbeAttempt reports whether ANY probe_runs row exists
+// for (offeringOperationID, operation=context_window) started at or after
+// since, regardless of execution — the raw query backing
+// qualificationContextProbeCooldown's own selection-level backoff (see that
+// constant's doc comment for why this cannot be expressed through
+// ProbeGuard.WithCapabilityCooldown).
+func (t *qualificationTick) hasRecentContextProbeAttempt(ctx context.Context, offeringOperationID string, since time.Time) (bool, error) {
+	var n int
+	if err := t.db.Conn().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM probe_runs WHERE offering_operation_id = ? AND operation = ? AND started_at >= ?`,
+		offeringOperationID, string(models.OperationContextWindow), since.Unix(),
+	).Scan(&n); err != nil {
+		return false, fmt.Errorf("httpapi: model qualification: check recent context probe attempt: %w", err)
+	}
+	return n > 0, nil
+}
+
+// dueContextProbes resolves every live-chat-offering model (the SAME
+// LiveOnly basis dueModels uses, walking ListOfferings' pagination exactly
+// like dueModels does — never assuming the whole fleet fits in memory or
+// one page) whose EFFECTIVE context is unknown
+// (models.EffectiveContext(row.NativeContextTokens, row.ContextLength)
+// returns a nil limit) and which has no recent context-probe attempt of any
+// kind (qualificationContextProbeCooldown).
+//
+// A model already covered by EITHER source — models.dev's provider-declared
+// cap (ContextLength) OR a prior verified probe (NativeContextTokens) — is
+// never selected: re-probing it would spend this probe's declared
+// 3,000,000 input tokens to learn a number the catalog, or an earlier
+// attempt, already gave for free. This is the exact rule the task-4 brief's
+// own test pins: a catalogued model must never be re-measured.
+func (t *qualificationTick) dueContextProbes(ctx context.Context) ([]contextProbeCandidate, error) {
+	seen := make(map[string]bool)
+	var due []contextProbeCandidate
+	since := t.now().Add(-qualificationContextProbeCooldown)
+
+	cursor := ""
+	for {
+		rows, next, err := t.catalog.ListOfferings(ctx, storage.CatalogListParams{LiveOnly: true, Cursor: cursor})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if seen[row.ModelID] {
+				continue
+			}
+			seen[row.ModelID] = true
+
+			if limit, _ := models.EffectiveContext(row.NativeContextTokens, row.ContextLength); limit != nil {
+				continue // the catalog, or an earlier probe, already answered this
+			}
+
+			chatOpID, ok := chatOfferingOperationIDOf(row)
+			if !ok {
+				continue // defensive only — see contextProbeCandidate's own doc comment
+			}
+
+			recent, err := t.hasRecentContextProbeAttempt(ctx, chatOpID, since)
+			if err != nil {
+				return nil, err
+			}
+			if recent {
+				continue
+			}
+
+			due = append(due, contextProbeCandidate{
+				ModelID:                 row.ModelID,
+				AccountID:               row.AccountID,
+				ProviderID:              row.ProviderID,
+				ProviderModelID:         row.ProviderModelID,
+				ChatOfferingOperationID: chatOpID,
+			})
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	return due, nil
+}
+
+// probeContextWindows runs one round of task 4: for every candidate
+// dueContextProbes selects (up to qualificationContextProbeCap, deferring
+// and logging the rest — mirroring qualificationPerRoundCap/
+// qualificationCapabilityProbeCap's own "a cap nobody can see reads as
+// everything was measured" discipline), run the context probe and persist
+// a positive extraction.
+//
+// A LIST-phase failure is logged and this round's context probing is
+// simply skipped — never fatal to the tick as a whole, exactly like
+// probeCapabilities/dueModels' own failures abort only their own pass. A
+// per-candidate failure is likewise logged and the round continues with
+// the rest.
+func (t *qualificationTick) probeContextWindows(ctx context.Context) {
+	due, err := t.dueContextProbes(ctx)
+	if err != nil {
+		t.log.Warn("model qualification: listing due context probes failed, skipping this round's context probing",
+			observability.Err(err))
+		return
+	}
+	if len(due) == 0 {
+		return
+	}
+
+	probe := due
+	if len(probe) > qualificationContextProbeCap {
+		probe = due[:qualificationContextProbeCap]
+	}
+	if skipped := len(due) - len(probe); skipped > 0 {
+		skippedIDs := make([]string, 0, skipped)
+		for _, c := range due[len(probe):] {
+			skippedIDs = append(skippedIDs, c.ModelID)
+		}
+		// Logged, never silent — see qualificationPerRoundCap's own doc
+		// comment for why a cap nobody can see is a dishonesty this project
+		// keeps fixing.
+		t.log.Info("model qualification: context-probe per-round cap reached, deferring the rest to a later round",
+			observability.Int("cap", qualificationContextProbeCap),
+			observability.Int("due", len(due)),
+			observability.Int("deferred", skipped),
+			observability.String("deferred_model_ids", fmt.Sprintf("%v", skippedIDs)),
+		)
+	}
+
+	for _, c := range probe {
+		if err := t.probeOneContextWindow(ctx, c); err != nil {
+			t.log.Warn("model qualification: probing one context window failed, continuing with the rest of the round",
+				observability.String("model_id", c.ModelID),
+				observability.Err(err),
+			)
+		}
+	}
+}
+
+// probeOneContextWindow runs the context probe (via t.probeContext, the
+// seam production wires to runContextProbe below and tests replace via
+// withContextProbe) and, ONLY on a positive extraction, persists it through
+// the existing DiscoveryRepo.SetNativeContextTokens write-back — the SAME
+// write probe.go's manual endpoint already performs after a genuine
+// extraction, never a second interpretation of what counts as "learned
+// something": (0, false) from t.probeContext (a refusal, a transport
+// failure, or RungNoSignal) writes nothing at all.
+func (t *qualificationTick) probeOneContextWindow(ctx context.Context, c contextProbeCandidate) error {
+	limit, ok := t.probeContext(ctx, c)
+	if !ok {
+		return nil
+	}
+	if err := t.discovery.SetNativeContextTokens(ctx, c.ModelID, limit); err != nil {
+		return fmt.Errorf("set native context tokens: %w", err)
+	}
+	return nil
+}
+
+// runContextProbe is probeContext's production implementation: build a
+// fresh intelligence.ContextProbe (guard + probe) per attempt — mirroring
+// probeOneCapability's own per-call construction exactly — admit it through
+// intelligence.ProbeGuard, and report the extracted limit.
+//
+// t.contextProbeGuardPolicy is used here instead of t.probeGuardPolicy:
+// this is the ONE place in the whole tick that ever admits a
+// Class=ProbeExpensive request (intelligence.ContextProbe.Run sets Class:
+// ProbeExpensive internally), and ProbeGuard.Admit refuses every expensive
+// probe unless policy.ExpensiveProbesEnabled is true
+// (intelligence/probesafety.go: "expensive probe class is disabled").
+// Flipping that ONE field, on a policy used by NOTHING else in this file,
+// is 04 §2's "enable expensive probes for this narrow path through the
+// policy, per probe" — every OTHER gate Admit runs (the per-probe/
+// per-account cost caps sized exactly for this probe's 3,000,000 declared
+// input tokens, DefaultProbeSafetyPolicy's own MaxInFlightPerProvider=1
+// concurrency cap, and CRITICALLY the unmodified 7-day ContextProbeCooldown)
+// still applies in full — this is never a bypass of ProbeGuard, only a
+// widening of what CLASS of probe its existing opt-in gate lets through.
+// probeGuardPolicy (capability probes) is left an entirely separate value
+// so this opt-in can never leak onto a probe class that has no business
+// needing it — capability probes always run Class=ProbeStandard
+// (probeEstimateAllocations' fixed tiny fixture estimate), so
+// ExpensiveProbesEnabled genuinely never matters to them today, but a
+// future capability-probe change should have to decide that for itself
+// rather than inherit it silently from this one.
+//
+// Start/Finish bookkeeping follows the SAME "Start strictly after a
+// successful Admit" ordering task-3's CRITICAL 2(a) fix established (see
+// probeOneCapability's own doc comment): cp.Run calls guard.Admit
+// internally, and probeRuns.Start is only ever reached once cp.Run has
+// already returned without error — a refused attempt (missing opt-in, a
+// cap, the cooldown, concurrency) never writes a probe_runs row and never
+// records spend.
+//
+// rules=nil (NewContextProbe's third argument) is deliberate, not a
+// forgotten parameter: a repo-wide search of this codebase — and, for
+// additional evidence, of its retired TypeScript predecessor's own
+// context-probe.server.ts — found no intelligence.ContextLimitRule value
+// defined anywhere. Every provider this project has ever observed rejects
+// an oversized request in a shape rung 2 (the OpenAI phrase, gated on
+// provider_code=="context_length_exceeded") or rung 4 (the generic
+// keyword-proximity search) already reads; inventing a provider-specific
+// regex for a rejection shape nobody has actually observed would be
+// exactly the kind of guessed fact 04 §2 forbids. Rung 3 (provider regex)
+// therefore stays a documented no-op, exactly as it already was at
+// probe.go:526 — this task revives the CALLER, not a rung with nothing to
+// revive.
+func (t *qualificationTick) runContextProbe(ctx context.Context, c contextProbeCandidate) (int, bool) {
+	guard, err := intelligence.NewProbeGuard(t.contextProbeGuardPolicy, t.probeReserver, t.probeRuns, t.probeRuns, t.probeRuns, t.now)
+	if err != nil {
+		t.log.Warn("model qualification: context probe guard construction failed", observability.Err(err))
+		return 0, false
+	}
+
+	cp, err := intelligence.NewContextProbe(t.probeTransport, guard, nil, t.now)
+	if err != nil {
+		t.log.Warn("model qualification: context probe construction failed", observability.Err(err))
+		return 0, false
+	}
+
+	startedAt := t.now()
+	report, err := cp.Run(ctx, intelligence.ProbeRequest{
+		AccountID: c.AccountID, ProviderID: c.ProviderID, ProviderModelID: c.ProviderModelID,
+		OfferingOperationID: c.ChatOfferingOperationID, Operation: models.OperationContextWindow,
+	})
+	if err != nil {
+		// A guard refusal (opt-in/cap/cooldown/concurrency) or a transport
+		// error: nothing was learned and nothing was spent. Neither a
+		// probe_runs row nor a probe_run_costs row is ever written for this
+		// attempt — see this method's own doc comment.
+		return 0, false
+	}
+
+	runID := t.newID()
+	if err := t.probeRuns.Start(ctx, storage.ProbeRunParams{
+		ID: runID, OfferingOperationID: c.ChatOfferingOperationID, AccountID: c.AccountID, ProviderID: c.ProviderID,
+		Operation: string(models.OperationContextWindow), Class: intelligence.ProbeExpensive,
+		Allocations: probeEstimateAllocations(models.OperationContextWindow), ReservationID: report.ReservationID, StartedAt: startedAt,
+	}); err != nil {
+		t.log.Warn("model qualification: starting context probe run failed", observability.Err(err))
+		return 0, false
+	}
+	// Finish is deferred under a WithoutCancel context and its error
+	// swallowed — mirroring probeOneCapability's/ProbeHandler.runProbe's own
+	// discipline exactly: Start has already claimed the row, and a
+	// cancellation before Finish must not leave it stuck at 'running' until
+	// ReclaimStale eventually sweeps it.
+	defer func() {
+		_ = t.probeRuns.Finish(context.WithoutCancel(ctx), runID, report.Outcome.Execution, t.now())
+	}()
+
+	if report.Limit == nil {
+		// Refused nothing, spent the reservation, learned nothing definite —
+		// RungNoSignal, or a definitive/inconclusive outcome with no ladder
+		// hit. Never a guessed number.
+		return 0, false
+	}
+	return *report.Limit, true
+}
+
 // BuildQualificationTick constructs the automatic-qualification sweep the
 // boot scheduler runs. Its own composition root, mirroring
 // BuildTokenRefreshTick/BuildAccountMaintenanceTick: it builds the SAME
@@ -821,6 +1216,16 @@ func BuildQualificationTick(db *storage.DB, kr *secrets.Keyring, now func() time
 		return nil, fmt.Errorf("httpapi: build qualification tick: certification driver: %w", err)
 	}
 
+	// contextProbeGuardPolicy: DefaultProbeSafetyPolicy() with ONLY
+	// ExpensiveProbesEnabled flipped true — see runContextProbe's own doc
+	// comment for why this single field, on a policy value used by nothing
+	// else in this file, is 04 §2's "enable expensive probes for this
+	// narrow path through the policy, per probe" and not a bypass of
+	// ProbeGuard: every other gate (cost caps, concurrency, and the
+	// 7-day ContextProbeCooldown) is left at its conservative default.
+	contextProbeGuardPolicy := intelligence.DefaultProbeSafetyPolicy()
+	contextProbeGuardPolicy.ExpensiveProbesEnabled = true
+
 	tick := &qualificationTick{
 		catalog: storage.NewCatalogRepo(db),
 		runs:    storage.NewBenchmarkRunRepo(db, now),
@@ -854,6 +1259,15 @@ func BuildQualificationTick(db *storage.DB, kr *secrets.Keyring, now func() time
 		probeGuardPolicy: intelligence.DefaultProbeSafetyPolicy(),
 		probeTransport:   probeTransport,
 		driver:           certDriver,
+
+		discovery:               storage.NewDiscoveryRepo(db, newOAuthTransactionID),
+		contextProbeGuardPolicy: contextProbeGuardPolicy,
 	}
+	// Task 4: probeContext is a bound method value, assigned after
+	// construction (it needs tick itself as its receiver) rather than
+	// inline in the struct literal above — the SAME reason
+	// buildQualificationTickForTest's own default wiring below does the
+	// identical assignment for its test builds.
+	tick.probeContext = tick.runContextProbe
 	return tick.Run, nil
 }

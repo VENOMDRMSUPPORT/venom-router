@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -81,6 +82,44 @@ func withNow(now func() time.Time) qualificationTickOption {
 	return func(tick *qualificationTick) { tick.now = now }
 }
 
+// withContextProbe replaces the tick's probeContext seam (task 4) with fn —
+// the task-4 brief's own test shape: a plain (ctx, providerModelID) ->
+// (limit, ok) function, deliberately simpler than injecting a fake
+// intelligence.ProbeTransport, since dueContextProbes' SELECTION is what
+// this file's own tests exercise — the extraction ladder itself is already
+// unit-tested in intelligence/contextprobe_test.go. fn is called with
+// c.ProviderModelID (the identifier every seed helper in this file, and the
+// brief's own test, addresses a model by — e.g. "known"/"unknown" — not the
+// internal canonical models.id).
+func withContextProbe(fn func(context.Context, string) (int, bool)) qualificationTickOption {
+	return func(tick *qualificationTick) {
+		tick.probeContext = func(ctx context.Context, c contextProbeCandidate) (int, bool) {
+			return fn(ctx, c.ProviderModelID)
+		}
+	}
+}
+
+// withContextProbeTransport is withCapabilityProbeTransport under another
+// name: intelligence.ProbeTransport is shared by both probes in production
+// (a single probeTransportAdapter instance) and by this file's tick struct
+// (one probeTransport field) — task-4's own tests that exercise the REAL
+// runContextProbe path (rather than faking probeContext wholesale) use this
+// name so a reader is not left wondering why a "capability" helper appears
+// in a context-probe test.
+func withContextProbeTransport(transport *fakeProbeTransport) qualificationTickOption {
+	return withCapabilityProbeTransport(transport)
+}
+
+// withContextProbeGuardPolicy overrides the ProbeSafetyPolicy the context
+// probe (task 4) is admitted against — used to prove the negative case
+// directly: WITHOUT this task's own ExpensiveProbesEnabled opt-in
+// (buildQualificationTickForTest's default already flips it, mirroring
+// BuildQualificationTick's production wiring), a context-probe attempt must
+// be refused before ever reaching the transport.
+func withContextProbeGuardPolicy(policy intelligence.ProbeSafetyPolicy) qualificationTickOption {
+	return func(tick *qualificationTick) { tick.contextProbeGuardPolicy = policy }
+}
+
 // fakeAlwaysAdmitReserver is the one non-storage-backed capability-probe
 // dependency this file's tests use: a real reservation
 // (storage.QuotaReservationRepo.Reserve) fails closed with
@@ -119,6 +158,15 @@ func buildQualificationTickForTest(t *testing.T, db *storage.DB, opts ...qualifi
 		t.Fatalf("NewCertificationDriver: %v", err)
 	}
 
+	// contextProbeGuardPolicy defaults to ExpensiveProbesEnabled=true —
+	// mirroring BuildQualificationTick's own production wiring exactly, so a
+	// test exercising the REAL runContextProbe path (rather than replacing
+	// probeContext wholesale via withContextProbe) gets this task's own
+	// narrow opt-in by default. withContextProbeGuardPolicy overrides it to
+	// prove the negative case.
+	contextProbeGuardPolicy := intelligence.DefaultProbeSafetyPolicy()
+	contextProbeGuardPolicy.ExpensiveProbesEnabled = true
+
 	tick := &qualificationTick{
 		catalog: storage.NewCatalogRepo(db),
 		runs:    storage.NewBenchmarkRunRepo(db, nil),
@@ -132,7 +180,14 @@ func buildQualificationTickForTest(t *testing.T, db *storage.DB, opts ...qualifi
 		probeReserver:    fakeAlwaysAdmitReserver{},
 		probeGuardPolicy: intelligence.DefaultProbeSafetyPolicy(),
 		driver:           driver,
+
+		discovery:               storage.NewDiscoveryRepo(db, newOAuthTransactionID),
+		contextProbeGuardPolicy: contextProbeGuardPolicy,
 	}
+	// Task 4: see BuildQualificationTick's own identical assignment for why
+	// this is a bound method value assigned after construction rather than
+	// inline in the struct literal above.
+	tick.probeContext = tick.runContextProbe
 	for _, opt := range opts {
 		opt(tick)
 	}
@@ -168,6 +223,41 @@ func seedLiveChatOffering(t *testing.T, db *storage.DB, accountID, providerID, p
 		Certified:     []string{"chat"},
 		ContextTokens: 8192,
 	})
+}
+
+// seedLiveChatOfferingNoContext is seedLiveChatOffering with NO catalog-
+// declared context at all (task 4): ContextTokens is left at its zero
+// value, so seedCertifiedOffering's DiscoverySnapshotModel.ContextLength
+// still carries a non-nil *int (intPtrArg only maps a NIL pointer to SQL
+// NULL — seedCertifiedOffering always takes the address of its local
+// contextTokens variable, never a nil pointer), but pointing at 0.
+// models.EffectiveContext's own positiveOrNil treats a non-positive value
+// as UNKNOWN exactly like an absent one, so this offering has no
+// catalog-declared context and — nothing having probed it yet — no native
+// fact either: genuinely unknown, the fixture dueContextProbes must select.
+func seedLiveChatOfferingNoContext(t *testing.T, db *storage.DB, accountID, providerID, providerModelID string) {
+	t.Helper()
+	seedCertifiedOffering(t, db, seedArgs{
+		AccountID:    accountID,
+		ProviderID:   providerID,
+		ModelID:      providerModelID,
+		Capabilities: []string{"chat"},
+		Certified:    []string{"chat"},
+	})
+}
+
+// nativeContextTokensOf reads models.native_context_tokens for the
+// canonical model behind providerModelID, straight from the table — what
+// is actually persisted by DiscoveryRepo.SetNativeContextTokens, never a
+// projection.
+func nativeContextTokensOf(t *testing.T, db *storage.DB, providerModelID string) *int {
+	t.Helper()
+	modelID := canonicalModelIDForProviderModel(t, db, providerModelID)
+	var v *int
+	if err := db.Conn().QueryRow(`SELECT native_context_tokens FROM models WHERE id = ?`, modelID).Scan(&v); err != nil {
+		t.Fatalf("read native_context_tokens for %q: %v", modelID, err)
+	}
+	return v
 }
 
 // canonicalModelIDForProviderModel resolves a seeded provider model id to its
@@ -1073,5 +1163,216 @@ func TestQualificationTick_NeverProbesChatOrContextWindow(t *testing.T) {
 
 	if got := transport.callCount(); got != 0 {
 		t.Fatalf("capability probe transport calls = %d, want 0 — chat and context_window must never be probed by this pass", got)
+	}
+}
+
+// --- Task 4: measure the context window for offerings no catalog covers ---
+
+// harmlessStream is withStream wired to a fixed, always-OK sample — every
+// context-probe fixture below (seedLiveChatOfferingNoContext) is, by
+// construction, ALSO a live chat offering the sibling performance-scoring
+// pass (dueModels/measureOne) selects (a live chat op is exactly what BOTH
+// passes require), so every test that does not itself override the stream
+// needs this to keep that unrelated pass from panicking on a nil stream
+// function — mirrors TestQualificationTick_NeverProbesChatOrContextWindow's
+// own identical need.
+func harmlessStream() qualificationTickOption {
+	return withStream(func(context.Context, string, string, string, string, int) (benchmarkSample, error) {
+		return benchmarkSample{OK: true, TTFT: 100 * time.Millisecond, TokensPerSec: 40}, nil
+	})
+}
+
+// probeRunExecutionOf reads the most recent probe_runs.execution for
+// (offeringOperationID, operation), straight from the table — what
+// production actually persisted.
+func probeRunExecutionOf(t *testing.T, db *storage.DB, offeringOperationID, operation string) string {
+	t.Helper()
+	var execution string
+	if err := db.Conn().QueryRow(
+		`SELECT execution FROM probe_runs WHERE offering_operation_id = ? AND operation = ? ORDER BY started_at DESC LIMIT 1`,
+		offeringOperationID, operation,
+	).Scan(&execution); err != nil {
+		t.Fatalf("read probe run execution for (%q,%q): %v", offeringOperationID, operation, err)
+	}
+	return execution
+}
+
+// TestQualificationTick_MeasuresContextOnlyWhenTheCatalogDidNot is task-4's
+// Step 1 test verbatim (the automatic-model-qualification plan's own task-4
+// brief): a model with NO catalog-declared context (and no prior native
+// fact either) must be measured; a model the catalog already described
+// must NOT be re-measured — the context probe declares 3,000,000 input
+// tokens and is the most expensive probe in the system, so re-measuring a
+// catalogued model would spend real quota to learn a number the dataset
+// already gave for free. This is the exact cline-pass/qwen3.8-max scenario
+// the task brief names: absent from models.dev, reading "ctx unknown"
+// forever without this pass.
+func TestQualificationTick_MeasuresContextOnlyWhenTheCatalogDidNot(t *testing.T) {
+	db := testControlDB(t)
+	seedLiveChatOffering(t, db, "acct-1", "prov-1", "known")            // context_length set (8192)
+	seedLiveChatOfferingNoContext(t, db, "acct-2", "prov-2", "unknown") // no catalog fact at all
+
+	var probed []string
+	tick := newQualificationTickForTest(t, db,
+		withContextProbe(func(_ context.Context, modelID string) (int, bool) {
+			probed = append(probed, modelID)
+			return 200000, true
+		}),
+		harmlessStream(),
+	)
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if !slices.Contains(probed, "unknown") {
+		t.Fatal("an uncatalogued model was never measured; it would read ctx unknown forever")
+	}
+	if slices.Contains(probed, "known") {
+		t.Fatalf("a catalogued model was re-measured — the context probe declares 3,000,000 input tokens and is the most expensive probe in the system")
+	}
+
+	if got := nativeContextTokensOf(t, db, "unknown"); got == nil || *got != 200000 {
+		t.Fatalf("native_context_tokens for the uncatalogued model = %v, want 200000 written back", got)
+	}
+	if got := nativeContextTokensOf(t, db, "known"); got != nil {
+		t.Fatalf("native_context_tokens for the catalogued model = %v, want nil — it was never probed", *got)
+	}
+}
+
+// TestQualificationTick_ContextProbeRunsThroughTheRealGuardAndWritesBackNativeContextTokens
+// proves the REAL production path (runContextProbe), not the withContextProbe
+// fake above: a genuine 4xx rejection carrying the OpenAI rung-2 phrase is
+// admitted through intelligence.ProbeGuard (this task's own
+// ExpensiveProbesEnabled opt-in, wired by buildQualificationTickForTest's
+// default contextProbeGuardPolicy), extracted by ExtractContextLimit, and
+// persisted through the SAME DiscoveryRepo.SetNativeContextTokens write-back
+// probe.go's manual endpoint already uses — proof that "enabled through the
+// policy, per probe" and "the existing write-back" are not merely asserted
+// in a doc comment but actually wired end to end.
+func TestQualificationTick_ContextProbeRunsThroughTheRealGuardAndWritesBackNativeContextTokens(t *testing.T) {
+	db := testControlDB(t)
+	seedLiveChatOfferingNoContext(t, db, "acct-1", "prov-1", "unknown")
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{
+		HTTPStatus: 400, ProviderCode: "context_length_exceeded",
+		Message: "This model's maximum context length is 128000 tokens.",
+	}}
+	tick := newQualificationTickForTest(t, db, withContextProbeTransport(transport), harmlessStream())
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("context probe transport calls = %d, want 1", got)
+	}
+	if got := nativeContextTokensOf(t, db, "unknown"); got == nil || *got != 128000 {
+		t.Fatalf("native_context_tokens = %v, want 128000 extracted from the rejection", got)
+	}
+
+	chatOpID := offeringOperationIDFor(t, db, "acct-1", "unknown", "chat")
+	if n := probeRunCount(t, db, chatOpID); n != 1 {
+		t.Fatalf("probe_runs rows for the chat offering-operation = %d, want 1 — the context probe's own bookkeeping anchor is the offering's chat row (see contextProbeCandidate's own doc comment)", n)
+	}
+	if got := probeRunExecutionOf(t, db, chatOpID, "context_window"); got != "succeeded" {
+		t.Fatalf("probe_runs.execution = %q, want \"succeeded\"", got)
+	}
+}
+
+// TestQualificationTick_ContextProbeRefusedWithoutTheExpensiveOptInRecordsNoSpend
+// proves the OTHER half of "enabled through the policy, per probe": WITHOUT
+// this task's own ExpensiveProbesEnabled opt-in (the plain
+// intelligence.DefaultProbeSafetyPolicy(), which leaves it false — every
+// context probe declares Class=ProbeExpensive by construction), the SAME
+// candidate is refused before the transport is ever reached, and — mirroring
+// task-3's CRITICAL 2(a) fix — probeRuns.Start never runs before a
+// successful Admit, so a refused attempt records neither a probe_runs row
+// nor a probe_run_costs row (no spend at all).
+func TestQualificationTick_ContextProbeRefusedWithoutTheExpensiveOptInRecordsNoSpend(t *testing.T) {
+	db := testControlDB(t)
+	seedLiveChatOfferingNoContext(t, db, "acct-1", "prov-1", "unknown")
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{
+		HTTPStatus: 400, ProviderCode: "context_length_exceeded",
+		Message: "This model's maximum context length is 128000 tokens.",
+	}}
+	tick := newQualificationTickForTest(t, db,
+		withContextProbeTransport(transport),
+		withContextProbeGuardPolicy(intelligence.DefaultProbeSafetyPolicy()), // ExpensiveProbesEnabled stays false
+		harmlessStream())
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if got := transport.callCount(); got != 0 {
+		t.Fatalf("context probe transport calls = %d, want 0 — the guard must refuse an expensive-class probe before the transport is ever reached without this task's own opt-in", got)
+	}
+	chatOpID := offeringOperationIDFor(t, db, "acct-1", "unknown", "chat")
+	if n := probeRunCount(t, db, chatOpID); n != 0 {
+		t.Fatalf("probe_runs rows = %d, want 0 — a refused attempt must record no evidence at all", n)
+	}
+	if n := probeRunCostRowCount(t, db); n != 0 {
+		t.Fatalf("probe_run_costs rows = %d, want 0 — a refused attempt must record no spend", n)
+	}
+	if got := nativeContextTokensOf(t, db, "unknown"); got != nil {
+		t.Fatalf("native_context_tokens = %v, want nil — a refused attempt learned nothing", *got)
+	}
+}
+
+// TestQualificationTick_NonResolvingContextProbeIsNotRetriedNextRound proves
+// qualificationContextProbeCooldown's own reason for existing: a 2xx
+// response is classified inconclusive (contextprobe.go's own doc comment —
+// "the provider ACCEPTED the oversized request... we must not invent [a
+// limit]"), so intelligence.ProbeGuard's OWN context-probe cooldown
+// (succeeded-only) never fires for it, and dueContextProbes' "effective
+// context is nil" selection alone would re-pick this candidate on every
+// subsequent round forever. This tick's own selection-level backoff must
+// stop that on the very next round.
+func TestQualificationTick_NonResolvingContextProbeIsNotRetriedNextRound(t *testing.T) {
+	db := testControlDB(t)
+	seedLiveChatOfferingNoContext(t, db, "acct-1", "prov-1", "unknown")
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{HTTPStatus: 200}}
+	tick := newQualificationTickForTest(t, db, withContextProbeTransport(transport), harmlessStream())
+
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("round 1: %v", err)
+	}
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("transport calls after round 1 = %d, want 1", got)
+	}
+
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("round 2: %v", err)
+	}
+	if got := transport.callCount(); got != 1 {
+		t.Fatalf("transport calls after round 2 = %d, want STILL 1 — a non-resolving context probe must not be retried on the very next round", got)
+	}
+	if got := nativeContextTokensOf(t, db, "unknown"); got != nil {
+		t.Fatalf("native_context_tokens = %v, want nil — nothing was ever extracted", *got)
+	}
+}
+
+// TestQualificationTick_CapsHowManyContextProbesOneRoundRuns proves
+// qualificationContextProbeCap: with more due context probes than the cap,
+// only that many are actually attempted in one Run call.
+func TestQualificationTick_CapsHowManyContextProbesOneRoundRuns(t *testing.T) {
+	db := testControlDB(t)
+	total := qualificationContextProbeCap + 2
+	for i := 0; i < total; i++ {
+		suffix := fmt.Sprintf("%03d", i)
+		seedLiveChatOfferingNoContext(t, db, "acct-ctxcap-"+suffix, "prov-ctxcap-"+suffix, "m-ctxcap-"+suffix)
+	}
+
+	transport := &fakeProbeTransport{available: true, result: intelligence.ProbeResult{
+		HTTPStatus: 400, ProviderCode: "context_length_exceeded",
+		Message: "This model's maximum context length is 128000 tokens.",
+	}}
+	tick := newQualificationTickForTest(t, db, withContextProbeTransport(transport), harmlessStream())
+	if err := tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if got := transport.callCount(); got != qualificationContextProbeCap {
+		t.Fatalf("context probe transport calls = %d, want %d — the per-round cap must bound the fan-out", got, qualificationContextProbeCap)
 	}
 }
