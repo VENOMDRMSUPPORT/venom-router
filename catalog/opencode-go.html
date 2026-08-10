@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenCode Go — Paid Models</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <button class="mobile-menu-btn" id="menuBtn" aria-label="Toggle Navigation">☰</button>
+  <button class="theme-toggle" id="themeToggle" aria-label="Toggle Theme">☀️</button>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <!-- Sidebar Navigation -->
+  <aside class="sidebar glass-panel" id="sidebar">
+    <div class="sidebar-header">
+      <div class="brand-badge-3d">
+        <img src="assets/catalog-3d-logo.jpg" alt="Venom Catalog Logo" class="3d-logo-img">
+      </div>
+      <div>
+        <h2>Venom Catalog</h2>
+        <p>AI Agent Providers & Models</p>
+      </div>
+    </div>
+    <nav>
+      <div class="nav-section">
+        <div class="nav-section-title">Overview</div>
+        <a href="index.html" class="nav-item">📊 All Providers</a>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-title">Providers Directory</div>
+        <a href="opencode-zen.html" class="nav-item">
+          <div class="nav-logo-box"><img src="assets/opencode-zen.png" alt="OpenCode"></div>
+          <span>OpenCode Zen</span>
+          <span class="badge badge-free">Free</span>
+        </a>
+        <a href="opencode-go.html" class="nav-item active">
+          <div class="nav-logo-box"><img src="assets/opencode-zen.png" alt="OpenCode"></div>
+          <span>OpenCode Go</span>
+          <span class="badge badge-paid">$10/mo</span>
+        </a>
+        <a href="clinepass.html" class="nav-item">
+          <div class="nav-logo-box"><img src="assets/clinepass.png" alt="ClinePass"></div>
+          <span>ClinePass</span>
+          <span class="badge badge-paid">Sub</span>
+        </a>
+        <a href="ollama-cloud.html" class="nav-item">
+          <div class="nav-logo-box"><img src="assets/ollama-cloud.png" alt="Ollama"></div>
+          <span>Ollama Cloud</span>
+          <span class="badge badge-mixed">Hybrid</span>
+        </a>
+      </div>
+    </nav>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <div class="page-header">
+      <div class="logo-badge-container">
+        <img src="assets/opencode-zen.png" alt="OpenCode Go">
+      </div>
+      <div>
+        <h1>OpenCode Go</h1>
+        <p class="subtitle">18 premium models — $5 first month, then $10/month</p>
+      </div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card glass-panel"><div class="value text-cyan">18</div><div class="label">Models</div></div>
+      <div class="stat-card glass-panel"><div class="value text-emerald">1M</div><div class="label">Max Context</div></div>
+      <div class="stat-card glass-panel"><div class="value text-purple">500K</div><div class="label">Max Output</div></div>
+      <div class="stat-card glass-panel"><div class="value text-amber">$5→$10</div><div class="label">Pricing</div></div>
+    </div>
+
+    <h2>All Models</h2>
+    <div class="provider-table-container glass-panel">
+      <table class="enterprise-table">
+        <thead><tr><th>#</th><th>Model</th><th>Context</th><th>Max Output</th><th>Inputs</th><th>Capabilities</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><strong>Grok 4.5</strong></td><td class="ctx-500k">500K</td><td>500K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span> <span class="badge badge-attachment">Attachment</span></td></tr>
+          <tr><td>2</td><td><strong>GLM-5.2</strong></td><td class="ctx-1m">1M</td><td>131K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td></tr>
+          <tr><td>3</td><td><strong>GLM-5.1</strong></td><td class="ctx-200k">203K</td><td>33K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td></tr>
+          <tr><td>4</td><td><strong>GPT 5.6 Luna</strong></td><td class="ctx-1m">1M</td><td>128K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span> <span class="badge badge-pdf">pdf</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span> <span class="badge badge-attachment">Attachment</span></td></tr>
+          <tr><td>5</td><td><strong>Kimi K3</strong></td><td class="ctx-1m">1M</td><td>131K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span> <span class="badge badge-video">video</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span> <span class="badge badge-attachment">Attachment</span></td></tr>
+          <tr><td>6</td><td><strong>Kimi K2.7 Code</strong></td><td class="ctx-256k">262K</td><td>262K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span> <span class="badge badge-attachment">Attachment</span></td></tr>
+          <tr><td>7</td><td><strong>Kimi K2.6</strong></td><td class="ctx-256k">262K</td><td>66K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span> <span class="badge badge-attachment">Attachment</span></td></tr>
+          <tr><td>8</td><td><strong>MiMo-V2.5</strong></td><td class="ctx-1m">1M</td><td>128K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span> <span class="badge badge-audio">audio</span> <span class="badge badge-video">video</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span> <span class="badge badge-attachment">Attachment</span></td></tr>
+          <tr><td>9</td><td><strong>MiMo-V2.5-Pro</strong></td><td class="ctx-1m">1M</td><td>128K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span> <span class="badge badge-attachment">Attachment</span></td></tr>
+          <tr><td>10</td><td><strong>MiniMax M3</strong></td><td class="ctx-1m">1M</td><td>131K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span> <span class="badge badge-video">video</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td></tr>
+          <tr><td>11</td><td><strong>MiniMax M2.7</strong></td><td class="ctx-200k">205K</td><td>131K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td></tr>
+          <tr><td>12</td><td><strong>Qwen3.8 Max</strong></td><td class="ctx-1m">1M</td><td>131K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span> <span class="badge badge-video">video</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td></tr>
+          <tr><td>13</td><td><strong>Qwen3.7 Max</strong></td><td class="ctx-1m">1M</td><td>66K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td></tr>
+          <tr><td>14</td><td><strong>Qwen3.7 Plus</strong></td><td class="ctx-1m">1M</td><td>66K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span> <span class="badge badge-video">video</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span> <span class="badge badge-attachment">Attachment</span></td></tr>
+          <tr><td>15</td><td><strong>Qwen3.6 Plus</strong></td><td class="ctx-1m">1M</td><td>66K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span> <span class="badge badge-video">video</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span> <span class="badge badge-attachment">Attachment</span></td></tr>
+          <tr><td>16</td><td><strong>DeepSeek V4 Pro</strong></td><td class="ctx-1m">1M</td><td>384K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td></tr>
+          <tr><td>17</td><td><strong>DeepSeek V4 Flash</strong></td><td class="ctx-1m">1M</td><td>384K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td></tr>
+          <tr><td>18</td><td><strong>Hy3</strong></td><td class="ctx-256k">256K</td><td>64K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <footer><p>Source: <code>models.dev/api.json</code> + <code>opencode.ai/docs/go/</code> — Data gathered 2026-08-10</p></footer>
+  </main>
+
+  <script src="theme.js"></script>
+</body>
+</html>

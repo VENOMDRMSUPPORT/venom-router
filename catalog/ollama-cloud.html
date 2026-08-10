@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ollama Cloud</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <button class="mobile-menu-btn" id="menuBtn" aria-label="Toggle Navigation">☰</button>
+  <button class="theme-toggle" id="themeToggle" aria-label="Toggle Theme">☀️</button>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <!-- Sidebar Navigation -->
+  <aside class="sidebar glass-panel" id="sidebar">
+    <div class="sidebar-header">
+      <div class="brand-badge-3d">
+        <img src="assets/catalog-3d-logo.jpg" alt="Venom Catalog Logo" class="3d-logo-img">
+      </div>
+      <div>
+        <h2>Venom Catalog</h2>
+        <p>AI Agent Providers & Models</p>
+      </div>
+    </div>
+    <nav>
+      <div class="nav-section">
+        <div class="nav-section-title">Overview</div>
+        <a href="index.html" class="nav-item">📊 All Providers</a>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-title">Providers Directory</div>
+        <a href="opencode-zen.html" class="nav-item">
+          <div class="nav-logo-box"><img src="assets/opencode-zen.png" alt="OpenCode"></div>
+          <span>OpenCode Zen</span>
+          <span class="badge badge-free">Free</span>
+        </a>
+        <a href="opencode-go.html" class="nav-item">
+          <div class="nav-logo-box"><img src="assets/opencode-zen.png" alt="OpenCode"></div>
+          <span>OpenCode Go</span>
+          <span class="badge badge-paid">$10/mo</span>
+        </a>
+        <a href="clinepass.html" class="nav-item">
+          <div class="nav-logo-box"><img src="assets/clinepass.png" alt="ClinePass"></div>
+          <span>ClinePass</span>
+          <span class="badge badge-paid">Sub</span>
+        </a>
+        <a href="ollama-cloud.html" class="nav-item active">
+          <div class="nav-logo-box"><img src="assets/ollama-cloud.png" alt="Ollama"></div>
+          <span>Ollama Cloud</span>
+          <span class="badge badge-mixed">Hybrid</span>
+        </a>
+      </div>
+    </nav>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <div class="page-header">
+      <div class="logo-badge-container">
+        <img src="assets/ollama-cloud.png" alt="Ollama Cloud">
+      </div>
+      <div>
+        <h1>Ollama Cloud</h1>
+        <p class="subtitle">46 models total (28 free + 18 paid) - cloud and local</p>
+      </div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card glass-panel"><div class="value text-amber">46</div><div class="label">Total Models</div></div>
+      <div class="stat-card glass-panel"><div class="value text-emerald">28</div><div class="label">Free</div></div>
+      <div class="stat-card glass-panel"><div class="value text-cyan">1M</div><div class="label">Max Context</div></div>
+      <div class="stat-card glass-panel"><div class="value text-purple">Yes</div><div class="label">Local Models</div></div>
+    </div>
+
+    <h2 class="text-emerald">Free Tier Models (28)</h2>
+    <div class="provider-table-container glass-panel">
+      <table class="enterprise-table">
+        <thead><tr><th>#</th><th>Model</th><th>Context</th><th>Max Output</th><th>Inputs</th><th>Capabilities</th><th>Level</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><strong>gpt-oss:20b-cloud</strong></td><td class="ctx-128k">128K</td><td>128K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-1">L1</span></td></tr>
+          <tr><td>2</td><td><strong>gpt-oss:120b-cloud</strong></td><td class="ctx-128k">128K</td><td>128K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>3</td><td><strong>gemma4:cloud</strong></td><td class="ctx-256k">256K</td><td>-</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span> <span class="badge badge-audio">audio</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-1">L1</span></td></tr>
+          <tr><td>4</td><td><strong>gemma4:31b-cloud</strong></td><td class="ctx-256k">256K</td><td>-</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span> <span class="badge badge-audio">audio</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-1">L1</span></td></tr>
+          <tr><td>5</td><td><strong>gemma3:4b-cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-1">L1</span></td></tr>
+          <tr><td>6</td><td><strong>gemma3:12b-cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-1">L1</span></td></tr>
+          <tr><td>7</td><td><strong>gemma3:27b-cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>8</td><td><strong>nemotron-3-nano:30b-cloud</strong></td><td class="ctx-1m">1M</td><td>128K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-1">L1</span></td></tr>
+          <tr><td>9</td><td><strong>nemotron-3-super:cloud</strong></td><td class="ctx-256k">256K</td><td>-</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>10</td><td><strong>nemotron-3-ultra:cloud</strong></td><td class="ctx-256k">256K</td><td>-</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>11</td><td><strong>ministral-3:3b-cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-1">L1</span></td></tr>
+          <tr><td>12</td><td><strong>ministral-3:8b-cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-1">L1</span></td></tr>
+          <tr><td>13</td><td><strong>ministral-3:14b-cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-1">L1</span></td></tr>
+          <tr><td>14</td><td><strong>minimax-m2:cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>15</td><td><strong>minimax-m2.1:cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>16</td><td><strong>minimax-m2.5:cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>17</td><td><strong>minimax-m3:cloud</strong></td><td class="ctx-500k">512K</td><td>-</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>18</td><td><strong>qwen3-next:80b-cloud</strong></td><td class="ctx-256k">256K</td><td>32K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>19</td><td><strong>qwen3-coder-next:cloud</strong></td><td class="ctx-256k">256K</td><td>32K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>20</td><td><strong>qwen3-coder:480b-cloud</strong></td><td class="ctx-256k">256K</td><td>65K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>21</td><td><strong>qwen3-vl:235b-cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>22</td><td><strong>qwen3-vl:235b-instruct-cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>23</td><td><strong>glm-4.6:cloud</strong></td><td class="ctx-200k">203K</td><td>131K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>24</td><td><strong>glm-4.7:cloud</strong></td><td class="ctx-200k">203K</td><td>131K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>25</td><td><strong>cogito-2.1:671b-cloud</strong></td><td class="ctx-164k">164K</td><td>65K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>26</td><td><strong>devstral-small-2:24b-cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-1">L1</span></td></tr>
+          <tr><td>27</td><td><strong>devstral-2:123b-cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>28</td><td><strong>rnj-1:8b-cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class="text-purple">Pro/Max Tier Models (18)</h2>
+    <div class="provider-table-container glass-panel">
+      <table class="enterprise-table">
+        <thead><tr><th>#</th><th>Model</th><th>Context</th><th>Max Output</th><th>Inputs</th><th>Capabilities</th><th>Level</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><strong>deepseek-v4-pro:cloud</strong></td><td class="ctx-1m">1M</td><td>384K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-4">L4</span></td></tr>
+          <tr><td>2</td><td><strong>kimi-k3:cloud</strong></td><td class="ctx-1m">1M</td><td>131K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-4">L4</span></td></tr>
+          <tr><td>3</td><td><strong>deepseek-v4-flash:cloud</strong></td><td class="ctx-1m">1M</td><td>128K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>4</td><td><strong>deepseek-v4-flash:0731-cloud</strong></td><td class="ctx-1m">1M</td><td>128K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>5</td><td><strong>glm-5.2:cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>6</td><td><strong>glm-5.1:cloud</strong></td><td class="ctx-200k">203K</td><td>131K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>7</td><td><strong>glm-5:cloud</strong></td><td class="ctx-200k">203K</td><td>131K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>8</td><td><strong>kimi-k2.7-code:cloud</strong></td><td class="ctx-256k">262K</td><td>32K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>9</td><td><strong>kimi-k2.6:cloud</strong></td><td class="ctx-256k">262K</td><td>256K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>10</td><td><strong>kimi-k2.5:cloud</strong></td><td class="ctx-256k">262K</td><td>256K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>11</td><td><strong>kimi-k2:1t-cloud</strong></td><td class="ctx-256k">256K</td><td>256K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>12</td><td><strong>kimi-k2-thinking:cloud</strong></td><td class="ctx-256k">256K</td><td>256K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>13</td><td><strong>minimax-m2.7:cloud</strong></td><td class="ctx-200k">200K</td><td>128K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>14</td><td><strong>mistral-large-3:675b-cloud</strong></td><td>-</td><td>-</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>15</td><td><strong>qwen3.5:397b-cloud</strong></td><td class="ctx-256k">256K</td><td>32K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>16</td><td><strong>qwen3.5:cloud</strong></td><td class="ctx-256k">256K</td><td>32K</td><td><span class="badge badge-text">text</span> <span class="badge badge-image">image</span></td><td><span class="badge badge-image">Vision</span> <span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-2">L2</span></td></tr>
+          <tr><td>17</td><td><strong>deepseek-v3.1:671b-cloud</strong></td><td class="ctx-164k">164K</td><td>164K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+          <tr><td>18</td><td><strong>deepseek-v3.2:cloud</strong></td><td class="ctx-164k">164K</td><td>65K</td><td><span class="badge badge-text">text</span></td><td><span class="badge badge-reasoning">Reasoning</span> <span class="badge badge-tools">Tools</span></td><td><span class="badge level-3">L3</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="warning"><strong>Pricing:</strong> Free ($0, 1 concurrent) | Pro ($20/mo, 3 concurrent, 50x quota) | Max ($100/mo, 10 concurrent, 250x quota). Usage measured by GPU time.</div>
+    <footer><p>Source: ollama.com/search?c=cloud + ollama.com/pricing + GitHub models.go - 2026-08-10</p></footer>
+  </main>
+
+  <script src="theme.js"></script>
+</body>
+</html>
