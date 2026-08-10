@@ -229,7 +229,7 @@ code {
   flex-shrink: 0;
 }
 
-.brand-badge-3d img, .3d-logo-img {
+.brand-badge-3d img, .brand-logo-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
