@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Model Catalogs — Enterprise Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <button class="mobile-menu-btn" id="menuBtn" aria-label="Toggle Navigation">☰</button>
+  <button class="theme-toggle" id="themeToggle" aria-label="Toggle Theme">☀️</button>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <!-- Sidebar Navigation -->
+  <aside class="sidebar glass-panel" id="sidebar">
+    <div class="sidebar-header">
+      <div class="brand-badge-3d">
+        <img src="assets/catalog-3d-logo.jpg" alt="Venom Catalog Logo" class="3d-logo-img">
+      </div>
+      <div>
+        <h2>Venom Catalog</h2>
+        <p>AI Agent Providers & Models</p>
+      </div>
+    </div>
+    <nav>
+      <div class="nav-section">
+        <div class="nav-section-title">Overview</div>
+        <a href="index.html" class="nav-item active">📊 All Providers</a>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-title">Providers Directory</div>
+        <a href="opencode-zen.html" class="nav-item">
+          <div class="nav-logo-box"><img src="assets/opencode-zen.png" alt="OpenCode"></div>
+          <span>OpenCode Zen</span>
+          <span class="badge badge-free">Free</span>
+        </a>
+        <a href="opencode-go.html" class="nav-item">
+          <div class="nav-logo-box"><img src="assets/opencode-zen.png" alt="OpenCode"></div>
+          <span>OpenCode Go</span>
+          <span class="badge badge-paid">$10/mo</span>
+        </a>
+        <a href="clinepass.html" class="nav-item">
+          <div class="nav-logo-box"><img src="assets/clinepass.png" alt="ClinePass"></div>
+          <span>ClinePass</span>
+          <span class="badge badge-paid">Sub</span>
+        </a>
+        <a href="ollama-cloud.html" class="nav-item">
+          <div class="nav-logo-box"><img src="assets/ollama-cloud.png" alt="Ollama"></div>
+          <span>Ollama Cloud</span>
+          <span class="badge badge-mixed">Hybrid</span>
+        </a>
+      </div>
+    </nav>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <header class="hero-section">
+      <div class="hero-badge">ENTERPRISE MATRIX 2026</div>
+      <h1>AI Model Catalogs</h1>
+      <p>Comprehensive comparison of verified AI model catalogs for coding agents — directly synchronized with official APIs and runtime specifications.</p>
+
+      <!-- KPI Metrics Ribbon -->
+      <div class="kpi-ribbon">
+        <div class="kpi-card glass-panel">
+          <div class="kpi-value text-cyan">84</div>
+          <div class="kpi-label">Verified Models</div>
+        </div>
+        <div class="kpi-card glass-panel">
+          <div class="kpi-value text-emerald">1M</div>
+          <div class="kpi-label">Max Context Window</div>
+        </div>
+        <div class="kpi-card glass-panel">
+          <div class="kpi-value text-purple">4</div>
+          <div class="kpi-label">Major Providers</div>
+        </div>
+        <div class="kpi-card glass-panel">
+          <div class="kpi-value text-amber">100%</div>
+          <div class="kpi-label">API Verified</div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Toolbar: Search, Filters & View Toggle -->
+    <div class="toolbar glass-panel">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="Search provider or model name..." aria-label="Search models">
+      </div>
+      <div class="filter-chips">
+        <button class="filter-chip active" data-filter="all">All</button>
+        <button class="filter-chip" data-filter="free">Free Tiers</button>
+        <button class="filter-chip" data-filter="paid">Subscription</button>
+        <button class="filter-chip" data-filter="1m">1M+ Context</button>
+        <button class="filter-chip" data-filter="multimodal">Multimodal</button>
+      </div>
+      <div class="view-switcher">
+        <button class="view-btn active" id="viewGridBtn" aria-label="Grid View">🎛️ Grid</button>
+        <button class="view-btn" id="viewTableBtn" aria-label="Table View">📑 Table</button>
+      </div>
+    </div>
+
+    <!-- Provider Grid View (3D Glassmorphic Cards) -->
+    <div class="provider-grid" id="providerGrid">
+      
+      <!-- OpenCode Zen Card -->
+      <a href="opencode-zen.html" class="provider-card-3d glass-panel" data-title="opencode zen" data-tags="free 1m multimodal">
+        <div class="provider-card-header">
+          <div class="logo-badge-container">
+            <img src="assets/opencode-zen.png" alt="OpenCode Zen">
+          </div>
+          <div>
+            <h3>OpenCode Zen</h3>
+            <span class="badge badge-free">Free</span>
+          </div>
+        </div>
+        <p>8 free tested and verified coding models. No API key or subscription required.</p>
+        <div class="provider-stats-row">
+          <div class="stat-item"><span class="stat-num text-emerald">8</span><span class="stat-lbl">Models</span></div>
+          <div class="stat-item"><span class="stat-num text-cyan">1M</span><span class="stat-lbl">Context</span></div>
+          <div class="stat-item"><span class="stat-num text-purple">Vision</span><span class="stat-lbl">Multimodal</span></div>
+        </div>
+      </a>
+
+      <!-- OpenCode Go Card -->
+      <a href="opencode-go.html" class="provider-card-3d glass-panel" data-title="opencode go" data-tags="paid 1m multimodal">
+        <div class="provider-card-header">
+          <div class="logo-badge-container">
+            <img src="assets/opencode-zen.png" alt="OpenCode Go">
+          </div>
+          <div>
+            <h3>OpenCode Go</h3>
+            <span class="badge badge-paid">$10/mo</span>
+          </div>
+        </div>
+        <p>18 premium tier models for $5 first month then $10/mo. High rate limits.</p>
+        <div class="provider-stats-row">
+          <div class="stat-item"><span class="stat-num text-cyan">18</span><span class="stat-lbl">Models</span></div>
+          <div class="stat-item"><span class="stat-num text-cyan">1M</span><span class="stat-lbl">Context</span></div>
+          <div class="stat-item"><span class="stat-num text-emerald">500K</span><span class="stat-lbl">Max Output</span></div>
+        </div>
+      </a>
+
+      <!-- ClinePass Card -->
+      <a href="clinepass.html" class="provider-card-3d glass-panel" data-title="clinepass" data-tags="paid 1m">
+        <div class="provider-card-header">
+          <div class="logo-badge-container">
+            <img src="assets/clinepass.png" alt="ClinePass">
+          </div>
+          <div>
+            <h3>ClinePass</h3>
+            <span class="badge badge-paid">Subscription</span>
+          </div>
+        </div>
+        <p>12 curated open-weight models via Cline extension with WorkOS OAuth integration.</p>
+        <div class="provider-stats-row">
+          <div class="stat-item"><span class="stat-num text-purple">12</span><span class="stat-lbl">Models</span></div>
+          <div class="stat-item"><span class="stat-num text-cyan">1M</span><span class="stat-lbl">Context</span></div>
+          <div class="stat-item"><span class="stat-num text-emerald">512K</span><span class="stat-lbl">Max Output</span></div>
+        </div>
+      </a>
+
+      <!-- Ollama Cloud Card -->
+      <a href="ollama-cloud.html" class="provider-card-3d glass-panel" data-title="ollama cloud" data-tags="free paid 1m multimodal">
+        <div class="provider-card-header">
+          <div class="logo-badge-container">
+            <img src="assets/ollama-cloud.png" alt="Ollama Cloud">
+          </div>
+          <div>
+            <h3>Ollama Cloud</h3>
+            <span class="badge badge-mixed">Free + Paid</span>
+          </div>
+        </div>
+        <p>46 models total (28 free + 18 paid). Also supports local custom model execution.</p>
+        <div class="provider-stats-row">
+          <div class="stat-item"><span class="stat-num text-amber">46</span><span class="stat-lbl">Models</span></div>
+          <div class="stat-item"><span class="stat-num text-cyan">1M</span><span class="stat-lbl">Context</span></div>
+          <div class="stat-item"><span class="stat-num text-emerald">Yes</span><span class="stat-lbl">Local Hybrid</span></div>
+        </div>
+      </a>
+
+    </div>
+
+    <!-- Provider Table View (Enterprise Data Grid) -->
+    <div class="provider-table-container glass-panel" id="providerTableView" style="display: none;">
+      <table class="enterprise-table">
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Pricing Tier</th>
+            <th>Models Count</th>
+            <th>Max Context</th>
+            <th>Max Output</th>
+            <th>Features</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <div class="table-provider-cell">
+                <div class="logo-badge-container sm"><img src="assets/opencode-zen.png" alt=""></div>
+                <strong>OpenCode Zen</strong>
+              </div>
+            </td>
+            <td><span class="badge badge-free">Free</span></td>
+            <td>8</td>
+            <td>1M</td>
+            <td>64K</td>
+            <td><span class="badge badge-text">Vision</span> <span class="badge badge-text">Tools</span></td>
+          </tr>
+          <tr>
+            <td>
+              <div class="table-provider-cell">
+                <div class="logo-badge-container sm"><img src="assets/opencode-zen.png" alt=""></div>
+                <strong>OpenCode Go</strong>
+              </div>
+            </td>
+            <td><span class="badge badge-paid">$10/mo</span></td>
+            <td>18</td>
+            <td>1M</td>
+            <td>500K</td>
+            <td><span class="badge badge-text">Reasoning</span> <span class="badge badge-text">Tools</span></td>
+          </tr>
+          <tr>
+            <td>
+              <div class="table-provider-cell">
+                <div class="logo-badge-container sm"><img src="assets/clinepass.png" alt=""></div>
+                <strong>ClinePass</strong>
+              </div>
+            </td>
+            <td><span class="badge badge-paid">Subscription</span></td>
+            <td>12</td>
+            <td>1M</td>
+            <td>512K</td>
+            <td><span class="badge badge-text">OAuth</span> <span class="badge badge-text">VSCode</span></td>
+          </tr>
+          <tr>
+            <td>
+              <div class="table-provider-cell">
+                <div class="logo-badge-container sm"><img src="assets/ollama-cloud.png" alt=""></div>
+                <strong>Ollama Cloud</strong>
+              </div>
+            </td>
+            <td><span class="badge badge-mixed">Hybrid</span></td>
+            <td>46</td>
+            <td>1M</td>
+            <td>128K</td>
+            <td><span class="badge badge-text">Local</span> <span class="badge badge-text">Open-Weight</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Methodology Section -->
+    <section class="methodology-section glass-panel">
+      <h3>📋 Enterprise Verification Methodology</h3>
+      <p>Data is retrieved live from primary API endpoints and validated against system logs:</p>
+      <ul>
+        <li><strong>OpenCode Zen & Go:</strong> Synchronized from <code>models.dev/api.json</code></li>
+        <li><strong>ClinePass:</strong> Fetched via <code>api.cline.bot</code></li>
+        <li><strong>Ollama Cloud:</strong> Verified from <code>ollama.com/library</code> and local CLI bindings</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p>Venom Router Catalog Enterprise Matrix — Last updated 2026-08-10</p>
+    </footer>
+  </main>
+
+  <script src="theme.js"></script>
+</body>
+</html>
