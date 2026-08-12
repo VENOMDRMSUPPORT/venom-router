@@ -96,8 +96,8 @@ export function DashboardPage() {
         <Kpi value={formatTokens(maxContext)} label="Max context" hint="Largest context window in the catalog right now." />
         <Kpi
           value={`${meta.qualityScored}/${meta.liveModels}`}
-          label="Quality-scored"
-          hint={`${meta.unrated} models have no published benchmark. Unknown quality — not low quality.`}
+          label="Benchmarked externally"
+          hint={`${meta.unrated} of these models have not been measured by any published benchmark. That is a gap in what the industry has measured, not a gap in this catalog — unknown quality is not low quality.`}
         />
         <Kpi
           value={data.origin === 'live' ? formatAgo(oldestSuccess) : 'snapshot'}
@@ -231,7 +231,7 @@ export function DashboardPage() {
                   <th>Sync Status</th>
                   <th className={styles.num}>Live Models</th>
                   <th className={styles.num}>Max Context</th>
-                  <th className={styles.num}>Quality Scored</th>
+                  <th className={styles.num} title="How many of this provider's models a published benchmark has measured. A low figure means the industry has not benchmarked those models yet — it is not a gap in this catalog's data.">Benchmarked</th>
                   <th className={styles.num}>Free Models</th>
                   <th className={styles.num}>Action</th>
                 </tr>
