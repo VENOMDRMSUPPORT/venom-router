@@ -51,7 +51,7 @@ export interface EnrichSummary {
 interface Row {
   provider_id: string; model_id: string;
   context_tokens: number | null; output_tokens: number | null; input_modalities: string | null;
-  tools: number | null; reasoning: number | null; structured: number | null;
+  tools: number | null; reasoning: number | null; structured: number | null; attachment: number | null;
   cost_in_per_m: number | null; cost_out_per_m: number | null;
 }
 
@@ -72,6 +72,7 @@ function specFromRow(r: Row): ModelSpec {
     tools: bool(r.tools),
     reasoning: bool(r.reasoning),
     structured: bool(r.structured),
+    attachment: bool(r.attachment),
     costInPerM: r.cost_in_per_m ?? undefined,
     costOutPerM: r.cost_out_per_m ?? undefined,
   };
@@ -81,7 +82,7 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
   const { db, canonical, overlay, billing, now } = deps;
   const rows = db
     .prepare(`SELECT provider_id, model_id, context_tokens, output_tokens, input_modalities,
-                     tools, reasoning, structured, cost_in_per_m, cost_out_per_m
+                     tools, reasoning, structured, attachment, cost_in_per_m, cost_out_per_m
               FROM models WHERE status IN ('active','missing')`)
     .all() as unknown as Row[];
 
@@ -100,7 +101,7 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
     );
     const update = db.prepare(
       `UPDATE models SET context_tokens = ?, output_tokens = ?, input_modalities = ?,
-                         tools = ?, reasoning = ?, structured = ?,
+                         tools = ?, reasoning = ?, structured = ?, attachment = ?,
                          cost_in_per_m = ?, cost_out_per_m = ?,
                          ref_cost_in_per_m = ?, ref_cost_out_per_m = ?, cost_kind = ?
        WHERE provider_id = ? AND model_id = ?`,
@@ -121,6 +122,7 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
       const tools = resolveCapability('tools', input);
       const reasoning = resolveCapability('reasoning', input);
       const structured = resolveCapability('structured', input);
+      const attachment = resolveCapability('attachment', input);
       const cost = resolveCost(input, billing[r.provider_id] ?? 'per_token');
 
       const record = (field: string, v: { value: unknown; source: string; ref: string } | null, wasNull: boolean) => {
@@ -138,6 +140,7 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
       record('tools', tools, r.tools === null);
       record('reasoning', reasoning, r.reasoning === null);
       record('structured', structured, r.structured === null);
+      record('attachment', attachment, r.attachment === null);
       fact.run(r.provider_id, r.model_id, 'cost', JSON.stringify({ kind: cost.kind, inPerM: cost.inPerM, outPerM: cost.outPerM }), cost.source, cost.ref, at);
       costKinds[cost.kind] = (costKinds[cost.kind] ?? 0) + 1;
 
@@ -148,6 +151,7 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
         tools === null ? null : Number(tools.value),
         reasoning === null ? null : Number(reasoning.value),
         structured === null ? null : Number(structured.value),
+        attachment === null ? null : Number(attachment.value),
         cost.inPerM, cost.outPerM, cost.refInPerM, cost.refOutPerM, cost.kind,
         r.provider_id, r.model_id,
       );

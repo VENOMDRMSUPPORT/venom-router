@@ -150,22 +150,29 @@ export function resolveModalities({ detail, spec, intrinsic, canonical }: Resolv
  * exposed there. So a miss returns null (unknown), never false.
  */
 export function resolveCapability(
-  field: 'tools' | 'structured' | 'reasoning',
+  field: 'tools' | 'structured' | 'reasoning' | 'attachment',
   { detail, spec, intrinsic, canonical }: ResolverInput,
 ): ResolvedFact<boolean> | null {
-  // A provider-declared capability outranks every index. Only fields its
-  // vocabulary can express arrive here at all — see OLLAMA_EXPRESSIBLE.
-  const fromDetail = field === 'structured' ? undefined : detail?.[field];
+  // A provider-declared capability outranks every index — but only for the two
+  // fields a detail vocabulary actually expresses. Structured output and file
+  // attachments have no representation there, so silence about them carries no
+  // information and the record is not consulted. See OLLAMA_EXPRESSIBLE.
+  const fromDetail = field === 'tools' || field === 'reasoning' ? detail?.[field] : undefined;
   if (typeof fromDetail === 'boolean') return { value: fromDetail, source: 'provider_api', ref: detail!.ref };
-  const fromSpec = spec?.[field === 'structured' ? 'structured' : field];
+  const fromSpec = spec?.[field];
   if (typeof fromSpec === 'boolean') return { value: fromSpec, source: 'models.dev', ref: field };
   // Another seller's declaration about the SAME model. Legitimate for a
   // capability, which belongs to the model, and it can say no as well as yes.
   const fromPool = intrinsic?.[field];
   if (typeof fromPool === 'boolean')
     return { value: fromPool, source: 'models.dev', ref: `${intrinsic.declaredBy}.${field}` };
+  // The canonical index can only ever CONFIRM, and only for a field whose
+  // acceptance it actually reports. `attachment` has no entry in PARAM_FOR on
+  // purpose: an input-modality list is a different question, and reading
+  // "accepts images" as "accepts attachments" would be an inference, not a fact.
   const params = canonical?.supportedParameters;
-  if (params && PARAM_FOR[field].some((p) => params.includes(p)))
+  const names = PARAM_FOR[field];
+  if (params && names?.some((p) => params.includes(p)))
     return { value: true, source: 'openrouter', ref: `${canonical.id}.supported_parameters` };
   return null;
 }
