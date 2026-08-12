@@ -77,6 +77,8 @@ export interface IntrinsicFacts {
   inputModalities?: string[];
   /** The `provider/model` key the value came from, for provenance. */
   declaredBy: string;
+  /** Fields whose sellers disagreed; deliberately left unresolved. */
+  conflicts: string[];
 }
 
 /**
@@ -91,10 +93,10 @@ export async function loadSpecs(fetchJson: FetchJson): Promise<SpecSource> {
   if (!feed || typeof feed !== 'object') throw new Error('models.dev: expected an object of providers');
 
   const byProvider = new Map<string, Map<string, ModelSpec>>();
-  // Intrinsic properties pooled across every provider. The first declaration
-  // wins per field, so a model is not left unknown merely because the provider
-  // we buy it from chose not to publish a flag another seller did.
-  const intrinsicByModel = new Map<string, IntrinsicFacts>();
+  // Every declaration of every intrinsic property, kept per field rather than
+  // collapsed on sight — because sellers disagree, and which one we happened to
+  // read first must never be the tie-breaker.
+  const pooled = new Map<string, { declarations: Record<string, { value: unknown; by: string }[]> }>();
 
   for (const [key, provider] of Object.entries(feed)) {
     const index = new Map<string, ModelSpec>();
@@ -104,13 +106,17 @@ export async function loadSpecs(fetchJson: FetchJson): Promise<SpecSource> {
       index.set(normalizeId(id), spec);
 
       const norm = normalizeId(id);
-      const existing = intrinsicByModel.get(norm) ?? { declaredBy: `${key}/${id}` };
-      if (existing.tools === undefined && typeof model.tool_call === 'boolean') existing.tools = model.tool_call;
-      if (existing.reasoning === undefined && typeof model.reasoning === 'boolean') existing.reasoning = model.reasoning;
-      if (existing.structured === undefined && typeof model.structured_output === 'boolean') existing.structured = model.structured_output;
-      if (existing.attachment === undefined && typeof model.attachment === 'boolean') existing.attachment = model.attachment;
-      if (existing.inputModalities === undefined && Array.isArray(model.modalities?.input)) existing.inputModalities = model.modalities.input;
-      intrinsicByModel.set(norm, existing);
+      const acc = pooled.get(norm) ?? { declarations: {} as Record<string, { value: unknown; by: string }[]> };
+      const declare = (field: string, value: unknown) => {
+        if (value === undefined) return;
+        (acc.declarations[field] ??= []).push({ value, by: `${key}/${id}` });
+      };
+      declare('tools', typeof model.tool_call === 'boolean' ? model.tool_call : undefined);
+      declare('reasoning', typeof model.reasoning === 'boolean' ? model.reasoning : undefined);
+      declare('structured', typeof model.structured_output === 'boolean' ? model.structured_output : undefined);
+      declare('attachment', typeof model.attachment === 'boolean' ? model.attachment : undefined);
+      declare('inputModalities', Array.isArray(model.modalities?.input) ? model.modalities.input : undefined);
+      pooled.set(norm, acc);
     }
     byProvider.set(key, index);
   }
@@ -123,10 +129,43 @@ export async function loadSpecs(fetchJson: FetchJson): Promise<SpecSource> {
     return index.get(modelId) ?? index.get(bare) ?? index.get(normalizeId(modelId)) ?? null;
   };
 
+  /**
+   * Reduce a field's declarations to a single answer.
+   *
+   * Unanimous declarations are taken. A field whose sellers DISAGREE resolves to
+   * unknown, not to a majority and not to the first one read.
+   *
+   * Measured 2026-08-12: hy3-preview is declared structured_output=true by
+   * aihubmix and false by both kilo and openrouter. Taking the first hit made
+   * the answer depend on object iteration order — a value that looks confident,
+   * has no trace of the disagreement, and differs from a correct one only by
+   * chance. `docs/catalog-data-sources.md` already names this failure: a quietly
+   * picked winner is indistinguishable from a bug.
+   */
+  function settle(list: { value: unknown; by: string }[] | undefined): { value: unknown; by: string } | null {
+    if (!list?.length) return null;
+    const distinct = new Set(list.map((d) => JSON.stringify(d.value)));
+    if (distinct.size > 1) return null;
+    return list[0];
+  }
+
   const intrinsic = (modelId: string): IntrinsicFacts | null => {
     const bare = modelId.replace(/^[^/]+\//, '');
-    return intrinsicByModel.get(normalizeId(modelId)) ?? intrinsicByModel.get(normalizeId(bare)) ?? null;
+    const acc = pooled.get(normalizeId(modelId)) ?? pooled.get(normalizeId(bare));
+    if (!acc) return null;
+    const out: IntrinsicFacts = { declaredBy: '', conflicts: [] };
+    for (const field of ['tools', 'reasoning', 'structured', 'attachment', 'inputModalities'] as const) {
+      const list = acc.declarations[field];
+      const settled = settle(list);
+      if (!settled) {
+        if (list && list.length > 1) out.conflicts.push(field);
+        continue;
+      }
+      (out as Record<string, unknown>)[field] = settled.value;
+      if (!out.declaredBy) out.declaredBy = settled.by;
+    }
+    return out.declaredBy || out.conflicts.length ? out : null;
   };
 
-  return { lookup, providerCount: byProvider.size, intrinsic, intrinsicCount: intrinsicByModel.size };
+  return { lookup, providerCount: byProvider.size, intrinsic, intrinsicCount: pooled.size };
 }

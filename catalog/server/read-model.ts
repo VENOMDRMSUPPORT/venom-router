@@ -86,6 +86,17 @@ export interface ApiModel {
     missingDimensions: string[];
     profileId: string;
   };
+  /**
+   * Whether every operational fact this catalog promises is resolved.
+   *
+   * A row that is not ready is NOT hidden and NOT deleted — it is served with
+   * this flag and its `missingFacts`, so the inventory stays complete while the
+   * main table stays trustworthy. Forcing a dash into a column would make the
+   * table look uniform and quietly lower what a complete row means.
+   */
+  catalogReady: boolean;
+  /** Named gaps, so "not ready" is always accountable. */
+  missingFacts: string[];
   /** Quality rank. Null for unrated models — they are unplaced, not last. */
   qualityRank: number | null;
   /** True when this row shares its rank with others the evidence cannot separate. */
@@ -208,12 +219,30 @@ export function loadModels(db: Db, opts: { includeRetired?: boolean; now?: () =>
         missingDimensions: voParsed?.missing ?? [],
         profileId: vo?.profile_id ?? 'balanced',
       },
+      catalogReady: false,
+      missingFacts: [],
       qualityRank: null,
       tiedAtRank: false,
       firstSeenAt: m.first_seen_at,
       lastSeenAt: m.last_seen_at,
     };
   });
+
+  // The completeness gate. VQ is deliberately NOT part of it: a model with no
+  // published benchmark is honestly unrated, which is a statement about the
+  // world rather than a hole in our data.
+  for (const m of models) {
+    const missing: string[] = [];
+    if (m.contextTokens === null) missing.push('context');
+    if (m.maxOutputTokens === null) missing.push('maxOutput');
+    if (m.inputModalities === null) missing.push('modalities');
+    if (m.capabilities.tools === null) missing.push('tools');
+    if (m.capabilities.reasoning === null) missing.push('reasoning');
+    if (m.capabilities.structured === null) missing.push('structured');
+    if (m.pricing.kind === 'unknown') missing.push('cost');
+    m.missingFacts = missing;
+    m.catalogReady = missing.length === 0;
+  }
 
   // Ranking is computed here, once, by the same module the tests exercise — the
   // client receives ranks and never re-derives them.
@@ -269,6 +298,10 @@ export interface CatalogMeta {
   methodologyVersion: string;
   profileId: string;
   liveModels: number;
+  /** Rows passing the completeness gate — what the main table shows. */
+  catalogReady: number;
+  /** Rows held back for review, with their gaps named per row. */
+  needsVerification: number;
   qualityScored: number;
   operationalScored: number;
   unrated: number;
@@ -308,6 +341,8 @@ export function loadMeta(db: Db, models: ApiModel[]): CatalogMeta {
     methodologyVersion: method?.methodology_ver ?? 'unknown',
     profileId: live[0]?.vo.profileId ?? 'balanced',
     liveModels: live.length,
+    catalogReady: live.filter((m) => m.catalogReady).length,
+    needsVerification: live.filter((m) => !m.catalogReady).length,
     qualityScored: withEvidence,
     operationalScored: live.filter((m) => m.vo.value !== null).length,
     unrated: live.length - withEvidence,

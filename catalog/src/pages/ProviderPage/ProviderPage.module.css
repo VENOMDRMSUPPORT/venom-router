@@ -390,3 +390,10 @@
   color: var(--foreground-tertiary);
   text-transform: uppercase;
 }
+
+.pendingNote {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}

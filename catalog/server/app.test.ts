@@ -6,6 +6,7 @@ import { SyncRunner } from './sync-runner.ts';
 import { loadModels, loadProviders, loadMeta } from './read-model.ts';
 import { syncProvider, type ProviderAdapter } from '../sync/engine.ts';
 import { scoreAll } from '../sync/score/pipeline.ts';
+import { enrich, canonicalFromBenchmarks } from '../sync/enrich/enrich.ts';
 import { buildIndex } from '../sync/identity.ts';
 import type { BenchmarkSource } from '../sync/sources/openrouter.ts';
 import type { ScoreProfile } from '../sync/score/venom-score.ts';
@@ -49,13 +50,21 @@ async function seed(rosters: Record<string, string[]>) {
       fetchJson: async () => ({ status: 200, body: { data: ids.map((x) => ({ id: x })) } }),
       lookupSpec: (_k, modelId) => ({
         contextTokens: modelId.includes('big') ? 1_000_000 : 128_000,
-        outputTokens: 32_000, tools: true, reasoning: true,
+        outputTokens: 32_000, tools: true, reasoning: true, structured: true,
         inputModalities: ['text'], costInPerM: 1, costOutPerM: modelId.includes('free') ? 0 : 5,
       }),
     });
   }
+  // The real pipeline always enriches before scoring, so the fixture does too —
+  // otherwise cost semantics would be unset and every row would look incomplete
+  // for a reason production never produces.
+  const bm = benchmarks();
+  enrich({
+    db, canonical: canonicalFromBenchmarks(bm), overlay: {}, billing: { acme: 'per_token', other: 'per_token' },
+    intrinsic: () => null, now,
+  });
   scoreAll({
-    db, benchmarks: benchmarks(), overlay: {}, profile: PROFILE,
+    db, benchmarks: bm, overlay: {}, profile: PROFILE,
     methodologyVersion: 'venom-score-v1', sourceFetchedAt: '2026-08-12T00:00:00.000Z', now,
   });
 }
@@ -348,5 +357,36 @@ describe('AC10 — /v1/changes produces deterministic, meaningful diffs', () => 
 
   test('the same query twice returns the same result', () => {
     assert.deepEqual(get('/v1/changes').body, get('/v1/changes').body);
+  });
+});
+
+describe('the completeness gate', () => {
+  test('a row missing an operational fact is not catalog-ready, and says which', () => {
+    db.exec(`UPDATE models SET structured = NULL WHERE model_id='measured-1' AND provider_id='acme'`);
+    const m = get('/v1/models').body.models.find((x: any) => x.providerId === 'acme' && x.modelId === 'measured-1');
+    assert.equal(m.catalogReady, false);
+    assert.deepEqual(m.missingFacts, ['structured']);
+  });
+
+  test('a not-ready row is still SERVED, not hidden or deleted', () => {
+    const before = get('/v1/models').body.models.length;
+    db.exec(`UPDATE models SET structured = NULL`);
+    const after = get('/v1/models').body;
+    assert.equal(after.models.length, before, 'the inventory must stay whole');
+    assert.equal(after.meta.catalogReady, 0);
+    assert.equal(after.meta.needsVerification, before);
+  });
+
+  test('an unrated VQ does NOT make a row incomplete', () => {
+    // Missing quality is a statement about the world; missing operational facts
+    // are a gap in our data. Only the second one holds a row back.
+    const m = get('/v1/models').body.models.find((x: any) => x.modelId === 'nobench-1');
+    assert.equal(m.vq.value, null);
+    assert.equal(m.catalogReady, true);
+  });
+
+  test('ready + needsVerification partitions the live rows', () => {
+    const r = get('/v1/models').body;
+    assert.equal(r.meta.catalogReady + r.meta.needsVerification, r.meta.liveModels);
   });
 });

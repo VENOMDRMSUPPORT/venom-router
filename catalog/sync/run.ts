@@ -19,7 +19,8 @@ import { ADAPTERS, BILLING } from './providers/index.ts';
 import { loadSpecs } from './sources/models-dev.ts';
 import { loadBenchmarks } from './sources/openrouter.ts';
 import { scoreAll } from './score/pipeline.ts';
-import { enrich, canonicalFromBenchmarks } from './enrich/enrich.ts';
+import { enrich, canonicalFromBenchmarks, rowsNeedingDetail } from './enrich/enrich.ts';
+import { DETAIL_FETCHERS, makePost, type ProviderDetail } from './sources/provider-detail.ts';
 import type { ScoreProfile } from './score/venom-score.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -75,11 +76,29 @@ export async function main(): Promise<number> {
   // resolving those facts first is what lets a previously factless model score.
   console.log('\nenriching operational metadata...');
   const overlay = loadIdentityOverlay();
-  const en = enrich({
-    db, canonical: canonicalFromBenchmarks(benchmarks), overlay, billing: BILLING,
-    intrinsic: specs.intrinsic,
+  const canonical = canonicalFromBenchmarks(benchmarks);
+  const base = {
+    db, canonical, overlay, billing: BILLING, intrinsic: specs.intrinsic,
     now: () => new Date().toISOString(),
-  });
+  };
+
+  // Pass one uses only the free shared sources. Whatever is still open is then
+  // asked of the provider's own detail endpoint, and pass two resolves again
+  // with that answer ranked first. Two passes rather than one so the per-model
+  // detail calls are targeted at the handful of rows that need them, instead of
+  // asking a provider 116 questions to answer four.
+  enrich(base);
+
+  const post = makePost(fetchJson);
+  const open = rowsNeedingDetail(db, Object.keys(DETAIL_FETCHERS));
+  const details = new Map<string, ProviderDetail>();
+  for (const row of open) {
+    const d = await DETAIL_FETCHERS[row.providerId](row.modelId, post);
+    if (d) details.set(`${row.providerId}/${row.modelId}`, d);
+  }
+  if (open.length) console.log(`  provider detail   : asked ${open.length}, answered ${details.size}`);
+
+  const en = enrich({ ...base, details });
   const fmt = (o: Record<string, number>) => Object.entries(o).map(([k, v]) => `${k}=${v}`).join(' ') || 'none';
   console.log(`  rows              : ${en.rows}`);
   console.log(`  filled by fallback: ${fmt(en.filled)}`);

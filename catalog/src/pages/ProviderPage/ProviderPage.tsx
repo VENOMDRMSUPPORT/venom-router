@@ -48,10 +48,16 @@ export function ProviderPage() {
   const maxCtx = Math.max(0, ...models.map((m) => m.contextTokens ?? 0));
   const free = models.filter((m) => m.pricing.isFree === true).length;
 
-  const rated = filteredModels
+  // The completeness gate: rows whose operational facts are all resolved make up
+  // the catalog proper. The rest are held in a labelled section rather than
+  // dropped — the inventory stays whole, the main table stays trustworthy.
+  const ready = filteredModels.filter((m) => m.catalogReady);
+  const pending = filteredModels.filter((m) => !m.catalogReady);
+
+  const rated = ready
     .filter((m) => m.qualityRank !== null)
     .sort((a, b) => a.qualityRank! - b.qualityRank!);
-  const unrated = filteredModels
+  const unrated = ready
     .filter((m) => m.qualityRank === null)
     .sort((a, b) => (b.vo.value ?? -1) - (a.vo.value ?? -1));
 
@@ -131,6 +137,14 @@ export function ProviderPage() {
         </>
       )}
 
+      {pending.length > 0 && (
+        <ModelTable
+          title={`Needs verification (${pending.length})`}
+          models={pending}
+          note={`These models are served by the provider, but at least one operational fact could not be resolved from any source. They are listed here rather than inside the catalog so an incomplete row never sits beside a complete one: ${[...new Set(pending.flatMap((m) => m.missingFacts))].join(', ')}.`}
+        />
+      )}
+
       <section className={styles.provenance}>
         <h3 className={styles.provTitle}>Where this data comes from</h3>
         <dl className={styles.provGrid}>
@@ -188,6 +202,11 @@ function ModelTable({ title, models, note }: { title: string; models: ApiModel[]
                 <td className={styles.narrow}><RankCell model={m} /></td>
                 <td>
                   <span className={styles.modelName}>{m.modelId}</span>
+                  {!m.catalogReady && (
+                    <span className={styles.pendingNote} title={`Unresolved: ${m.missingFacts.join(', ')}`}>
+                      unresolved: {m.missingFacts.join(', ')}
+                    </span>
+                  )}
                   {m.canonicalId && m.canonicalId.replace(/^[^/]+\//, '') !== m.modelId && (
                     <span className={styles.canonical} title="The upstream model this row was proven to be. Two providers serving it share one score.">
                       {m.canonicalId}

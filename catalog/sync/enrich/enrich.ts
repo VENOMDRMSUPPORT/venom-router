@@ -20,6 +20,7 @@ import {
   type CanonicalRecord, type BillingModel,
 } from './resolvers.ts';
 import type { ModelSpec } from '../engine.ts';
+import type { ProviderDetail } from '../sources/provider-detail.ts';
 
 export interface EnrichDeps {
   db: Db;
@@ -29,6 +30,12 @@ export interface EnrichDeps {
   overlay: Record<string, string>;
   /** How each provider charges. Declared, because no feed publishes it. */
   billing: Record<string, BillingModel>;
+  /**
+   * The provider's own per-model record, when it publishes one. Fetched only
+   * for rows a cheaper source could not settle, so a full run does not make
+   * hundreds of extra calls to answer questions already answered.
+   */
+  details?: Map<string, ProviderDetail>;
   now: () => string;
 }
 
@@ -103,7 +110,10 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
       const res = resolveIdentity(r.model_id, canonical.index, overlay);
       const canon = res.status === 'resolved' ? canonical.byId.get(res.target) ?? null : null;
       const spec = specFromRow(r);
-      const input = { spec, intrinsic: deps.intrinsic(r.model_id), canonical: canon };
+      const input = {
+        detail: deps.details?.get(`${r.provider_id}/${r.model_id}`) ?? null,
+        spec, intrinsic: deps.intrinsic(r.model_id), canonical: canon,
+      };
 
       const context = resolveContext(input);
       const output = resolveMaxOutput(input);
@@ -145,6 +155,25 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
   });
 
   return { rows: rows.length, filled, stillMissing, costKinds };
+}
+
+/**
+ * Which rows are worth a provider detail call.
+ *
+ * Only rows still missing something after the free sources. A detail endpoint is
+ * a per-model HTTP request, so asking it about 116 models to answer 4 questions
+ * would be rude to the provider and slow for no gain.
+ */
+export function rowsNeedingDetail(db: Db, providers: string[]): { providerId: string; modelId: string }[] {
+  const placeholders = providers.map(() => '?').join(',');
+  return db
+    .prepare(
+      `SELECT provider_id AS providerId, model_id AS modelId FROM models
+       WHERE status IN ('active','missing') AND provider_id IN (${placeholders})
+         AND (context_tokens IS NULL OR output_tokens IS NULL OR input_modalities IS NULL
+              OR tools IS NULL OR reasoning IS NULL OR structured IS NULL)`,
+    )
+    .all(...providers) as unknown as { providerId: string; modelId: string }[];
 }
 
 /** Project the OpenRouter payload into the shape the resolvers consume. */

@@ -21,8 +21,9 @@
  */
 
 import type { ModelSpec } from '../engine.ts';
+import type { ProviderDetail } from '../sources/provider-detail.ts';
 
-export type FactSource = 'models.dev' | 'openrouter' | 'provider_billing' | 'probe';
+export type FactSource = 'provider_api' | 'models.dev' | 'openrouter' | 'provider_billing' | 'probe';
 
 export interface ResolvedFact<T> {
   value: T;
@@ -76,6 +77,13 @@ const PARAM_FOR: Record<string, string[]> = {
 const has = <T>(v: T | null | undefined): v is T => v !== null && v !== undefined;
 
 export interface ResolverInput {
+  /**
+   * The provider's OWN detail record, when it publishes one.
+   *
+   * Ranked first: this is the seller describing its own offer, which no index
+   * can outrank for a provider-specific limit.
+   */
+  detail?: ProviderDetail | null;
   /** The provider's own feed entry, when models.dev carries one. */
   spec: ModelSpec | null;
   /**
@@ -97,10 +105,14 @@ export interface IntrinsicFacts {
   attachment?: boolean;
   inputModalities?: string[];
   declaredBy: string;
+  /** Fields whose sellers disagreed. Those never reach a resolver as a value. */
+  conflicts?: string[];
 }
 
 /** Context window, in tokens. */
-export function resolveContext({ spec, canonical }: ResolverInput): ResolvedFact<number> | null {
+export function resolveContext({ detail, spec, canonical }: ResolverInput): ResolvedFact<number> | null {
+  // The provider's own answer about its own serving comes first.
+  if (has(detail?.contextTokens)) return { value: detail.contextTokens, source: 'provider_api', ref: detail.ref };
   if (has(spec?.contextTokens)) return { value: spec.contextTokens, source: 'models.dev', ref: 'limit.context' };
   if (has(canonical?.contextLength)) return { value: canonical.contextLength, source: 'openrouter', ref: `${canonical.id}.context_length` };
   return null;
@@ -117,7 +129,10 @@ export function resolveMaxOutput({ spec, canonical }: ResolverInput): ResolvedFa
   return null;
 }
 
-export function resolveModalities({ spec, intrinsic, canonical }: ResolverInput): ResolvedFact<string[]> | null {
+export function resolveModalities({ detail, spec, intrinsic, canonical }: ResolverInput): ResolvedFact<string[]> | null {
+  // Ollama's vocabulary expresses vision, so it can state modality both ways.
+  if (detail && typeof detail.vision === 'boolean')
+    return { value: detail.vision ? ['text', 'image'] : ['text'], source: 'provider_api', ref: detail.ref };
   if (has(spec?.inputModalities)) return { value: spec.inputModalities, source: 'models.dev', ref: 'modalities.input' };
   if (has(intrinsic?.inputModalities))
     return { value: intrinsic.inputModalities, source: 'models.dev', ref: `${intrinsic.declaredBy}.modalities.input` };
@@ -136,8 +151,12 @@ export function resolveModalities({ spec, intrinsic, canonical }: ResolverInput)
  */
 export function resolveCapability(
   field: 'tools' | 'structured' | 'reasoning',
-  { spec, intrinsic, canonical }: ResolverInput,
+  { detail, spec, intrinsic, canonical }: ResolverInput,
 ): ResolvedFact<boolean> | null {
+  // A provider-declared capability outranks every index. Only fields its
+  // vocabulary can express arrive here at all — see OLLAMA_EXPRESSIBLE.
+  const fromDetail = field === 'structured' ? undefined : detail?.[field];
+  if (typeof fromDetail === 'boolean') return { value: fromDetail, source: 'provider_api', ref: detail!.ref };
   const fromSpec = spec?.[field === 'structured' ? 'structured' : field];
   if (typeof fromSpec === 'boolean') return { value: fromSpec, source: 'models.dev', ref: field };
   // Another seller's declaration about the SAME model. Legitimate for a

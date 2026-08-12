@@ -88,7 +88,11 @@ export function DashboardPage() {
       {/* Operational status, not a marketing claim. Each number is a fact the
           service can point at a timestamp for. */}
       <div className={styles.grid4}>
-        <Kpi value={String(meta.liveModels)} label="Live models" hint="Currently served by the providers below, as of the last successful sync." />
+        <Kpi
+          value={String(meta.catalogReady)}
+          label="Catalog-ready models"
+          hint={`Every operational fact resolved. ${meta.needsVerification} more are served by the providers but have an unresolved fact and are listed separately on their provider page.`}
+        />
         <Kpi value={formatTokens(maxContext)} label="Max context" hint="Largest context window in the catalog right now." />
         <Kpi
           value={`${meta.qualityScored}/${meta.liveModels}`}
@@ -238,6 +242,7 @@ export function DashboardPage() {
                   const mine = models.filter((m) => m.providerId === p.id);
                   const free = mine.filter((m) => m.pricing.isFree === true).length;
                   const maxCtx = Math.max(0, ...mine.map((m) => m.contextTokens ?? 0));
+                  const scoredRatio = p.liveModels > 0 ? Math.round((p.qualityScored / p.liveModels) * 100) : 0;
                   return (
                     <tr key={p.id} className={styles.tableRow} onClick={() => navigate(`/provider/${p.id}`)}>
                       <td>
@@ -256,7 +261,19 @@ export function DashboardPage() {
                       </td>
                       <td className={styles.num}>{p.liveModels}</td>
                       <td className={styles.num}>{formatTokens(maxCtx)}</td>
-                      <td className={styles.num}>{p.qualityScored}</td>
+                      <td className={styles.num}>
+                        <div className={styles.tableProgressCell}>
+                          <div className={styles.tableProgressValue}>
+                            {scoredRatio}% <span className={styles.tableProgressRatio}>({p.qualityScored}/{p.liveModels})</span>
+                          </div>
+                          <div className={styles.tableProgressBarBg}>
+                            <div
+                              className={styles.tableProgressBarFill}
+                              style={{ width: `${scoredRatio}%` }}
+                            />
+                          </div>
+                        </div>
+                      </td>
                       <td className={styles.num}>{free > 0 ? free : '—'}</td>
                       <td className={styles.num}>
                         <div className={styles.actionCell} title="View provider roster">

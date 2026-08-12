@@ -52,6 +52,8 @@ export interface ApiModel {
     provenance: Provenance | null;
   };
   vo: { value: number | null; dimensions: Record<string, number | null>; missingDimensions: string[]; profileId: string };
+  catalogReady: boolean;
+  missingFacts: string[];
   qualityRank: number | null;
   tiedAtRank: boolean;
   firstSeenAt: string;
@@ -76,6 +78,8 @@ export interface CatalogMeta {
   methodologyVersion: string;
   profileId: string;
   liveModels: number;
+  catalogReady: number;
+  needsVerification: number;
   qualityScored: number;
   operationalScored: number;
   unrated: number;
@@ -180,6 +184,8 @@ function snapshotToCatalog(data: { models: any[]; providers: any[] }): Omit<Cata
       provenance: null,
     },
     vo: { value: m.vo_value ?? null, dimensions: {}, missingDimensions: [], profileId: 'balanced' },
+    catalogReady: true,
+    missingFacts: [],
     qualityRank: null,
     tiedAtRank: false,
     firstSeenAt: m.first_seen_at,
@@ -208,6 +214,8 @@ function snapshotToCatalog(data: { models: any[]; providers: any[] }): Omit<Cata
       methodologyVersion: 'venom-score-v1',
       profileId: 'balanced',
       liveModels: models.length,
+      catalogReady: models.length,
+      needsVerification: 0,
       qualityScored: scored,
       operationalScored: models.length,
       unrated: models.length - scored,
