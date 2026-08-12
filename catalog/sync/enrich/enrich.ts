@@ -23,6 +23,8 @@ import type { ModelSpec } from '../engine.ts';
 
 export interface EnrichDeps {
   db: Db;
+  /** Intrinsic model properties pooled across every provider in the spec feed. */
+  intrinsic: (modelId: string) => import('./resolvers.ts').IntrinsicFacts | null;
   canonical: { index: IdentityIndex; byId: Map<string, CanonicalRecord> };
   overlay: Record<string, string>;
   /** How each provider charges. Declared, because no feed publishes it. */
@@ -101,7 +103,7 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
       const res = resolveIdentity(r.model_id, canonical.index, overlay);
       const canon = res.status === 'resolved' ? canonical.byId.get(res.target) ?? null : null;
       const spec = specFromRow(r);
-      const input = { spec, canonical: canon };
+      const input = { spec, intrinsic: deps.intrinsic(r.model_id), canonical: canon };
 
       const context = resolveContext(input);
       const output = resolveMaxOutput(input);

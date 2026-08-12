@@ -78,8 +78,25 @@ const has = <T>(v: T | null | undefined): v is T => v !== null && v !== undefine
 export interface ResolverInput {
   /** The provider's own feed entry, when models.dev carries one. */
   spec: ModelSpec | null;
+  /**
+   * The same model as declared by ANY provider in the spec feed.
+   *
+   * Consulted only for properties intrinsic to the model. Serving limits and
+   * price never come from here — those belong to a seller, not to the model.
+   */
+  intrinsic: IntrinsicFacts | null;
   /** The canonical index entry, when identity resolved. */
   canonical: CanonicalRecord | null;
+}
+
+/** Model-level properties another provider may legitimately vouch for. */
+export interface IntrinsicFacts {
+  tools?: boolean;
+  reasoning?: boolean;
+  structured?: boolean;
+  attachment?: boolean;
+  inputModalities?: string[];
+  declaredBy: string;
 }
 
 /** Context window, in tokens. */
@@ -100,8 +117,10 @@ export function resolveMaxOutput({ spec, canonical }: ResolverInput): ResolvedFa
   return null;
 }
 
-export function resolveModalities({ spec, canonical }: ResolverInput): ResolvedFact<string[]> | null {
+export function resolveModalities({ spec, intrinsic, canonical }: ResolverInput): ResolvedFact<string[]> | null {
   if (has(spec?.inputModalities)) return { value: spec.inputModalities, source: 'models.dev', ref: 'modalities.input' };
+  if (has(intrinsic?.inputModalities))
+    return { value: intrinsic.inputModalities, source: 'models.dev', ref: `${intrinsic.declaredBy}.modalities.input` };
   if (has(canonical?.inputModalities))
     return { value: canonical.inputModalities, source: 'openrouter', ref: `${canonical.id}.architecture.input_modalities` };
   return null;
@@ -117,10 +136,15 @@ export function resolveModalities({ spec, canonical }: ResolverInput): ResolvedF
  */
 export function resolveCapability(
   field: 'tools' | 'structured' | 'reasoning',
-  { spec, canonical }: ResolverInput,
+  { spec, intrinsic, canonical }: ResolverInput,
 ): ResolvedFact<boolean> | null {
   const fromSpec = spec?.[field === 'structured' ? 'structured' : field];
   if (typeof fromSpec === 'boolean') return { value: fromSpec, source: 'models.dev', ref: field };
+  // Another seller's declaration about the SAME model. Legitimate for a
+  // capability, which belongs to the model, and it can say no as well as yes.
+  const fromPool = intrinsic?.[field];
+  if (typeof fromPool === 'boolean')
+    return { value: fromPool, source: 'models.dev', ref: `${intrinsic.declaredBy}.${field}` };
   const params = canonical?.supportedParameters;
   if (params && PARAM_FOR[field].some((p) => params.includes(p)))
     return { value: true, source: 'openrouter', ref: `${canonical.id}.supported_parameters` };

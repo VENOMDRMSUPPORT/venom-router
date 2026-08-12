@@ -77,6 +77,7 @@ export async function main(): Promise<number> {
   const overlay = loadIdentityOverlay();
   const en = enrich({
     db, canonical: canonicalFromBenchmarks(benchmarks), overlay, billing: BILLING,
+    intrinsic: specs.intrinsic,
     now: () => new Date().toISOString(),
   });
   const fmt = (o: Record<string, number>) => Object.entries(o).map(([k, v]) => `${k}=${v}`).join(' ') || 'none';

@@ -99,7 +99,7 @@ export class SyncRunner {
       // Facts first, then the score derived from them.
       enrich({
         db, canonical: canonicalFromBenchmarks(benchmarks), overlay: identityOverlay,
-        billing: BILLING, now: () => new Date().toISOString(),
+        billing: BILLING, intrinsic: specs.intrinsic, now: () => new Date().toISOString(),
       });
 
       const scoring = scoreAll({
