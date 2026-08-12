@@ -1,0 +1,30 @@
+{
+  "methodologyVersion": "vs-1.0.0",
+  "note": "Weights are policy, not measurement. They are committed and reviewable precisely so that no number in the catalog depends on an undeclared judgement. Changing any weight requires bumping methodologyVersion, which invalidates and recomputes every stored VO.",
+  "profiles": [
+    {
+      "id": "balanced",
+      "label": "Balanced",
+      "description": "No dimension dominates. The default when the caller has not stated a preference.",
+      "weights": { "context": 0.3, "output": 0.2, "capabilities": 0.3, "cost": 0.2 }
+    },
+    {
+      "id": "coding",
+      "label": "Coding agent",
+      "description": "Long context and tool use matter most for an agent that reads a repository; price matters least.",
+      "weights": { "context": 0.35, "output": 0.15, "capabilities": 0.4, "cost": 0.1 }
+    },
+    {
+      "id": "cheapest",
+      "label": "Cost first",
+      "description": "For bulk or background work where the cheapest adequate model wins.",
+      "weights": { "context": 0.15, "output": 0.1, "capabilities": 0.15, "cost": 0.6 }
+    },
+    {
+      "id": "long-context",
+      "label": "Long context",
+      "description": "For whole-codebase or long-document work, where the window is the constraint.",
+      "weights": { "context": 0.6, "output": 0.25, "capabilities": 0.1, "cost": 0.05 }
+    }
+  ]
+}

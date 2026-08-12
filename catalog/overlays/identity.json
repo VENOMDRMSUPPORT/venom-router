@@ -1,0 +1,5 @@
+{
+  "note": "Human-reviewed identity mappings. Each entry is a decision a machine may not make: it binds a catalog model id to an exact upstream benchmark id. Every entry needs a reason that a later reader can re-verify. An entry whose target leaves the upstream index resolves to nothing rather than to a guess.",
+  "reviewedAt": "2026-08-12",
+  "mappings": {}
+}
