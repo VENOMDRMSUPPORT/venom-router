@@ -1,0 +1,40 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.compact {
+  padding: 1px 7px;
+  font-size: 0.68rem;
+}
+
+.ok {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  color: var(--accent);
+}
+
+.stale,
+.warn {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--text-muted) 40%, transparent);
+  color: var(--text-secondary);
+}
+
+.never {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--text-muted) 26%, transparent);
+  color: var(--text-muted);
+}
+
+.suffix {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}

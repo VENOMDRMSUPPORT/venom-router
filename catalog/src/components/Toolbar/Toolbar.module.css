@@ -1,0 +1,117 @@
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 32px 0 24px;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 240px;
+  max-width: 320px;
+  background: var(--background-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  transition: border-color var(--transition-fast);
+}
+
+.search:focus-within {
+  border-color: var(--border-strong);
+}
+
+.searchIcon {
+  color: var(--foreground-tertiary);
+  flex-shrink: 0;
+}
+
+.input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--foreground);
+  font-size: 13px;
+  width: 100%;
+}
+
+.input::placeholder {
+  color: var(--foreground-tertiary);
+}
+
+.filters {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.filterBtn {
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  white-space: nowrap;
+}
+
+.filterBtn:hover {
+  background: var(--accent-subtle);
+  color: var(--foreground);
+}
+
+.filterActive {
+  background: var(--background-tertiary);
+  color: var(--foreground);
+  border-color: var(--border);
+}
+
+.viewSwitcher {
+  display: flex;
+  margin-left: auto;
+  background: var(--background-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2px;
+  gap: 1px;
+}
+
+.viewBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground-tertiary);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.viewBtn:hover {
+  color: var(--foreground);
+}
+
+.viewActive {
+  background: var(--background-tertiary);
+  color: var(--foreground);
+}
+
+@media (max-width: 768px) {
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .search {
+    max-width: none;
+  }
+  .viewSwitcher {
+    margin-left: 0;
+    align-self: flex-start;
+  }
+}

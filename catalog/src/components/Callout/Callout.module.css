@@ -1,0 +1,33 @@
+.callout {
+  display: flex;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--background-secondary);
+  margin: 24px 0;
+  font-size: 13px;
+  color: var(--foreground-secondary);
+  line-height: 1.6;
+}
+
+.icon {
+  color: var(--foreground-tertiary);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.content {
+  flex: 1;
+}
+
+.content a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.content strong {
+  color: var(--foreground);
+  font-weight: 500;
+}

@@ -104,14 +104,69 @@ interface StoredModel {
   miss_count: number;
   context_tokens: number | null;
   output_tokens: number | null;
+  cost_in_per_m: number | null;
+  cost_out_per_m: number | null;
+  tools: number | null;
+  reasoning: number | null;
+  structured: number | null;
+  attachment: number | null;
+  input_modalities: string | null;
 }
 
-function specChanges(before: StoredModel | undefined, spec: ModelSpec | null): number {
-  if (!before || !spec) return 0;
-  let n = 0;
-  if (spec.contextTokens !== undefined && spec.contextTokens !== before.context_tokens) n++;
-  if (spec.outputTokens !== undefined && spec.outputTokens !== before.output_tokens) n++;
-  return n;
+/**
+ * Fields whose change is worth telling a reader about, and the class each change
+ * belongs to.
+ *
+ * Only these are compared. A field absent from this list cannot generate an
+ * event, which is what keeps `/v1/changes` from filling up with noise — a
+ * re-fetch that returns identical data must produce zero events, not 116 rows
+ * saying "observed again".
+ */
+const TRACKED: {
+  field: string;
+  cls: 'context' | 'price' | 'capability';
+  stored: (m: StoredModel) => string | null;
+  incoming: (s: ModelSpec) => string | null;
+}[] = [
+  { field: 'context_tokens', cls: 'context', stored: (m) => str(m.context_tokens), incoming: (s) => str(s.contextTokens) },
+  { field: 'output_tokens', cls: 'context', stored: (m) => str(m.output_tokens), incoming: (s) => str(s.outputTokens) },
+  { field: 'cost_in_per_m', cls: 'price', stored: (m) => str(m.cost_in_per_m), incoming: (s) => str(s.costInPerM) },
+  { field: 'cost_out_per_m', cls: 'price', stored: (m) => str(m.cost_out_per_m), incoming: (s) => str(s.costOutPerM) },
+  { field: 'tools', cls: 'capability', stored: (m) => bit(m.tools), incoming: (s) => bool(s.tools) },
+  { field: 'reasoning', cls: 'capability', stored: (m) => bit(m.reasoning), incoming: (s) => bool(s.reasoning) },
+  { field: 'structured', cls: 'capability', stored: (m) => bit(m.structured), incoming: (s) => bool(s.structured) },
+  { field: 'attachment', cls: 'capability', stored: (m) => bit(m.attachment), incoming: (s) => bool(s.attachment) },
+  { field: 'input_modalities', cls: 'capability', stored: (m) => m.input_modalities, incoming: (s) => (s.inputModalities ? JSON.stringify(s.inputModalities) : null) },
+];
+
+const str = (v: number | null | undefined) => (v === null || v === undefined ? null : String(v));
+const bit = (v: number | null) => (v === null ? null : String(Boolean(v)));
+const bool = (v: boolean | undefined) => (v === undefined ? null : String(v));
+
+export interface FieldChange {
+  field: string;
+  cls: string;
+  from: string | null;
+  to: string | null;
+}
+
+/**
+ * Diff a stored row against incoming specs.
+ *
+ * A field the feed stops publishing is NOT reported as a change to null: losing
+ * sight of a value is not the same event as the value changing, and conflating
+ * them would show "context dropped to unknown" every time the feed hiccups.
+ */
+function specChanges(before: StoredModel | undefined, spec: ModelSpec | null): FieldChange[] {
+  if (!before || !spec) return [];
+  const out: FieldChange[] = [];
+  for (const t of TRACKED) {
+    const from = t.stored(before);
+    const to = t.incoming(spec);
+    if (to === null) continue;
+    if (from !== to) out.push({ field: t.field, cls: t.cls, from, to });
+  }
+  return out;
 }
 
 /**
@@ -153,7 +208,9 @@ export async function syncProvider(adapter: ProviderAdapter, deps: SyncDeps): Pr
   }
 
   const stored = db
-    .prepare(`SELECT model_id, status, miss_count, context_tokens, output_tokens FROM models WHERE provider_id = ? AND status != 'retired'`)
+    .prepare(`SELECT model_id, status, miss_count, context_tokens, output_tokens, cost_in_per_m,
+                     cost_out_per_m, tools, reasoning, structured, attachment, input_modalities
+              FROM models WHERE provider_id = ? AND status != 'retired'`)
     .all(adapter.id) as unknown as StoredModel[];
   const storedById = new Map(stored.map((m) => [m.model_id, m]));
   const live = new Set(roster);
@@ -189,7 +246,8 @@ export async function syncProvider(adapter: ProviderAdapter, deps: SyncDeps): Pr
     for (const id of roster) {
       const spec = deps.lookupSpec(adapter.feedKey, id);
       const before = storedById.get(id);
-      changed += specChanges(before, spec);
+      const diffs = specChanges(before, spec);
+      changed += diffs.length;
 
       db.prepare(
         `INSERT INTO models (provider_id, model_id, display_name, context_tokens, output_tokens, input_modalities,
@@ -215,6 +273,7 @@ export async function syncProvider(adapter: ProviderAdapter, deps: SyncDeps): Pr
 
       if (!before) event.run(runId, adapter.id, id, 'added', null, null, id, null, at);
       else if (before.status === 'missing') event.run(runId, adapter.id, id, 'readded', null, 'missing', 'active', 'reappeared upstream', at);
+      for (const d of diffs) event.run(runId, adapter.id, id, 'changed', d.field, d.from, d.to, d.cls, at);
     }
 
     // Layer 5 + 7: absence increments a counter; only the third consecutive one

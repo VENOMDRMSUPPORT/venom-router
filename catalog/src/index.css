@@ -1,0 +1,263 @@
+/* ============================================================
+   Venom Catalog — Vercel-style Design System
+   Monochrome. Pure black/white. 1px borders. No glow.
+   ============================================================ */
+
+/* ---------- Design Tokens ---------- */
+:root,
+[data-theme='dark'] {
+  /* Surfaces */
+  --background: #000000;
+  --background-secondary: #0a0a0a;
+  --background-tertiary: #111111;
+  --background-hover: #1a1a1a;
+
+  /* Foreground */
+  --foreground: #ededed;
+  --foreground-secondary: #a1a1a1;
+  --foreground-tertiary: #6b6b6b;
+
+  /* Borders */
+  --border: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.25);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+
+  /* Accent (monochrome — same as foreground, just contextual) */
+  --accent: #ffffff;
+  --accent-subtle: rgba(255, 255, 255, 0.05);
+
+  /* Status pills — neutral, opacity-based */
+  --pill-bg: rgba(255, 255, 255, 0.06);
+  --pill-bg-hover: rgba(255, 255, 255, 0.1);
+
+  /* Shadows — almost none in dark mode */
+  --shadow: none;
+  --shadow-sm: none;
+
+  /* Typography */
+  --font-sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'Geist Mono', 'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', monospace;
+
+  /* Sizing */
+  --sidebar-width: 240px;
+  --content-max-width: 1400px;
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* Motion */
+  --transition: 150ms ease;
+  --transition-fast: 100ms ease;
+
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --background: #ffffff;
+  --background-secondary: #fafafa;
+  --background-tertiary: #f4f4f4;
+  --background-hover: #ededed;
+
+  --foreground: #171717;
+  --foreground-secondary: #666666;
+  --foreground-tertiary: #999999;
+
+  --border: rgba(0, 0, 0, 0.14);
+  --border-strong: rgba(0, 0, 0, 0.25);
+  --border-subtle: rgba(0, 0, 0, 0.06);
+
+  --accent: #000000;
+  --accent-subtle: rgba(0, 0, 0, 0.04);
+
+  --pill-bg: rgba(0, 0, 0, 0.04);
+  --pill-bg-hover: rgba(0, 0, 0, 0.08);
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.03);
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --background: #ffffff;
+    --background-secondary: #fafafa;
+    --background-tertiary: #f4f4f4;
+    --background-hover: #ededed;
+    --foreground: #171717;
+    --foreground-secondary: #666666;
+    --foreground-tertiary: #999999;
+    --border: rgba(0, 0, 0, 0.14);
+    --border-strong: rgba(0, 0, 0, 0.25);
+    --border-subtle: rgba(0, 0, 0, 0.06);
+    --accent: #000000;
+    --accent-subtle: rgba(0, 0, 0, 0.04);
+    --pill-bg: rgba(0, 0, 0, 0.04);
+    --pill-bg-hover: rgba(0, 0, 0, 0.08);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.03);
+    color-scheme: light;
+  }
+}
+
+/* ---------- Reset ---------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--background);
+  color: var(--foreground);
+  line-height: 1.5;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  min-height: 100vh;
+  transition: background var(--transition), color var(--transition);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+  transition: color var(--transition);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+input {
+  font-family: inherit;
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+}
+
+code {
+  background: var(--background-tertiary);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85em;
+  border: 1px solid var(--border-subtle);
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+/* ---------- App Layout ---------- */
+#root {
+  min-height: 100vh;
+}
+
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.app-main {
+  flex: 1;
+  margin-left: var(--sidebar-width);
+  padding: 48px;
+  width: calc(100% - var(--sidebar-width));
+  min-width: 0;
+  /* Center inner content on very wide screens */
+  display: flex;
+  justify-content: center;
+}
+
+.app-main > * {
+  width: 100%;
+  max-width: var(--content-max-width);
+  min-width: 0;
+}
+
+/* ---------- Utility ---------- */
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* Logo inversion for dark-mode-unfriendly logos (dark artwork on transparent).
+   Inverts artwork in dark theme, restores in light theme. */
+.logo-invert-dark {
+  transition: filter var(--transition), background var(--transition);
+}
+
+[data-theme='dark'] .logo-invert-dark {
+  filter: invert(1);
+  background: transparent !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .logo-invert-dark {
+    filter: invert(1);
+    background: transparent !important;
+  }
+}
+
+::selection {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+/* ---------- Scrollbar (subtle) ---------- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 1024px) {
+  .app-main {
+    padding: 32px;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-main {
+    margin-left: 0;
+    width: 100%;
+    padding: 24px 16px;
+    padding-top: 72px;
+  }
+}

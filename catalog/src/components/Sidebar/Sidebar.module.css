@@ -1,0 +1,145 @@
+.sidebar {
+  width: var(--sidebar-width);
+  background: var(--background-secondary);
+  border-right: 1px solid var(--border);
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  overflow-y: auto;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  transition: transform var(--transition);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.logo {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+}
+
+.brandText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.brandName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+  letter-spacing: -0.01em;
+}
+
+.brandDesc {
+  font-size: 11px;
+  color: var(--foreground-tertiary);
+}
+
+.nav {
+  flex: 1;
+  padding: 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sectionTitle {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--foreground-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 8px 8px;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--foreground-secondary);
+  transition: background var(--transition-fast), color var(--transition-fast);
+  min-width: 0;
+}
+
+.item:hover {
+  background: var(--accent-subtle);
+  color: var(--foreground);
+}
+
+.item.active {
+  background: var(--accent-subtle);
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.navLogo {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: contain;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.itemLabel {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pill {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--pill-bg);
+  color: var(--foreground-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 90;
+}
+
+/* ---------- Mobile ---------- */
+@media (max-width: 768px) {
+  .sidebar {
+    transform: translateX(-100%);
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .overlay {
+    display: block;
+  }
+}

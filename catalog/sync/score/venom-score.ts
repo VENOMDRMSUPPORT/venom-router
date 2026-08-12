@@ -192,7 +192,13 @@ export interface ScoreProfile {
 
 export interface VO {
   kind: 'VO';
-  value: number;
+  /**
+   * Null when NO dimension had data. Returning 0 there would read as "worst
+   * operational fit" when the truth is "nothing published" — the same failure
+   * `unrated` exists to prevent on the quality side. Unknown is not zero, on
+   * either axis.
+   */
+  value: number | null;
   /** Per-dimension 0..100 contributions, so a score is always explainable. */
   dimensions: Record<VODimension, number | null>;
   /** Dimensions that had no data and were excluded from the weighted mean. */
@@ -260,8 +266,8 @@ export function computeVO(
   const present = (Object.keys(dims) as VODimension[]).filter((d) => dims[d] !== null);
   const totalWeight = present.reduce((s, d) => s + profile.weights[d], 0);
   const value =
-    totalWeight === 0
-      ? 0
+    present.length === 0 || totalWeight === 0
+      ? null
       : present.reduce((s, d) => s + dims[d]! * profile.weights[d], 0) / totalWeight;
 
   return { kind: 'VO', value, dimensions: dims, missing, profileId: profile.id };

@@ -177,3 +177,22 @@ describe('percentile', () => {
     assert.equal(percentile(5, []), 50);
   });
 });
+
+describe('VO withholds a value when nothing is published', () => {
+  const profile: ScoreProfile = {
+    id: 'balanced', label: 'Balanced',
+    weights: { context: 0.3, output: 0.2, capabilities: 0.3, cost: 0.2 },
+  };
+  const pop = { context: [Math.log(8000)], output: [Math.log(4000)], cost: [0, 5] };
+
+  test('a model with no operational facts scores null, not zero', () => {
+    // Zero would sort as "worst operational fit"; the truth is "not published".
+    const vo = computeVO({}, pop, profile);
+    assert.equal(vo.value, null);
+    assert.equal(vo.missing.length, 4);
+  });
+
+  test('one known dimension is still enough for a value', () => {
+    assert.ok(computeVO({ contextTokens: 128_000 }, pop, profile).value !== null);
+  });
+});

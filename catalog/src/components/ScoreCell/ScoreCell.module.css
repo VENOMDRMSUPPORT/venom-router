@@ -1,0 +1,93 @@
+.cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.interval {
+  margin-left: 5px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.unknown {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+/* Measured is the only one that reads as solid. Calibrated is deliberately
+   lighter and outlined: it must not be mistaken for a direct measurement. */
+.measured {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  color: var(--accent);
+}
+
+.calibrated {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--text-muted) 42%, transparent);
+  border-style: dashed;
+  color: var(--text-secondary);
+}
+
+.bounded {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--text-muted) 42%, transparent);
+  color: var(--text-secondary);
+}
+
+/* Unrated is neutral, never a warning colour: unknown is not bad. */
+.unrated {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--text-muted) 26%, transparent);
+  color: var(--text-muted);
+}
+
+.partial {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--text-muted) 26%, transparent);
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.rank {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.tie {
+  margin-left: 3px;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.unplaced {
+  color: var(--text-muted);
+}
