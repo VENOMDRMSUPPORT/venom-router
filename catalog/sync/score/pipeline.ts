@@ -6,7 +6,7 @@
 
 import type { Db } from '../../db/index.ts';
 import { transaction } from '../../db/index.ts';
-import { resolveIdentity } from '../identity.ts';
+import { resolveIdentity, normalizeId } from '../identity.ts';
 import type { BenchmarkSource } from '../sources/openrouter.ts';
 import { fitCalibration, isAcceptable, type Calibration } from './calibration.ts';
 import { computeVQ, computeVO, type ScoreProfile, type VOPopulations } from './venom-score.ts';
@@ -17,6 +17,8 @@ export interface ScoringDeps {
   overlay: Record<string, string>;
   profile: ScoreProfile;
   methodologyVersion: string;
+  /** When the upstream payloads behind this pass were fetched. */
+  sourceFetchedAt: string;
   now: () => string;
 }
 
@@ -52,7 +54,15 @@ export function fitFromBenchmarks(benchmarks: BenchmarkSource): Calibration | nu
   const obs = [];
   for (const rec of benchmarks.byId.values()) {
     if (typeof rec.intelligence === 'number' && typeof rec.designElo === 'number') {
-      obs.push({ id: rec.id, group: rec.vendor, x: rec.designElo, y: rec.intelligence });
+      // `identity` collapses plan twins (`X`, `X:batch`, `X:free`) that carry
+      // the same figures; see the Observation docs for why that matters.
+      obs.push({
+        id: rec.id,
+        identity: normalizeId(rec.id),
+        group: rec.vendor,
+        x: rec.designElo,
+        y: rec.intelligence,
+      });
     }
   }
   return fitCalibration(obs);
@@ -98,13 +108,16 @@ export function scoreAll(deps: ScoringDeps): ScoringSummary {
 
     const upsert = db.prepare(
       `INSERT INTO model_scores (provider_id, model_id, kind, value, uncertainty, bound, evidence_level, source,
-                                 source_model_id, identity_rule, precision_dp, dimensions, profile_id,
+                                 source_model_id, raw_value, raw_field, transformation, source_fetched_at,
+                                 identity_rule, precision_dp, dimensions, profile_id,
                                  methodology_ver, calibration_ver, computed_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(provider_id, model_id, kind) DO UPDATE SET
          value = excluded.value, uncertainty = excluded.uncertainty, bound = excluded.bound,
          evidence_level = excluded.evidence_level, source = excluded.source,
-         source_model_id = excluded.source_model_id, identity_rule = excluded.identity_rule,
+         source_model_id = excluded.source_model_id, raw_value = excluded.raw_value,
+         raw_field = excluded.raw_field, transformation = excluded.transformation,
+         source_fetched_at = excluded.source_fetched_at, identity_rule = excluded.identity_rule,
          precision_dp = excluded.precision_dp, dimensions = excluded.dimensions,
          profile_id = excluded.profile_id, methodology_ver = excluded.methodology_ver,
          calibration_ver = excluded.calibration_ver, computed_at = excluded.computed_at`,
@@ -127,7 +140,7 @@ export function scoreAll(deps: ScoringDeps): ScoringSummary {
       const rec = resolution.status === 'resolved' ? benchmarks.byId.get(resolution.target) : undefined;
       const vq = computeVQ(
         resolution,
-        { direct: rec?.intelligence, calibratable: rec?.designElo },
+        { direct: rec?.intelligence, calibratable: rec?.designElo, group: rec?.vendor },
         accepted ? calibration : null,
       );
       levels[vq.level]++;
@@ -141,7 +154,8 @@ export function scoreAll(deps: ScoringDeps): ScoringSummary {
       }
 
       upsert.run(m.provider_id, m.model_id, 'VQ', vq.value, vq.uncertainty, vq.bound, vq.level,
-        vq.source, vq.sourceModelId, vq.identityRule, vq.precision, null, null,
+        vq.source, vq.sourceModelId, vq.rawValue, vq.rawField, vq.transformation, deps.sourceFetchedAt,
+        vq.identityRule, vq.precision, null, null,
         methodologyVersion, vq.level === 'calibrated' ? calibrationVersion : null, at);
 
       const vo = computeVO(
@@ -158,8 +172,10 @@ export function scoreAll(deps: ScoringDeps): ScoringSummary {
         pop,
         profile,
       );
+      // 'derived' is VO's evidence level in the SAME vocabulary VQ uses.
+      // Dimension coverage is not an evidence level and lives in `dimensions`.
       upsert.run(m.provider_id, m.model_id, 'VO', vo.value, null, null,
-        vo.missing.length ? 'partial' : 'complete', 'derived', null, null, 0,
+        'derived', 'models.dev', null, null, null, null, deps.sourceFetchedAt, null, 0,
         JSON.stringify({ dimensions: vo.dimensions, missing: vo.missing }), profile.id,
         methodologyVersion, null, at);
     }

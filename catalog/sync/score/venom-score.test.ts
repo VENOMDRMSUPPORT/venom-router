@@ -22,7 +22,7 @@ const rnd = lcg(9);
 const CAL = fitCalibration(
   Array.from({ length: 60 }, (_, i) => {
     const x = 1000 + i * 5;
-    return { id: `m${i}`, group: 'g', x, y: 0.11 * x - 99 + rnd() * 4 };
+    return { id: `m${i}`, identity: `m${i}`, group: 'g', x, y: 0.11 * x - 99 + rnd() * 4 };
   }),
 )!;
 
@@ -64,7 +64,7 @@ describe('computeVQ — calibrated values carry their real uncertainty', () => {
 
   test('withholds the value when the calibration is unusable', () => {
     const junk = fitCalibration(
-      Array.from({ length: 60 }, (_, i) => ({ id: `${i}`, group: 'g', x: 1000 + i, y: 30 + rnd() * 40 })),
+      Array.from({ length: 60 }, (_, i) => ({ id: `j${i}`, identity: `j${i}`, group: 'g', x: 1000 + i, y: 30 + rnd() * 40 })),
     );
     const vq = computeVQ(RESOLVED, { calibratable: 1200 }, junk);
     assert.equal(vq.level, 'unrated');

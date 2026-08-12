@@ -1,5 +1,22 @@
 {
-  "note": "Human-reviewed identity mappings. Each entry is a decision a machine may not make: it binds a catalog model id to an exact upstream benchmark id. Every entry needs a reason that a later reader can re-verify. An entry whose target leaves the upstream index resolves to nothing rather than to a guess.",
+  "note": "Human-reviewed identity mappings. Each entry is a decision a machine may not make: it binds a catalog model id to an exact upstream benchmark id. Every entry needs a reason a later reader can re-verify from primary sources. An entry whose target leaves the upstream index resolves to nothing rather than to a guess.",
   "reviewedAt": "2026-08-12",
-  "mappings": {}
+  "mappings": {
+    "nemotron-3-nano:30b": "nvidia/nemotron-3-nano-30b-a3b"
+  },
+  "reasons": {
+    "nemotron-3-nano:30b": {
+      "target": "nvidia/nemotron-3-nano-30b-a3b",
+      "rejected": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+      "decidedBy": "primary source: POST https://ollama.com/api/show {\"model\":\"nemotron-3-nano:30b\"}",
+      "evidence": [
+        "context_length: Ollama reports 262144; the chosen target reports 262144, the rejected one 256000 — an exact match on one side and a mismatch on the other",
+        "general.architecture: Ollama reports 'nemotron-3-nano'; the rejected candidate is 'nemotron-3-nano-omni', a different architecture",
+        "modality: Ollama reports capabilities [completion, tools, thinking] with no vision or audio, and the chosen target is text-only; the rejected candidate accepts text, audio, image and video",
+        "tags: https://ollama.com/library/nemotron-3-nano/tags lists 30b, 30b-a3b-fp16, 30b-a3b-q4, 30b-a3b-q8, 30b-cloud — no omni build is published at all"
+      ],
+      "reverifyBy": "re-running the /api/show call above and comparing context_length and architecture; if either stops matching, delete this mapping rather than adjusting it",
+      "reviewedAt": "2026-08-12"
+    }
+  }
 }

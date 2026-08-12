@@ -45,6 +45,7 @@ export async function main(): Promise<number> {
   }
 
   console.log('fetching shared sources...');
+  const sourceFetchedAt = new Date().toISOString();
   const [specs, benchmarks] = await Promise.all([loadSpecs(fetchJson), loadBenchmarks(fetchJson)]);
   console.log(`  models.dev : ${specs.providerCount} providers`);
   console.log(`  openrouter : ${benchmarks.count} models`);
@@ -71,7 +72,7 @@ export async function main(): Promise<number> {
 
   console.log('\nscoring...');
   const summary = scoreAll({
-    db, benchmarks, overlay: loadIdentityOverlay(), profile, methodologyVersion,
+    db, benchmarks, overlay: loadIdentityOverlay(), profile, methodologyVersion, sourceFetchedAt,
     now: () => new Date().toISOString(),
   });
 

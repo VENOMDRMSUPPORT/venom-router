@@ -1,5 +1,7 @@
 {
-  "methodologyVersion": "vs-1.0.0",
+  "methodologyVersion": "venom-score-v1",
+  "frozenAt": "2026-08-12",
+  "versioningRule": "A DATA refresh (new benchmark figures, a new model, a refitted calibration) does NOT change this version — only the calibration_ver on affected rows moves. A METHODOLOGY change (different weights, a different calibration algorithm, changed thresholds, a new evidence level) requires a new version here, which invalidates and recomputes every stored score.",
   "note": "Weights are policy, not measurement. They are committed and reviewable precisely so that no number in the catalog depends on an undeclared judgement. Changing any weight requires bumping methodologyVersion, which invalidates and recomputes every stored VO.",
   "profiles": [
     {

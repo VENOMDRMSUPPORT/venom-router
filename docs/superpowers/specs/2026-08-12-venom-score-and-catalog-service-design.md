@@ -168,23 +168,32 @@ Restricting to the `models/*` sub-arena materially improves the relation; the
 
 | Metric | Value |
 |---|---|
-| Overlap set | n = 83 |
-| Spearman ρ | **0.922** |
-| r² | 0.828 |
-| Fit | `ii = 0.11456 · elo − 99.07` |
-| RMSE | 6.39 |
-| **LOO-CV RMSE** | **6.60** |
-| sd(ii) baseline | 15.42 |
+| Overlap set | n = 52 distinct models (83 raw rows held only 57 identities before plan twins were collapsed) |
+| Spearman ρ | **0.926** |
+| r² | 0.848 |
+| Fit | refitted every run; 2026-08-12: `ii = 0.10178 · elo − 83.31` |
+| RMSE | 5.5 |
+| **LOO-CV RMSE** | **5.73** |
+| sd(ii) baseline | 14.06 |
+| **Leave-one-VENDOR-out RMSE** | **7.92** — the honest figure for an unseen vendor |
 
 The fit generalises (LOO ≈ in-sample, so it is not overfitted) and cuts error to
 43% of the natural spread. **Accepted**, with the LOO-CV RMSE published as the
 calibrated tier's uncertainty.
 
-**Vendor bias, measured:** residual spread across vendors is 18.6 points,
-dominated by `mistralai` (−15.1, n = 5); excluding it, LOO-CV RMSE falls to
-5.66. The bias is recorded in `overlays/calibration.json` and re-measured every
-run; a vendor whose bias exceeds ±10 points is excluded from calibration rather
-than silently distorted.
+**Vendor bias, measured and then adversarially re-tested.** `mistralai` carries
+a −12.7 residual with a standard error of 0.69. The gate excludes it, but the
+justification is *scope, not accuracy*: under leave-one-vendor-out the gate
+moves pooled error only from 7.94 to 7.92, which is nothing. What the holdout
+does establish is that a held-out `mistralai` is predicted at RMSE 15.49
+against a natural spread of 14.06 — the calibration has no predictive power
+there at all. So an excluded group receives **no calibrated value**, rather
+than being dropped from the fit and scored from it anyway.
+
+Two safeguards were added after that test: exclusion requires the bias to be
+both large and precisely estimated (`|mean| − 2·SE > threshold`), so a scattered
+group cannot be dropped on noise; and the threshold sits on a stable plateau —
+any value in 8–12 excludes the same single vendor.
 
 ### 6.1 Two estimators tested and **rejected**
 
@@ -231,7 +240,7 @@ component is evidence-backed, and that is stated on the row rather than hidden.
 | Level | Source | Uncertainty | Displayed precision |
 |---|---|---|---|
 | `measured` | AA, exact identity | ±1.0 | one decimal |
-| `calibrated` | `design_arena models/*` via the published fit | **±5.66** (the measured LOO-CV RMSE of the accepted fit, after the bias gate drops `mistralai`) | integer |
+| `calibrated` | `design_arena models/*` via the published fit | **±5.73** for a vendor represented in the fit (LOO-CV); **±7.92** for one that is not (leave-one-vendor-out) | integer |
 | `bounded` | a reviewed relation to a measured model yields a one-sided bound | one-sided | `≥ N`, integer |
 | `unrated` | nothing exists | — | `—`, never `0`, never sorted as `0` |
 

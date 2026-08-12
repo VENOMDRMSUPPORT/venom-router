@@ -24,6 +24,12 @@ export interface QualityEvidence {
   /** A value on a second scale that calibration can map, e.g. design_arena Elo. */
   calibratable?: number;
   /**
+   * The group the calibration reasons about (the upstream vendor). Decides both
+   * whether calibration is permitted for this model at all and which measured
+   * error applies to it.
+   */
+  group?: string;
+  /**
    * A one-sided bound justified by a reviewed relation to a measured model,
    * e.g. a "pro" tier whose base is measured. Never inferred automatically.
    */
@@ -39,6 +45,12 @@ export interface VQ {
   source: string | null;
   sourceModelId: string | null;
   identityRule: IdentityRule | null;
+  /** The untransformed upstream figure this value was derived from. */
+  rawValue: number | null;
+  /** Which upstream field `rawValue` came from. */
+  rawField: string | null;
+  /** How `rawValue` became `value`. 'identity' when it was used unchanged. */
+  transformation: string | null;
   /** Decimals this value has earned. Precision follows evidence, never taste. */
   precision: number;
 }
@@ -52,6 +64,9 @@ const UNRATED: VQ = {
   source: null,
   sourceModelId: null,
   identityRule: null,
+  rawValue: null,
+  rawField: null,
+  transformation: null,
   precision: 0,
 };
 
@@ -85,21 +100,32 @@ export function computeVQ(
       uncertainty: 0.05,
       level: 'measured',
       source: 'artificial_analysis',
+      rawValue: evidence.direct,
+      rawField: 'benchmarks.artificial_analysis.intelligence_index',
+      transformation: 'identity',
       precision: 1,
     };
   }
 
   if (typeof evidence.calibratable === 'number' && isAcceptable(calibration)) {
-    const { value, uncertainty } = applyCalibration(calibration!, evidence.calibratable);
-    return {
-      ...base,
-      value,
-      uncertainty,
-      level: 'calibrated',
-      source: 'design_arena',
-      // +/- 5-7 points of uncertainty cannot justify a decimal place.
-      precision: 0,
-    };
+    // Returns null for a group the calibration was measured to be biased on;
+    // that model falls through to `unrated` rather than taking a value the
+    // evidence says would be wrong.
+    const applied = applyCalibration(calibration!, evidence.calibratable, evidence.group);
+    if (applied) {
+      return {
+        ...base,
+        value: applied.value,
+        uncertainty: applied.uncertainty,
+        level: 'calibrated',
+        source: 'design_arena',
+        rawValue: evidence.calibratable,
+        rawField: 'benchmarks.design_arena[arena=models].elo (mean)',
+        transformation: `y = ${calibration!.slope} * x + ${calibration!.intercept}`,
+        // +/- 5-8 points of uncertainty cannot justify a decimal place.
+        precision: 0,
+      };
+    }
   }
 
   if (evidence.bound) {
@@ -110,6 +136,9 @@ export function computeVQ(
       bound: evidence.bound.side,
       level: 'bounded',
       source: `relation: ${evidence.bound.reason}`,
+      rawValue: evidence.bound.value,
+      rawField: 'reviewed relation',
+      transformation: 'identity',
       precision: 0,
     };
   }

@@ -51,9 +51,21 @@ CREATE TABLE IF NOT EXISTS model_scores (
   value           REAL,
   uncertainty     REAL,                    -- half-width; NULL when unrated or bounded
   bound           TEXT,                    -- NULL | lower | upper
-  evidence_level  TEXT NOT NULL,           -- measured | calibrated | bounded | unrated
+  -- ONE vocabulary for both kinds. VQ uses measured|calibrated|bounded|unrated;
+  -- VO is always 'derived' (computed from published facts). An earlier version
+  -- put 'complete'/'partial' here for VO, which meant a consumer grouping by
+  -- this column mixed two different meanings — dimension coverage now lives in
+  -- `dimensions.missing` where it belongs.
+  evidence_level  TEXT NOT NULL,           -- measured | calibrated | bounded | unrated | derived
   source          TEXT,
   source_model_id TEXT,                    -- exact upstream id the value came from
+  -- The untransformed upstream figure, kept so any score can be re-derived
+  -- without re-fetching: raw_value + transformation + calibration_ver is enough
+  -- to reproduce `value` exactly.
+  raw_value       REAL,
+  raw_field       TEXT,                    -- which upstream field raw_value came from
+  transformation  TEXT,                    -- 'identity' | the applied formula
+  source_fetched_at TEXT,                  -- when the upstream payload was retrieved
   identity_rule   TEXT,                    -- exact | free-variant | exact-size | overlay
   precision_dp    INTEGER NOT NULL DEFAULT 0,
   dimensions      TEXT,                    -- VO only: JSON of per-dimension values
