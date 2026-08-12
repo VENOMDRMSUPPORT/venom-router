@@ -2,7 +2,10 @@
   "note": "Human-reviewed identity mappings. Each entry is a decision a machine may not make: it binds a catalog model id to an exact upstream benchmark id. Every entry needs a reason a later reader can re-verify from primary sources. An entry whose target leaves the upstream index resolves to nothing rather than to a guess.",
   "reviewedAt": "2026-08-12",
   "mappings": {
-    "nemotron-3-nano:30b": "nvidia/nemotron-3-nano-30b-a3b"
+    "nemotron-3-nano:30b": "nvidia/nemotron-3-nano-30b-a3b",
+    "nemotron-3-ultra": "nvidia/nemotron-3-ultra-550b-a55b",
+    "nemotron-3-super": "nvidia/nemotron-3-super-120b-a12b",
+    "nemotron-3-ultra-free": "nvidia/nemotron-3-ultra-550b-a55b"
   },
   "reasons": {
     "nemotron-3-nano:30b": {
@@ -17,6 +20,60 @@
       ],
       "reverifyBy": "re-running the /api/show call above and comparing context_length and architecture; if either stops matching, delete this mapping rather than adjusting it",
       "reviewedAt": "2026-08-12"
+    },
+    "nemotron-3-ultra": {
+      "target": "nvidia/nemotron-3-ultra-550b-a55b",
+      "decidedBy": "primary source: POST https://ollama.com/api/show {\"model\":\"nemotron-3-ultra\"}",
+      "evidence": [
+        "general.parameter_count: Ollama reports 550000000000, and the target's own id declares 550b — an exact match on the one number that identifies this model",
+        "NVIDIA publishes exactly one Nemotron 3 Ultra, so there is no sibling for the parameter count to be confused with",
+        "context differs (Ollama 262144 vs the target's 512288), which is expected: a host may serve a shorter window than the model supports. The parameter count, not the served window, is the identity"
+      ],
+      "reverifyBy": "if NVIDIA ever ships a second Ultra at a different parameter count, this mapping must be re-decided rather than kept",
+      "reviewedAt": "2026-08-12"
+    },
+    "nemotron-3-super": {
+      "target": "nvidia/nemotron-3-super-120b-a12b",
+      "decidedBy": "primary source: POST https://ollama.com/api/show {\"model\":\"nemotron-3-super\"}",
+      "evidence": [
+        "general.parameter_count: Ollama reports 120000000000; the target declares 120b",
+        "general.architecture: Ollama reports 'nemotron_h_moe', a mixture-of-experts model, consistent with the target's 'a12b' active-parameter suffix",
+        "NVIDIA publishes one Nemotron 3 Super"
+      ],
+      "reviewedAt": "2026-08-12"
+    },
+    "nemotron-3-ultra-free": {
+      "target": "nvidia/nemotron-3-ultra-550b-a55b",
+      "decidedBy": "models.dev provider 'opencode', plus the reference index's own free variant",
+      "evidence": [
+        "context: models.dev reports 1000000 for opencode/nemotron-3-ultra-free, which is exactly the context the reference index publishes for nvidia/nemotron-3-ultra-550b-a55b:free (the paid variant reports 512288)",
+        "OpenCode Zen sells no paid nemotron-3-ultra, so the -free suffix is the plan and not a distinct model",
+        "the reference index publishes identical benchmark values for the paid and :free variants, so binding to the base is the same claim either way"
+      ],
+      "reviewedAt": "2026-08-12"
+    }
+  },
+  "rejected": {
+    "note": "Mappings that looked reasonable and were REFUSED on evidence. Recorded so the same plausible-but-wrong bind is not proposed again.",
+    "qwen3.5-plus": {
+      "candidate": "qwen/qwen3.5-plus-20260420",
+      "why": "context mismatch of roughly 4x: models.dev reports 262144 for both opencode/qwen3.5-plus and opencode-go/qwen3.5-plus, while the dated snapshot reports 1000000. A dated snapshot may well be the same family, but nothing available establishes it is the same model, and a wrong bind would attach another model's benchmark."
+    },
+    "mimo-v2-pro": {
+      "candidate": "xiaomi/mimo-v2.5-pro",
+      "why": "OpenCode Go sells mimo-v2-pro AND mimo-v2.5-pro as two separate models in the same roster. The provider itself distinguishes them, so binding one to the other would merge two products a seller lists apart. The matching context window (1048576 for both) is what makes this bind tempting and is not identity evidence."
+    },
+    "mimo-v2-omni": {
+      "candidate": "xiaomi/mimo-v2.5",
+      "why": "same as mimo-v2-pro: a version change (v2 vs v2.5) that the provider's own roster keeps distinct."
+    },
+    "mistral-large-3:675b": {
+      "candidate": null,
+      "why": "no 675b Mistral Large exists in the reference index. Binding to mistral-large-2512 would be a size and edition collapse."
+    },
+    "deepseek-v4-flash:preview": {
+      "candidate": null,
+      "why": "a preview build with no counterpart published anywhere. Binding it to the stable deepseek-v4-flash would claim a preview and a release are the same model."
     }
   }
 }

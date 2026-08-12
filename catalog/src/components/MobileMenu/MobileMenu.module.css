@@ -1,7 +1,7 @@
 .btn {
   display: none;
   position: fixed;
-  top: 20px;
+  top: 14px;
   left: 16px;
   z-index: 200;
   width: 32px;
@@ -9,10 +9,10 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius);
-  background: var(--background-secondary);
+  background: var(--background);
   border: 1px solid var(--border);
   color: var(--foreground);
-  transition: background var(--transition-fast);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .btn:hover {

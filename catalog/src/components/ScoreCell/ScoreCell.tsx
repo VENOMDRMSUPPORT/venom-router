@@ -106,3 +106,43 @@ export function RankCell({ model }: { model: ApiModel }) {
     </span>
   );
 }
+
+/**
+ * Cost, with its semantics visible.
+ *
+ * `Included` is not a missing price — it is the true answer for a model covered
+ * by a subscription, and inventing a $/M figure there would be a number from a
+ * different seller. The list price elsewhere is still shown, faintly and
+ * labelled `ref`, so the model can be compared without that figure being
+ * mistaken for a bill.
+ */
+export function CostCell({ model, side }: { model: ApiModel; side: 'in' | 'out' }) {
+  const p = model.pricing;
+  const own = side === 'in' ? p.inputPerMTokens : p.outputPerMTokens;
+  const ref = side === 'in' ? p.referenceInPerMTokens : p.referenceOutPerMTokens;
+  const money = (v: number) => (v === 0 ? 'Free' : v < 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(2).replace(/\.00$/, '')}`);
+
+  const refNote = ref !== null && ref > 0 && (
+    <span className={styles.refPrice} title="List price for this model elsewhere. Shown for comparison — it is not what this provider charges you.">
+      ref {money(ref)}
+    </span>
+  );
+
+  if (p.kind === 'per_token' && own !== null) {
+    return <div className={styles.costCell}><span className={styles.value}>{money(own)}</span></div>;
+  }
+  if (p.kind === 'free') {
+    return <div className={styles.costCell}><span className={styles.free}>Free</span>{refNote}</div>;
+  }
+  if (p.kind === 'included') {
+    return (
+      <div className={styles.costCell}>
+        <span className={styles.included} title="Covered by this provider's subscription. There is no per-token charge to report.">
+          Included
+        </span>
+        {refNote}
+      </div>
+    );
+  }
+  return <div className={styles.costCell}><span className={styles.unknown} title="No price is published for this model at this provider.">—</span></div>;
+}

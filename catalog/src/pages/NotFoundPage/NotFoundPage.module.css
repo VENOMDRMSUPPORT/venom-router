@@ -4,26 +4,47 @@
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 96px 16px;
-  gap: 8px;
+  padding: 64px 24px;
+  gap: 12px;
+  max-width: 480px;
+  margin: 60px auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .code {
-  font-size: 48px;
-  font-weight: 600;
+  font-size: 56px;
+  font-weight: 700;
   letter-spacing: -0.04em;
   color: var(--foreground);
+  margin: 0;
+  line-height: 1;
 }
 
 .message {
   font-size: 14px;
   color: var(--foreground-secondary);
-  margin-bottom: 16px;
+  margin: 0 0 12px;
 }
 
 .link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
   font-size: 13px;
+  font-weight: 500;
   color: var(--foreground);
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  text-decoration: none;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.link:hover {
+  background: var(--background-hover);
+  border-color: var(--border-strong);
 }

@@ -1,11 +1,13 @@
+import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { LuArrowLeft } from 'react-icons/lu';
 import { useCatalog, useProviderModels } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
-import { formatTokens, formatPrice, type ApiModel } from '../../api/client';
+import { formatTokens, type ApiModel } from '../../api/client';
 import { FreshnessBadge } from '../../components/FreshnessBadge/FreshnessBadge';
-import { VQCell, VOCell, RankCell } from '../../components/ScoreCell/ScoreCell';
+import { VQCell, VOCell, RankCell, CostCell } from '../../components/ScoreCell/ScoreCell';
 import { Callout } from '../../components/Callout/Callout';
+import { Toolbar } from '../../components/Toolbar/Toolbar';
 import { NotFoundPage } from '../NotFoundPage/NotFoundPage';
 import styles from './ProviderPage.module.css';
 
@@ -13,6 +15,30 @@ export function ProviderPage() {
   const { id } = useParams<{ id: string }>();
   const { loading, error } = useCatalog();
   const { provider, models, meta } = useProviderModels(id);
+
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [view, setView] = useState<'grid' | 'table'>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 768 ? 'grid' : 'table'
+  );
+
+  const filteredModels = useMemo(() => {
+    let list = models;
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(
+        (m) =>
+          m.modelId.toLowerCase().includes(q) ||
+          (m.canonicalId && m.canonicalId.toLowerCase().includes(q))
+      );
+    }
+    if (filter === 'free') list = list.filter((m) => m.pricing.isFree === true);
+    if (filter === 'paid') list = list.filter((m) => m.pricing.isFree !== true);
+    if (filter === '1m') list = list.filter((m) => (m.contextTokens ?? 0) >= 1000000);
+    if (filter === 'multimodal')
+      list = list.filter((m) => (m.inputModalities ?? []).some((x) => x !== 'text'));
+    return list;
+  }, [models, query, filter]);
 
   if (loading) return <div className={styles.state}>Loading…</div>;
   if (error) return <div className={styles.state}>Catalog unavailable: {error}</div>;
@@ -22,10 +48,12 @@ export function ProviderPage() {
   const maxCtx = Math.max(0, ...models.map((m) => m.contextTokens ?? 0));
   const free = models.filter((m) => m.pricing.isFree === true).length;
 
-  // Rated first, in rank order; unrated after, in a labelled section. Never
-  // interleaved — an unrated model has unknown quality, not low quality.
-  const rated = models.filter((m) => m.qualityRank !== null).sort((a, b) => a.qualityRank! - b.qualityRank!);
-  const unrated = models.filter((m) => m.qualityRank === null).sort((a, b) => (b.vo.value ?? -1) - (a.vo.value ?? -1));
+  const rated = filteredModels
+    .filter((m) => m.qualityRank !== null)
+    .sort((a, b) => a.qualityRank! - b.qualityRank!);
+  const unrated = filteredModels
+    .filter((m) => m.qualityRank === null)
+    .sort((a, b) => (b.vo.value ?? -1) - (a.vo.value ?? -1));
 
   return (
     <div>
@@ -35,9 +63,13 @@ export function ProviderPage() {
       </Link>
 
       <header className={styles.header}>
-        {pres.logo && (
-          <img src={pres.logo} alt="" className={`${styles.logo} ${pres.invertInDark ? 'logo-invert-dark' : ''}`} />
-        )}
+        <div className={styles.logoBox}>
+          {pres.logo ? (
+            <img src={pres.logo} alt="" className={`${styles.logo} ${pres.invertInDark ? 'logo-invert-dark' : ''}`} />
+          ) : (
+            <span className={styles.fallbackLogo}>{provider.name.charAt(0)}</span>
+          )}
+        </div>
         <div className={styles.headerText}>
           <div className={styles.titleRow}>
             <h1 className={styles.title}>{provider.name}</h1>
@@ -51,20 +83,52 @@ export function ProviderPage() {
         <Stat value={String(provider.liveModels)} label="Live models" />
         <Stat value={formatTokens(maxCtx)} label="Max context" />
         <Stat value={`${provider.qualityScored}/${provider.liveModels}`} label="Quality-scored" />
-        <Stat value={free > 0 ? String(free) : '—'} label="Free models" />
+        <Stat value={free > 0 ? String(free) : '—'} label="Free models" isFree={free > 0} />
       </div>
 
-      {pres.note && <Callout><strong>Note:</strong> {pres.note}{' '}
-        {pres.docsUrl && <a href={pres.docsUrl} target="_blank" rel="noopener noreferrer">Provider docs →</a>}
-      </Callout>}
+      {pres.note && (
+        <Callout>
+          <strong>Note:</strong> {pres.note}{' '}
+          {pres.docsUrl && (
+            <a href={pres.docsUrl} target="_blank" rel="noopener noreferrer">
+              Provider docs →
+            </a>
+          )}
+        </Callout>
+      )}
 
-      <ModelTable title={`Ranked by quality (${rated.length})`} models={rated} />
-      {unrated.length > 0 && (
-        <ModelTable
-          title={`No quality evidence (${unrated.length})`}
-          models={unrated}
-          note="No benchmark publishes a figure for these models. Their operational data is shown as normal — unknown quality is not low quality, and they are not ranked."
-        />
+      {/* Unified Toolbar */}
+      <Toolbar
+        query={query}
+        onQueryChange={setQuery}
+        filter={filter}
+        onFilterChange={setFilter}
+        view={view}
+        onViewChange={setView}
+      />
+
+      {view === 'table' ? (
+        <>
+          <ModelTable title={`Ranked by quality (${rated.length})`} models={rated} />
+          {unrated.length > 0 && (
+            <ModelTable
+              title={`No quality evidence (${unrated.length})`}
+              models={unrated}
+              note="No benchmark publishes a figure for these models. Their operational data is shown as normal — unknown quality is not low quality, and they are not ranked."
+            />
+          )}
+        </>
+      ) : (
+        <>
+          <ModelGrid title={`Ranked by quality (${rated.length})`} models={rated} />
+          {unrated.length > 0 && (
+            <ModelGrid
+              title={`No quality evidence (${unrated.length})`}
+              models={unrated}
+              note="No benchmark publishes a figure for these models. Operational data is shown below."
+            />
+          )}
+        </>
       )}
 
       <section className={styles.provenance}>
@@ -113,8 +177,8 @@ function ModelTable({ title, models, note }: { title: string; models: ApiModel[]
               <th>VO</th>
               <th>Context</th>
               <th>Max out</th>
-              <th>In $/M</th>
-              <th>Out $/M</th>
+              <th title="What this provider charges you per million input tokens.">In</th>
+              <th title="What this provider charges you per million output tokens.">Out</th>
               <th>Capabilities</th>
             </tr>
           </thead>
@@ -134,8 +198,8 @@ function ModelTable({ title, models, note }: { title: string; models: ApiModel[]
                 <td><VOCell model={m} /></td>
                 <td className={styles.num}>{formatTokens(m.contextTokens)}</td>
                 <td className={styles.num}>{formatTokens(m.maxOutputTokens)}</td>
-                <td className={styles.num}>{formatPrice(m.pricing.inputPerMTokens)}</td>
-                <td className={styles.num}>{formatPrice(m.pricing.outputPerMTokens)}</td>
+                <td className={styles.num}><CostCell model={m} side="in" /></td>
+                <td className={styles.num}><CostCell model={m} side="out" /></td>
                 <td>
                   <div className={styles.caps}>
                     {m.capabilities.tools && <span className={styles.cap}>tools</span>}
@@ -155,9 +219,73 @@ function ModelTable({ title, models, note }: { title: string; models: ApiModel[]
   );
 }
 
-function Stat({ value, label }: { value: string; label: string }) {
+function ModelGrid({ title, models, note }: { title: string; models: ApiModel[]; note?: string }) {
+  if (models.length === 0) return null;
   return (
-    <div className={styles.stat}>
+    <div className={styles.tableWrap}>
+      <h3 className={styles.tableTitle}>{title}</h3>
+      {note && <p className={styles.tableNote}>{note}</p>}
+      <div className={styles.modelGrid}>
+        {models.map((m) => (
+          <div key={`${m.providerId}/${m.modelId}`} className={styles.modelCard}>
+            <div className={styles.modelCardTop}>
+              <div>
+                <span className={styles.modelName}>{m.modelId}</span>
+                {m.canonicalId && m.canonicalId.replace(/^[^/]+\//, '') !== m.modelId && (
+                  <span className={styles.canonical}>{m.canonicalId}</span>
+                )}
+              </div>
+              <RankCell model={m} />
+            </div>
+
+            <div className={styles.modelCardScores}>
+              <div className={styles.scorePill}>
+                <span className={styles.scoreTag}>VQ</span>
+                <VQCell model={m} />
+              </div>
+              <div className={styles.scorePill}>
+                <span className={styles.scoreTag}>VO</span>
+                <VOCell model={m} />
+              </div>
+            </div>
+
+            <div className={styles.modelCardStats}>
+              <div className={styles.miniStat}>
+                <span className={styles.miniVal}>{formatTokens(m.contextTokens)}</span>
+                <span className={styles.miniLbl}>Context</span>
+              </div>
+              <div className={styles.miniStat}>
+                <span className={styles.miniVal}>{formatTokens(m.maxOutputTokens)}</span>
+                <span className={styles.miniLbl}>Max out</span>
+              </div>
+              <div className={styles.miniStat}>
+                <span className={styles.miniVal}><CostCell model={m} side="in" /></span>
+                <span className={styles.miniLbl}>In</span>
+              </div>
+              <div className={styles.miniStat}>
+                <span className={styles.miniVal}><CostCell model={m} side="out" /></span>
+                <span className={styles.miniLbl}>Out</span>
+              </div>
+            </div>
+
+            <div className={styles.caps}>
+              {m.capabilities.tools && <span className={styles.cap}>tools</span>}
+              {m.capabilities.reasoning && <span className={styles.cap}>reasoning</span>}
+              {m.capabilities.structured && <span className={styles.cap}>structured</span>}
+              {(m.inputModalities ?? []).filter((x) => x !== 'text').map((x) => (
+                <span key={x} className={styles.cap}>{x}</span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ value, label, isFree }: { value: string; label: string; isFree?: boolean }) {
+  return (
+    <div className={`${styles.stat} ${isFree ? styles.freeStat : ''}`}>
       <span className={styles.statValue}>{value}</span>
       <span className={styles.statLabel}>{label}</span>
     </div>

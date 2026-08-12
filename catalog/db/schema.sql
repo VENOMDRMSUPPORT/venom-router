@@ -31,8 +31,17 @@ CREATE TABLE IF NOT EXISTS models (
   reasoning       INTEGER,
   structured      INTEGER,
   attachment      INTEGER,
-  cost_in_per_m   REAL,
+  cost_in_per_m   REAL,                    -- EFFECTIVE price at this provider, per million
   cost_out_per_m  REAL,
+  -- What the model costs elsewhere at list price. Kept apart from the effective
+  -- price on purpose: a subscription provider's model does not cost you the
+  -- market rate, and putting a market rate in the effective column would be a
+  -- value from one seller wearing another seller's label.
+  ref_cost_in_per_m  REAL,
+  ref_cost_out_per_m REAL,
+  -- free | included | per_token | unknown. `included` is a real cost semantic
+  -- for a subscription model, not a missing number.
+  cost_kind       TEXT,
   spec_source     TEXT,                    -- 'models.dev' | NULL when the feed has no entry
   status          TEXT NOT NULL,           -- active | missing | retired
   first_seen_at   TEXT NOT NULL,
@@ -122,6 +131,19 @@ CREATE TABLE IF NOT EXISTS calibrations (
   excluded_json TEXT,
   bias_json     TEXT,
   fitted_at     TEXT NOT NULL
+);
+
+-- One row per resolved field, so any single fact can be traced to its source
+-- without inferring it from which pass happened to run last.
+CREATE TABLE IF NOT EXISTS model_facts (
+  provider_id  TEXT NOT NULL,
+  model_id     TEXT NOT NULL,
+  field        TEXT NOT NULL,
+  value        TEXT,
+  source       TEXT NOT NULL,   -- models.dev | openrouter | provider_billing | probe
+  source_ref   TEXT,            -- the exact upstream id or field the value came from
+  resolved_at  TEXT NOT NULL,
+  PRIMARY KEY (provider_id, model_id, field)
 );
 
 -- Ambiguous identities park here until a human resolves them once.

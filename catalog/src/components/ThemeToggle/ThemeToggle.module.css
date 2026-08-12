@@ -1,15 +1,11 @@
 .toggle {
-  position: fixed;
-  top: 16px;
-  right: 24px;
-  z-index: 200;
   width: 32px;
   height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius);
-  background: var(--background-secondary);
+  background: var(--background);
   border: 1px solid var(--border);
   color: var(--foreground-secondary);
   transition: background var(--transition-fast), color var(--transition-fast),
@@ -20,11 +16,4 @@
   background: var(--background-hover);
   color: var(--foreground);
   border-color: var(--border-strong);
-}
-
-@media (max-width: 768px) {
-  .toggle {
-    top: 20px;
-    right: 16px;
-  }
 }

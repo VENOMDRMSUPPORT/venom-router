@@ -35,6 +35,11 @@ function migrate(db: Db): void {
       'transformation TEXT',
       'source_fetched_at TEXT',
     ],
+    models: [
+      'ref_cost_in_per_m REAL',
+      'ref_cost_out_per_m REAL',
+      'cost_kind TEXT',
+    ],
   };
   for (const [table, columns] of Object.entries(ADDED)) {
     const existing = new Set(

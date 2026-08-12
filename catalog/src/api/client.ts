@@ -34,7 +34,14 @@ export interface ApiModel {
   maxOutputTokens: number | null;
   inputModalities: string[] | null;
   capabilities: { tools: boolean | null; reasoning: boolean | null; structured: boolean | null; attachment: boolean | null };
-  pricing: { inputPerMTokens: number | null; outputPerMTokens: number | null; isFree: boolean | null };
+  pricing: {
+    kind: 'free' | 'included' | 'per_token' | 'unknown';
+    inputPerMTokens: number | null;
+    outputPerMTokens: number | null;
+    referenceInPerMTokens: number | null;
+    referenceOutPerMTokens: number | null;
+    isFree: boolean | null;
+  };
   vq: {
     value: number | null;
     uncertainty: number | null;
@@ -156,9 +163,12 @@ function snapshotToCatalog(data: { models: any[]; providers: any[] }): Omit<Cata
       attachment: m.attachment === null ? null : Boolean(m.attachment),
     },
     pricing: {
+      kind: (m.cost_kind ?? 'unknown') as ApiModel['pricing']['kind'],
       inputPerMTokens: m.cost_in_per_m,
       outputPerMTokens: m.cost_out_per_m,
-      isFree: m.cost_out_per_m === null ? null : m.cost_out_per_m === 0,
+      referenceInPerMTokens: m.ref_cost_in_per_m ?? null,
+      referenceOutPerMTokens: m.ref_cost_out_per_m ?? null,
+      isFree: m.cost_kind === 'free' ? true : m.cost_kind === 'unknown' ? null : false,
     },
     vq: {
       value: m.vq_value ?? null,

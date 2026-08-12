@@ -1,16 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { LuArrowLeft } from 'react-icons/lu';
 import { fetchChanges, formatAgo, type Change } from '../../api/client';
+import { Toolbar } from '../../components/Toolbar/Toolbar';
 import styles from './ChangesPage.module.css';
 
 /**
  * "What's new", built from the events the sync recorded inside the same
  * transaction that applied each change.
- *
- * Nothing here is inferred by diffing two API responses in the browser: a change
- * the service did not record is a change that did not happen, and one it did
- * record cannot be missed.
  */
 const LABEL: Record<string, { text: string; tone: 'add' | 'remove' | 'change' | 'score' }> = {
   added: { text: 'Added', tone: 'add' },
@@ -28,29 +25,51 @@ const LABEL: Record<string, { text: string; tone: 'add' | 'remove' | 'change' | 
 
 export function ChangesPage() {
   const [changes, setChanges] = useState<Change[] | null>(null);
-  const [byClass, setByClass] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState<string>('');
   const [filter, setFilter] = useState<string>('all');
+  const [view, setView] = useState<'grid' | 'table'>('grid');
 
   useEffect(() => {
     fetchChanges()
-      .then((r) => { setChanges(r.changes); setByClass(r.byClass); })
+      .then((r) => {
+        setChanges(r.changes);
+      })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
+
+  const filteredChanges = useMemo(() => {
+    if (!changes) return [];
+    let list = changes;
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(
+        (c) =>
+          c.modelId.toLowerCase().includes(q) ||
+          c.providerId.toLowerCase().includes(q)
+      );
+    }
+    if (filter !== 'all') {
+      list = list.filter((c) => c.class === filter);
+    }
+    return list;
+  }, [changes, query, filter]);
 
   if (error) return <div className={styles.state}>Change history unavailable: {error}</div>;
   if (!changes) return <div className={styles.state}>Loading…</div>;
 
-  const shown = filter === 'all' ? changes : changes.filter((c) => c.class === filter);
   const days = new Map<string, Change[]>();
-  for (const c of shown) {
+  for (const c of filteredChanges) {
     const day = c.observedAt.slice(0, 10);
     days.set(day, [...(days.get(day) ?? []), c]);
   }
 
   return (
     <div>
-      <Link to="/" className={styles.back}><LuArrowLeft size={14} /><span>All providers</span></Link>
+      <Link to="/" className={styles.back}>
+        <LuArrowLeft size={14} />
+        <span>All providers</span>
+      </Link>
 
       <header className={styles.header}>
         <h1 className={styles.title}>What's new</h1>
@@ -60,48 +79,91 @@ export function ChangesPage() {
         </p>
       </header>
 
-      <div className={styles.filters}>
-        <button className={`${styles.chip} ${filter === 'all' ? styles.on : ''}`} onClick={() => setFilter('all')}>
-          All {changes.length}
-        </button>
-        {Object.entries(byClass).sort((a, b) => b[1] - a[1]).map(([cls, n]) => (
-          <button key={cls} className={`${styles.chip} ${filter === cls ? styles.on : ''}`} onClick={() => setFilter(cls)}>
-            {LABEL[cls]?.text ?? cls} {n}
-          </button>
-        ))}
-      </div>
+      {/* Unified Toolbar */}
+      <Toolbar
+        query={query}
+        onQueryChange={setQuery}
+        filter={filter}
+        onFilterChange={setFilter}
+        view={view}
+        onViewChange={setView}
+      />
 
-      {shown.length === 0 && <div className={styles.state}>No changes recorded yet. The first sync writes the initial inventory.</div>}
+      {filteredChanges.length === 0 && (
+        <div className={styles.state}>
+          No changes match your search or filter.
+        </div>
+      )}
 
-      {[...days.entries()].map(([day, items]) => (
-        <section key={day} className={styles.day}>
-          <h2 className={styles.dayTitle}>
-            {day} <span className={styles.dayAgo}>· {formatAgo(items[0].observedAt)}</span>
-          </h2>
-          <ul className={styles.list}>
-            {items.map((c, i) => {
-              const meta = LABEL[c.class] ?? { text: c.class, tone: 'change' as const };
-              return (
-                <li key={`${c.providerId}/${c.modelId}/${c.class}/${i}`} className={styles.item}>
-                  <span className={`${styles.tag} ${styles[meta.tone]}`}>{meta.text}</span>
-                  <div className={styles.body}>
-                    <span className={styles.model}>{c.modelId}</span>
-                    <span className={styles.provider}>{c.providerId}</span>
-                    {c.from !== null && c.to !== null && (
-                      <span className={styles.delta}>
-                        <span className={styles.old}>{c.from}</span> → <span className={styles.new}>{c.to}</span>
-                        {c.field && <span className={styles.field}>{c.field}</span>}
-                      </span>
-                    )}
-                    {c.note && !c.from && <span className={styles.note}>{c.note}</span>}
-                  </div>
-                  <time className={styles.time} dateTime={c.observedAt}>{c.observedAt.slice(11, 16)}</time>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      ))}
+      {view === 'grid' ? (
+        [...days.entries()].map(([day, items]) => (
+          <section key={day} className={styles.day}>
+            <h2 className={styles.dayTitle}>
+              {day} <span className={styles.dayAgo}>· {formatAgo(items[0].observedAt)}</span>
+            </h2>
+            <ul className={styles.list}>
+              {items.map((c, i) => {
+                const meta = LABEL[c.class] ?? { text: c.class, tone: 'change' as const };
+                return (
+                  <li key={`${c.providerId}/${c.modelId}/${c.class}/${i}`} className={styles.item}>
+                    <span className={`${styles.tag} ${styles[meta.tone]}`}>{meta.text}</span>
+                    <div className={styles.body}>
+                      <span className={styles.model}>{c.modelId}</span>
+                      <span className={styles.provider}>{c.providerId}</span>
+                      {c.from !== null && c.to !== null && (
+                        <span className={styles.delta}>
+                          <span className={styles.old}>{c.from}</span> → <span className={styles.new}>{c.to}</span>
+                          {c.field && <span className={styles.field}>{c.field}</span>}
+                        </span>
+                      )}
+                      {c.note && !c.from && <span className={styles.note}>{c.note}</span>}
+                    </div>
+                    <time className={styles.time} dateTime={c.observedAt}>{c.observedAt.slice(11, 16)}</time>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))
+      ) : (
+        <div className={styles.tableScroll}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Event</th>
+                <th>Provider</th>
+                <th>Model</th>
+                <th>Change Details</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredChanges.map((c, i) => {
+                const meta = LABEL[c.class] ?? { text: c.class, tone: 'change' as const };
+                return (
+                  <tr key={`${c.providerId}/${c.modelId}/${c.class}/${i}`}>
+                    <td>
+                      <span className={`${styles.tag} ${styles[meta.tone]}`}>{meta.text}</span>
+                    </td>
+                    <td><span className={styles.provider}>{c.providerId}</span></td>
+                    <td><span className={styles.model}>{c.modelId}</span></td>
+                    <td>
+                      {c.from !== null && c.to !== null && (
+                        <span className={styles.delta}>
+                          <span className={styles.old}>{c.from}</span> → <span className={styles.new}>{c.to}</span>
+                          {c.field && <span className={styles.field}>{c.field}</span>}
+                        </span>
+                      )}
+                      {c.note && !c.from && <span className={styles.note}>{c.note}</span>}
+                    </td>
+                    <td className={styles.timeTd}>{c.observedAt.slice(0, 16).replace('T', ' ')}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

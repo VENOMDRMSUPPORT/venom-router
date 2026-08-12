@@ -15,10 +15,11 @@ import { fileURLToPath } from 'node:url';
 import { openDb } from '../db/index.ts';
 import { createFetchJson } from './http.ts';
 import { syncProvider } from './engine.ts';
-import { ADAPTERS } from './providers/index.ts';
+import { ADAPTERS, BILLING } from './providers/index.ts';
 import { loadSpecs } from './sources/models-dev.ts';
 import { loadBenchmarks } from './sources/openrouter.ts';
 import { scoreAll } from './score/pipeline.ts';
+import { enrich, canonicalFromBenchmarks } from './enrich/enrich.ts';
 import type { ScoreProfile } from './score/venom-score.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -70,9 +71,23 @@ export async function main(): Promise<number> {
     return 2;
   }
 
+  // Enrichment runs BEFORE scoring: VO is derived from operational facts, so
+  // resolving those facts first is what lets a previously factless model score.
+  console.log('\nenriching operational metadata...');
+  const overlay = loadIdentityOverlay();
+  const en = enrich({
+    db, canonical: canonicalFromBenchmarks(benchmarks), overlay, billing: BILLING,
+    now: () => new Date().toISOString(),
+  });
+  const fmt = (o: Record<string, number>) => Object.entries(o).map(([k, v]) => `${k}=${v}`).join(' ') || 'none';
+  console.log(`  rows              : ${en.rows}`);
+  console.log(`  filled by fallback: ${fmt(en.filled)}`);
+  console.log(`  still unresolved  : ${fmt(en.stillMissing)}`);
+  console.log(`  cost semantics    : ${fmt(en.costKinds)}`);
+
   console.log('\nscoring...');
   const summary = scoreAll({
-    db, benchmarks, overlay: loadIdentityOverlay(), profile, methodologyVersion, sourceFetchedAt,
+    db, benchmarks, overlay, profile, methodologyVersion, sourceFetchedAt,
     now: () => new Date().toISOString(),
   });
 

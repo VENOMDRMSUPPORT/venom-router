@@ -13,6 +13,37 @@
  */
 
 import type { ProviderAdapter } from '../engine.ts';
+import type { BillingModel } from '../enrich/resolvers.ts';
+
+/**
+ * How to read the ABSENCE of a published price for each provider.
+ *
+ * This is deliberately narrow. It never overrides a price the provider's own
+ * feed publishes — that always wins, because it is the provider speaking about
+ * itself. It only decides what a *missing* price means: for a subscription
+ * provider the model is covered by the plan (`included`), while for a
+ * per-token provider a missing price is genuinely `unknown`.
+ *
+ * Evidence, checked 2026-08-12:
+ *   opencode-zen / opencode-go  models.dev prices every model; this never fires
+ *   clinepass                   subscription per docs.cline.bot, but models.dev
+ *                               DOES publish ClinePass's own rates for 11 of 12
+ *                               models — and they are not copies of the vendor
+ *                               list price (cline-pass/deepseek-v4-flash is
+ *                               0.14/0.28 against the vendor's 0.07/0.14, an
+ *                               exact 2x markup), so those 11 are correctly
+ *                               per-token and only the unpriced one falls
+ *                               through to `included`
+ *   ollama-cloud                ollama.com/pricing gates usage volume and
+ *                               concurrency, not models; models.dev publishes
+ *                               no per-token cost for it at all
+ */
+export const BILLING: Record<string, BillingModel> = {
+  'opencode-zen': 'per_token',
+  'opencode-go': 'per_token',
+  clinepass: 'subscription',
+  'ollama-cloud': 'subscription',
+};
 
 /** The OpenAI-compatible `/v1/models` shape: `{ object, data: [{ id }] }`. */
 function parseOpenAiList(body: unknown): string[] {

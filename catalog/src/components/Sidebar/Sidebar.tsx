@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LuLayoutGrid, LuHistory } from "react-icons/lu";
+import { LuLayoutGrid, LuHistory, LuX } from "react-icons/lu";
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import styles from './Sidebar.module.css';
@@ -31,6 +31,15 @@ export function Sidebar({ open, onClose }: SidebarProps) {
             <span className={styles.brandName}>Venom Catalog</span>
             <span className={styles.brandDesc}>AI Model Matrix</span>
           </div>
+
+          <button
+            className={styles.closeBtn}
+            onClick={onClose}
+            aria-label="Close sidebar"
+            title="Close sidebar"
+          >
+            <LuX size={16} />
+          </button>
         </div>
 
         <nav className={styles.nav}>
@@ -45,7 +54,8 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               onClick={onClose}
             >
               <LuLayoutGrid size={15} />
-              <span>All Providers</span>
+              <span className={styles.itemLabel}>All Providers</span>
+              <span className={styles.pill}>{providers.length}</span>
             </NavLink>
             <NavLink
               to="/changes"

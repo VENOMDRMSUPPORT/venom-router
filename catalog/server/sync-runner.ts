@@ -10,10 +10,11 @@
 import type { Db } from '../db/index.ts';
 import { createFetchJson } from '../sync/http.ts';
 import { syncProvider, type RunResult } from '../sync/engine.ts';
-import { ADAPTERS } from '../sync/providers/index.ts';
+import { ADAPTERS, BILLING } from '../sync/providers/index.ts';
 import { loadSpecs } from '../sync/sources/models-dev.ts';
 import { loadBenchmarks } from '../sync/sources/openrouter.ts';
 import { scoreAll, type ScoringSummary } from '../sync/score/pipeline.ts';
+import { enrich, canonicalFromBenchmarks } from '../sync/enrich/enrich.ts';
 import type { ScoreProfile } from '../sync/score/venom-score.ts';
 
 export interface SyncOutcome {
@@ -94,6 +95,12 @@ export class SyncRunner {
           }),
         );
       }
+
+      // Facts first, then the score derived from them.
+      enrich({
+        db, canonical: canonicalFromBenchmarks(benchmarks), overlay: identityOverlay,
+        billing: BILLING, now: () => new Date().toISOString(),
+      });
 
       const scoring = scoreAll({
         db, benchmarks, overlay: identityOverlay, profile, methodologyVersion,

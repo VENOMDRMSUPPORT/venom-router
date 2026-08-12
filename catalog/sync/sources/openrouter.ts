@@ -25,6 +25,12 @@ export interface BenchmarkRecord extends UpstreamModel {
   designElo?: number;
   vendor: string;
   contextLength?: number;
+  /** Per-endpoint output cap, distinct from the context window. */
+  maxCompletionTokens?: number;
+  inputModalities?: string[];
+  /** Parameter names the endpoint accepts; used only to CONFIRM a capability. */
+  supportedParameters?: string[];
+  costInPerM?: number;
   costOutPerM?: number;
 }
 
@@ -32,7 +38,10 @@ interface RawModel {
   id: string;
   canonical_slug?: string;
   context_length?: number;
-  pricing?: { completion?: string | number };
+  top_provider?: { max_completion_tokens?: number };
+  architecture?: { input_modalities?: string[] };
+  supported_parameters?: string[];
+  pricing?: { prompt?: string | number; completion?: string | number };
   benchmarks?: {
     artificial_analysis?: { intelligence_index?: number; coding_index?: number; agentic_index?: number };
     design_arena?: { arena?: string; category?: string; elo?: number }[];
@@ -55,7 +64,8 @@ export async function loadBenchmarks(fetchJson: FetchJson): Promise<BenchmarkSou
     const arena = (m.benchmarks?.design_arena ?? []).filter(
       (r) => r.arena === 'models' && typeof r.elo === 'number',
     );
-    const price = Number(m.pricing?.completion ?? NaN);
+    const priceOut = Number(m.pricing?.completion ?? NaN);
+    const priceIn = Number(m.pricing?.prompt ?? NaN);
     return {
       id: m.id,
       canonicalSlug: m.canonical_slug,
@@ -65,8 +75,12 @@ export async function loadBenchmarks(fetchJson: FetchJson): Promise<BenchmarkSou
       agentic: aa?.agentic_index,
       designElo: arena.length ? arena.reduce((s, r) => s + r.elo!, 0) / arena.length : undefined,
       contextLength: m.context_length,
+      maxCompletionTokens: m.top_provider?.max_completion_tokens,
+      inputModalities: m.architecture?.input_modalities,
+      supportedParameters: m.supported_parameters,
       // OpenRouter prices per token; the catalog works in USD per million.
-      costOutPerM: Number.isFinite(price) ? price * 1_000_000 : undefined,
+      costInPerM: Number.isFinite(priceIn) ? priceIn * 1_000_000 : undefined,
+      costOutPerM: Number.isFinite(priceOut) ? priceOut * 1_000_000 : undefined,
     };
   });
 

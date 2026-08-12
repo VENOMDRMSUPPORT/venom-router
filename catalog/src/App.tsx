@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import { useTheme } from './hooks/useTheme';
 import { Sidebar } from './components/Sidebar/Sidebar';
-import { ThemeToggle } from './components/ThemeToggle/ThemeToggle';
+import { Header } from './components/Header/Header';
 import { MobileMenu } from './components/MobileMenu/MobileMenu';
 import { DashboardPage } from './pages/DashboardPage/DashboardPage';
 import { ProviderPage } from './pages/ProviderPage/ProviderPage';
@@ -19,8 +19,8 @@ export default function App() {
 
   return (
     <div className="app-layout">
-      <ThemeToggle theme={theme} onToggle={toggleTheme} />
-      <MobileMenu onClick={() => setMenuOpen((v) => !v)} />
+      <Header theme={theme} onToggleTheme={toggleTheme} />
+      <MobileMenu open={menuOpen} onClick={() => setMenuOpen((v) => !v)} />
       <Sidebar open={menuOpen} onClose={handleNavigate} />
       <main className="app-main" key={location.pathname}>
         <Routes>

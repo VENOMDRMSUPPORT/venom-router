@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { LuArrowUpRight } from 'react-icons/lu';
+import { useMemo, useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { LuArrowUpRight, LuArrowRight, LuCpu } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import { formatTokens, formatAgo } from '../../api/client';
@@ -12,7 +12,31 @@ export function DashboardPage() {
   const { data, error, loading } = useCatalog();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
-  const [view, setView] = useState<'grid' | 'table'>('grid');
+  const [view, setView] = useState<'grid' | 'table'>('table');
+  const [preferredView, setPreferredView] = useState<'grid' | 'table'>('table');
+
+  const navigate = useNavigate();
+
+  // Dynamic responsive view switcher: automatically adapt view based on window size
+  useEffect(() => {
+    const handleResize = () => {
+      const isMobile = window.innerWidth < 768;
+      if (isMobile) {
+        setView('grid');
+      } else {
+        setView(preferredView);
+      }
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [preferredView]);
+
+  const handleViewChange = (newView: 'grid' | 'table') => {
+    setView(newView);
+    setPreferredView(newView);
+  };
 
   const providers = useMemo(() => {
     if (!data) return [];
@@ -101,42 +125,154 @@ export function DashboardPage() {
         filter={filter}
         onFilterChange={setFilter}
         view={view}
-        onViewChange={setView}
+        onViewChange={handleViewChange}
       />
 
-      <div className={styles.grid}>
-        {providers.map((p) => {
-          const pres = present(p.id);
-          const mine = models.filter((m) => m.providerId === p.id);
-          const free = mine.filter((m) => m.pricing.isFree === true).length;
-          const maxCtx = Math.max(0, ...mine.map((m) => m.contextTokens ?? 0));
-          return (
-            <Link key={p.id} to={`/provider/${p.id}`} className={styles.card}>
-              <div className={styles.cardTop}>
-                <div className={styles.cardHead}>
-                  {pres.logo && (
-                    <img src={pres.logo} alt="" className={`${styles.logo} ${pres.invertInDark ? 'logo-invert-dark' : ''}`} />
-                  )}
-                  <div>
+      {view === 'grid' ? (
+        <div className={styles.grid}>
+          {providers.map((p) => {
+            const pres = present(p.id);
+            const mine = models.filter((m) => m.providerId === p.id);
+            const free = mine.filter((m) => m.pricing.isFree === true).length;
+            const maxCtx = Math.max(0, ...mine.map((m) => m.contextTokens ?? 0));
+            const topModels = mine.slice(0, 3);
+            const scoredRatio = p.liveModels > 0 ? Math.round((p.qualityScored / p.liveModels) * 100) : 0;
+
+            return (
+              <Link key={p.id} to={`/provider/${p.id}`} className={styles.card}>
+                <div className={styles.cardHeader}>
+                  <div className={styles.logoBox}>
+                    {pres.logo ? (
+                      <img
+                        src={pres.logo}
+                        alt=""
+                        className={`${styles.logo} ${pres.invertInDark ? 'logo-invert-dark' : ''}`}
+                      />
+                    ) : (
+                      <LuCpu size={22} className={styles.fallbackLogo} />
+                    )}
+                  </div>
+
+                  <div className={styles.cardTitleBox}>
                     <div className={styles.nameRow}>
                       <h3 className={styles.name}>{p.name}</h3>
-                      <LuArrowUpRight size={14} className={styles.arrow} />
+                      <LuArrowUpRight size={15} className={styles.arrow} />
                     </div>
                     <FreshnessBadge provider={p} compact />
                   </div>
                 </div>
+
                 <p className={styles.tagline}>{pres.blurb}</p>
-              </div>
-              <div className={styles.stats}>
-                <Stat value={String(p.liveModels)} label="Models" />
-                <Stat value={formatTokens(maxCtx)} label="Max ctx" />
-                <Stat value={`${p.qualityScored}`} label="Scored" />
-                <Stat value={free > 0 ? String(free) : '—'} label="Free" />
-              </div>
-            </Link>
-          );
-        })}
-      </div>
+
+                {topModels.length > 0 && (
+                  <div className={styles.modelChips}>
+                    {topModels.map((m) => (
+                      <span key={`${m.providerId}/${m.modelId}`} className={styles.modelChip}>
+                        {m.modelId}
+                      </span>
+                    ))}
+                    {mine.length > 3 && (
+                      <span className={styles.moreChip}>+{mine.length - 3} more</span>
+                    )}
+                  </div>
+                )}
+
+                <div className={styles.progressSection}>
+                  <div className={styles.progressMeta}>
+                    <span className={styles.progressLabel}>Benchmark Scored</span>
+                    <span className={styles.progressPercent}>{scoredRatio}% ({p.qualityScored}/{p.liveModels})</span>
+                  </div>
+                  <div className={styles.progressBarBg}>
+                    <div
+                      className={styles.progressBarFill}
+                      style={{ width: `${scoredRatio}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className={styles.stats}>
+                  <div className={styles.statBox}>
+                    <span className={styles.statValue}>{p.liveModels}</span>
+                    <span className={styles.statLabel}>Models</span>
+                  </div>
+                  <div className={styles.statBox}>
+                    <span className={styles.statValue}>{formatTokens(maxCtx)}</span>
+                    <span className={styles.statLabel}>Max Ctx</span>
+                  </div>
+                  <div className={styles.statBox}>
+                    <span className={styles.statValue}>{p.qualityScored}</span>
+                    <span className={styles.statLabel}>Scored</span>
+                  </div>
+                  <div className={`${styles.statBox} ${free > 0 ? styles.freeBox : ''}`}>
+                    <span className={styles.statValue}>{free > 0 ? free : '—'}</span>
+                    <span className={styles.statLabel}>Free</span>
+                  </div>
+                </div>
+
+                <div className={styles.cardFooterAction}>
+                  <span>Explore Catalog Roster</span>
+                  <LuArrowRight size={14} className={styles.footerArrow} />
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      ) : (
+        <div className={styles.tableWrap}>
+          <div className={styles.tableScroll}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Provider</th>
+                  <th>Sync Status</th>
+                  <th className={styles.num}>Live Models</th>
+                  <th className={styles.num}>Max Context</th>
+                  <th className={styles.num}>Quality Scored</th>
+                  <th className={styles.num}>Free Models</th>
+                  <th className={styles.num}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {providers.map((p) => {
+                  const pres = present(p.id);
+                  const mine = models.filter((m) => m.providerId === p.id);
+                  const free = mine.filter((m) => m.pricing.isFree === true).length;
+                  const maxCtx = Math.max(0, ...mine.map((m) => m.contextTokens ?? 0));
+                  return (
+                    <tr key={p.id} className={styles.tableRow} onClick={() => navigate(`/provider/${p.id}`)}>
+                      <td>
+                        <div className={styles.providerCell}>
+                          {pres.logo && (
+                            <img src={pres.logo} alt="" className={`${styles.providerCellLogo} ${pres.invertInDark ? 'logo-invert-dark' : ''}`} />
+                          )}
+                          <div>
+                            <div className={styles.providerCellName}>{p.name}</div>
+                            <div className={styles.providerCellBlurb}>{pres.blurb}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <FreshnessBadge provider={p} compact />
+                      </td>
+                      <td className={styles.num}>{p.liveModels}</td>
+                      <td className={styles.num}>{formatTokens(maxCtx)}</td>
+                      <td className={styles.num}>{p.qualityScored}</td>
+                      <td className={styles.num}>{free > 0 ? free : '—'}</td>
+                      <td className={styles.num}>
+                        <div className={styles.actionCell} title="View provider roster">
+                          <button className={styles.actionBtn} aria-label="View provider roster">
+                            <LuArrowUpRight size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {providers.length === 0 && <div className={styles.empty}>No providers match your search.</div>}
 
@@ -196,11 +332,4 @@ function Kpi({ value, label, hint }: { value: string; label: string; hint: strin
   );
 }
 
-function Stat({ value, label }: { value: string; label: string }) {
-  return (
-    <div className={styles.stat}>
-      <span className={styles.statValue}>{value}</span>
-      <span className={styles.statLabel}>{label}</span>
-    </div>
-  );
-}
+
