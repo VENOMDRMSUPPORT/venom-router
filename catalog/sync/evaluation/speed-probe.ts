@@ -49,7 +49,13 @@ export function createStreamingSpeedProbe(input: CreateStreamingSpeedProbeInput)
           model: input.modelId,
           messages: [{ role: 'user', content: 'Output exactly 512 space-separated copies of the lowercase token catalog. Do not add punctuation or explanation.' }],
           temperature: 0,
-          max_tokens: 512,
+          // The prompt asks for 512 output tokens. Capping at 512 left a
+          // reasoning model no room to think and then answer, so it spent the
+          // whole budget on `reasoning_content` and streamed no answer at all —
+          // 23 paid requests to learn nothing. The headroom is for the preamble;
+          // what is MEASURED is still the answer alone, because time-to-first
+          // ANSWER token is the latency a caller actually waits through.
+          max_tokens: 2048,
           stream: true,
           stream_options: { include_usage: true },
         }),

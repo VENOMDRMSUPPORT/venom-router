@@ -39,15 +39,21 @@ export async function persistSpeedEvaluation(input: PersistSpeedEvaluationInput)
     input.onProbe?.(Math.min(++issued, SPEED_REQUESTS_PER_RUN), SPEED_REQUESTS_PER_RUN);
     return result;
   };
+  // The warmups are also a preflight. A provider that answers nothing three
+  // times will not answer twenty more, and finding that out cost 23 paid
+  // requests per model before this guard existed.
+  let anyWarmupAnswered = false;
   for (let warmup = 0; warmup < OVERALL_SCORE_POLICY.warmupRequests; warmup++) {
     if (input.shouldStop?.()) break;
-    await probe();
+    if ((await probe()).success) anyWarmupAnswered = true;
   }
-  const samples = await runPool(
+  const abandoned = !anyWarmupAnswered && !input.shouldStop?.();
+  const samples = abandoned ? [] : await runPool(
     Array.from({ length: OVERALL_SCORE_POLICY.scenarioCount }, () => probe),
     OVERALL_SCORE_POLICY.speedProviderConcurrency,
     input.shouldStop,
   );
+  const shortfall = abandoned ? 'no_successful_warmup' : 'no_successful_speed_samples';
   const successful = samples.filter((sample) => sample.success && sample.ttftSeconds !== null
     && sample.outputTokensPerSecond !== null && sample.endToEndSeconds !== null);
   const scored = successful.length > 0 ? runSpeedEvaluation(samples) : null;
@@ -69,7 +75,7 @@ export async function persistSpeedEvaluation(input: PersistSpeedEvaluationInput)
       methodologyVersion: OVERALL_SCORE_POLICY.methodologyVersion,
       region: OVERALL_SCORE_POLICY.region,
       independentRunKey: `${input.providerId}/${input.modelId}/speed/${startedAt}`,
-      errorCode: scored ? null : 'no_successful_speed_samples',
+      errorCode: scored ? null : shortfall,
       startedAt,
       finishedAt,
     });
@@ -110,5 +116,5 @@ export async function persistSpeedEvaluation(input: PersistSpeedEvaluationInput)
 
   return scored
     ? { status: 'complete', reason: null, samples }
-    : { status: 'insufficient_evidence', reason: 'no_successful_speed_samples', samples };
+    : { status: 'insufficient_evidence', reason: shortfall, samples };
 }

@@ -30,6 +30,61 @@ describe('streaming speed probe', () => {
     });
     const body = await requests[0].json() as Record<string, unknown>;
     assert.equal(body.stream, true);
-    assert.equal(body.max_tokens, 512);
+    // Four times the 512 answer tokens the prompt asks for. A reasoning model
+    // spends the head of its budget on `reasoning_content`; capping at 512 left
+    // it no room to think and then answer, so it streamed no answer at all and
+    // the run failed after paying for every request. The headroom is for the
+    // preamble only — the measurement still starts at the first ANSWER token.
+    assert.equal(body.max_tokens, 2048);
+  });
+
+  const streamOf = (chunks: string[]) => (async () => new Response(
+    new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk));
+        controller.close();
+      },
+    }),
+    { status: 200 },
+  )) as typeof fetch;
+
+  test('does not mistake a reasoning stream for an answer', async () => {
+    let clock = 0;
+    const probe = createStreamingSpeedProbe({
+      providerId: 'clinepass', modelId: 'm', credential: 'secret',
+      nowMs: () => (clock += 1000),
+      fetchImpl: streamOf([
+        'data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n\n',
+        'data: {"choices":[{"delta":{"reasoning_content":" some more"}}]}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    });
+
+    const result = await probe();
+    // Observed verbatim from opencode-go/glm-5.3: 39 chunks, every one
+    // reasoning, no answer at all. Counting them would make a model that thinks
+    // for a long time look fast, which is backwards, and would make every score
+    // measured before this incomparable with everything after it.
+    assert.equal(result.success, false);
+    assert.equal(result.errorCode, 'empty_stream_content');
+  });
+
+  test('a reasoning preamble does not stop a real answer being measured', async () => {
+    let clock = 0;
+    const probe = createStreamingSpeedProbe({
+      providerId: 'clinepass', modelId: 'm', credential: 'secret',
+      nowMs: () => (clock += 1000),
+      fetchImpl: streamOf([
+        'data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"catalog catalog"}}]}\n\n',
+        'data: {"usage":{"completion_tokens":2}}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    });
+
+    const result = await probe();
+    assert.equal(result.success, true);
+    assert.ok(result.ttftSeconds !== null && result.ttftSeconds > 0);
+    assert.ok(result.outputTokensPerSecond !== null && result.outputTokensPerSecond > 0);
   });
 });
