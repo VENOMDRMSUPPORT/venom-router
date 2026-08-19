@@ -531,3 +531,63 @@ export const EVIDENCE_HELP: Record<EvidenceLevel, string> = {
   bounded: 'A one-sided bound from a reviewed relation to a measured model.',
   unrated: 'No benchmark publishes a figure for this model. Unknown quality — not low quality.',
 };
+
+/** The plan the service will execute, as the modal needs to show it. */
+export interface EvaluationPlanView {
+  dimensions: string[];
+  skipped: Array<{ dimension: string; reason: string }>;
+  speed: 'missing' | 'scored';
+  blocked: string | null;
+  estimatedRequests: number;
+}
+
+export interface EvaluationStateView {
+  state: 'idle' | 'running' | 'stopping';
+  current: null | {
+    providerId: string;
+    modelId: string;
+    dimension: string | null;
+    samplesCompleted: number;
+    samplesTotal: number;
+    dimensionsCompleted: Array<{ dimension: string; score: number | null; status: string }>;
+    dimensionsRemaining: string[];
+  };
+  queue: Array<{ providerId: string; modelId: string }>;
+}
+
+export async function fetchEvaluationPlan(providerId: string, modelId: string): Promise<EvaluationPlanView> {
+  const res = await fetch(`${BASE}/models/${encodeURIComponent(providerId)}/${encodeURIComponent(modelId)}/evaluation`);
+  if (!res.ok) throw new Error(`evaluation plan unavailable (${res.status})`);
+  return ((await res.json()) as { plan: EvaluationPlanView }).plan;
+}
+
+/**
+ * A refusal is a value, not an exception.
+ *
+ * A missing credential or an unresolved identity is something the modal must
+ * show the owner, not something it should crash on: those are the two states
+ * where a click would otherwise spend money on evidence that cannot be produced.
+ */
+export async function startEvaluation(
+  providerId: string,
+  modelId: string,
+): Promise<{ ok: true } | { ok: false; status: number; reason: string }> {
+  const res = await fetch(`${BASE}/evaluations`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ providerId, modelId }),
+  });
+  if (res.ok) return { ok: true };
+  const body = (await res.json().catch(() => ({}))) as { reason?: string; error?: string };
+  return { ok: false, status: res.status, reason: body.reason ?? body.error ?? `http_${res.status}` };
+}
+
+export async function fetchEvaluationState(): Promise<EvaluationStateView> {
+  const res = await fetch(`${BASE}/evaluations`);
+  if (!res.ok) throw new Error(`evaluation state unavailable (${res.status})`);
+  return (await res.json()) as EvaluationStateView;
+}
+
+export async function stopEvaluations(): Promise<void> {
+  await fetch(`${BASE}/evaluations`, { method: 'DELETE' });
+}

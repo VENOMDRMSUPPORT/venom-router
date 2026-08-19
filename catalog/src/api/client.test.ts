@@ -19,7 +19,7 @@
  */
 
 import { describe, test, expect, vi, afterEach } from 'vitest';
-import { fetchCatalog } from './client';
+import { fetchCatalog, fetchEvaluationPlan, fetchEvaluationState, startEvaluation } from './client';
 
 /**
  * One model exactly as the pre-M5.1 service shape puts it on the wire.
@@ -527,5 +527,89 @@ describe('the offline snapshot is the last live answer, or it is refused', () =>
     });
 
     await expect(fetchCatalog()).rejects.toThrow(/superseded/i);
+  });
+});
+
+describe('the evaluation control client', () => {
+  const withFetch = async (impl: typeof fetch, run: () => Promise<void>) => {
+    const original = globalThis.fetch;
+    globalThis.fetch = impl;
+    try {
+      await run();
+    } finally {
+      globalThis.fetch = original;
+    }
+  };
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+  test('a refusal comes back as a value carrying the typed reason', async () => {
+    await withFetch(
+      (async () => json({ error: 'cannot evaluate', reason: 'missing_credentials' }, 422)) as typeof fetch,
+      async () => {
+        const outcome = await startEvaluation('p', 'm');
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) throw new Error('unreachable');
+        expect(outcome.reason).toBe('missing_credentials');
+        expect(outcome.status).toBe(422);
+      },
+    );
+  });
+
+  test('a refusal with no body still names something usable', async () => {
+    await withFetch(
+      (async () => new Response('', { status: 409 })) as typeof fetch,
+      async () => {
+        const outcome = await startEvaluation('p', 'm');
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) throw new Error('unreachable');
+        expect(outcome.reason).toBe('http_409');
+      },
+    );
+  });
+
+  test('an accepted start reports success', async () => {
+    await withFetch(
+      (async () => json({ position: 1, plan: { estimatedRequests: 63 } }, 202)) as typeof fetch,
+      async () => {
+        expect((await startEvaluation('p', 'm')).ok).toBe(true);
+      },
+    );
+  });
+
+  test('the state snapshot carries the queue and the job in flight', async () => {
+    await withFetch(
+      (async () => json({
+        state: 'running',
+        current: {
+          providerId: 'p', modelId: 'm', dimension: 'coding',
+          samplesCompleted: 24, samplesTotal: 63,
+          dimensionsCompleted: [], dimensionsRemaining: ['coding'],
+        },
+        queue: [{ providerId: 'p', modelId: 'm2' }],
+        recent: [],
+      })) as typeof fetch,
+      async () => {
+        const state = await fetchEvaluationState();
+        expect(state.state).toBe('running');
+        expect(state.current?.samplesCompleted).toBe(24);
+        expect(state.queue).toHaveLength(1);
+      },
+    );
+  });
+
+  test('the plan is read from the diagnostics route, not a second endpoint', async () => {
+    const seen: string[] = [];
+    await withFetch(
+      (async (input: RequestInfo | URL) => {
+        seen.push(String(input));
+        return json({ plan: { dimensions: ['coding'], skipped: [], speed: 'missing', blocked: null, estimatedRequests: 86 } });
+      }) as typeof fetch,
+      async () => {
+        const plan = await fetchEvaluationPlan('p', 'm');
+        expect(plan.estimatedRequests).toBe(86);
+        expect(seen[0]).toContain('/v1/models/p/m/evaluation');
+      },
+    );
   });
 });
