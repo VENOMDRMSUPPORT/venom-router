@@ -21,6 +21,7 @@ import { Callout } from '../../components/Callout/Callout';
 import { Toolbar } from '../../components/Toolbar/Toolbar';
 import { NotFoundPage } from '../NotFoundPage/NotFoundPage';
 import { EvidencePanel } from '../../components/EvidencePanel/EvidencePanel';
+import { EvaluateModal } from '../../components/EvaluateModal/EvaluateModal';
 import { FactState, factStateOf } from '../../components/FactState/FactState';
 import styles from './ProviderPage.module.css';
 
@@ -377,8 +378,31 @@ function EvidenceToggle({ model, open, onToggle }: { model: ApiModel; open: bool
   );
 }
 
+/**
+ * Opens the evaluation modal for one row.
+ *
+ * Beside the evidence toggle on purpose: "why is this value what it is" and
+ * "go measure it" are the two things an owner wants from a row that is missing
+ * something.
+ */
+function EvaluateButton({ model, onOpen }: { model: ApiModel; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      className={styles.evaluateBtn}
+      onClick={onOpen}
+      title="Run the evaluations this model is still missing"
+      aria-label={`Evaluate ${model.modelId}`}
+      data-testid={`evaluate-${model.modelId}`}
+    >
+      run
+    </button>
+  );
+}
+
 function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean; ranked?: boolean }) {
   const [openRows, setOpenRows] = useState<Set<string>>(() => new Set());
+  const [evaluating, setEvaluating] = useState<ApiModel | null>(null);
   const toggleRow = (k: string) =>
     setOpenRows((prev) => {
       const next = new Set(prev);
@@ -480,7 +504,10 @@ function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: st
                   <CapabilityBadges model={m} showUnknown />
                 </td>
                 <td className={styles.narrow}>
-                  <EvidenceToggle model={m} open={openRows.has(rowKey(m))} onToggle={() => toggleRow(rowKey(m))} />
+                  <div className={styles.rowActions}>
+                    <EvidenceToggle model={m} open={openRows.has(rowKey(m))} onToggle={() => toggleRow(rowKey(m))} />
+                    <EvaluateButton model={m} onOpen={() => setEvaluating(m)} />
+                  </div>
                 </td>
               </tr>
               {openRows.has(rowKey(m)) && (
@@ -495,12 +522,14 @@ function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: st
           </tbody>
         </table>
       </div>
+      {evaluating && <EvaluateModal model={evaluating} onClose={() => setEvaluating(null)} />}
     </div>
   );
 }
 
 function ModelGrid({ title, models, note, costStatedOnce, ranked }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean; ranked?: boolean }) {
   const [openCards, setOpenCards] = useState<Set<string>>(() => new Set());
+  const [evaluating, setEvaluating] = useState<ApiModel | null>(null);
   const toggleCard = (key: string) => setOpenCards((previous) => {
     const next = new Set(previous);
     if (next.has(key)) next.delete(key);
@@ -566,15 +595,19 @@ function ModelGrid({ title, models, note, costStatedOnce, ranked }: { title: str
             </div>
 
             <CapabilityBadges model={m} />
-            <EvidenceToggle
-              model={m}
-              open={openCards.has(rowKey(m))}
-              onToggle={() => toggleCard(rowKey(m))}
-            />
+            <div className={styles.rowActions}>
+              <EvidenceToggle
+                model={m}
+                open={openCards.has(rowKey(m))}
+                onToggle={() => toggleCard(rowKey(m))}
+              />
+              <EvaluateButton model={m} onOpen={() => setEvaluating(m)} />
+            </div>
             {openCards.has(rowKey(m)) && <EvidencePanel model={m} />}
           </div>
         ))}
       </div>
+      {evaluating && <EvaluateModal model={evaluating} onClose={() => setEvaluating(null)} />}
     </div>
   );
 }
