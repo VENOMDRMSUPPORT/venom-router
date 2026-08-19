@@ -20,6 +20,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, type Db } from '../db/index.ts';
 import { route } from './app.ts';
+import { EvaluationRunner } from './evaluation-runner.ts';
+import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
 import { buildSnapshot, writeSnapshot } from './snapshot.ts';
 import { syncProvider, type ProviderAdapter, type SpecLookup } from '../sync/engine.ts';
 import { scoreAll } from '../sync/score/pipeline.ts';
@@ -93,7 +95,16 @@ async function seed() {
 const runner = () => new SyncRunner({ db, profile: PROFILE, methodologyVersion: 'venom-score-v1', identityOverlay: {} });
 /** The one clock both sides read, so provider freshness is a comparison and not a race. */
 const AT = () => new Date(Date.UTC(2026, 7, 12, 1));
-const get = (path: string) => route({ db, runner: runner(), now: AT }, new URL(`http://127.0.0.1${path}`), 'GET') as { status: number; body: any };
+const evaluations = () => new EvaluationRunner({
+  db,
+  executor: {
+    async runDimension() { return { status: 'complete', score: 90 }; },
+    async runSpeed() { return { status: 'complete' }; },
+    recalculate() {},
+  },
+  testSetHash: fixtureDigest(buildEvaluationFixtures()),
+});
+const get = (path: string) => route({ db, runner: runner(), evaluations: evaluations(), now: AT }, new URL(`http://127.0.0.1${path}`), 'GET') as { status: number; body: any };
 
 beforeEach(async () => {
   db = openDb(':memory:');

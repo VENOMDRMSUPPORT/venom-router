@@ -1,8 +1,10 @@
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb, type Db } from '../db/index.ts';
-import { route, health } from './app.ts';
+import { route, health, type AppDeps } from './app.ts';
 import { SyncRunner } from './sync-runner.ts';
+import { EvaluationRunner, type EvaluationJobExecutor } from './evaluation-runner.ts';
+import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
 import { syncProvider, type ProviderAdapter, type SpecLookup } from '../sync/engine.ts';
 import { scoreAll } from '../sync/score/pipeline.ts';
 import { enrich, canonicalFromBenchmarks } from '../sync/enrich/enrich.ts';
@@ -82,7 +84,33 @@ async function seed(rosters: Record<string, string[]>) {
 }
 
 const runner = () => new SyncRunner({ db, profile: PROFILE, methodologyVersion: 'venom-score-v1', identityOverlay: {} });
-const get = (path: string) => route({ db, runner: runner(), now: () => new Date(Date.UTC(2026, 7, 12, 1)) }, new URL(`http://127.0.0.1${path}`), 'GET') as { status: number; body: any };
+/** Never touches a provider: every job resolves instantly and records nothing. */
+const inertExecutor: EvaluationJobExecutor = {
+  async runDimension() { return { status: 'complete', score: 90 }; },
+  async runSpeed() { return { status: 'complete' }; },
+  recalculate() {},
+};
+
+/**
+ * Deps for a route call, built in one place so a new service dependency is
+ * added once rather than at every call site.
+ */
+function deps(extra: Partial<AppDeps> = {}): AppDeps {
+  const database = extra.db ?? db;
+  return {
+    db: database,
+    runner: runner(),
+    evaluations: new EvaluationRunner({
+      db: database,
+      executor: inertExecutor,
+      testSetHash: fixtureDigest(buildEvaluationFixtures()),
+      hasCredential: () => true,
+    }),
+    ...extra,
+  };
+}
+
+const get = (path: string) => route(deps({ now: () => new Date(Date.UTC(2026, 7, 12, 1)) }), new URL(`http://127.0.0.1${path}`), 'GET') as { status: number; body: any };
 
 beforeEach(async () => {
   db = openDb(':memory:');
@@ -307,8 +335,16 @@ describe('overall-score-v1 coexists with the legacy composite', () => {
     assert.equal(response.body.identityDimensions[0].score, 72);
     assert.equal(response.body.providerId, 'acme');
     assert.equal(response.body.modelId, 'measured-1');
-    assert.equal(JSON.stringify(response.body).includes('credential'), false);
-    assert.equal(JSON.stringify(response.body).includes('raw_response'), false);
+    const serialized = JSON.stringify(response.body);
+    assert.equal(serialized.includes('raw_response'), false);
+    // What must never appear is a credential VALUE. Scanning for the WORD was a
+    // weaker proxy that also forbade the API from explaining itself: the plan
+    // reports `missing_credentials` as a typed reason, which is exactly the kind
+    // of accountable answer this service is supposed to give.
+    assert.ok(!/sk-[A-Za-z0-9_-]{8,}/.test(serialized), 'no API-key shaped value may appear');
+    assert.ok(!/"[A-Za-z0-9_-]{32,}"/.test(serialized), 'no opaque secret-length token may appear');
+    assert.equal(response.body.plan.blocked, 'missing_credentials',
+      'the only mention of a credential is this typed reason');
   });
 
   test('returns an accountable unknown result when no overall evidence was stored', () => {
@@ -356,7 +392,7 @@ describe('AC6 — provenance is sufficient for reconstruction', () => {
   });
 
   test('the detail endpoint returns raw value and transformation', () => {
-    const r = route({ db, runner: runner() }, new URL('http://127.0.0.1/v1/models/acme/calibrated-1/provenance'), 'GET') as any;
+    const r = route(deps(), new URL('http://127.0.0.1/v1/models/acme/calibrated-1/provenance'), 'GET') as any;
     assert.equal(r.status, 200);
     assert.equal(typeof r.body.rawValue, 'number');
     assert.match(r.body.transformation, /^y = /);
@@ -364,14 +400,14 @@ describe('AC6 — provenance is sufficient for reconstruction', () => {
   });
 
   test('a calibrated value is re-derivable from its own provenance', () => {
-    const r = route({ db, runner: runner() }, new URL('http://127.0.0.1/v1/models/acme/calibrated-1/provenance'), 'GET') as any;
+    const r = route(deps(), new URL('http://127.0.0.1/v1/models/acme/calibrated-1/provenance'), 'GET') as any;
     const [, slope, intercept] = /y = (-?[\d.e-]+) \* x \+ (-?[\d.e-]+)/.exec(r.body.transformation)!;
     const stored = get('/v1/models').body.models.find((m: any) => m.modelId === 'calibrated-1').vq.value;
     assert.ok(Math.abs(Number(slope) * r.body.rawValue + Number(intercept) - stored) < 1e-9);
   });
 
   test('an unrated model has no provenance to offer, and says so', () => {
-    const r = route({ db, runner: runner() }, new URL('http://127.0.0.1/v1/models/acme/nobench-1/provenance'), 'GET') as any;
+    const r = route(deps(), new URL('http://127.0.0.1/v1/models/acme/nobench-1/provenance'), 'GET') as any;
     assert.equal(r.status, 404);
   });
 });
@@ -425,7 +461,7 @@ describe('AC8 — concurrent syncs cannot corrupt state', () => {
   test('POST /v1/sync answers 409 rather than starting a parallel run', async () => {
     const r = new SyncRunner({ db, profile: PROFILE, methodologyVersion: 'venom-score-v1', identityOverlay: {} });
     (r as unknown as { running: boolean }).running = true;
-    const res = (await route({ db, runner: r }, new URL('http://127.0.0.1/v1/sync'), 'POST')) as any;
+    const res = (await route(deps({ runner: r }), new URL('http://127.0.0.1/v1/sync'), 'POST')) as any;
     assert.equal(res.status, 409);
     assert.match(res.body.error, /already running/);
   });
@@ -504,7 +540,7 @@ describe('AC10 — /v1/changes produces deterministic, meaningful diffs', () => 
   test('since= filters to newer events only', () => {
     const all = get('/v1/changes').body;
     const cursor = all.cursor;
-    assert.equal((route({ db, runner: runner() }, new URL(`http://127.0.0.1/v1/changes?since=${cursor}`), 'GET') as any).body.total, 0);
+    assert.equal((route(deps(), new URL(`http://127.0.0.1/v1/changes?since=${cursor}`), 'GET') as any).body.total, 0);
   });
 
   test('the same query twice returns the same result', () => {
@@ -755,5 +791,65 @@ describe('a row states which model it is, even with no index entry to bind to', 
   test('a row with no vendor listing reports null, not an empty string', () => {
     const m = (get('/v1/models').body.models as any[]).find((x) => x.modelId === 'measured-1');
     assert.equal(m.vendorModelId, null);
+  });
+});
+
+describe('evaluation control routes', () => {
+  /** One queue shared across the calls in a test, so state carries between them. */
+  const queue = () => new EvaluationRunner({
+    db,
+    executor: inertExecutor,
+    testSetHash: fixtureDigest(buildEvaluationFixtures()),
+    hasCredential: () => true,
+  });
+  const post = (evaluations: EvaluationRunner, body: unknown) =>
+    route(deps({ evaluations }), new URL('http://127.0.0.1/v1/evaluations'), 'POST', body) as { status: number; body: any };
+
+  test('accepts a model onto the queue and answers with the plan it will spend', () => {
+    const result = post(queue(), { providerId: 'acme', modelId: 'measured-1' });
+    assert.equal(result.status, 202);
+    assert.equal(result.body.position, 1);
+    assert.ok(result.body.plan.estimatedRequests > 0);
+    assert.equal(result.body.plan.blocked, null);
+  });
+
+  test('is a conflict when the same offer is already queued', () => {
+    const evaluations = queue();
+    assert.equal(post(evaluations, { providerId: 'acme', modelId: 'measured-1' }).status, 202);
+    const second = post(evaluations, { providerId: 'acme', modelId: 'measured-1' });
+    assert.equal(second.status, 409);
+  });
+
+  test('is 404 for a model the catalog does not have', () => {
+    const result = post(queue(), { providerId: 'acme', modelId: 'no-such-model' });
+    assert.equal(result.status, 404);
+  });
+
+  test('is 400 when the body does not name an offer', () => {
+    assert.equal(post(queue(), {}).status, 400);
+    assert.equal(post(queue(), { providerId: 'acme' }).status, 400);
+  });
+
+  test('reports the queue, and DELETE empties it', () => {
+    const evaluations = queue();
+    post(evaluations, { providerId: 'acme', modelId: 'measured-1' });
+    const state = route(deps({ evaluations }), new URL('http://127.0.0.1/v1/evaluations'), 'GET') as { status: number; body: any };
+    assert.equal(state.status, 200);
+    assert.ok(['idle', 'running'].includes(state.body.state));
+    const cleared = route(deps({ evaluations }), new URL('http://127.0.0.1/v1/evaluations'), 'DELETE') as { status: number; body: any };
+    assert.equal(cleared.status, 200);
+    assert.equal(typeof cleared.body.cleared, 'number');
+  });
+
+  test('refuses a method it does not implement', () => {
+    const result = route(deps(), new URL('http://127.0.0.1/v1/evaluations'), 'PATCH') as { status: number };
+    assert.equal(result.status, 405);
+  });
+
+  test('the diagnostics route carries the plan, so the modal needs no second endpoint', () => {
+    const result = get('/v1/models/acme/measured-1/evaluation');
+    assert.equal(result.status, 200);
+    assert.ok(Array.isArray(result.body.plan.dimensions));
+    assert.equal(typeof result.body.plan.estimatedRequests, 'number');
   });
 });

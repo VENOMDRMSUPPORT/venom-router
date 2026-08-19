@@ -7,14 +7,26 @@ import type { Db } from '../db/index.ts';
 import { loadModels, loadProviders, loadMeta, loadProvenance, loadEvaluationDiagnostics, STALE_AFTER_HOURS } from './read-model.ts';
 import { loadChanges } from './changes.ts';
 import type { SyncRunner, SchedulerHandle } from './sync-runner.ts';
+import type { EvaluationRunner } from './evaluation-runner.ts';
+import { planEvaluation } from '../sync/evaluation/plan.ts';
+import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
 
 export interface AppDeps {
   db: Db;
   runner: SyncRunner;
+  /**
+   * Required, not optional: the service always owns an evaluation queue, and an
+   * optional dependency would give the routes a silent "feature missing" state
+   * that production can never actually be in.
+   */
+  evaluations: EvaluationRunner;
   scheduler?: SchedulerHandle;
   now?: () => Date;
   startedAt?: string;
 }
+
+/** The corpus the plan is measured against. Computed once; it never varies at runtime. */
+const TEST_SET_HASH = fixtureDigest(buildEvaluationFixtures());
 
 export interface HttpResult {
   status: number;
@@ -32,7 +44,13 @@ export type Handler = (url: URL, method: string) => HttpResult;
  * week-old catalog report healthy because its socket answered — which is the
  * failure this endpoint exists to make visible.
  */
-export function health(deps: AppDeps): HttpResult {
+/**
+ * Health asks for exactly what it reads. Widening this to the full AppDeps
+ * would make every caller build an evaluation queue to answer "are you up".
+ */
+export type HealthDeps = Pick<AppDeps, 'db' | 'runner' | 'scheduler' | 'now' | 'startedAt'>;
+
+export function health(deps: HealthDeps): HttpResult {
   const { db, runner, scheduler } = deps;
   const now = deps.now?.() ?? new Date();
 
@@ -90,7 +108,7 @@ export function health(deps: AppDeps): HttpResult {
   };
 }
 
-export function route(deps: AppDeps, url: URL, method: string): HttpResult | Promise<HttpResult> {
+export function route(deps: AppDeps, url: URL, method: string, body?: unknown): HttpResult | Promise<HttpResult> {
   const { db } = deps;
   const now = deps.now?.() ?? new Date();
   const path = url.pathname.replace(/\/+$/, '') || '/';
@@ -123,10 +141,15 @@ export function route(deps: AppDeps, url: URL, method: string): HttpResult | Pro
 
   const evaluation = /^\/v1\/models\/([^/]+)\/([^]+)\/evaluation$/.exec(path);
   if (evaluation && method === 'GET') {
-    const detail = loadEvaluationDiagnostics(db, decodeURIComponent(evaluation[1]), decodeURIComponent(evaluation[2]));
+    const providerId = decodeURIComponent(evaluation[1]);
+    const modelId = decodeURIComponent(evaluation[2]);
+    const detail = loadEvaluationDiagnostics(db, providerId, modelId);
+    // The plan travels with the diagnostics so the modal can show what a click
+    // will spend without a second endpoint, and so the figure it shows is
+    // produced by the same code that will execute it.
     return detail
-      ? { status: 200, body: detail }
-      : { status: 404, body: { error: 'model not found', providerId: evaluation[1], modelId: evaluation[2] } };
+      ? { status: 200, body: { ...detail, plan: planEvaluation(db, { providerId, modelId, testSetHash: TEST_SET_HASH }) } }
+      : { status: 404, body: { error: 'model not found', providerId, modelId } };
   }
 
   if (path === '/v1/changes' && method === 'GET') {
@@ -144,6 +167,28 @@ export function route(deps: AppDeps, url: URL, method: string): HttpResult | Pro
           }
         : { status: 200, body: outcome },
     );
+  }
+
+  if (path === '/v1/evaluations') {
+    if (method === 'GET') return { status: 200, body: deps.evaluations.state };
+    if (method === 'DELETE') return { status: 200, body: deps.evaluations.stop() };
+    if (method === 'POST') {
+      const input = (body ?? {}) as { providerId?: unknown; modelId?: unknown };
+      if (typeof input.providerId !== 'string' || typeof input.modelId !== 'string') {
+        return { status: 400, body: { error: 'providerId and modelId are required' } };
+      }
+      const outcome = deps.evaluations.enqueue(input.providerId, input.modelId);
+      if (outcome.accepted) return { status: 202, body: { position: outcome.position, plan: outcome.plan } };
+      if (outcome.reason === 'already_queued') {
+        return { status: 409, body: { error: 'already queued', state: deps.evaluations.state.state } };
+      }
+      // Fail closed with the typed reason: nothing was sent to a provider.
+      if (outcome.plan.blocked === 'model_not_found') {
+        return { status: 404, body: { error: 'model not found', providerId: input.providerId, modelId: input.modelId } };
+      }
+      return { status: 422, body: { error: 'cannot evaluate', reason: outcome.plan.blocked } };
+    }
+    return { status: 405, body: { error: 'method not allowed', path } };
   }
 
   return { status: 404, body: { error: 'not found', path } };

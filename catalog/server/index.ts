@@ -13,6 +13,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '../db/index.ts';
 import { SyncRunner, startScheduler } from './sync-runner.ts';
+import { EvaluationRunner } from './evaluation-runner.ts';
+import { createEvaluationExecutor } from './evaluation-executor.ts';
+import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
 import { route } from './app.ts';
 import { writeSnapshot } from './snapshot.ts';
 import type { ScoreProfile } from '../sync/score/venom-score.ts';
@@ -64,13 +67,38 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
     onSnapshot: writeSnapshot,
   });
   const scheduler = startScheduler(runner);
+  // The service runs evaluations itself, which is what makes it the single
+  // writer: a terminal batch opening a second connection is refused by
+  // scripts/service-guard.ts.
+  const evaluations = new EvaluationRunner({
+    db,
+    executor: createEvaluationExecutor(db),
+    testSetHash: fixtureDigest(buildEvaluationFixtures()),
+  });
   const startedAt = new Date().toISOString();
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${BIND_HOST}:${port}`);
     let result;
     try {
-      result = await route({ db, runner, scheduler, startedAt }, url, req.method ?? 'GET');
+      // Buffered rather than streamed: every request this service accepts is a
+      // small control message, and a body is only read when one was sent.
+      let body: unknown;
+      if (req.method === 'POST' || req.method === 'PUT') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const raw = Buffer.concat(chunks).toString('utf8').trim();
+        if (raw.length > 0) {
+          try {
+            body = JSON.parse(raw);
+          } catch {
+            res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'invalid json body' }));
+            return;
+          }
+        }
+      }
+      result = await route({ db, runner, evaluations, scheduler, startedAt }, url, req.method ?? 'GET', body);
     } catch (err) {
       result = { status: 500, body: { error: err instanceof Error ? err.message : String(err) } };
     }
@@ -84,7 +112,7 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
     res.end(payload);
   });
 
-  return { server, db, runner, scheduler, port };
+  return { server, db, runner, evaluations, scheduler, port };
 }
 
 if (import.meta.filename === process.argv[1]) {
