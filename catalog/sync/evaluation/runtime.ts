@@ -14,6 +14,14 @@ export interface RuntimeSample {
   weightedSuccesses: number | null;
   weightedCriteria: number | null;
   errorCode: string | null;
+  /**
+   * What the provider actually answered, when it answered at all.
+   *
+   * Kept beside the verdict so a repaired grader can be replayed against the
+   * stored corpus. Absent on samples reloaded from the database, which predate
+   * retention or were resumed.
+   */
+  response?: unknown;
 }
 
 export interface DimensionEvaluationRequest {
@@ -24,6 +32,8 @@ export interface DimensionEvaluationRequest {
   transport: EvaluationTransport;
   credential: string | null;
   now: () => string;
+  existingSamples?: RuntimeSample[];
+  onSample?: (sample: RuntimeSample) => void | Promise<void>;
 }
 
 export type DimensionEvaluationResult =
@@ -51,6 +61,7 @@ function outcomeSample(scenario: RuntimeScenario, repetition: number, outcome: T
       scenarioId: scenario.id, repetition,
       outcome: graded.weightedSuccesses >= graded.weightedCriteria ? 'passed' : 'failed',
       weightedSuccesses: graded.weightedSuccesses, weightedCriteria: graded.weightedCriteria, errorCode: null,
+      response: outcome.response.body,
     };
   }
   return {
@@ -63,6 +74,14 @@ function outcomeSample(scenario: RuntimeScenario, repetition: number, outcome: T
   };
 }
 
+function sampleKey(sample: Pick<RuntimeSample, 'scenarioId' | 'repetition'>): string {
+  return `${sample.scenarioId}:${sample.repetition}`;
+}
+
+function isFinalSample(sample: RuntimeSample): boolean {
+  return sample.outcome === 'passed' || sample.outcome === 'failed';
+}
+
 export async function runDimensionEvaluation(request: DimensionEvaluationRequest): Promise<DimensionEvaluationResult> {
   const evaluatedAt = request.now();
   if (!request.credential) {
@@ -71,18 +90,31 @@ export async function runDimensionEvaluation(request: DimensionEvaluationRequest
   if (request.scenarios.length !== OVERALL_SCORE_POLICY.scenarioCount) {
     return { status: 'insufficient_evidence', reason: 'invalid_scenario_count', score: null, samples: [], evaluatedAt };
   }
-  for (let warmup = 0; warmup < OVERALL_SCORE_POLICY.warmupRequests; warmup++) {
-    await request.transport(request.scenarios[warmup % request.scenarios.length].payload, request.credential);
-  }
+  const prior = new Map((request.existingSamples ?? [])
+    .filter(isFinalSample)
+    .map((sample) => [sampleKey(sample), sample]));
   const tasks: (() => Promise<RuntimeSample>)[] = [];
   for (const scenario of request.scenarios) {
     for (let repetition = 1; repetition <= OVERALL_SCORE_POLICY.repetitions; repetition++) {
-      tasks.push(async () => outcomeSample(
-        scenario, repetition, await request.transport(scenario.payload, request.credential!),
-      ));
+      const key = sampleKey({ scenarioId: scenario.id, repetition });
+      if (prior.has(key)) continue;
+      tasks.push(async () => {
+        const sample = outcomeSample(
+          scenario, repetition, await request.transport(scenario.payload, request.credential!),
+        );
+        await request.onSample?.(sample);
+        return sample;
+      });
     }
   }
-  const samples = await runPool(tasks, OVERALL_SCORE_POLICY.providerConcurrency);
+  if (tasks.length > 0) {
+    for (let warmup = 0; warmup < OVERALL_SCORE_POLICY.warmupRequests; warmup++) {
+      await request.transport(request.scenarios[warmup % request.scenarios.length].payload, request.credential);
+    }
+  }
+  const fresh = await runPool(tasks, OVERALL_SCORE_POLICY.qualityProviderConcurrency);
+  const samples = [...prior.values(), ...fresh]
+    .sort((left, right) => left.scenarioId.localeCompare(right.scenarioId) || left.repetition - right.repetition);
   const evaluatorFailures = samples.filter((sample) => sample.outcome === 'evaluator_failure' || sample.outcome === 'provider_failure');
   if (evaluatorFailures.length > 0) {
     return { status: 'insufficient_evidence', reason: 'incomplete_valid_scenarios', score: null, samples, evaluatedAt };

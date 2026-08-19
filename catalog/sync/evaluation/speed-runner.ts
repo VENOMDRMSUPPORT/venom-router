@@ -41,7 +41,7 @@ export async function persistSpeedEvaluation(input: PersistSpeedEvaluationInput)
   for (let warmup = 0; warmup < OVERALL_SCORE_POLICY.warmupRequests; warmup++) await input.probe();
   const samples = await runPool(
     Array.from({ length: OVERALL_SCORE_POLICY.scenarioCount }, () => input.probe),
-    OVERALL_SCORE_POLICY.providerConcurrency,
+    OVERALL_SCORE_POLICY.speedProviderConcurrency,
   );
   const successful = samples.filter((sample) => sample.success && sample.ttftSeconds !== null
     && sample.outputTokensPerSecond !== null && sample.endToEndSeconds !== null);

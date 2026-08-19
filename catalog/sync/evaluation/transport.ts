@@ -15,6 +15,45 @@ export type EvaluationTransport = (payload: unknown, credential: string) => Prom
 export interface TransportPolicy {
   timeoutMs: number;
   transientRetries: number;
+  /** Test hooks also make the retry policy deterministic under fake timers. */
+  sleep?: (milliseconds: number) => Promise<void>;
+  random?: () => number;
+  now?: () => number;
+  backoffBaseMs?: number;
+  maxBackoffMs?: number;
+}
+
+const DEFAULT_BACKOFF_BASE_MS = 1_000;
+const DEFAULT_MAX_BACKOFF_MS = 30_000;
+
+function headerValue(headers: Record<string, string>, name: string): string | undefined {
+  const expected = name.toLowerCase();
+  return Object.entries(headers).find(([key]) => key.toLowerCase() === expected)?.[1];
+}
+
+function retryAfterMilliseconds(headers: Record<string, string>, now: number): number | null {
+  const retryAfter = headerValue(headers, 'retry-after')?.trim();
+  if (!retryAfter) return null;
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1_000);
+  const at = Date.parse(retryAfter);
+  return Number.isFinite(at) ? Math.max(0, at - now) : null;
+}
+
+function exponentialBackoffMilliseconds(attempt: number, policy: TransportPolicy): number {
+  const cap = policy.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
+  const base = policy.backoffBaseMs ?? DEFAULT_BACKOFF_BASE_MS;
+  const unjittered = Math.min(cap, base * (2 ** (attempt - 1)));
+  // Equal jitter maintains a non-zero pause even when the provider omitted Retry-After.
+  const random = policy.random ?? Math.random;
+  return Math.round(unjittered * (0.5 + random() * 0.5));
+}
+
+async function waitBeforeRetry(response: TransportResponse | null, attempt: number, policy: TransportPolicy): Promise<void> {
+  const retryAfter = response ? retryAfterMilliseconds(response.headers, (policy.now ?? Date.now)()) : null;
+  const delay = Math.max(retryAfter ?? 0, exponentialBackoffMilliseconds(attempt, policy));
+  const sleep = policy.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  await sleep(delay);
 }
 
 function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
@@ -42,6 +81,7 @@ export async function callWithPolicy(
       if (attempt === maxAttempts) {
         return { kind: 'provider_failure', status: response.status, attempts: attempt, errorCode: `http_${response.status}` };
       }
+      await waitBeforeRetry(response, attempt, policy);
     } catch (error) {
       if (attempt === maxAttempts) {
         return {
@@ -49,6 +89,7 @@ export async function callWithPolicy(
           errorCode: error instanceof Error ? error.message : 'network_transient',
         };
       }
+      await waitBeforeRetry(null, attempt, policy);
     }
   }
   return { kind: 'evaluator_failure', attempts: maxAttempts, errorCode: 'unreachable_transport_state' };

@@ -42,6 +42,9 @@ function migrate(db: Db): void {
       'cost_kind TEXT',
       'exclusion_reason TEXT',
     ],
+    evaluation_samples: [
+      'response_json TEXT',
+    ],
     model_facts: [
       'source_url TEXT',
       'evidence_state TEXT',

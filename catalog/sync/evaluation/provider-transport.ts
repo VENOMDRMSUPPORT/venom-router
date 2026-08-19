@@ -1,3 +1,4 @@
+import { deflateSync } from 'node:zlib';
 import { OVERALL_SCORE_POLICY } from './score.ts';
 import { callWithPolicy, type EvaluationTransport, type TransportResponse } from './transport.ts';
 
@@ -30,6 +31,90 @@ export interface CreateEvaluationTransportInput {
   protocol?: EvaluationProtocol;
   credential: string;
   fetchImpl?: typeof fetch;
+}
+
+const DIGIT_GLYPHS: Record<string, string[]> = {
+  '0': ['01110', '10001', '10011', '10101', '11001', '10001', '01110'],
+  '1': ['00100', '01100', '00100', '00100', '00100', '00100', '01110'],
+  '2': ['01110', '10001', '00001', '00010', '00100', '01000', '11111'],
+  '3': ['11110', '00001', '00001', '01110', '00001', '00001', '11110'],
+  '4': ['00010', '00110', '01010', '10010', '11111', '00010', '00010'],
+  '5': ['11111', '10000', '10000', '11110', '00001', '00001', '11110'],
+  '6': ['01110', '10000', '10000', '11110', '10001', '10001', '01110'],
+  '7': ['11111', '00001', '00010', '00100', '01000', '01000', '01000'],
+  '8': ['01110', '10001', '10001', '01110', '10001', '10001', '01110'],
+  '9': ['01110', '10001', '10001', '01111', '00001', '00001', '01110'],
+};
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const typeBytes = Buffer.from(type, 'ascii');
+  const body = Buffer.concat([typeBytes, data]);
+  let crc = 0xffffffff;
+  for (const byte of body) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  const header = Buffer.alloc(4);
+  header.writeUInt32BE(data.length, 0);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0, 0);
+  return Buffer.concat([header, body, checksum]);
+}
+
+function digitSvgToPngDataUrl(value: string): string {
+  const match = /^data:image\/svg\+xml;base64,(.+)$/i.exec(value);
+  if (!match) return value;
+  const svg = Buffer.from(match[1], 'base64').toString('utf8');
+  const digit = /<text\b[^>]*>\s*(\d)\s*<\/text>/i.exec(svg)?.[1];
+  const glyph = digit ? DIGIT_GLYPHS[digit] : undefined;
+  if (!glyph) return value;
+
+  const width = 128;
+  const height = 128;
+  const scale = 12;
+  const left = Math.floor((width - glyph[0].length * scale) / 2);
+  const top = Math.floor((height - glyph.length * scale) / 2);
+  const raw = Buffer.alloc((width * 4 + 1) * height, 255);
+  for (let y = 0; y < height; y++) {
+    raw[y * (width * 4 + 1)] = 0;
+  }
+  for (let row = 0; row < glyph.length; row++) {
+    for (let column = 0; column < glyph[row].length; column++) {
+      if (glyph[row][column] !== '1') continue;
+      for (let dy = 0; dy < scale; dy++) {
+        for (let dx = 0; dx < scale; dx++) {
+          const x = left + column * scale + dx;
+          const y = top + row * scale + dy;
+          const offset = y * (width * 4 + 1) + 1 + x * 4;
+          raw[offset] = 0;
+          raw[offset + 1] = 0;
+          raw[offset + 2] = 0;
+          raw[offset + 3] = 255;
+        }
+      }
+    }
+  }
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 6;
+  const png = Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+  return `data:image/png;base64,${png.toString('base64')}`;
+}
+
+function normalizeClinePayload(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeClinePayload);
+  if (typeof value !== 'object' || value === null) return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    key === 'url' && typeof item === 'string' ? digitSvgToPngDataUrl(item) : normalizeClinePayload(item),
+  ]));
 }
 
 export function evaluationHeaders(providerId: string, credential: string): Record<string, string> {
@@ -74,10 +159,13 @@ export function createEvaluationTransport(input: CreateEvaluationTransportInput)
     const body = typeof payload === 'object' && payload !== null && !Array.isArray(payload)
       ? payload as Record<string, unknown>
       : { messages: [{ role: 'user', content: String(payload) }] };
+    const normalizedBody = input.providerId === 'clinepass'
+      ? normalizeClinePayload(body) as Record<string, unknown>
+      : body;
     const response = await fetchImpl(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: evaluationHeaders(input.providerId, credential),
-      body: JSON.stringify({ ...body, model: input.modelId, stream: false }),
+      body: JSON.stringify({ ...normalizedBody, model: input.modelId, stream: false }),
     });
     const text = await response.text();
     let responseBody: unknown = null;

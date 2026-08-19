@@ -376,6 +376,9 @@ CREATE TABLE IF NOT EXISTS evaluation_samples (
   weighted_criteria   REAL,
   metrics_json        TEXT,
   artifact_ref        TEXT,
+  -- The provider's own answer, credential-redacted. Retained so a grader repair
+  -- can be replayed offline instead of buying the whole corpus a second time.
+  response_json       TEXT,
   error_code          TEXT,
   recorded_at         TEXT NOT NULL,
   PRIMARY KEY (run_id, scenario_id, repetition)

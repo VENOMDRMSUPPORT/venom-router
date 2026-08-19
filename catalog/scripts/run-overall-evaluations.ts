@@ -110,6 +110,9 @@ try {
         credential,
         testSetHash,
         now,
+        // --force means "re-evaluate", so it must not inherit samples an earlier
+        // grader scored; a plain re-run still resumes whatever this leaves behind.
+        fresh: force,
       });
       if (result.status === 'complete') {
         completed++;

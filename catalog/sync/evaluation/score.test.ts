@@ -35,12 +35,13 @@ describe('overall-score-v1 math', () => {
       scenarioCount: OVERALL_SCORE_POLICY.scenarioCount,
       repetitions: OVERALL_SCORE_POLICY.repetitions,
       requestTimeoutMs: OVERALL_SCORE_POLICY.requestTimeoutMs,
-      providerConcurrency: OVERALL_SCORE_POLICY.providerConcurrency,
+      qualityProviderConcurrency: OVERALL_SCORE_POLICY.qualityProviderConcurrency,
+      speedProviderConcurrency: OVERALL_SCORE_POLICY.speedProviderConcurrency,
       transientRetries: OVERALL_SCORE_POLICY.transientRetries,
     }, {
       evaluatorVersion: 'catalog-eval-v1', region: 'catalog-eval-cairo-1', warmupRequests: 3,
       scenarioCount: 20, repetitions: 3, requestTimeoutMs: 120_000,
-      providerConcurrency: 2, transientRetries: 3,
+      qualityProviderConcurrency: 3, speedProviderConcurrency: 2, transientRetries: 3,
     });
   });
   test('finite perfect criterion evidence is below 100', () => {

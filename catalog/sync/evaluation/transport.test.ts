@@ -5,6 +5,23 @@ import { callWithPolicy, redactSecrets, type TransportResponse } from './transpo
 const response = (status: number): TransportResponse => ({ status, body: {}, headers: {} });
 
 describe('evaluation transport policy', () => {
+  test('waits for Retry-After before retrying a rate-limited request', async () => {
+    const statuses = [
+      { ...response(429), headers: { 'retry-after': '1' } },
+      response(200),
+    ];
+    const waits: number[] = [];
+    const result = await callWithPolicy(async () => statuses.shift()!, {
+      timeoutMs: 100,
+      transientRetries: 1,
+      sleep: async (milliseconds) => { waits.push(milliseconds); },
+      random: () => 0.5,
+      now: () => 0,
+    });
+    assert.equal(result.kind, 'success');
+    assert.deepEqual(waits, [1_000]);
+  });
+
   test('retries 429 and 5xx at most three times', async () => {
     const statuses = [429, 500, 502, 200];
     let calls = 0;

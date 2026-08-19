@@ -3,6 +3,23 @@ import { describe, test } from 'node:test';
 import { createEvaluationTransport, evaluationHeaders, resolveEvaluationCredential } from './provider-transport.ts';
 
 describe('provider evaluation transport', () => {
+  test('normalizes the Cline vision fixture to a supported PNG without changing other providers', async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" fill="white"/><text x="64" y="94" font-size="96" text-anchor="middle" fill="black">7</text></svg>';
+    const image = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+    const requests: Request[] = [];
+    const transport = createEvaluationTransport({
+      providerId: 'clinepass', modelId: 'cline-pass/kimi-k2.6', credential: 'secret',
+      fetchImpl: async (input, init) => {
+        requests.push(new Request(input, init));
+        return new Response(JSON.stringify({ data: { choices: [{ message: { content: '{}' } }] }, success: true }), { status: 200 });
+      },
+    });
+
+    await transport({ messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: image } }] }] }, 'secret');
+    const body = await requests[0].json() as { messages: Array<{ content: Array<{ image_url: { url: string } }> }> };
+    assert.match(body.messages[0].content[0].image_url.url, /^data:image\/png;base64,/);
+  });
+
   test('posts a non-streaming OpenAI chat request and never exposes the credential', async () => {
     const requests: Request[] = [];
     const transport = createEvaluationTransport({

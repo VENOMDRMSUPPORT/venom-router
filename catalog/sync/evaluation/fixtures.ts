@@ -23,6 +23,75 @@ function contentFromResponse(response: unknown): string {
   return `${content}\n${reasoning}`.trim();
 }
 
+/**
+ * The model's ANSWER, which is `message.content` alone.
+ *
+ * `contentFromResponse` deliberately also folds in `message.reasoning`, because
+ * the regex-graded dimensions accept a worked answer. JSON-graded dimensions
+ * cannot: a reasoning model's trace is prose, so concatenating it made
+ * `JSON.parse` throw on a perfect answer and scored it zero. That is what
+ * silently zeroed structured output, long context and vision across a whole
+ * paid evaluation run.
+ */
+function answerText(response: unknown): string {
+  const message = messageFromResponse(response);
+  return typeof message.content === 'string' ? message.content : '';
+}
+
+/** Strip one markdown code fence, which is how most models wrap JSON. */
+function unfence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('```')) return text;
+  const opening = trimmed.indexOf('\n');
+  if (opening < 0) return text;
+  const closing = trimmed.lastIndexOf('```');
+  if (closing <= opening) return text;
+  return trimmed.slice(opening + 1, closing);
+}
+
+/** The first balanced JSON object in the text, so trailing prose is tolerated. */
+function firstJsonObject(text: string): string | null {
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index++) {
+    const character = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') inString = true;
+    else if (character === '{') depth++;
+    else if (character === '}' && --depth === 0) return text.slice(start, index + 1);
+  }
+  return null;
+}
+
+/**
+ * The JSON object the model answered with, or `{}` when it produced none.
+ *
+ * Reads the answer only, unwraps a code fence, and finally falls back to the
+ * first balanced object in the text. An empty object fails every criterion,
+ * which is the correct verdict for a model that did not return JSON.
+ */
+function jsonFromResponse(response: unknown): Record<string, unknown> {
+  const answer = unfence(answerText(response).trim());
+  for (const candidate of [answer, firstJsonObject(answer)]) {
+    if (!candidate) continue;
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch { /* try the next candidate */ }
+  }
+  return {};
+}
+
 const grade = (checks: boolean[]): Grade => ({
   weightedSuccesses: checks.filter(Boolean).length,
   weightedCriteria: 5,
@@ -97,15 +166,15 @@ const longContext = Array.from({ length: 20 }, (_, index) => {
     [{ role: 'user', content: `Opening authorization token: ${first}. ${filler} Closing authorization token: ${second}. ${filler} Return JSON only with first, second, and combined where combined is first:second.` }],
     { choices: [{ message: { content: expected } }] },
     (response) => {
-      const out = contentFromResponse(response);
-      let parsed: Record<string, unknown> = {};
-      try { parsed = JSON.parse(out) as Record<string, unknown>; } catch { /* model failure */ }
+      const parsed = jsonFromResponse(response);
       return grade([
         parsed.first === first,
         parsed.second === second,
         parsed.combined === `${first}:${second}`,
         Object.keys(parsed).length === 3,
-        !out.includes('routine inventory'),
+        // The echo check reads the ANSWER only: a reasoning trace may legitimately
+        // quote the filler while working, and that is not the model answering with it.
+        !answerText(response).includes('routine inventory'),
       ]);
     },
   );
@@ -149,8 +218,7 @@ const structuredOutput = Array.from({ length: 20 }, (_, index) => {
     [{ role: 'user', content: `Return JSON only for record ${id} with integer recordId ${id}, boolean approved true, and string label ${label}. No extra fields.` }],
     { choices: [{ message: { content: expected } }] },
     (response) => {
-      let parsed: Record<string, unknown> = {};
-      try { parsed = JSON.parse(contentFromResponse(response)) as Record<string, unknown>; } catch { /* model failure */ }
+      const parsed = jsonFromResponse(response);
       return grade([
         Number.isInteger(parsed.recordId),
         parsed.recordId === id,
@@ -172,14 +240,18 @@ const vision = Array.from({ length: 20 }, (_, index) => {
     [{ role: 'user', content: [{ type: 'text', text: 'Return JSON only with digit, color, and background for this image.' }, { type: 'image_url', image_url: { url: image } }] }],
     { choices: [{ message: { content: expected } }] },
     (response) => {
-      let parsed: Record<string, unknown> = {};
-      try { parsed = JSON.parse(contentFromResponse(response)) as Record<string, unknown>; } catch { /* model failure */ }
+      const parsed = jsonFromResponse(response);
+      // The prompt asks for the digit, never for a particular JSON type, so a
+      // model that reads the image correctly and writes 1 rather than "1" has
+      // answered. Requiring the string form failed a right answer on two of the
+      // five criteria. The shape check keeps five real criteria.
+      const seen = parsed.digit === undefined || parsed.digit === null ? '' : String(parsed.digit);
       return grade([
-        parsed.digit === digit,
+        seen === digit,
         parsed.color === 'black',
         parsed.background === 'white',
         Object.keys(parsed).length === 3,
-        typeof parsed.digit === 'string',
+        /^[0-9]$/.test(seen),
       ]);
     },
   );

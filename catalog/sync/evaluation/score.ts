@@ -24,7 +24,10 @@ export const OVERALL_SCORE_POLICY = {
   scenarioCount: 20,
   repetitions: 3,
   requestTimeoutMs: 120_000,
-  providerConcurrency: 2,
+  qualityProviderConcurrency: 3,
+  // Speed is measured alone under this fixed load. Do not couple it to quality
+  // throughput: changing it would make provider speed scores non-comparable.
+  speedProviderConcurrency: 2,
   transientRetries: 3,
   qualityWeight: 0.70,
   operationalWeight: 0.30,

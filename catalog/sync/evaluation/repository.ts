@@ -85,6 +85,8 @@ export interface EvaluationSampleRow {
   weightedCriteria: number | null;
   metrics: Record<string, number | string | boolean | null> | null;
   artifactRef: string | null;
+  /** The provider's answer, already redacted by the caller. */
+  response?: unknown;
   errorCode: string | null;
   recordedAt: string;
 }
@@ -159,7 +161,17 @@ export interface EvaluationRepository {
   offerDimensions(providerId: string, modelId: string, methodologyVersion?: string): OfferDimensionRow[];
   overall(providerId: string, modelId: string, methodologyVersion?: string): OverallScoreRow | null;
   createRun(row: EvaluationRunRow): number;
+  findResumableRun(input: {
+    providerId: string;
+    modelId: string;
+    identityId: string;
+    dimension: string;
+    testSetHash: string;
+  }): number | null;
+  updateRun(runId: number, status: EvaluationRunRow['status'], errorCode: string | null, finishedAt: string | null): void;
+  runSamples(runId: number): EvaluationSampleRow[];
   appendSample(row: EvaluationSampleRow): void;
+  upsertSample(row: EvaluationSampleRow): void;
 }
 
 export function createEvaluationRepository(db: Db): EvaluationRepository {
@@ -196,6 +208,17 @@ export function createEvaluationRepository(db: Db): EvaluationRepository {
       overall_coverage_json=excluded.overall_coverage_json, included_dimensions_json=excluded.included_dimensions_json,
       excluded_dimensions_json=excluded.excluded_dimensions_json, status=excluded.status,
       uncertainty=excluded.uncertainty, reasons_json=excluded.reasons_json, computed_at=excluded.computed_at
+  `);
+  const upsertSample = db.prepare(`
+    INSERT INTO evaluation_samples (
+      run_id, scenario_id, repetition, outcome, weighted_successes,
+      weighted_criteria, metrics_json, artifact_ref, response_json, error_code, recorded_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(run_id, scenario_id, repetition) DO UPDATE SET
+      outcome=excluded.outcome, weighted_successes=excluded.weighted_successes,
+      weighted_criteria=excluded.weighted_criteria, metrics_json=excluded.metrics_json,
+      artifact_ref=excluded.artifact_ref, response_json=excluded.response_json,
+      error_code=excluded.error_code, recorded_at=excluded.recorded_at
   `);
 
   return {
@@ -270,6 +293,44 @@ export function createEvaluationRepository(db: Db): EvaluationRepository {
       ) as unknown as { lastInsertRowid: number | bigint };
       return Number(result.lastInsertRowid);
     },
+    findResumableRun(input) {
+      const row = db.prepare(`
+        SELECT id FROM evaluation_runs
+        WHERE provider_id=? AND model_id=? AND identity_id=? AND dimension=?
+          AND run_kind='runtime' AND test_set_hash=? AND methodology_ver=?
+          AND status IN ('running','insufficient_evidence')
+        ORDER BY id DESC LIMIT 1
+      `).get(
+        input.providerId, input.modelId, input.identityId, input.dimension,
+        input.testSetHash, 'overall-score-v1',
+      ) as unknown as { id: number } | undefined;
+      return row?.id ?? null;
+    },
+    updateRun(runId, status, errorCode, finishedAt) {
+      db.prepare(`UPDATE evaluation_runs SET status=?, error_code=?, finished_at=? WHERE id=?`)
+        .run(status, errorCode, finishedAt, runId);
+    },
+    runSamples(runId) {
+      return (db.prepare(`SELECT * FROM evaluation_samples WHERE run_id=? ORDER BY scenario_id,repetition`)
+        .all(runId) as unknown as Array<{
+          run_id: number;
+          scenario_id: string;
+          repetition: number;
+          outcome: EvaluationSampleRow['outcome'];
+          weighted_successes: number | null;
+          weighted_criteria: number | null;
+          metrics_json: string | null;
+          artifact_ref: string | null;
+          error_code: string | null;
+          recorded_at: string;
+        }>).map((row) => ({
+        runId: row.run_id, scenarioId: row.scenario_id, repetition: row.repetition,
+        outcome: row.outcome, weightedSuccesses: row.weighted_successes,
+        weightedCriteria: row.weighted_criteria,
+        metrics: row.metrics_json ? JSON.parse(row.metrics_json) as Record<string, number | string | boolean | null> : null,
+        artifactRef: row.artifact_ref, errorCode: row.error_code, recordedAt: row.recorded_at,
+      }));
+    },
     appendSample(row) {
       db.prepare(`
         INSERT INTO evaluation_samples (
@@ -280,6 +341,14 @@ export function createEvaluationRepository(db: Db): EvaluationRepository {
         row.runId, row.scenarioId, row.repetition, row.outcome, row.weightedSuccesses,
         row.weightedCriteria, row.metrics ? JSON.stringify(row.metrics) : null,
         row.artifactRef, row.errorCode, row.recordedAt,
+      );
+    },
+    upsertSample(row) {
+      upsertSample.run(
+        row.runId, row.scenarioId, row.repetition, row.outcome, row.weightedSuccesses,
+        row.weightedCriteria, row.metrics ? JSON.stringify(row.metrics) : null,
+        row.artifactRef, row.response === undefined ? null : JSON.stringify(row.response),
+        row.errorCode, row.recordedAt,
       );
     },
   };

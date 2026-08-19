@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { runDimensionEvaluation, runSpeedEvaluation, type RuntimeScenario } from './runtime.ts';
+import { OVERALL_SCORE_POLICY } from './score.ts';
 import type { EvaluationTransport } from './transport.ts';
 
 const scenarios: RuntimeScenario[] = Array.from({ length: 20 }, (_, index) => ({
@@ -32,7 +33,7 @@ describe('runtime evaluation scheduling', () => {
     assert.equal(result.samples.length, 60);
     assert.equal(result.score.sampleCount, 300);
     assert.ok(result.score.score < 100);
-    assert.ok(maxActive <= 2);
+    assert.ok(maxActive <= OVERALL_SCORE_POLICY.qualityProviderConcurrency);
   });
 
   test('missing credentials produces insufficient evidence without a request', async () => {
