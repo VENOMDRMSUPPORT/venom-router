@@ -33,6 +33,25 @@ function deltaContent(event: Record<string, unknown>): string {
   return typeof content === 'string' ? content : '';
 }
 
+/**
+ * What the speed probe asks for.
+ *
+ * The first version asked a model to "output exactly 512 space-separated copies
+ * of the lowercase token catalog". A reasoning model treats that as a puzzle
+ * and never stops thinking about it: measured on opencode-go/glm-5.3, an 8192
+ * token budget produced 8,190 chunks of `reasoning_content` and not one token
+ * of answer. No budget fixes that — the instrument was reading "no value" for a
+ * whole class of models, which makes it a broken instrument rather than a
+ * finding about those models.
+ *
+ * This asks for ordinary prose of a bounded length instead. A reasoning model
+ * still thinks first, and that wait still lands in time-to-first-token where it
+ * belongs — but it then answers, so there is something to measure.
+ */
+export const SPEED_PROMPT =
+  'Describe what a software catalogue is, in plain prose, for a reader who has '
+  + 'never seen one. Write four short paragraphs. Output only the prose.';
+
 export function createStreamingSpeedProbe(input: CreateStreamingSpeedProbeInput): SpeedProbe {
   const baseUrl = PROVIDER_BASE_URLS[input.providerId];
   if (!baseUrl) throw new Error(`unsupported_evaluation_provider:${input.providerId}`);
@@ -47,7 +66,7 @@ export function createStreamingSpeedProbe(input: CreateStreamingSpeedProbeInput)
         headers: evaluationHeaders(input.providerId, input.credential),
         body: JSON.stringify({
           model: input.modelId,
-          messages: [{ role: 'user', content: 'Output exactly 512 space-separated copies of the lowercase token catalog. Do not add punctuation or explanation.' }],
+          messages: [{ role: 'user', content: SPEED_PROMPT }],
           temperature: 0,
           // The prompt asks for 512 output tokens. Capping at 512 left a
           // reasoning model no room to think and then answer, so it spent the

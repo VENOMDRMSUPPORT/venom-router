@@ -4,6 +4,13 @@ import { createEvaluationRepository } from './repository.ts';
 import { runPool, runSpeedEvaluation, type SpeedRequestSample } from './runtime.ts';
 import { OVERALL_SCORE_POLICY } from './score.ts';
 
+/**
+ * Bumped whenever the prompt or the token budget changes, because both are
+ * measurement conditions: a score taken under one is not comparable with a
+ * score taken under another.
+ */
+export const SPEED_FIXTURE_VERSION = 'catalog-speed-prose-v2';
+
 export interface SpeedProbeResult extends SpeedRequestSample {
   errorCode: string | null;
 }
@@ -107,7 +114,7 @@ export async function persistSpeedEvaluation(input: PersistSpeedEvaluationInput)
         confidence: scored.score.confidence,
         sampleCount: scored.score.sampleCount,
         status: 'scored',
-        evidence: [`runtime:${input.providerId}/${input.modelId}`, `run:${runId}`, 'speed-fixture:512-output-tokens'],
+        evidence: [`runtime:${input.providerId}/${input.modelId}`, `run:${runId}`, `speed-fixture:${SPEED_FIXTURE_VERSION}`],
         evaluatedAt: finishedAt,
         methodologyVersion: OVERALL_SCORE_POLICY.methodologyVersion,
       });
