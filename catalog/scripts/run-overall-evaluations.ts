@@ -3,16 +3,14 @@ import { openDb } from '../db/index.ts';
 import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
 import { createEvaluationTransport, resolveEvaluationCredential } from '../sync/evaluation/provider-transport.ts';
 import { recalculatePublishedOffers } from '../sync/evaluation/recalculate.ts';
-import { createEvaluationRepository } from '../sync/evaluation/repository.ts';
+import { planEvaluation } from '../sync/evaluation/plan.ts';
 import { persistDimensionEvaluation } from '../sync/evaluation/runner.ts';
 import { QUALITY_DIMENSIONS, type QualityDimension } from '../sync/evaluation/score.ts';
-import { shouldSkipDimension } from './evaluation-selection.ts';
+import { assertServiceNotListening } from './service-guard.ts';
 
 interface OfferRow {
   provider_id: string;
   model_id: string;
-  canonical_id: string | null;
-  vendor_identity_json: string | null;
 }
 
 const valueOf = (name: string): string | null => {
@@ -28,31 +26,28 @@ for (const dimension of dimensionFilter) {
   if (!QUALITY_DIMENSIONS.includes(dimension)) throw new Error(`unknown_dimension:${dimension}`);
 }
 
+// A refusal here is an expected outcome, not a crash: print the reason and
+// leave, rather than burying it under a stack trace.
+try {
+  await assertServiceNotListening();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+
 const db = openDb(process.env.CATALOG_DB);
 const fixtures = buildEvaluationFixtures();
 const testSetHash = fixtureDigest(fixtures);
 const now = () => new Date().toISOString();
 
-function identityOf(row: OfferRow): string | null {
-  if (row.canonical_id) return row.canonical_id;
-  if (!row.vendor_identity_json) return null;
-  try {
-    const parsed = JSON.parse(row.vendor_identity_json) as unknown;
-    return typeof parsed === 'string' ? parsed : null;
-  } catch {
-    return null;
-  }
-}
 
 try {
   recalculatePublishedOffers(db, now());
   const placeholders = providerFilter.map(() => '?').join(',');
+  // The roster only. Identity resolution belongs to planEvaluation, which both
+  // this batch and the service call, so it is not re-derived here.
   const rows = db.prepare(`
-    SELECT m.provider_id, m.model_id,
-      (SELECT source_model_id FROM model_scores s
-        WHERE s.provider_id=m.provider_id AND s.model_id=m.model_id AND s.kind='VQ') canonical_id,
-      (SELECT value FROM model_facts f
-        WHERE f.provider_id=m.provider_id AND f.model_id=m.model_id AND f.field='vendorIdentity') vendor_identity_json
+    SELECT m.provider_id, m.model_id
     FROM models m
     WHERE m.status IN ('active','missing') AND m.provider_id IN (${placeholders})
     ORDER BY m.provider_id, m.model_id
@@ -63,41 +58,33 @@ try {
   let skipped = 0;
   let failed = 0;
   for (const offer of selected) {
-    const identityId = identityOf(offer);
-    if (!identityId) {
-      console.log(JSON.stringify({ event: 'skip', providerId: offer.provider_id, modelId: offer.model_id, reason: 'identity_unresolved' }));
+    // One rule decides what runs, shared with the service. See sync/evaluation/plan.ts.
+    const plan = planEvaluation(db, {
+      providerId: offer.provider_id,
+      modelId: offer.model_id,
+      testSetHash,
+      force,
+    });
+    if (plan.blocked) {
+      console.log(JSON.stringify({ event: 'skip', providerId: offer.provider_id, modelId: offer.model_id, reason: plan.blocked }));
       skipped++;
       continue;
     }
+    const identityId = plan.identityId!;
     if (seenIdentities.has(identityId)) continue;
     seenIdentities.add(identityId);
-    const credential = resolveEvaluationCredential(offer.provider_id);
-    if (!credential) {
-      console.log(JSON.stringify({ event: 'skip', providerId: offer.provider_id, modelId: offer.model_id, identityId, reason: 'missing_credentials' }));
+    for (const entry of plan.skipped) {
+      if (!dimensionFilter.includes(entry.dimension)) continue;
+      console.log(JSON.stringify({ event: 'skip', identityId, dimension: entry.dimension, reason: entry.reason }));
       skipped++;
-      continue;
     }
-    const repository = createEvaluationRepository(db);
-    const existing = repository.identityDimensions(identityId)
-      .map((row) => ({ dimension: row.dimension, status: row.status, testSetHash: row.testSetHash }));
-    const applicability = new Map(repository.offerDimensions(offer.provider_id, offer.model_id)
-      .map((row) => [row.dimension, row.status]));
+    const credential = resolveEvaluationCredential(offer.provider_id)!;
     const transport = createEvaluationTransport({
       providerId: offer.provider_id,
       modelId: offer.model_id,
       credential,
     });
-    for (const dimension of dimensionFilter) {
-      if (shouldSkipDimension(existing, dimension, testSetHash, force)) {
-        console.log(JSON.stringify({ event: 'skip', identityId, dimension, reason: 'already_scored' }));
-        skipped++;
-        continue;
-      }
-      if (applicability.get(dimension) === 'unsupported') {
-        console.log(JSON.stringify({ event: 'skip', identityId, dimension, reason: 'unsupported' }));
-        skipped++;
-        continue;
-      }
+    for (const dimension of plan.dimensions.filter((entry) => dimensionFilter.includes(entry))) {
       console.log(JSON.stringify({ event: 'start', providerId: offer.provider_id, modelId: offer.model_id, identityId, dimension, testSetHash }));
       const result = await persistDimensionEvaluation({
         db,
