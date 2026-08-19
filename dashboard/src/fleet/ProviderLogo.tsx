@@ -28,6 +28,7 @@ export default function ProviderLogo(props: ProviderLogoProps) {
     "vn-provider-logo",
     `vn-provider-logo--${size}`,
     slug === "agnes-ai" ? "vn-provider-logo--edge-to-edge" : "",
+    slug === "ollama-cloud" || slug === "ollama" ? "logo-invert-dark" : "",
   ].filter(Boolean).join(" ");
   return (
     <span className={cls}>

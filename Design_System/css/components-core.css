@@ -578,6 +578,13 @@
 .vn-provider-logo--lg { width: 56px; height: 56px; }
 .vn-provider-logo img { display: block; width: 100%; height: 100%; padding: 6px; object-fit: contain; }
 .vn-provider-logo--edge-to-edge img { padding: 0; object-fit: cover; }
+[data-theme='dark'] .vn-provider-logo.logo-invert-dark img,
+.dark .vn-provider-logo.logo-invert-dark img,
+[data-theme='dark'] .logo-invert-dark img,
+.dark .logo-invert-dark img {
+  filter: invert(1);
+  background: transparent !important;
+}
 
 /* ---- App shell ----------------------------------------------------------- */
 /* Chrome heights match the legacy console exactly: 70px header row and a
