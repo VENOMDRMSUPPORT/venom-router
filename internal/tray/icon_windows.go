@@ -2,7 +2,5 @@
 
 package tray
 
-import _ "embed"
-
-//go:embed assets/venom.ico
-var trayIcon []byte
+// trayIcon is the same ICO used by the control page favicon.
+var trayIcon = appIcon

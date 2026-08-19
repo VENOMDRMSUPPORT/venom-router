@@ -113,6 +113,16 @@ func randomToken() (string, error) {
 func newControlHandler(controls TrayControls, token, selfOrigin string) http.Handler {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("Content-Type", "image/x-icon")
+		_, _ = w.Write(appIcon)
+	})
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -183,7 +193,7 @@ func newControlHandler(controls TrayControls, token, selfOrigin string) http.Han
 // returns the page, and same-origin policy keeps the baked-in token secret.
 func securityMiddleware(token, selfOrigin string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/" {
+		if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/favicon.ico") {
 			next.ServeHTTP(w, r)
 			return
 		}

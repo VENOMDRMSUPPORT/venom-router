@@ -27,6 +27,9 @@ func TestResolveAppWindowCommand(t *testing.T) {
 		if !containsArg(args, "--app="+url) {
 			t.Errorf("args = %v, want an --app=%s entry", args, url)
 		}
+		if !containsArg(args, "--window-size=") {
+			t.Errorf("args = %v, want a --window-size entry", args)
+		}
 	})
 
 	t.Run("falls through to chrome when edge is absent", func(t *testing.T) {

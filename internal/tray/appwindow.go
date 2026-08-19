@@ -1,6 +1,7 @@
 package tray
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -20,8 +21,20 @@ type browserCandidate struct {
 	Path string
 }
 
-// appWindowSize is the initial chromeless window size (Chromium --window-size).
-const appWindowSize = "420,600"
+// appWindowWidth / appWindowHeight keep the control window compact enough to
+// avoid the big dead margins that Chromium's default app-window sizing can
+// leave around the actual controls.
+const (
+	appWindowWidth  = 560
+	appWindowHeight = 440
+)
+
+var appWindowLaunchArgs = func(url string) []string {
+	return []string{
+		"--app=" + url,
+		fmt.Sprintf("--window-size=%d,%d", appWindowWidth, appWindowHeight),
+	}
+}
 
 // resolveAppWindowCommand returns the executable and args to open url in a
 // chromeless app-window using the first present candidate, or ok=false when
@@ -31,7 +44,7 @@ func resolveAppWindowCommand(candidates []browserCandidate, url string) (name st
 		if c.Path == "" {
 			continue
 		}
-		return c.Path, []string{"--app=" + url, "--window-size=" + appWindowSize}, true
+		return c.Path, appWindowLaunchArgs(url), true
 	}
 	return "", nil, false
 }
@@ -56,6 +69,9 @@ const controlWindowTitle = "Venom Router Control"
 // only the prefix is stable.
 const chromiumWindowClassPrefix = "Chrome_WidgetWin_"
 
+// nativeWebViewWindowClass is the top-level class used by go-webview2.
+const nativeWebViewWindowClass = "webview"
+
 // appWindowSpawnCooldown is how long after a spawn a tap that still cannot see
 // the window is assumed to be racing that spawn rather than reporting a closed
 // window. Generous enough for a cold Chromium start, short enough that closing
@@ -68,7 +84,7 @@ const appWindowSpawnCooldown = 3 * time.Second
 // same-titled page and then treat it as the control window.
 func isControlWindow(class, title string, visible bool) bool {
 	return visible &&
-		strings.HasPrefix(class, chromiumWindowClassPrefix) &&
+		(strings.HasPrefix(class, chromiumWindowClassPrefix) || strings.EqualFold(class, nativeWebViewWindowClass)) &&
 		title == controlWindowTitle
 }
 

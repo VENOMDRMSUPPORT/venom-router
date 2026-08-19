@@ -84,3 +84,18 @@ func assertPrefix(t *testing.T, got, want []string) {
 		}
 	}
 }
+
+// TestCenteredAppWindowArgs_CarriesAPosition pins the Windows-only half of the
+// launch arguments. Centring needs Win32 screen metrics, so the portable
+// default in appwindow.go deliberately omits --window-position and only this
+// build's override supplies one; asserting it in the portable test would fail
+// everywhere else.
+func TestCenteredAppWindowArgs_CarriesAPosition(t *testing.T) {
+	args := centeredAppWindowArgs("http://127.0.0.1:1/")
+	if !containsArg(args, "--window-position=") {
+		t.Errorf("args = %v, want a --window-position entry", args)
+	}
+	if !containsArg(args, "--window-size=") {
+		t.Errorf("args = %v, want a --window-size entry", args)
+	}
+}

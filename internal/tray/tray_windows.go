@@ -27,6 +27,9 @@ func (winOpener) Open(target string) error { return shellOpen(target) }
 // solely owned, and blocks in systray.Run until Quit/onExit cancel ctx.
 func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller, dev *DevSupervisor) error {
 	runtime.LockOSThread()
+	if err := cleanupLegacyAutostart(); err != nil {
+		c.log.Warn("tray: could not remove legacy startup script", observability.String("err", err.Error()))
+	}
 	tid := windows.GetCurrentThreadId()
 	c.SetUIStop(func() {
 		systray.Quit()

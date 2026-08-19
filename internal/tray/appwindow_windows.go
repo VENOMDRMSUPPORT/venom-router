@@ -3,6 +3,7 @@
 package tray
 
 import (
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"time"
@@ -14,10 +15,12 @@ import (
 // control window across every left-click.
 var controlWindowGate appWindowGate
 
+func init() {
+	appWindowLaunchArgs = centeredAppWindowArgs
+}
+
 // openOrFocusControlWindow is what a tray left-click does: raise the control
-// window if one is already open, else open it — never a second one. Chromium
-// does not de-duplicate --app= windows by URL, so without this every click
-// would stack another identical window.
+// window if one is already open, else open it — never a second one.
 func openOrFocusControlWindow(url string) (tapOutcome, error) {
 	return controlWindowGate.resolveTap(
 		time.Now(),
@@ -30,24 +33,60 @@ func openOrFocusControlWindow(url string) (tapOutcome, error) {
 	)
 }
 
-// openControlWindow opens url as a chromeless app-window using an installed
-// Edge or Chrome; if neither is found it falls back to the default browser (a
-// normal tab), which still shows the fully functional control page. The
-// browser is launched detached — it is a separate process, so closing its
-// window never touches the tray.
+// openControlWindow uses the installed Edge or Chrome app-window for rendering,
+// then replaces the browser-provided title-bar/taskbar icon with the Venom icon
+// from the executable resource. This keeps the existing WebView-free fallback
+// compatible with machines where the WebView2 runtime is unavailable.
 func openControlWindow(url string) error {
 	name, args, ok := resolveAppWindowCommand(resolveBrowserCandidates(), url)
 	if !ok {
 		return shellOpen(url)
 	}
-	return exec.Command(name, args...).Start()
+	if err := exec.Command(name, args...).Start(); err != nil {
+		return err
+	}
+
+	// The browser creates its top-level window asynchronously. Wait briefly for
+	// the exact control title, then set both large and small window icons.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if hwnd := findWindowMatching(isControlWindow); hwnd != 0 {
+			applyVenomWindowIdentity(hwnd)
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return nil
 }
 
-// resolveBrowserCandidates returns Edge then Chrome with their resolved exe
-// paths ("" when not installed), preferring the well-known install locations
-// and falling back to PATH. The install roots are read once, in
-// internal/platform, and passed in as a typed value — this package never
-// reads the environment itself.
+func centeredAppWindowArgs(url string) []string {
+	width := appWindowWidth
+	height := appWindowHeight
+	x, y := centeredWindowPosition(width, height)
+	return []string{
+		"--app=" + url,
+		fmt.Sprintf("--window-size=%d,%d", width, height),
+		fmt.Sprintf("--window-position=%d,%d", x, y),
+	}
+}
+
+func centeredWindowPosition(width, height int) (x, y int) {
+	sx, _, _ := procGetSystemMetrics.Call(smCxScreen)
+	sy, _, _ := procGetSystemMetrics.Call(smCyScreen)
+	if sx <= 0 || sy <= 0 {
+		return 0, 0
+	}
+	x = int(sx)/2 - width/2
+	y = int(sy)/2 - height/2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	return x, y
+}
+
 func resolveBrowserCandidates() []browserCandidate {
 	roots := platform.WindowsInstallRoots()
 	return []browserCandidate{
@@ -56,10 +95,6 @@ func resolveBrowserCandidates() []browserCandidate {
 	}
 }
 
-// edgePaths lists Edge's well-known locations under the given roots, most
-// specific first, then whatever PATH resolves. A root reported as ""
-// contributes no candidate: joining onto it would yield a relative path
-// that could match an unrelated file in the process's working directory.
 func edgePaths(roots platform.InstallRoots) []string {
 	var p []string
 	for _, base := range []string{roots.ProgramFilesX86, roots.ProgramFiles} {
@@ -73,9 +108,6 @@ func edgePaths(roots platform.InstallRoots) []string {
 	return p
 }
 
-// chromePaths lists Chrome's well-known locations under the given roots
-// (including the per-user LOCALAPPDATA install), with the same ""-root rule
-// as edgePaths.
 func chromePaths(roots platform.InstallRoots) []string {
 	var p []string
 	for _, base := range []string{roots.ProgramFiles, roots.ProgramFilesX86, roots.LocalAppData} {
@@ -89,7 +121,6 @@ func chromePaths(roots platform.InstallRoots) []string {
 	return p
 }
 
-// firstExisting returns the first path that exists as a regular file, else "".
 func firstExisting(paths []string) string {
 	for _, p := range paths {
 		if fileExists(p) {

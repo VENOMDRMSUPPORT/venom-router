@@ -57,6 +57,13 @@ var bootFunc = app.Boot
 // in production it comes from app.NotifyContext (real SIGINT/SIGTERM);
 // tests may cancel it directly.
 func Dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	// Windows autostart passes --minimized to make the intended tray-only
+	// startup behavior explicit. Bare tray mode already stays hidden until
+	// the tray icon is clicked, so consume the flag before mode dispatch.
+	if len(args) > 0 && args[0] == "--minimized" {
+		args = args[1:]
+	}
+
 	mode := ""
 	if len(args) > 0 {
 		mode = args[0]

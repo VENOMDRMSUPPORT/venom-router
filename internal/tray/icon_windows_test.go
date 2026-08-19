@@ -45,3 +45,11 @@ func TestTrayIcon_IsPNGCompressedICOWithExpectedSizes(t *testing.T) {
 		}
 	}
 }
+
+func TestVenomIconResourceForExe_UsesEmbeddedResourceOne(t *testing.T) {
+	got := venomIconResourceForExe(`C:\Users\hamee\Desktop\venom-router\dist\venom.exe`)
+	want := `C:\Users\hamee\Desktop\venom-router\dist\venom.exe,-1`
+	if got != want {
+		t.Fatalf("resource = %q, want %q", got, want)
+	}
+}

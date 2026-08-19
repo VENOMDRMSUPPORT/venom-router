@@ -3,132 +3,150 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
 <title>Venom Router Control</title>
 <style>
   :root {
-    --bg: #0f1115; --panel: #171a21; --line: #262b36;
-    --fg: #e6e9ef; --muted: #9aa4b2;
-    --accent: #6ea8fe; --ok: #3fb950; --warn: #d29922; --err: #f85149;
-    --btn: #21262d; --btnh: #2c333c;
+    color-scheme: dark;
+    --bg: #0b0e13;
+    --surface: #141922;
+    --surface-2: #1a202b;
+    --line: #293241;
+    --line-strong: #3b485a;
+    --text: #eef2f7;
+    --muted: #98a5b5;
+    --accent: #37d6a3;
+    --accent-soft: rgba(55, 214, 163, .14);
+    --blue: #70a7ff;
+    --danger: #ff6f78;
+    --shadow: 0 12px 34px rgba(0, 0, 0, .28);
   }
   * { box-sizing: border-box; }
+  html, body { margin: 0; min-width: 420px; background: var(--bg); color: var(--text); }
   body {
-    margin: 0; background: var(--bg); color: var(--fg);
-    font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif;
-    padding: 18px; min-width: 320px;
+    padding: 14px;
+    font: 13px/1.4 "Segoe UI", Inter, system-ui, sans-serif;
   }
-  h1 { font-size: 15px; margin: 0 0 14px; letter-spacing: .3px; }
-  h1 .dot { color: var(--accent); }
-  .card {
-    background: var(--panel); border: 1px solid var(--line);
-    border-radius: 10px; padding: 14px; margin-bottom: 14px;
-  }
-  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .title { font-weight: 600; }
-  .status { font-size: 12px; color: var(--muted); }
-  .error-detail { display: none; margin-top: 8px; font-size: 12px; color: var(--err); overflow-wrap: anywhere; }
-  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
-  .b-running { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
-  .b-starting { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
-  .b-error { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, var(--line)); }
-  .b-stopped { color: var(--muted); }
-  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-  button {
-    background: var(--btn); color: var(--fg); border: 1px solid var(--line);
-    border-radius: 8px; padding: 7px 12px; font-size: 13px; cursor: pointer;
-  }
-  button:hover:not(:disabled) { background: var(--btnh); }
-  button:disabled { opacity: .4; cursor: not-allowed; }
-  button.primary { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
-  button.danger { border-color: color-mix(in srgb, var(--err) 45%, var(--line)); color: var(--err); }
-  .foot { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
-  label.chk { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; cursor: pointer; }
+  button, input { font: inherit; }
+  .shell { width: 100%; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .brand-mark { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid rgba(55,214,163,.45); border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-size: 17px; line-height: 1; }
+  .brand-copy { min-width: 0; }
+  .brand-title { font-weight: 700; letter-spacing: .2px; }
+  .brand-subtitle { color: var(--muted); font-size: 11px; margin-top: 1px; }
+  .live { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .stack { display: grid; gap: 10px; }
+  .surface { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; box-shadow: var(--shadow); }
+  .surface-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .section-title { font-weight: 700; letter-spacing: .15px; }
+  .section-status { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .badge { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+  .b-running { color: var(--accent); border-color: rgba(55,214,163,.5); background: var(--accent-soft); }
+  .b-starting { color: #f2c45d; border-color: rgba(242,196,93,.45); }
+  .b-error { color: var(--danger); border-color: rgba(255,111,120,.5); }
+  .b-stopped, .b-n\/a { color: var(--muted); }
+  .actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
+  button { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: var(--surface-2); color: var(--text); cursor: pointer; transition: background .15s ease, border-color .15s ease, transform .15s ease; }
+  button:hover:not(:disabled) { background: #222b39; border-color: var(--line-strong); transform: translateY(-1px); }
+  button:disabled { opacity: .38; cursor: not-allowed; }
+  button.primary { border-color: rgba(112,167,255,.55); color: #dce9ff; }
+  button.danger { border-color: rgba(255,111,120,.55); color: var(--danger); }
+  .notice { display: none; margin-top: 8px; padding: 7px 9px; border: 1px solid rgba(255,111,120,.35); border-radius: 8px; color: #ffabb0; background: rgba(255,111,120,.08); font-size: 11px; overflow-wrap: anywhere; }
+  .settings { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .settings-left { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+  .settings-left input { width: 15px; height: 15px; accent-color: var(--accent); margin: 0; }
+  .settings-actions { display: flex; gap: 7px; }
+  .footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; color: var(--muted); font-size: 11px; }
+  .footer button { padding: 6px 9px; font-size: 12px; }
 </style>
 </head>
 <body>
-  <h1><span class="dot">●</span> Venom Router</h1>
+<div class="shell">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">▲</div>
+      <div class="brand-copy">
+        <div class="brand-title">Venom Router</div>
+        <div class="brand-subtitle">Local control center</div>
+      </div>
+    </div>
+    <div class="live">Live status</div>
+  </header>
 
-  <div class="card">
-    <div class="row">
-      <span class="title">Production</span>
-      <span id="prod-badge" class="badge b-stopped">…</span>
-    </div>
-    <div class="status" id="prod-status">loading…</div>
-    <div class="actions">
-      <button id="prod-open" class="primary">Open Dashboard</button>
-      <button id="prod-start">Start</button>
-      <button id="prod-stop">Stop</button>
-    </div>
-  </div>
+  <main class="stack">
+    <section class="surface">
+      <div class="surface-head">
+        <div>
+          <div class="section-title">Production</div>
+          <div class="section-status" id="prod-status">Loading status…</div>
+        </div>
+        <span id="prod-badge" class="badge b-stopped">…</span>
+      </div>
+      <div class="actions">
+        <button id="prod-open" class="primary">Open Dashboard</button>
+        <button id="prod-start">Start</button>
+        <button id="prod-stop">Stop</button>
+      </div>
+    </section>
 
-  <div class="card">
-    <div class="row">
-      <span class="title">Development</span>
-      <span id="dev-badge" class="badge b-stopped">…</span>
-    </div>
-    <div class="status" id="dev-status">loading…</div>
-    <div class="error-detail" id="dev-error"></div>
-    <div class="actions">
-      <button id="dev-open" class="primary">Open Dashboard</button>
-      <button id="dev-start">Start</button>
-      <button id="dev-stop">Stop</button>
-      <button id="dev-logs">View Development Log</button>
-    </div>
-  </div>
+    <section class="surface">
+      <div class="surface-head">
+        <div>
+          <div class="section-title">Development</div>
+          <div class="section-status" id="dev-status">Loading status…</div>
+        </div>
+        <span id="dev-badge" class="badge b-stopped">…</span>
+      </div>
+      <div id="dev-error" class="notice"></div>
+      <div class="actions">
+        <button id="dev-open" class="primary">Open Dashboard</button>
+        <button id="dev-start">Start</button>
+        <button id="dev-stop">Stop</button>
+        <button id="dev-logs">View Log</button>
+      </div>
+    </section>
 
-  <div class="card">
-    <div class="foot">
-      <label class="chk"><input type="checkbox" id="autostart"> Start with Windows</label>
-      <button id="logs">View Logs</button>
-    </div>
-    <div class="actions">
-      <button id="quit" class="danger">Quit Venom Router</button>
-    </div>
-  </div>
-
+    <section class="surface">
+      <div class="settings">
+        <label class="settings-left"><input type="checkbox" id="autostart"> <span>Start with Windows</span></label>
+        <div class="settings-actions"><button id="logs">View Logs</button></div>
+      </div>
+      <div class="footer">
+        <span>Venom Router is running in the system tray.</span>
+        <button id="quit" class="danger">Quit</button>
+      </div>
+    </section>
+  </main>
+</div>
 <script>
 const TOKEN = "__VENOM_CONTROL_TOKEN__";
-
 async function post(path, body) {
   const opts = { method: "POST", headers: { "X-Control-Token": TOKEN } };
-  if (body !== undefined) {
-    opts.headers["Content-Type"] = "application/json";
-    opts.body = JSON.stringify(body);
-  }
-  try { await fetch(path, opts); } catch (e) { /* tray may be mid-transition */ }
+  if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  try { await fetch(path, opts); } catch (e) {}
   setTimeout(refresh, 250);
 }
-
 function badge(el, state) {
-  const s = (state || "Stopped").toLowerCase();
+  const s = (state || "Stopped").toLowerCase().replace(/[^a-z/]/g, "-");
   el.textContent = state || "Stopped";
   el.className = "badge b-" + s;
 }
-
 async function refresh() {
   let st;
-  try {
-    const r = await fetch("/state", { headers: { "X-Control-Token": TOKEN } });
-    st = await r.json();
-  } catch (e) { return; }
-
-  // Production
+  try { const r = await fetch("/state", { headers: { "X-Control-Token": TOKEN } }); st = await r.json(); } catch (e) { return; }
   const prodState = st.prod.charAt(0).toUpperCase() + st.prod.slice(1);
   badge(document.getElementById("prod-badge"), prodState);
   document.getElementById("prod-status").textContent = "Status: " + prodState;
   const prodRunning = st.prod === "running";
   const devActive = st.devAvailable && st.devOverall !== "Stopped";
   document.getElementById("prod-open").disabled = !prodRunning;
-  // Start is hidden while dev holds 8081 + the one-DB lock (mirrors the menu).
   document.getElementById("prod-start").disabled = prodRunning || devActive;
   document.getElementById("prod-stop").disabled = !prodRunning;
 
-  // Development
   badge(document.getElementById("dev-badge"), st.devAvailable ? st.devOverall : "N/A");
-  document.getElementById("dev-status").textContent =
-    st.devAvailable ? ("Backend: " + st.devBackend + " · Frontend: " + st.devFrontend) : "No dev repo found";
-  // Open needs BOTH vite (frontend) and the backend (8081) up — opening the
-  // dashboard before its API is ready yields a transient 500 the SPA sticks on.
+  document.getElementById("dev-status").textContent = st.devAvailable ? ("Backend: " + st.devBackend + " · Frontend: " + st.devFrontend) : "No dev repo found";
   document.getElementById("dev-open").disabled = !(st.devFrontend === "Running" && st.devBackend === "Running");
   document.getElementById("dev-start").disabled = !st.devAvailable || devActive;
   document.getElementById("dev-stop").disabled = !devActive;
@@ -136,23 +154,18 @@ async function refresh() {
   devError.textContent = st.devError || "";
   devError.style.display = st.devError ? "block" : "none";
   document.getElementById("dev-logs").style.display = st.devLogAvailable ? "inline-block" : "none";
-
   document.getElementById("autostart").checked = !!st.autostart;
 }
-
-document.getElementById("prod-open").onclick  = () => post("/prod/open");
+document.getElementById("prod-open").onclick = () => post("/prod/open");
 document.getElementById("prod-start").onclick = () => post("/prod/start");
-document.getElementById("prod-stop").onclick  = () => post("/prod/stop");
-document.getElementById("dev-open").onclick    = () => post("/dev/open");
-document.getElementById("dev-start").onclick   = () => post("/dev/start");
-document.getElementById("dev-stop").onclick    = () => post("/dev/stop");
-document.getElementById("dev-logs").onclick    = () => post("/dev/logs");
-document.getElementById("logs").onclick        = () => post("/logs");
-document.getElementById("autostart").onchange  = (e) => post("/autostart", { enabled: e.target.checked });
-document.getElementById("quit").onclick = () => {
-  if (confirm("Stop Venom Router completely and exit?")) post("/quit");
-};
-
+document.getElementById("prod-stop").onclick = () => post("/prod/stop");
+document.getElementById("dev-open").onclick = () => post("/dev/open");
+document.getElementById("dev-start").onclick = () => post("/dev/start");
+document.getElementById("dev-stop").onclick = () => post("/dev/stop");
+document.getElementById("dev-logs").onclick = () => post("/dev/logs");
+document.getElementById("logs").onclick = () => post("/logs");
+document.getElementById("autostart").onchange = e => post("/autostart", { enabled: e.target.checked });
+document.getElementById("quit").onclick = () => { if (confirm("Stop Venom Router completely and exit?")) post("/quit"); };
 refresh();
 setInterval(refresh, 1500);
 </script>
