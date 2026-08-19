@@ -24,7 +24,12 @@ export interface EvaluationJobExecutor {
     /** Asked between samples: a stop must not cost another full dimension. */
     shouldStop: () => boolean;
   }): Promise<{ status: 'complete' | 'insufficient_evidence'; score: number | null }>;
-  runSpeed(input: { providerId: string; modelId: string }): Promise<{ status: 'complete' | 'insufficient_evidence' }>;
+  runSpeed(input: {
+    providerId: string;
+    modelId: string;
+    onSample: (completed: number, total: number) => void;
+    shouldStop: () => boolean;
+  }): Promise<{ status: 'complete' | 'insufficient_evidence' }>;
   recalculate(): void;
 }
 
@@ -210,13 +215,29 @@ export class EvaluationRunner {
       current.dimension = 'speed';
       current.samplesCompleted = 0;
       current.samplesTotal = 0;
-      const result = await this.executor.runSpeed({ providerId, modelId });
+      const result = await this.executor.runSpeed({
+        providerId,
+        modelId,
+        onSample: (completed, total) => {
+          current.samplesCompleted = completed;
+          current.samplesTotal = total;
+        },
+        shouldStop: () => this.stopping,
+      });
       current.dimensionsCompleted.push({ dimension: 'speed', score: null, status: result.status });
       current.dimensionsRemaining = current.dimensionsRemaining.filter((entry) => entry !== 'speed');
     }
 
     this.executor.recalculate();
-    this.remember(providerId, modelId, 'complete');
+    // "complete" means the job ran to the end, which is not the same as the
+    // evidence being complete. A dimension that came back short is named, so a
+    // finished job never implies a scored one.
+    const short = current.dimensionsCompleted.filter((entry) => entry.status !== 'complete');
+    this.remember(
+      providerId,
+      modelId,
+      short.length === 0 ? 'complete' : `incomplete: ${short.map((entry) => entry.dimension).join(', ')}`,
+    );
   }
 
   private remember(providerId: string, modelId: string, outcome: string): void {

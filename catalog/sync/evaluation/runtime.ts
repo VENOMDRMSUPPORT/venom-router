@@ -47,7 +47,7 @@ export type DimensionEvaluationResult =
   | { status: 'complete'; reason: null; score: CriterionScore; samples: RuntimeSample[]; evaluatedAt: string }
   | { status: 'insufficient_evidence'; reason: string; score: null; samples: RuntimeSample[]; evaluatedAt: string };
 
-async function runPool<T>(
+export async function runPool<T>(
   tasks: (() => Promise<T>)[],
   concurrency: number,
   shouldStop?: () => boolean,
@@ -107,6 +107,11 @@ export async function runDimensionEvaluation(request: DimensionEvaluationRequest
   const prior = new Map((request.existingSamples ?? [])
     .filter(isFinalSample)
     .map((sample) => [sampleKey(sample), sample]));
+  // Every sample must succeed for a dimension to be scored, so the first
+  // unrecoverable failure already decides the outcome. Everything issued after
+  // it is paid for and thrown away.
+  let doomed = false;
+  const halt = () => doomed || (request.shouldStop?.() ?? false);
   const tasks: (() => Promise<RuntimeSample>)[] = [];
   for (const scenario of request.scenarios) {
     for (let repetition = 1; repetition <= OVERALL_SCORE_POLICY.repetitions; repetition++) {
@@ -116,6 +121,7 @@ export async function runDimensionEvaluation(request: DimensionEvaluationRequest
         const sample = outcomeSample(
           scenario, repetition, await request.transport(scenario.payload, request.credential!),
         );
+        if (sample.outcome === 'provider_failure' || sample.outcome === 'evaluator_failure') doomed = true;
         await request.onSample?.(sample);
         return sample;
       });
@@ -123,11 +129,11 @@ export async function runDimensionEvaluation(request: DimensionEvaluationRequest
   }
   if (tasks.length > 0) {
     for (let warmup = 0; warmup < OVERALL_SCORE_POLICY.warmupRequests; warmup++) {
-      if (request.shouldStop?.()) break;
+      if (halt()) break;
       await request.transport(request.scenarios[warmup % request.scenarios.length].payload, request.credential);
     }
   }
-  const fresh = await runPool(tasks, OVERALL_SCORE_POLICY.qualityProviderConcurrency, request.shouldStop);
+  const fresh = await runPool(tasks, OVERALL_SCORE_POLICY.qualityProviderConcurrency, halt);
   const samples = [...prior.values(), ...fresh]
     .sort((left, right) => left.scenarioId.localeCompare(right.scenarioId) || left.repetition - right.repetition);
   // Checked before anything else: a stopped run is incomplete by construction,

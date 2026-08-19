@@ -79,7 +79,7 @@ export function createEvaluationExecutor(db: Db, overrides: ExecutorOverrides = 
       };
     },
 
-    async runSpeed({ providerId, modelId }) {
+    async runSpeed({ providerId, modelId, onSample, shouldStop }) {
       const credential = credentialFor(providerId);
       if (!credential) return { status: 'insufficient_evidence' };
       const result = await persistSpeedEvaluation({
@@ -88,6 +88,8 @@ export function createEvaluationExecutor(db: Db, overrides: ExecutorOverrides = 
         modelId,
         probe: createStreamingSpeedProbe({ providerId, modelId, credential }),
         now,
+        onProbe: onSample,
+        shouldStop,
       });
       return { status: result.status };
     },

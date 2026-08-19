@@ -107,3 +107,29 @@ describe('stopping a dimension part-way', () => {
     assert.equal(result.samples.length, 60);
   });
 });
+
+describe('abandoning a dimension the moment it cannot be scored', () => {
+  test('stops paying once a provider failure has already doomed the run', async () => {
+    const fixtures = buildEvaluationFixtures().structuredOutput;
+    const bodies = new Map(fixtures.map((item) => [JSON.stringify(item.payload), item.expectedResponse]));
+    let calls = 0;
+    const result = await runDimensionEvaluation({
+      providerId: 'p', modelId: 'm', dimension: 'structuredOutput',
+      scenarios: fixtures,
+      credential: 'secret',
+      now: () => '2026-08-20T00:00:00.000Z',
+      transport: async (payload) => {
+        calls++;
+        // One unrecoverable failure is enough: every sample must succeed for the
+        // dimension to be scored, so everything after this is bought for nothing.
+        if (calls === 10) return { kind: 'provider_failure', status: 500, attempts: 4, errorCode: 'http_500' };
+        return { kind: 'success', attempts: 1, response: { status: 200, headers: {}, body: bodies.get(JSON.stringify(payload)) } };
+      },
+    });
+
+    assert.equal(result.status, 'insufficient_evidence');
+    assert.equal(result.reason, 'incomplete_valid_scenarios');
+    assert.ok(calls < 40, `a doomed dimension must stop early, but it issued ${calls} of 63 requests`);
+    assert.ok(result.samples.some((sample) => sample.outcome === 'provider_failure'));
+  });
+});

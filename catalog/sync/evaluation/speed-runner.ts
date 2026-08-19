@@ -1,7 +1,7 @@
 import type { Db } from '../../db/index.ts';
 import { transaction } from '../../db/index.ts';
 import { createEvaluationRepository } from './repository.ts';
-import { runSpeedEvaluation, type SpeedRequestSample } from './runtime.ts';
+import { runPool, runSpeedEvaluation, type SpeedRequestSample } from './runtime.ts';
 import { OVERALL_SCORE_POLICY } from './score.ts';
 
 export interface SpeedProbeResult extends SpeedRequestSample {
@@ -16,21 +16,16 @@ export interface PersistSpeedEvaluationInput {
   modelId: string;
   probe: SpeedProbe;
   now: () => string;
+  /** Reports requests issued, warmups included, so the caller can show progress. */
+  onProbe?: (completed: number, total: number) => void;
+  /** Asked between samples so a stop costs at most the request in flight. */
+  shouldStop?: () => boolean;
 }
 
-async function runPool<T>(tasks: (() => Promise<T>)[], concurrency: number): Promise<T[]> {
-  const results = new Array<T>(tasks.length);
-  let next = 0;
-  const worker = async () => {
-    while (true) {
-      const index = next++;
-      if (index >= tasks.length) return;
-      results[index] = await tasks[index]();
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker));
-  return results;
-}
+/** Warmups plus one request per sample: everything a speed run sends. */
+export const SPEED_REQUESTS_PER_RUN =
+  OVERALL_SCORE_POLICY.warmupRequests + OVERALL_SCORE_POLICY.scenarioCount;
+
 
 export async function persistSpeedEvaluation(input: PersistSpeedEvaluationInput): Promise<{
   status: 'complete' | 'insufficient_evidence';
@@ -38,10 +33,20 @@ export async function persistSpeedEvaluation(input: PersistSpeedEvaluationInput)
   samples: SpeedProbeResult[];
 }> {
   const startedAt = input.now();
-  for (let warmup = 0; warmup < OVERALL_SCORE_POLICY.warmupRequests; warmup++) await input.probe();
+  let issued = 0;
+  const probe: SpeedProbe = async () => {
+    const result = await input.probe();
+    input.onProbe?.(Math.min(++issued, SPEED_REQUESTS_PER_RUN), SPEED_REQUESTS_PER_RUN);
+    return result;
+  };
+  for (let warmup = 0; warmup < OVERALL_SCORE_POLICY.warmupRequests; warmup++) {
+    if (input.shouldStop?.()) break;
+    await probe();
+  }
   const samples = await runPool(
-    Array.from({ length: OVERALL_SCORE_POLICY.scenarioCount }, () => input.probe),
+    Array.from({ length: OVERALL_SCORE_POLICY.scenarioCount }, () => probe),
     OVERALL_SCORE_POLICY.speedProviderConcurrency,
+    input.shouldStop,
   );
   const successful = samples.filter((sample) => sample.success && sample.ttftSeconds !== null
     && sample.outputTokensPerSecond !== null && sample.endToEndSeconds !== null);
