@@ -1,6 +1,6 @@
 # Venom Catalog Live Evaluation Control Design
 
-**Status:** owner-approved design; ready for implementation planning
+**Status:** delivered 2026-08-20
 **Date:** 2026-08-20
 **Scope:** Venom Catalog only (`catalog/`). No Venom Router, Venom Lite, Venom
 Pro, Venom Max, or `Design_System/` change.
