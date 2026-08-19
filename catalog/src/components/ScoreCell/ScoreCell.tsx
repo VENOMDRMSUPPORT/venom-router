@@ -1,5 +1,67 @@
 import { EVIDENCE_LABEL, EVIDENCE_HELP, type ApiModel } from '../../api/client';
+import { FactState, factStateOf } from '../FactState/FactState';
 import styles from './ScoreCell.module.css';
+
+const OVERALL_PRESENTATION: Record<ApiModel['overallScore']['status'], { label: string; className: string }> = {
+  complete: { label: 'Unrated', className: 'unrated' },
+  evaluating: { label: 'Evaluating', className: 'processing' },
+  insufficient_evidence: { label: 'Insufficient evidence', className: 'incomplete' },
+  unknown: { label: 'Unrated', className: 'unrated' },
+};
+
+/** Overall-score-v1 presentation. The server owns value, coverage, and state. */
+export function ModelScoreCell({ model }: { model: ApiModel }) {
+  const score = model.overallScore;
+
+  if (score.value === null) {
+    const state = OVERALL_PRESENTATION[score.status];
+    const reason = score.reasons.length > 0 ? score.reasons.join(', ') : undefined;
+    return (
+      <div className={styles.cell}>
+        <span className={styles.unknown} title={reason}>
+          —
+        </span>
+        <span className={`${styles.badge} ${styles[state.className]}`}>{state.label}</span>
+      </div>
+    );
+  }
+
+  const breakdown = `${score.methodologyVersion ?? 'overall-score-v1'}: quality ${score.qualityScore?.toFixed(1) ?? 'unknown'} × 70% + operations ${score.operationalScore?.toFixed(1) ?? 'unknown'} × 30% = ${score.display}`;
+  const coverage = `${Math.round(score.overallCoverage.percent)}% coverage`;
+
+  return (
+    <div className={styles.cell}>
+      <span className={styles.value} title={breakdown}>{score.display}</span>
+      <span className={`${styles.badge} ${styles.partial}`} title={`${score.overallCoverage.scored} of ${score.overallCoverage.applicable} applicable dimensions scored.`}>
+        {coverage}
+      </span>
+    </div>
+  );
+}
+
+export function ModelRankCell({ model }: { model: ApiModel }) {
+  if (model.overallRank === null) {
+    return (
+      <span
+        className={styles.unplaced}
+        title="No complete overall score, so this model is not placed in the global ranking."
+        data-testid={`model-rank-${model.modelId}`}
+      >
+        —
+      </span>
+    );
+  }
+  return (
+    <span className={styles.rank} data-testid={`model-rank-${model.modelId}`}>
+      #{model.overallRank}
+      {model.tiedAtOverallRank ? (
+        <span className={styles.tie} title="Tied: the overall-score uncertainty intervals overlap.">
+          =
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 /**
  * VQ presentation.
@@ -50,8 +112,9 @@ export function VQCell({ model }: { model: ApiModel }) {
 }
 
 /** VO is derived from published facts, so it carries coverage, not uncertainty. */
-export function VOCell({ model }: { model: ApiModel }) {
+export function VOCell({ model, statedOnce }: { model: ApiModel; statedOnce?: boolean }) {
   const missing = model.vo.missingDimensions;
+  const notApplicable = model.vo.notApplicableDimensions;
 
   // No operational fact published at all. Zero would read as "worst"; a dash
   // reads as "unknown", which is what it is.
@@ -77,9 +140,20 @@ export function VOCell({ model }: { model: ApiModel }) {
       {missing.length > 0 && (
         <span
           className={`${styles.badge} ${styles.partial}`}
-          title={`Computed without: ${missing.join(', ')} — those facts are not published for this model.`}
+          title={`Computed without: ${missing.join(', ')} — nobody publishes those facts for this model.`}
         >
           {missing.length} missing
+        </span>
+      )}
+      {/* A dimension that does not APPLY is not a gap and must not wear the same
+          badge. Both leave the weighted mean; only one is open work. */}
+      {notApplicable.length > 0 && !statedOnce && (
+        <span
+          className={`${styles.badge} ${styles.unrated}`}
+          title={`${notApplicable.join(', ')} does not apply to this offering — excluded from the score with the remaining weights renormalised. This is an answer, not a missing value.`}
+          data-testid="vo-notapplicable"
+        >
+          {notApplicable.join(', ')} n/a
         </span>
       )}
     </div>
@@ -116,7 +190,7 @@ export function RankCell({ model }: { model: ApiModel }) {
  * labelled `ref`, so the model can be compared without that figure being
  * mistaken for a bill.
  */
-export function CostCell({ model, side }: { model: ApiModel; side: 'in' | 'out' }) {
+export function CostCell({ model, side, statedOnce }: { model: ApiModel; side: 'in' | 'out'; statedOnce?: boolean }) {
   const p = model.pricing;
   const own = side === 'in' ? p.inputPerMTokens : p.outputPerMTokens;
   const ref = side === 'in' ? p.referenceInPerMTokens : p.referenceOutPerMTokens;
@@ -135,14 +209,55 @@ export function CostCell({ model, side }: { model: ApiModel; side: 'in' | 'out' 
     return <div className={styles.costCell}><span className={styles.free}>Free</span>{refNote}</div>;
   }
   if (p.kind === 'included') {
+    // `statedOnce` means the caller has already said, once for the whole
+    // provider, that the plan covers every model. Repeating it per cell printed
+    // one provider-level sentence three times per row — twice in the price
+    // columns and again on the VO badge — in the same `n/a` vocabulary the
+    // catalog uses for ABSENT facts. An answer rendered as a page full of holes
+    // is a worse failure than a missing label: it reads as broken data.
+    if (statedOnce) {
+      // No per-cell `ref` prefix: the column header carries it, once, for the
+      // same reason the plan itself is stated once above the table. The marker
+      // cannot simply be dropped — a bare `$3` under a subscription reads as
+      // what you pay, which is the one claim the provider's documentation
+      // denies — so it moves rather than disappearing.
+      return (
+        <div className={styles.costCell}>
+          {ref !== null && ref > 0 ? (
+            <span
+              className={styles.refPrice}
+              title="The published per-million-token rate this plan meters usage against. Not a charge — the subscription covers this model."
+            >
+              {money(ref)}
+            </span>
+          ) : (
+            <span className={styles.refPrice} title="No rate is published for this model, so there is no figure to compare against. The plan still covers it.">
+              —
+            </span>
+          )}
+        </div>
+      );
+    }
     return (
       <div className={styles.costCell}>
-        <span className={styles.included} title="Covered by this provider's subscription. There is no per-token charge to report.">
-          Included
+        <span
+          className={styles.included}
+          title="Covered by this provider's subscription: the plan includes this model, so there is no per-token price to publish. This is NOT $0 — the cost dimension does not apply, and it is excluded from VO with the remaining weights renormalised."
+          data-testid="cost-notapplicable"
+        >
+          Included · n/a
         </span>
         {refNote}
       </div>
     );
   }
-  return <div className={styles.costCell}><span className={styles.unknown} title="No price is published for this model at this provider.">—</span></div>;
+  // A per-token provider that published no price. Named as a gap rather than
+  // rendered as an em dash, which a reader cannot tell apart from "not
+  // applicable" — and those are opposite claims.
+  return (
+    <div className={styles.costCell}>
+      <FactState state={factStateOf(model, 'billingKind', null)} />
+      {refNote}
+    </div>
+  );
 }

@@ -5,23 +5,34 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b && tsc --noEmit -p tsconfig.node.json",
+    "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "sync": "node sync/run.ts",
-    "test": "node --test \"sync/**/*.test.ts\" \"server/**/*.test.ts\"",
-    "serve": "node server/index.ts"
+    "evaluate": "node scripts/run-overall-evaluations.ts",
+    "evaluate:speed": "node scripts/run-speed-evaluations.ts",
+    "test": "npm run test:backend && npm run test:spa",
+    "serve": "node server/index.ts",
+    "serve:verify": "node scripts/serve-verify.mjs",
+    "test:backend": "node --test \"sync/**/*.test.ts\" \"server/**/*.test.ts\" \"scripts/**/*.test.ts\"",
+    "test:spa": "vitest run"
   },
   "dependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.0.0",
-    "react-icons": "^5.5.0"
+    "react-icons": "^5.5.0",
+    "react-router-dom": "^7.0.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^24.13.3",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^25.0.1",
     "typescript": "^5.6.0",
-    "vite": "^7.0.0"
+    "vite": "^7.0.0",
+    "vitest": "^3.2.7"
   }
 }

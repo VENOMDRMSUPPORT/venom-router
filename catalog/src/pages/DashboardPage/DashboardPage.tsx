@@ -6,6 +6,7 @@ import { present } from '../../api/presentation';
 import { formatTokens, formatAgo } from '../../api/client';
 import { FreshnessBadge } from '../../components/FreshnessBadge/FreshnessBadge';
 import { Toolbar } from '../../components/Toolbar/Toolbar';
+import { FactState } from '../../components/FactState/FactState';
 import styles from './DashboardPage.module.css';
 
 export function DashboardPage() {
@@ -95,9 +96,22 @@ export function DashboardPage() {
         />
         <Kpi value={formatTokens(maxContext)} label="Max context" hint="Largest context window in the catalog right now." />
         <Kpi
-          value={`${meta.qualityScored}/${meta.liveModels}`}
-          label="Benchmarked externally"
-          hint={`${meta.unrated} of these models have not been measured by any published benchmark. That is a gap in what the industry has measured, not a gap in this catalog — unknown quality is not low quality.`}
+          value={`${meta.overallScoreScored}/${meta.liveModels}`}
+          label="Complete overall scores"
+          hint={`Operational data is available for ${meta.operationalScored}/${meta.liveModels} models. ${meta.liveModels - meta.overallScoreScored} model(s) do not yet have a complete overall-score-v1 evaluation. Provider availability and metadata do not substitute for reproducible task, speed, and cost evidence.`}
+        />
+        {/* The identity breakdown arrives as one answer or not at all, so one
+            null here means the whole tile is unknown. It used to interpolate
+            `undefined` straight into the page — "undefined/116" — which is the
+            same failure as a fabricated zero wearing a worse costume. */}
+        <Kpi
+          value={meta.identity.resolved === null ? null : `${meta.identity.resolved}/${meta.liveModels}`}
+          label="Identity proven"
+          hint={
+            meta.identity.resolved === null
+              ? 'This catalog service response did not carry the identity breakdown — unknown, not zero. Reload once the service is back on the current contract.'
+              : `${meta.identity.identityReview} are in identity review — candidates were examined and refused, with the evidence recorded — and ${meta.identity.unresolved} matched nothing upstream at all. The three states are exclusive and sum to every live model. Identity is a separate question from quality: a proven identity does not imply a benchmark exists.`
+          }
         />
         <Kpi
           value={data.origin === 'live' ? formatAgo(oldestSuccess) : 'snapshot'}
@@ -107,6 +121,50 @@ export function DashboardPage() {
               ? 'The least recently synced provider. Freshness is per provider and shown on each card.'
               : `The service is unreachable, so this page is showing a snapshot generated ${formatAgo(data.snapshotGeneratedAt ?? null)}.`
           }
+        />
+      </div>
+
+      {/*
+        The three things the catalog now knows and used to render as an em dash.
+        They sit on their own row, above the fold, because they are the reason a
+        cell is empty — and a reader who cannot see them concludes the data is
+        simply complete.
+      */}
+      <div className={styles.grid4} data-testid="truth-tiles">
+        <Kpi
+          value={meta.conflictedModels === null ? null : String(meta.conflictedModels)}
+          label="Models with source conflicts"
+          hint={
+            meta.conflictedModels === null
+              ? 'This catalog service response did not carry this figure — unknown, not zero. A zero here would say the catalog compared its sources and found no disagreement, which is a different fact.'
+              : "Sources contradicted each other on at least one field, so no value was taken and both sides are kept. Open any model's evidence to see who said what. A quietly picked winner is indistinguishable from a bug."
+          }
+        />
+        <Kpi
+          value={String(meta.needsVerification)}
+          label="Models with a missing fact"
+          hint="At least one operational fact is published by nobody. These models are still served and listed — with the exact field named — rather than hidden or padded with a plausible default."
+        />
+        <Kpi
+          // `identityDetail` can be absent from a stale server's response even
+          // though `CatalogMeta` declares it required — the type is a promise
+          // about the current contract, not a guarantee about every payload
+          // that will ever arrive over the wire. `undefined` here must render
+          // as "unknown", never as the fabricated claim "0": zero says the
+          // catalog looked and found none, which is a different fact from
+          // "this response didn't say".
+          value={meta.identityDetail ? String(meta.identityDetail.rejectedCandidates) : null}
+          label="Identity candidates refused"
+          hint={
+            meta.identityDetail
+              ? `Upstream candidates that were examined and refused on evidence, across ${meta.identityDetail.withRejectedCandidates} models. Each one records why and against what evidence, so "identity review" means investigated rather than untouched.`
+              : 'This catalog service response did not include this figure — unknown, not zero. Reload once the service is back on the current contract.'
+          }
+        />
+        <Kpi
+          value={`${meta.unrated}`}
+          label="Unrated, with a recorded reason"
+          hint="Every model without a quality score carries a machine-readable reason: identity unresolved, identity ambiguous, no published benchmark, or a vendor the calibration was measured to have no predictive power for. None of these prevents a model from being operationally complete."
         />
       </div>
 
@@ -140,7 +198,8 @@ export function DashboardPage() {
             const free = mine.filter((m) => m.pricing.isFree === true).length;
             const maxCtx = Math.max(0, ...mine.map((m) => m.contextTokens ?? 0));
             const topModels = mine.slice(0, 3);
-            const scoredRatio = p.liveModels > 0 ? Math.round((p.qualityScored / p.liveModels) * 100) : 0;
+            const operationalReady = mine.filter((m) => m.vo.value !== null).length;
+            const scoredRatio = p.liveModels > 0 ? Math.round((p.overallScoreScored / p.liveModels) * 100) : 0;
 
             return (
               <Link key={p.id} to={`/provider/${p.id}`} className={styles.card}>
@@ -183,8 +242,8 @@ export function DashboardPage() {
 
                 <div className={styles.progressSection}>
                   <div className={styles.progressMeta}>
-                    <span className={styles.progressLabel}>Benchmark Scored</span>
-                    <span className={styles.progressPercent}>{scoredRatio}% ({p.qualityScored}/{p.liveModels})</span>
+                    <span className={styles.progressLabel}>Complete overall-score-v1</span>
+                    <span className={styles.progressPercent}>{scoredRatio}% ({p.overallScoreScored}/{p.liveModels})</span>
                   </div>
                   <div className={styles.progressBarBg}>
                     <div
@@ -192,6 +251,9 @@ export function DashboardPage() {
                       style={{ width: `${scoredRatio}%` }}
                     />
                   </div>
+                  <span className={styles.progressSupport}>
+                    Operational data {operationalReady}/{p.liveModels}; provider sync is a separate status.
+                  </span>
                 </div>
 
                 <div className={styles.stats}>
@@ -204,8 +266,8 @@ export function DashboardPage() {
                     <span className={styles.statLabel}>Max Ctx</span>
                   </div>
                   <div className={styles.statBox}>
-                    <span className={styles.statValue}>{p.qualityScored}</span>
-                    <span className={styles.statLabel}>Scored</span>
+                    <span className={styles.statValue}>{p.overallScoreScored}</span>
+                    <span className={styles.statLabel}>Final scores</span>
                   </div>
                   <div className={`${styles.statBox} ${free > 0 ? styles.freeBox : ''}`}>
                     <span className={styles.statValue}>{free > 0 ? free : '—'}</span>
@@ -231,7 +293,8 @@ export function DashboardPage() {
                   <th>Sync Status</th>
                   <th className={styles.num}>Live Models</th>
                   <th className={styles.num}>Max Context</th>
-                  <th className={styles.num} title="How many of this provider's models a published benchmark has measured. A low figure means the industry has not benchmarked those models yet — it is not a gap in this catalog's data.">Benchmarked</th>
+                  <th className={styles.num} title="Models with complete overall-score-v1 task, speed, and cost evidence.">Final score</th>
+                  <th className={styles.num} title="Models with a complete legacy operational-fit projection. This is independent of the final evaluation.">Operational data</th>
                   <th className={styles.num}>Free Models</th>
                   <th className={styles.num}>Action</th>
                 </tr>
@@ -242,7 +305,8 @@ export function DashboardPage() {
                   const mine = models.filter((m) => m.providerId === p.id);
                   const free = mine.filter((m) => m.pricing.isFree === true).length;
                   const maxCtx = Math.max(0, ...mine.map((m) => m.contextTokens ?? 0));
-                  const scoredRatio = p.liveModels > 0 ? Math.round((p.qualityScored / p.liveModels) * 100) : 0;
+                  const operationalReady = mine.filter((m) => m.vo.value !== null).length;
+                  const scoredRatio = p.liveModels > 0 ? Math.round((p.overallScoreScored / p.liveModels) * 100) : 0;
                   return (
                     <tr key={p.id} className={styles.tableRow} onClick={() => navigate(`/provider/${p.id}`)}>
                       <td>
@@ -264,7 +328,7 @@ export function DashboardPage() {
                       <td className={styles.num}>
                         <div className={styles.tableProgressCell}>
                           <div className={styles.tableProgressValue}>
-                            {scoredRatio}% <span className={styles.tableProgressRatio}>({p.qualityScored}/{p.liveModels})</span>
+                            {scoredRatio}% <span className={styles.tableProgressRatio}>({p.overallScoreScored}/{p.liveModels})</span>
                           </div>
                           <div className={styles.tableProgressBarBg}>
                             <div
@@ -274,6 +338,7 @@ export function DashboardPage() {
                           </div>
                         </div>
                       </td>
+                      <td className={styles.num}>{operationalReady}/{p.liveModels}</td>
                       <td className={styles.num}>{free > 0 ? free : '—'}</td>
                       <td className={styles.num}>
                         <div className={styles.actionCell} title="View provider roster">
@@ -315,6 +380,11 @@ export function DashboardPage() {
             only, under the <code>{meta.profileId}</code> profile of{' '}
             <code>{meta.methodologyVersion}</code>.
           </li>
+          <li>
+            <strong>Overall-score-v1</strong> is complete only after accepted task,
+            speed, and cost evidence exists. A successful provider request proves
+            availability; it does not produce a benchmark score.
+          </li>
           {meta.calibration && (
             <li>
               The current calibration was fitted on {meta.calibration.n} models
@@ -340,10 +410,18 @@ export function DashboardPage() {
   );
 }
 
-function Kpi({ value, label, hint }: { value: string; label: string; hint: string }) {
+/** `value === null` means the figure is unknown, not zero — rendered with the
+ * same "missing" chip the rest of the catalog uses for a fact nobody sent. */
+function Kpi({ value, label, hint }: { value: string | null; label: string; hint: string }) {
   return (
     <div className={styles.kpi} title={hint}>
-      <span className={styles.kpiValue}>{value}</span>
+      {value === null ? (
+        <span className={styles.kpiValue}>
+          <FactState state="missing" />
+        </span>
+      ) : (
+        <span className={styles.kpiValue}>{value}</span>
+      )}
       <span className={styles.kpiLabel}>{label}</span>
     </div>
   );

@@ -40,10 +40,10 @@ export const PRESENTATION: Record<string, ProviderPresentation> = {
   },
   'ollama-cloud': {
     logo: '/assets/ollama-cloud.png',
-    blurb: 'Ollama-hosted cloud models, reachable on every plan.',
+    blurb: 'Ollama-hosted models available to the configured free catalog access.',
     docsUrl: 'https://docs.ollama.com/cloud',
     invertInDark: true,
-    note: 'Plans gate usage volume and concurrency, not which models you may call.',
+    note: 'Offers requiring Pro, Max, or Team plus Extra Usage are excluded from this free catalog.',
   },
 };
 

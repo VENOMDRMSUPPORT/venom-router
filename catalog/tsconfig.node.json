@@ -1,0 +1,29 @@
+{
+  // The backend half of the catalog: the sync pipeline, the HTTP service, the
+  // database layer and the operator scripts, plus their tests.
+  //
+  // This file exists because the root tsconfig includes only `src` — the React
+  // app — so until now NOTHING in sync/, server/ or db/ was ever type-checked.
+  // Node runs these files by stripping types without checking them, so a type
+  // error was invisible at build time AND at run time. That hole is how
+  // `IntrinsicFacts` came to be declared twice, structurally compatible and
+  // silently free to drift.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "types": ["node"],
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["sync", "server", "db", "scripts"]
+}

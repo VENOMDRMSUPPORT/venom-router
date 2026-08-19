@@ -1,0 +1,42 @@
+/*
+ * The three absences are deliberately NOT styled alike.
+ *
+ * `n/a` is quiet — it is a settled answer and should not draw the eye like a
+ * problem. `missing` and `conflict` are warmer, because they are open work. If
+ * all three looked the same we would be back to the em dash they replaced.
+ */
+
+.chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  font-family: var(--font-sans);
+  cursor: help;
+}
+
+/* Settled: the question does not apply. Lowest visual weight of the three. */
+.notApplicable {
+  background: var(--pill-bg);
+  color: var(--text-muted);
+  border-color: var(--border-subtle);
+}
+
+/* A real gap. Visible, not alarming. */
+.missing {
+  background: rgba(250, 204, 21, 0.09);
+  color: #facc15;
+  border-color: rgba(250, 204, 21, 0.28);
+}
+
+/* Sources contradicted each other — the one absence that has evidence behind it. */
+.conflicted {
+  background: rgba(244, 114, 182, 0.1);
+  color: #f472b6;
+  border-color: rgba(244, 114, 182, 0.3);
+}

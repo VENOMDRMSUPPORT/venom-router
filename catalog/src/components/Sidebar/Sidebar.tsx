@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LuLayoutGrid, LuHistory, LuX } from "react-icons/lu";
+import { LuLayoutGrid, LuHistory, LuX, LuSettings } from "react-icons/lu";
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import styles from './Sidebar.module.css';
@@ -93,6 +93,24 @@ export function Sidebar({ open, onClose }: SidebarProps) {
             ))}
           </div>
         </nav>
+
+        <div className={styles.footer}>
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              `${styles.workspaceCard} ${isActive ? styles.workspaceActive : ''}`
+            }
+            onClick={onClose}
+            title="Workspace Settings"
+          >
+            <div className={styles.workspaceAvatar}>EN</div>
+            <div className={styles.workspaceInfo}>
+              <span className={styles.workspaceName}>Engineering workspace</span>
+              <span className={styles.workspaceDesc}>Internal catalog</span>
+            </div>
+            <LuSettings size={16} className={styles.workspaceSettingsIcon} />
+          </NavLink>
+        </div>
       </aside>
 
       {open && (

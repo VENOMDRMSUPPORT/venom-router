@@ -221,11 +221,11 @@ frontier model it exists to showcase. **No structural estimator ships.**
 
 ## 7. Venom Score
 
-### 7.1 Shape: two sub-scores, never a hidden blend
+### 7.1 Shape: two independent sub-scores, never a hidden blend
 
 `VQ` and `VO` measure different things with different coverage and different
-evidence strength. Fusing them into one published number would let a cheap
-long-context model impersonate an intelligent one wherever quality is unknown.
+evidence strength. They remain published independently so a composite can never
+hide its inputs or turn missing quality into a low value.
 
 | Sub-score | Meaning | Coverage today |
 |---|---|---|
@@ -276,6 +276,31 @@ balanced (default) · coding · cheapest · long-context
 stored score records the version that produced it, so a score can always be
 reproduced or invalidated.
 
+### 7.5 Model score and global rank
+
+`model-score-v1` is a declared presentation policy derived by the service:
+
+```
+modelScore = (VQ * 0.70) + (round(VO, 0) * 0.30)
+```
+
+Both inputs are required. If VQ, VO, or both are absent, `modelScore` and
+`modelRank` are `null`, with `reason` naming the missing input; the client never
+recomputes a score from an older payload. VQ evidence level and bounds remain
+visible, partial VO participates but is flagged, and score uncertainty is
+`VQ uncertainty * 0.70` because VO currently has no independent uncertainty
+contract. `operationalPrecision: 0` is published in the policy: VO enters the
+formula at the same integer precision presented by the catalog, so the visible
+equation and the server result remain exactly reproducible.
+
+Ranking is global across every catalog offering and is computed by the service
+from the unrounded score. It is dense: two models tied at `#5` are followed by
+`#6`. Equal values and overlapping uncertainty intervals share a rank;
+`tiedAtModelRank` tells the client to render the equality marker. The API keeps
+the original VQ, VO, and quality-rank fields for evidence and compatibility.
+No database migration is needed because the composite and its rank are a
+deterministic projection of stored evidence.
+
 ---
 
 ## 8. Schema
@@ -324,9 +349,14 @@ downgrade (a benchmark withdrawn upstream) is an event with a reason.
 
 ## 10. UI
 
-The models table gains `VQ` and `VO` columns. Each VQ cell shows the value plus
-a small level marker (`measured` / `calibrated` / `bounded` / `—`). The row
-detail panel shows full provenance: source, upstream id, identity rule,
+The models table presents `#`, `Model`, and `Score` as its leading columns rather
+than separate Rank/VQ/VO columns. The score cell shows a percentage plus the VQ
+evidence state and a separate warning for partial VO. The rank is labelled as
+global catalog rank, and an equality marker distinguishes a tie. Grid view uses
+the same single score presentation.
+
+The row detail panel shows the exact 70/30 equation using the server-provided
+inputs and result, plus full provenance: source, upstream id, identity rule,
 uncertainty, methodology and calibration versions, and the timestamp.
 
 Sorting is by point value; rows whose uncertainty intervals overlap are rendered
@@ -343,7 +373,7 @@ reads as a ranking.
 | **M1** | Four provider adapters | 115 live rows in the DB; counts match the live APIs |
 | **M2** | Identity + evidence + Venom Score | tier tally reproduces §7; review queue populated |
 | **M3** | HTTP API + scheduler + snapshot | service serves last-known-good with staleness |
-| **M4** | SPA reads the API; VQ/VO columns; provenance panel | page shows 115, not 58 |
+| **M4** | SPA reads the API; composite score/rank; provenance panel | page shows the full provider inventory and server-owned score policy |
 | **M5** | First-party reliability/latency measurement | VO gains its missing dimensions |
 
 `catalog/src/` moves to `catalog/web/` in M4. The current

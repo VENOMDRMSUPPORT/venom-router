@@ -8,14 +8,23 @@
  */
 
 import type { Db } from '../db/index.ts';
-import { createFetchJson } from '../sync/http.ts';
-import { syncProvider, type RunResult } from '../sync/engine.ts';
+import { createFetchJson, type FetchJson } from '../sync/http.ts';
+import type { RunResult } from '../sync/engine.ts';
 import { ADAPTERS, BILLING } from '../sync/providers/index.ts';
 import { loadSpecs } from '../sync/sources/models-dev.ts';
+import { loadVendors } from '../sync/vendor-registry.ts';
+import { loadQualityBounds } from '../sync/quality-bounds.ts';
+import { loadReviewedFacts } from '../sync/reviewed-facts.ts';
 import { loadBenchmarks } from '../sync/sources/openrouter.ts';
-import { scoreAll, type ScoringSummary } from '../sync/score/pipeline.ts';
-import { enrich, canonicalFromBenchmarks } from '../sync/enrich/enrich.ts';
+import type { ScoringSummary } from '../sync/score/pipeline.ts';
+import {
+  runResolutionPipeline,
+  runSyncPipeline,
+  type SyncPipelineConfig,
+} from '../sync/pipeline.ts';
+import type { RejectionOverlay } from '../sync/identity-rejections.ts';
 import type { ScoreProfile } from '../sync/score/venom-score.ts';
+import { beginResolutionWindow, bootstrapResolutionJobs, listDueResolutionJobs } from '../sync/resolution-jobs.ts';
 
 export interface SyncOutcome {
   startedAt: string;
@@ -26,12 +35,37 @@ export interface SyncOutcome {
   aborted?: string;
 }
 
+export interface ResolutionOutcome {
+  startedAt: string;
+  finishedAt: string;
+  attempted: number;
+  resolved: number;
+  dormant: number;
+  aborted?: string;
+}
+
 export interface RunnerConfig {
   db: Db;
   profile: ScoreProfile;
   methodologyVersion: string;
   identityOverlay: Record<string, string>;
+  /**
+   * The overlay's refused-candidate records.
+   *
+   * Optional so a caller that has none is not forced to invent an empty shape,
+   * but the real service always passes them: a decision the catalog cannot serve
+   * is a decision no consumer can audit.
+   */
+  identityRejections?: RejectionOverlay;
   onSnapshot?: (db: Db) => void;
+  /** Injectable for tests; defaults to the real fetch discipline, POST helper, and provider registry. See `runSyncPipeline`. */
+  fetchJson?: FetchJson;
+  post?: SyncPipelineConfig['post'];
+  detailFetchers?: SyncPipelineConfig['detailFetchers'];
+  /** Injectable wall clock for deterministic lifecycle tests. */
+  now?: () => Date;
+  /** Targeted passes wait for a full sync for at most this long. */
+  resolutionLockWaitMs?: number;
 }
 
 export class SyncRunner {
@@ -39,6 +73,8 @@ export class SyncRunner {
   private running = false;
   private last: SyncOutcome | null = null;
   private startedAt: string | null = null;
+  private mode: 'full' | 'resolution' | null = null;
+  private fullSyncQueued = false;
 
   constructor(config: RunnerConfig) {
     this.config = config;
@@ -62,59 +98,133 @@ export class SyncRunner {
    * seconds later would fetch the same upstream state anyway.
    */
   async run(): Promise<SyncOutcome | null> {
-    if (this.running) return null;
+    if (this.running) {
+      if (this.mode === 'resolution') this.fullSyncQueued = true;
+      return null;
+    }
     this.running = true;
-    const startedAt = new Date().toISOString();
+    this.mode = 'full';
+    const currentDate = () => this.config.now?.() ?? new Date();
+    const startedAt = currentDate().toISOString();
     this.startedAt = startedAt;
 
     try {
-      const { db, profile, methodologyVersion, identityOverlay } = this.config;
-      const fetchJson = createFetchJson();
-      const sourceFetchedAt = new Date().toISOString();
+      const { db, profile, methodologyVersion, identityOverlay, identityRejections, post, detailFetchers } = this.config;
+      const fetchJson = this.config.fetchJson ?? createFetchJson();
+      const sourceFetchedAt = currentDate().toISOString();
 
       let specs, benchmarks;
       try {
-        [specs, benchmarks] = await Promise.all([loadSpecs(fetchJson), loadBenchmarks(fetchJson)]);
+        // The same registry the CLI passes. A source wired into one entry point
+        // and not the other is the failure `sync/pipeline.ts` documents: this
+        // scheduler runs every six hours and would prune what the CLI filled.
+        [specs, benchmarks] = await Promise.all([loadSpecs(fetchJson, loadVendors()), loadBenchmarks(fetchJson)]);
       } catch (err) {
         // The shared sources are the specs and the benchmarks. Without them a
         // run would rewrite every row with nulls, so it does not start at all
         // and the previous catalog stands untouched.
         const outcome: SyncOutcome = {
-          startedAt, finishedAt: new Date().toISOString(), providers: [], scoring: null,
+          startedAt, finishedAt: currentDate().toISOString(), providers: [], scoring: null,
           aborted: err instanceof Error ? err.message : String(err),
         };
         this.last = outcome;
         return outcome;
       }
 
-      const providers: RunResult[] = [];
-      for (const adapter of ADAPTERS) {
-        providers.push(
-          await syncProvider(adapter, {
-            db, fetchJson, now: () => new Date().toISOString(), lookupSpec: specs.lookup,
-          }),
-        );
-      }
-
-      // Facts first, then the score derived from them.
-      enrich({
-        db, canonical: canonicalFromBenchmarks(benchmarks), overlay: identityOverlay,
-        billing: BILLING, intrinsic: specs.intrinsic, now: () => new Date().toISOString(),
+      // The same function the CLI calls — see `sync/pipeline.ts` for why this
+      // one path, not two, is the point. Before this, this runner enriched only
+      // once and never asked a provider's own detail endpoint, so a fact ONLY
+      // detail could prove looked identical, to this path, to one the provider
+      // had withdrawn.
+      const result = await runSyncPipeline({
+        db, fetchJson, adapters: ADAPTERS, specs, benchmarks, billing: BILLING,
+        overlay: identityOverlay, rejections: identityRejections, profile, methodologyVersion,
+        // Read here rather than taken from config for the same reason as the
+        // vendor registry: a source the CLI passes and the scheduler does not
+        // is a six-hourly run that silently drops every reviewed bound.
+        bounds: loadQualityBounds(), reviewedFacts: loadReviewedFacts(),
+        sourceFetchedAt, now: () => currentDate().toISOString(), post, detailFetchers,
       });
 
-      const scoring = scoreAll({
-        db, benchmarks, overlay: identityOverlay, profile, methodologyVersion,
-        sourceFetchedAt, now: () => new Date().toISOString(),
-      });
-
+      const finishedAt = currentDate().toISOString();
+      beginResolutionWindow(db, finishedAt);
       this.config.onSnapshot?.(db);
-      const outcome: SyncOutcome = { startedAt, finishedAt: new Date().toISOString(), providers, scoring };
+      const outcome: SyncOutcome = {
+        startedAt, finishedAt, providers: result.providers, scoring: result.scoring,
+      };
       this.last = outcome;
       return outcome;
     } finally {
       this.running = false;
+      this.mode = null;
       this.startedAt = null;
     }
+  }
+
+  /** Run due source-resolution work without fetching any provider roster. */
+  async runResolutionPass(): Promise<ResolutionOutcome | null> {
+    const currentDate = () => this.config.now?.() ?? new Date();
+    const waitMs = this.config.resolutionLockWaitMs ?? 30_000;
+    const deadline = Date.now() + waitMs;
+    while (this.running && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(1, deadline - Date.now()))));
+    }
+    if (this.running) return null;
+
+    const startedAt = currentDate().toISOString();
+    const jobs = listDueResolutionJobs(this.config.db, startedAt);
+    if (jobs.length === 0) {
+      return { startedAt, finishedAt: startedAt, attempted: 0, resolved: 0, dormant: 0 };
+    }
+    this.running = true;
+    this.mode = 'resolution';
+    this.startedAt = startedAt;
+    try {
+      const { db, profile, methodologyVersion, identityOverlay, post, detailFetchers } = this.config;
+      const fetchJson = this.config.fetchJson ?? createFetchJson();
+      const sourceFetchedAt = currentDate().toISOString();
+      let specs, benchmarks;
+      try {
+        [specs, benchmarks] = await Promise.all([
+          loadSpecs(fetchJson, loadVendors()),
+          loadBenchmarks(fetchJson),
+        ]);
+      } catch (err) {
+        return {
+          startedAt, finishedAt: currentDate().toISOString(), attempted: 0, resolved: 0, dormant: 0,
+          aborted: err instanceof Error ? err.message : String(err),
+        };
+      }
+
+      const result = await runResolutionPipeline({
+        db, fetchJson, jobs, specs, benchmarks, billing: BILLING, overlay: identityOverlay,
+        profile, methodologyVersion, bounds: loadQualityBounds(), reviewedFacts: loadReviewedFacts(),
+        sourceFetchedAt, now: () => currentDate().toISOString(), post, detailFetchers,
+      });
+      this.config.onSnapshot?.(db);
+      return {
+        startedAt,
+        finishedAt: currentDate().toISOString(),
+        attempted: result.attempted,
+        resolved: result.resolutions.filter((resolution) => resolution.state === 'complete').length,
+        dormant: result.resolutions.filter((resolution) => resolution.nextAttemptAt === null && resolution.state !== 'complete').length,
+      };
+    } finally {
+      this.running = false;
+      this.mode = null;
+      this.startedAt = null;
+      if (this.fullSyncQueued) {
+        this.fullSyncQueued = false;
+        queueMicrotask(() => void this.run().catch((err) => console.error('[scheduler] queued full sync failed:', err)));
+      }
+    }
+  }
+
+  /** Seed jobs missing from an older database, then resume anything due. */
+  async resumeResolutionJobs(): Promise<ResolutionOutcome | null> {
+    const now = (this.config.now?.() ?? new Date()).toISOString();
+    bootstrapResolutionJobs(this.config.db, now);
+    return this.runResolutionPass();
   }
 }
 
@@ -126,10 +236,15 @@ export interface SchedulerHandle {
 
 /** Six hours: often enough to catch a same-day launch, rare enough to be polite. */
 export const SCHEDULE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+export const RESOLUTION_POLL_MS = 30_000;
 
 export function startScheduler(
   runner: SyncRunner,
-  { intervalMs = SCHEDULE_INTERVAL_MS, runOnStart = false }: { intervalMs?: number; runOnStart?: boolean } = {},
+  {
+    intervalMs = SCHEDULE_INTERVAL_MS,
+    resolutionPollMs = RESOLUTION_POLL_MS,
+    runOnStart = false,
+  }: { intervalMs?: number; resolutionPollMs?: number; runOnStart?: boolean } = {},
 ): SchedulerHandle {
   let nextAt = Date.now() + intervalMs;
   const timer = setInterval(() => {
@@ -139,9 +254,19 @@ export function startScheduler(
     void runner.run().catch((err) => console.error('[scheduler] sync failed:', err));
   }, intervalMs);
   timer.unref?.();
+  const resolutionTimer = setInterval(() => {
+    void runner.runResolutionPass().catch((err) => console.error('[scheduler] resolution pass failed:', err));
+  }, resolutionPollMs);
+  resolutionTimer.unref?.();
+  // Resume durable jobs after a service restart and seed older databases that
+  // predate the queue. Existing dormant jobs stay dormant until a real trigger.
+  void runner.resumeResolutionJobs().catch((err) => console.error('[scheduler] initial resolution pass failed:', err));
   if (runOnStart) void runner.run().catch((err) => console.error('[scheduler] initial sync failed:', err));
   return {
-    stop: () => clearInterval(timer),
+    stop: () => {
+      clearInterval(timer);
+      clearInterval(resolutionTimer);
+    },
     intervalMs,
     nextRunAt: () => new Date(nextAt).toISOString(),
   };

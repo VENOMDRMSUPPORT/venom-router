@@ -1,0 +1,74 @@
+{
+  "note": "Reviewed source-backed facts for provider offerings whose roster or detail endpoint does not express a required operational field. This file never supplies a score or identity; each entry can only fill the exact field it names and remains visible as reviewed evidence in model_facts.",
+  "reviewedAt": "2026-08-18",
+  "facts": {
+    "ollama-cloud/deepseek-v4-flash:preview": {
+      "maxOutput": {
+        "value": 384000,
+        "ref": "deepseek/deepseek-v4-flash.limit.output",
+        "sourceUrl": "https://models.dev/labs/deepseek",
+        "evidence": [
+          "Ollama lists deepseek-v4-flash:preview as the April 24, 2026 preview offering.",
+          "models.dev lists DeepSeek V4 Flash, released April 24, 2026, with 1,000,000 context tokens and 384,000 output tokens."
+        ],
+        "reviewedAt": "2026-08-18"
+      },
+      "structured": {
+        "value": true,
+        "ref": "deepseek/deepseek-v4-flash.structured",
+        "sourceUrl": "https://models.dev/labs/deepseek",
+        "evidence": [
+          "models.dev marks the April 24, 2026 DeepSeek V4 Flash release as supporting structured output.",
+          "Ollama's detail vocabulary does not represent structured output, so its silence is not interpreted as false."
+        ],
+        "reviewedAt": "2026-08-18"
+      }
+    },
+    "ollama-cloud/deepseek-v4-pro:0813": {
+      "maxOutput": {
+        "value": 384000,
+        "ref": "DeepSeek-V4-Pro-0813 maximum output recommendation",
+        "sourceUrl": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813",
+        "evidence": [
+          "The DeepSeek model card identifies DeepSeek-V4-Pro-0813 as the official release that supersedes the preview.",
+          "For high and max reasoning effort, the model card recommends a maximum output length of 384K tokens."
+        ],
+        "reviewedAt": "2026-08-18"
+      }
+    },
+    "ollama-cloud/deepseek-v4-pro:preview": {
+      "maxOutput": {
+        "value": 384000,
+        "ref": "deepseek/deepseek-v4-pro.limit.output",
+        "sourceUrl": "https://models.dev/labs/deepseek",
+        "evidence": [
+          "Ollama lists deepseek-v4-pro:preview as the April 24, 2026 preview offering.",
+          "models.dev lists DeepSeek V4 Pro, released April 24, 2026, with 1,000,000 context tokens and 384,000 output tokens."
+        ],
+        "reviewedAt": "2026-08-18"
+      },
+      "structured": {
+        "value": true,
+        "ref": "deepseek/deepseek-v4-pro.structured",
+        "sourceUrl": "https://models.dev/labs/deepseek",
+        "evidence": [
+          "models.dev marks the April 24, 2026 DeepSeek V4 Pro release as supporting structured output.",
+          "Ollama's detail vocabulary does not represent structured output, so its silence is not interpreted as false."
+        ],
+        "reviewedAt": "2026-08-18"
+      }
+    },
+    "ollama-cloud/mistral-large-3:675b": {
+      "structured": {
+        "value": true,
+        "ref": "Mistral Large 3 features: Structured Outputs",
+        "sourceUrl": "https://docs.mistral.ai/models/mistral-large-3-25-12",
+        "evidence": [
+          "Mistral identifies Mistral Large 3 as the December 2, 2025 675B total-parameter release with a 256K context window.",
+          "The model's official feature list explicitly includes Structured Outputs for both chat completions and conversations."
+        ],
+        "reviewedAt": "2026-08-18"
+      }
+    }
+  }
+}

@@ -15,8 +15,6 @@
  * written off as unresolvable was simply never asked of its own provider.
  */
 
-import type { FetchJson } from '../http.ts';
-
 export interface ProviderDetail {
   contextTokens?: number;
   /** Capabilities the provider itself declares for its serving of this model. */
@@ -27,6 +25,8 @@ export interface ProviderDetail {
   architecture?: string;
   /** The exact call this came from, for provenance. */
   ref: string;
+  /** The endpoint URL, so a reader can re-issue the call themselves. */
+  url: string;
 }
 
 /**
@@ -75,7 +75,7 @@ export async function fetchOllamaDetail(
   const info = body.model_info ?? {};
   const contextEntry = Object.entries(info).find(([k]) => k.endsWith('.context_length'));
   const caps = body.capabilities ?? [];
-  const detail: ProviderDetail = { ref: `ollama.com/api/show(${modelId})` };
+  const detail: ProviderDetail = { ref: `ollama.com/api/show(${modelId})`, url: OLLAMA_SHOW_URL };
 
   if (typeof contextEntry?.[1] === 'number') detail.contextTokens = contextEntry[1];
   const params = info['general.parameter_count'];
@@ -102,7 +102,7 @@ export const DETAIL_FETCHERS: Record<
 };
 
 /** POST helper shaped like the rest of the fetch discipline. */
-export function makePost(fetchJson: FetchJson): (url: string, body: unknown) => Promise<unknown> {
+export function makePost(): (url: string, body: unknown) => Promise<unknown> {
   return async (url, body) => {
     const res = await fetch(url, {
       method: 'POST',

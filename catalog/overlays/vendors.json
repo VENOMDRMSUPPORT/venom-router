@@ -1,0 +1,115 @@
+{
+  "note": "Model vendors and their own storefronts inside the models.dev feed. Reached ONLY when nobody who serves a model published its limits — see sync/enrich/resolvers.ts adoptFirstPartyLimit. Every entry below was read off the feed on the reviewedAt date, not recalled: `storefronts` are feed provider keys the vendor itself operates, and `namespaces` are the id prefixes OTHER sellers use for that vendor's models, which is how membership is established without asserting it. The namespace guard is what stops alibaba/glm-5.2 — Alibaba reselling a Z-AI model — from passing as a first-party GLM figure. `canonicalPrefix` is the form the reference index writes this vendor's models in — read off that index, never guessed, because the registry key and the index prefix differ (registry `alibaba`, index `qwen/`). Documentation URLs are deliberately NOT here: they are read from each storefront's own `doc` field in the feed, so a link cannot rot in this file without anything failing.",
+  "reviewedAt": "2026-08-18",
+  "vendors": {
+    "z-ai": {
+      "label": "Z.ai / Zhipu AI",
+      "storefronts": [
+        "zai",
+        "zai-coding-plan",
+        "zhipuai",
+        "zhipuai-coding-plan"
+      ],
+      "namespaces": [
+        "zai",
+        "z-ai",
+        "zai-org",
+        "zhipuai"
+      ],
+      "canonicalPrefix": "z-ai"
+    },
+    "alibaba": {
+      "label": "Alibaba (Qwen)",
+      "storefronts": [
+        "alibaba",
+        "alibaba-cn",
+        "alibaba-coding-plan",
+        "alibaba-coding-plan-cn",
+        "alibaba-token-plan",
+        "alibaba-token-plan-cn"
+      ],
+      "namespaces": [
+        "qwen",
+        "alibaba",
+        "bailian"
+      ],
+      "canonicalPrefix": "qwen"
+    },
+    "deepseek": {
+      "label": "DeepSeek",
+      "storefronts": [
+        "deepseek"
+      ],
+      "namespaces": [
+        "deepseek",
+        "deepseek-ai"
+      ],
+      "canonicalPrefix": "deepseek"
+    },
+    "moonshotai": {
+      "label": "Moonshot AI (Kimi)",
+      "storefronts": [
+        "moonshotai",
+        "moonshotai-cn"
+      ],
+      "namespaces": [
+        "moonshotai",
+        "moonshot",
+        "moonshot-ai"
+      ],
+      "canonicalPrefix": "moonshotai"
+    },
+    "minimax": {
+      "label": "MiniMax",
+      "storefronts": [
+        "minimax",
+        "minimax-cn",
+        "minimax-coding-plan",
+        "minimax-cn-coding-plan"
+      ],
+      "namespaces": [
+        "minimax",
+        "minimaxai"
+      ],
+      "canonicalPrefix": "minimax"
+    },
+    "xiaomi": {
+      "label": "Xiaomi (MiMo)",
+      "storefronts": [
+        "xiaomi",
+        "xiaomi-token-plan-cn",
+        "xiaomi-token-plan-sgp",
+        "xiaomi-token-plan-ams"
+      ],
+      "namespaces": [
+        "xiaomi",
+        "xiaomimimo",
+        "mimo"
+      ],
+      "canonicalPrefix": "xiaomi"
+    },
+    "tencent": {
+      "label": "Tencent (Hunyuan)",
+      "storefronts": [
+        "tencent-tokenhub",
+        "tencent-token-plan",
+        "tencent-coding-plan"
+      ],
+      "namespaces": [
+        "tencent"
+      ],
+      "canonicalPrefix": "tencent"
+    },
+    "mistral": {
+      "label": "Mistral AI",
+      "storefronts": [
+        "mistral"
+      ],
+      "namespaces": [
+        "mistral",
+        "mistralai"
+      ],
+      "canonicalPrefix": "mistralai"
+    }
+  }
+}

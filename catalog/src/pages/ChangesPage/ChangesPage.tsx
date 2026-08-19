@@ -1,6 +1,4 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Link } from 'react-router-dom';
-import { LuArrowLeft } from 'react-icons/lu';
 import { fetchChanges, formatAgo, type Change } from '../../api/client';
 import { Toolbar } from '../../components/Toolbar/Toolbar';
 import styles from './ChangesPage.module.css';
@@ -66,11 +64,6 @@ export function ChangesPage() {
 
   return (
     <div>
-      <Link to="/" className={styles.back}>
-        <LuArrowLeft size={14} />
-        <span>All providers</span>
-      </Link>
-
       <header className={styles.header}>
         <h1 className={styles.title}>What's new</h1>
         <p className={styles.subtitle}>

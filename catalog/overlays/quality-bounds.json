@@ -1,0 +1,21 @@
+{
+ "note": "Reviewed one-sided bounds on VQ. The last resort, and the only path by which a row with no settled identity carries a figure at all. Each entry is a decision a machine may not make: it asserts a RELATION to a measured model, never that this row IS that model. The value is rendered with its side (>= or <=) and the evidence level 'bounded' — never 'measured' — and it deliberately produces no canonicalId, because a bound is a claim about where a model sits, not about which model it is. An entry whose reference model leaves the index, or whose model gains a real measurement, is superseded: a measured or calibrated figure always outranks a bound. Re-verify every entry against primary sources before trusting it.",
+ "reviewedAt": "2026-08-18",
+ "bounds": {
+  "cline-pass/glm-5.3": {
+   "value": 52.6,
+   "side": "lower",
+   "reason": "Z.ai documents GLM-5.3 as using THE SAME BASE MODEL as GLM-5.2, with every improvement coming from post-training, and reports a 50% coding gain over it on its own Code Bench. GLM-5.2 is measured at 52.6 on this scale. Same base plus vendor-reported post-training gains is taken as not scoring below the sibling. It stays a bound, not a measurement: Z.ai Code Bench is the vendor’s own benchmark on its own scale, no calibration exists to map it onto this one, and the true figure may be materially higher.",
+   "referenceModel": "z-ai/glm-5.2",
+   "evidence": [
+    "Z.ai docs, GLM-5.3 overview: \"It uses the same base model as GLM-5.2, with all improvements driven by post-training\"",
+    "Z.ai docs, same page: \"GLM-5.3 delivers a significant improvement in coding capabilities, achieving a 50% performance gain over GLM-5.2 on Z.ai Code Bench\"",
+    "z-ai/glm-5.2 carries a measured Artificial Analysis figure in the reference index; its published VQ is 52.6",
+    "no benchmark index lists GLM-5.3 as of 2026-08-18 — token search across all 413 reference-index ids returns no match, and Artificial Analysis publishes no figure for it",
+    "the same page independently confirms the limits this catalog resolved from Z.ai’s storefront feed entry: \"a 1M-token context window and a maximum output length of 128K tokens\", text-only inputs",
+    "supersede this entry the moment an index publishes a figure for GLM-5.3 — a measured value outranks a bound automatically, so this needs no cleanup to stay correct"
+   ],
+   "sourceUrl": "https://docs.z.ai/guides/llm/glm-5.3"
+  }
+ }
+}

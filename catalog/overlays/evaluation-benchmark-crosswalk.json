@@ -1,0 +1,53 @@
+{
+  "version": "catalog-benchmark-crosswalk-v1",
+  "dimensions": {
+    "coding": {
+      "task": "inspect_evals/humaneval",
+      "source": "inspect-evals",
+      "sampleCount": 20,
+      "repetitions": 3,
+      "methodologyUrl": "https://inspect.aisi.org.uk/evals/coding/humaneval/",
+      "metric": "accuracy"
+    },
+    "reasoning": {
+      "task": "inspect_evals/gpqa_diamond",
+      "source": "inspect-evals",
+      "sampleCount": 20,
+      "repetitions": 3,
+      "methodologyUrl": "https://inspect.aisi.org.uk/evals/reasoning/gpqa/",
+      "metric": "accuracy"
+    },
+    "longContext": {
+      "task": "inspect_evals/infinite_bench_kv_retrieval",
+      "source": "inspect-evals",
+      "sampleCount": 20,
+      "repetitions": 3,
+      "methodologyUrl": "https://inspect.aisi.org.uk/evals/reasoning/infinite-bench/",
+      "metric": "accuracy"
+    },
+    "toolCalling": {
+      "task": "inspect_evals/bfcl",
+      "source": "inspect-evals",
+      "sampleCount": 20,
+      "repetitions": 3,
+      "methodologyUrl": "https://inspect.aisi.org.uk/evals/assistants/bfcl/",
+      "metric": "accuracy"
+    },
+    "structuredOutput": {
+      "task": "catalog/structured-output-v1",
+      "source": "venom-catalog",
+      "sampleCount": 20,
+      "repetitions": 3,
+      "methodologyUrl": "https://github.com/UKGovernmentBEIS/inspect_ai/blob/main/docs/structured.qmd",
+      "metric": "criteria_accuracy"
+    },
+    "vision": {
+      "task": "inspect_evals/mmmu_multiple_choice",
+      "source": "inspect-evals",
+      "sampleCount": 20,
+      "repetitions": 3,
+      "methodologyUrl": "https://inspect.aisi.org.uk/evals/multimodal/mmmu/",
+      "metric": "accuracy"
+    }
+  }
+}

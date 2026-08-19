@@ -34,6 +34,18 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     return () => ctrl.abort();
   }, [nonce]);
 
+  useEffect(() => {
+    const pending = data?.models.filter((model) => model.resolution.state === 'processing') ?? [];
+    if (pending.length === 0 || data?.origin !== 'live') return;
+    const next = pending
+      .map((model) => model.resolution.nextAttemptAt)
+      .filter((value): value is string => value !== null)
+      .map((value) => new Date(value).getTime());
+    const untilNext = next.length > 0 ? Math.min(...next) - Date.now() + 500 : 30_000;
+    const timer = window.setTimeout(() => setNonce((value) => value + 1), Math.min(30_000, Math.max(1_000, untilNext)));
+    return () => window.clearTimeout(timer);
+  }, [data]);
+
   return (
     <Ctx.Provider value={{ data, error, loading, reload: () => setNonce((n) => n + 1) }}>
       {children}

@@ -1,0 +1,95 @@
+{
+  "version": "catalog-rubrics-v1",
+  "dimensions": {
+    "coding": {
+      "criteria": [
+        { "id": "correctness", "weight": 0.2 },
+        { "id": "tests", "weight": 0.2 },
+        { "id": "edge_cases", "weight": 0.2 },
+        { "id": "maintainability", "weight": 0.2 },
+        { "id": "instruction_adherence", "weight": 0.2 }
+      ],
+      "scenarios": [
+        { "id": "coding-01" }, { "id": "coding-02" }, { "id": "coding-03" }, { "id": "coding-04" }, { "id": "coding-05" },
+        { "id": "coding-06" }, { "id": "coding-07" }, { "id": "coding-08" }, { "id": "coding-09" }, { "id": "coding-10" },
+        { "id": "coding-11" }, { "id": "coding-12" }, { "id": "coding-13" }, { "id": "coding-14" }, { "id": "coding-15" },
+        { "id": "coding-16" }, { "id": "coding-17" }, { "id": "coding-18" }, { "id": "coding-19" }, { "id": "coding-20" }
+      ]
+    },
+    "reasoning": {
+      "criteria": [
+        { "id": "correctness", "weight": 0.2 },
+        { "id": "multi_step_consistency", "weight": 0.2 },
+        { "id": "constraint_adherence", "weight": 0.2 },
+        { "id": "uncertainty_handling", "weight": 0.2 },
+        { "id": "contradiction_resistance", "weight": 0.2 }
+      ],
+      "scenarios": [
+        { "id": "reasoning-01" }, { "id": "reasoning-02" }, { "id": "reasoning-03" }, { "id": "reasoning-04" }, { "id": "reasoning-05" },
+        { "id": "reasoning-06" }, { "id": "reasoning-07" }, { "id": "reasoning-08" }, { "id": "reasoning-09" }, { "id": "reasoning-10" },
+        { "id": "reasoning-11" }, { "id": "reasoning-12" }, { "id": "reasoning-13" }, { "id": "reasoning-14" }, { "id": "reasoning-15" },
+        { "id": "reasoning-16" }, { "id": "reasoning-17" }, { "id": "reasoning-18" }, { "id": "reasoning-19" }, { "id": "reasoning-20" }
+      ]
+    },
+    "longContext": {
+      "criteria": [
+        { "id": "retrieval", "weight": 0.2 },
+        { "id": "multi_hop_reasoning", "weight": 0.2 },
+        { "id": "position_robustness", "weight": 0.2 },
+        { "id": "distraction_resistance", "weight": 0.2 },
+        { "id": "synthesis", "weight": 0.2 }
+      ],
+      "scenarios": [
+        { "id": "long-context-01" }, { "id": "long-context-02" }, { "id": "long-context-03" }, { "id": "long-context-04" }, { "id": "long-context-05" },
+        { "id": "long-context-06" }, { "id": "long-context-07" }, { "id": "long-context-08" }, { "id": "long-context-09" }, { "id": "long-context-10" },
+        { "id": "long-context-11" }, { "id": "long-context-12" }, { "id": "long-context-13" }, { "id": "long-context-14" }, { "id": "long-context-15" },
+        { "id": "long-context-16" }, { "id": "long-context-17" }, { "id": "long-context-18" }, { "id": "long-context-19" }, { "id": "long-context-20" }
+      ]
+    },
+    "toolCalling": {
+      "criteria": [
+        { "id": "tool_selection", "weight": 0.2 },
+        { "id": "arguments", "weight": 0.2 },
+        { "id": "sequencing", "weight": 0.2 },
+        { "id": "error_recovery", "weight": 0.2 },
+        { "id": "stop_condition", "weight": 0.2 }
+      ],
+      "scenarios": [
+        { "id": "tool-calling-01" }, { "id": "tool-calling-02" }, { "id": "tool-calling-03" }, { "id": "tool-calling-04" }, { "id": "tool-calling-05" },
+        { "id": "tool-calling-06" }, { "id": "tool-calling-07" }, { "id": "tool-calling-08" }, { "id": "tool-calling-09" }, { "id": "tool-calling-10" },
+        { "id": "tool-calling-11" }, { "id": "tool-calling-12" }, { "id": "tool-calling-13" }, { "id": "tool-calling-14" }, { "id": "tool-calling-15" },
+        { "id": "tool-calling-16" }, { "id": "tool-calling-17" }, { "id": "tool-calling-18" }, { "id": "tool-calling-19" }, { "id": "tool-calling-20" }
+      ]
+    },
+    "structuredOutput": {
+      "criteria": [
+        { "id": "schema_validity", "weight": 0.2 },
+        { "id": "types", "weight": 0.2 },
+        { "id": "required_fields", "weight": 0.2 },
+        { "id": "constraints", "weight": 0.2 },
+        { "id": "semantic_correctness", "weight": 0.2 }
+      ],
+      "scenarios": [
+        { "id": "structured-output-01" }, { "id": "structured-output-02" }, { "id": "structured-output-03" }, { "id": "structured-output-04" }, { "id": "structured-output-05" },
+        { "id": "structured-output-06" }, { "id": "structured-output-07" }, { "id": "structured-output-08" }, { "id": "structured-output-09" }, { "id": "structured-output-10" },
+        { "id": "structured-output-11" }, { "id": "structured-output-12" }, { "id": "structured-output-13" }, { "id": "structured-output-14" }, { "id": "structured-output-15" },
+        { "id": "structured-output-16" }, { "id": "structured-output-17" }, { "id": "structured-output-18" }, { "id": "structured-output-19" }, { "id": "structured-output-20" }
+      ]
+    },
+    "vision": {
+      "criteria": [
+        { "id": "recognition", "weight": 0.2 },
+        { "id": "localization", "weight": 0.2 },
+        { "id": "ocr", "weight": 0.2 },
+        { "id": "chart_table_understanding", "weight": 0.2 },
+        { "id": "visual_reasoning", "weight": 0.2 }
+      ],
+      "scenarios": [
+        { "id": "vision-01" }, { "id": "vision-02" }, { "id": "vision-03" }, { "id": "vision-04" }, { "id": "vision-05" },
+        { "id": "vision-06" }, { "id": "vision-07" }, { "id": "vision-08" }, { "id": "vision-09" }, { "id": "vision-10" },
+        { "id": "vision-11" }, { "id": "vision-12" }, { "id": "vision-13" }, { "id": "vision-14" }, { "id": "vision-15" },
+        { "id": "vision-16" }, { "id": "vision-17" }, { "id": "vision-18" }, { "id": "vision-19" }, { "id": "vision-20" }
+      ]
+    }
+  }
+}

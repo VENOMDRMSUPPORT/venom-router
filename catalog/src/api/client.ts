@@ -13,6 +13,68 @@
 
 export type EvidenceLevel = 'measured' | 'calibrated' | 'bounded' | 'unrated';
 
+/**
+ * Where a row stands on identity.
+ *
+ * The service publishes three exclusive states — `resolved`, `identity_review`,
+ * `unresolved`. `unknown` is a fourth that only this client can produce, and it
+ * carries exactly one meaning: *the response we got did not state it.*
+ *
+ * It is not a finding about a model. That distinction is the whole reason it
+ * exists: the two states we could otherwise have fallen back to are both
+ * fabrications. `resolved` would invent a proof that this row is a specific
+ * upstream model; `unresolved` would invent the finding that nothing upstream
+ * matched. Deriving it from `canonicalId` is worse still — the axes are
+ * independent by design, and a client that couples them cannot tell
+ * "investigated and parked" from "never looked at".
+ */
+export type IdentityState = 'resolved' | 'identity_review' | 'unresolved' | 'unknown';
+
+/** The three states a catalog service is allowed to assert. `unknown` is ours. */
+function isServiceIdentityState(v: unknown): v is Exclude<IdentityState, 'unknown'> {
+  return v === 'resolved' || v === 'identity_review' || v === 'unresolved';
+}
+
+/** One identity candidate that was examined and refused, with its evidence. */
+export interface RejectedCandidate {
+  /** The refused upstream id, or null when the finding is that none exists. */
+  candidate: string | null;
+  verdict: 'candidate_rejected' | 'no_candidate_exists';
+  why: string;
+  evidence: string[];
+  source: string;
+  sourceRef: string | null;
+  sourceUrl: string | null;
+  evidenceState: string;
+  resolverVersion: string;
+  candidateMeta: Record<string, unknown> | null;
+  reviewedAt: string | null;
+  recordedAt: string;
+}
+
+/** One field whose sources contradicted each other. Every side is kept. */
+export interface FieldConflict {
+  field: string;
+  sides: { value: unknown; by: string }[];
+  conflictType: string;
+  status: 'open' | 'resolved';
+  resolvedTo: string | null;
+  detectedAt: string;
+}
+
+/** Where one resolved value came from. */
+export interface FactProvenance {
+  value: unknown;
+  source: string;
+  sourceRef: string | null;
+  sourceUrl: string | null;
+  evidenceState: string | null;
+  rawValue: unknown;
+  resolverVersion: string | null;
+  probeVersion: string | null;
+  resolvedAt: string;
+}
+
 export interface Provenance {
   evidenceLevel: EvidenceLevel | 'derived';
   source: string | null;
@@ -24,10 +86,65 @@ export interface Provenance {
   computedAt: string;
 }
 
+export interface ApiModelScore {
+  value: number | null;
+  display: string;
+  methodologyVersion: string | null;
+  qualityWeight: number | null;
+  operationalWeight: number | null;
+  operationalPrecision: number | null;
+  uncertainty: number | null;
+  bound: 'lower' | 'upper' | null;
+  reason: 'missing_vq' | 'missing_vo' | 'missing_both' | 'not_reported' | null;
+  /** Evidence class of the VQ component; the composite itself is derived. */
+  qualityEvidenceLevel: EvidenceLevel;
+  operationalCoverage: 'complete' | 'partial' | 'missing' | 'unknown';
+}
+
+export interface ApiOverallScore {
+  value: number | null;
+  display: string;
+  status: 'complete' | 'evaluating' | 'insufficient_evidence' | 'unknown';
+  qualityScore: number | null;
+  operationalScore: number | null;
+  qualityCoverage: { scored: number; applicable: number; percent: number };
+  overallCoverage: { scored: number; applicable: number; percent: number };
+  includedDimensions: string[];
+  excludedDimensions: string[];
+  uncertainty: number | null;
+  reasons: string[];
+  methodologyVersion: string | null;
+  computedAt: string | null;
+}
+
+export type ModelResolutionState =
+  | 'complete'
+  | 'processing'
+  | 'awaiting_external_benchmark'
+  | 'source_incomplete'
+  | 'unknown';
+
+export interface ModelResolution {
+  state: ModelResolutionState;
+  reasons: string[];
+  firstDetectedAt: string | null;
+  lastAttemptAt: string | null;
+  nextAttemptAt: string | null;
+}
+
 export interface ApiModel {
   providerId: string;
   modelId: string;
   canonicalId: string | null;
+  /**
+   * Which model this row IS, from a vendor listing — a different question from
+   * `canonicalId`, which names the reference-index entry a SCORE came from. A
+   * model no index lists yet has no canonical id and can still be identified.
+   */
+  vendorModelId: string | null;
+  /** Exclusive; never inferred from canonicalId. `unknown` = the response didn't say. */
+  identityState: IdentityState;
+  rejectedCandidates: RejectedCandidate[];
   displayName: string;
   state: 'active' | 'missing' | 'retired';
   contextTokens: number | null;
@@ -49,13 +166,34 @@ export interface ApiModel {
     evidenceLevel: EvidenceLevel;
     precision: number;
     display: string;
+    /** Why there is no score. Null when scored. */
+    unratedReason: string | null;
     provenance: Provenance | null;
   };
-  vo: { value: number | null; dimensions: Record<string, number | null>; missingDimensions: string[]; profileId: string };
+  vo: {
+    value: number | null;
+    dimensions: Record<string, number | null>;
+    /** Nobody published these. A real gap. */
+    missingDimensions: string[];
+    /** These do not apply — e.g. cost for a subscription model. NOT a gap. */
+    notApplicableDimensions: string[];
+    profileId: string;
+  };
+  /** Server-derived composite. The SPA must never calculate this field. */
+  modelScore: ApiModelScore;
+  /** Server-derived overall-score-v1 result. The SPA must never calculate it. */
+  overallScore: ApiOverallScore;
+  resolution: ModelResolution;
   catalogReady: boolean;
   missingFacts: string[];
+  conflicts: FieldConflict[];
+  provenanceByField: Record<string, FactProvenance>;
   qualityRank: number | null;
   tiedAtRank: boolean;
+  modelRank: number | null;
+  tiedAtModelRank: boolean;
+  overallRank: number | null;
+  tiedAtOverallRank: boolean;
   firstSeenAt: string;
   lastSeenAt: string;
 }
@@ -71,19 +209,44 @@ export interface ApiProvider {
   freshness: 'fresh' | 'stale' | 'never';
   hoursSinceSuccess: number | null;
   qualityScored: number;
+  /** Published composite model scores, not merely a VQ component. */
+  modelScoreScored: number;
+  overallScoreScored: number;
   unrated: number;
 }
 
 export interface CatalogMeta {
   methodologyVersion: string;
   profileId: string;
+  scoringPolicy: {
+    methodologyVersion: string | null;
+    qualityWeight: number | null;
+    operationalWeight: number | null;
+    operationalPrecision: number | null;
+  };
   liveModels: number;
   catalogReady: number;
   needsVerification: number;
   qualityScored: number;
+  modelScoreScored: number;
+  overallScoreScored: number;
   operationalScored: number;
   unrated: number;
-  identity: { resolvedWithEvidence: number; resolvedWithoutEvidence: number; unresolved: number; ambiguousOpen: number };
+  /**
+   * The identity breakdown, or `null`s when the response did not carry it.
+   *
+   * `number | null` rather than `number` because these types are a promise about
+   * the current contract, not a guarantee about every payload that will ever
+   * arrive over the wire. A counter that reads `0` claims the catalog looked and
+   * found none; `null` says this response did not answer. Rendering the second
+   * as the first is how a stale service comes to look like good news.
+   */
+  identity: { resolved: number | null; identityReview: number | null; unresolved: number | null };
+  identityDetail: { ambiguousOpen: number; withRejectedCandidates: number; rejectedCandidates: number } | null;
+  /** Models with at least one field withheld by a source disagreement. */
+  conflictedModels: number | null;
+  /** How many MODELS each disputed field affects. */
+  conflictsByField: Record<string, number>;
   identityRules: Record<string, number>;
   calibration: { version: string | null; accepted: boolean; n: number; rho: number; looRmse: number; baselineSd: number; excludedGroups: string[] } | null;
   sortContracts: Record<string, { key: string; field: string; unplacedLabel: string; tieRule: string }>;
@@ -112,6 +275,168 @@ export interface CatalogData {
 
 const BASE = '/v1';
 
+/**
+ * The offline fallback file.
+ *
+ * `meta` is optional here and required in `CatalogData` on purpose: this type
+ * describes a FILE on disk, which may predate the current writer, and the check
+ * in `fetchCatalog` is what turns that possibility into a refusal. A snapshot
+ * that cannot state the catalog's own summary is not a stale view of it.
+ */
+interface SnapshotFile {
+  generatedAt: string;
+  models: WireModel[];
+  providers: ApiProvider[];
+  meta?: WireMeta;
+}
+
+// ---------------------------------------------------------------------------
+// The wire boundary.
+//
+// A response is not an `ApiModel`, and the gap between the two is not
+// theoretical: a service process started before a contract change keeps serving
+// the older shape until it is restarted, and the fields it never heard of arrive
+// as `undefined`. Reading `.length` off one of those unmounts the whole page.
+//
+// So exactly one place turns wire data into an `ApiModel`, and it holds exactly
+// one rule: an absent field becomes a *renderable absence*, never a value.
+// `[]`, `{}` and `unknown` all say "this response did not carry it". `0`, `false`
+// and `resolved` would each say something about a model instead — a claim the
+// service never made. Nothing here computes a score, resolves an identity, picks
+// between conflicting sources, or fills a gap with a plausible default.
+//
+// It is deliberately not a validator. A field that IS present is passed through
+// untouched, whatever it holds; the goal is to make a partial payload renderable
+// and honest, not to second-guess a service about its own data.
+// ---------------------------------------------------------------------------
+
+/** A model as it arrives. Every field optional, because any of them may be. */
+type WireModel = Omit<Partial<ApiModel>, 'vq' | 'vo' | 'identityState'> & {
+  /** Just a string until it is checked against the contract. */
+  identityState?: string;
+  vq?: Partial<ApiModel['vq']>;
+  vo?: Partial<ApiModel['vo']>;
+  overallScore?: Partial<ApiOverallScore>;
+};
+
+/** A meta block as it arrives, including from a superseded contract. */
+type WireMeta = Omit<Partial<CatalogMeta>, 'identity'> & {
+  identity?: Partial<CatalogMeta['identity']>;
+};
+
+export function normalizeModel(raw: WireModel): ApiModel {
+  const vq = (raw.vq ?? {}) as ApiModel['vq'];
+  const vo = (raw.vo ?? {}) as ApiModel['vo'];
+  const modelScore = raw.modelScore ?? {
+    value: null,
+    display: '—',
+    methodologyVersion: null,
+    qualityWeight: null,
+    operationalWeight: null,
+    operationalPrecision: null,
+    uncertainty: null,
+    bound: null,
+    reason: 'not_reported' as const,
+    qualityEvidenceLevel: vq.evidenceLevel ?? 'unrated',
+    operationalCoverage: 'unknown' as const,
+  };
+  const overallScore: ApiOverallScore = {
+    value: raw.overallScore?.value ?? null,
+    display: raw.overallScore?.display ?? '—',
+    status: raw.overallScore?.status ?? 'unknown',
+    qualityScore: raw.overallScore?.qualityScore ?? null,
+    operationalScore: raw.overallScore?.operationalScore ?? null,
+    qualityCoverage: raw.overallScore?.qualityCoverage ?? { scored: 0, applicable: 0, percent: 0 },
+    overallCoverage: raw.overallScore?.overallCoverage ?? { scored: 0, applicable: 0, percent: 0 },
+    includedDimensions: raw.overallScore?.includedDimensions ?? [],
+    excludedDimensions: raw.overallScore?.excludedDimensions ?? [],
+    uncertainty: raw.overallScore?.uncertainty ?? null,
+    reasons: raw.overallScore?.reasons ?? ['not_reported'],
+    methodologyVersion: raw.overallScore?.methodologyVersion ?? 'overall-score-v1',
+    computedAt: raw.overallScore?.computedAt ?? null,
+  };
+
+  return {
+    // Everything the response did carry, exactly as it carried it. A null stays
+    // null: unknown quality is not low quality, and an absent context window is
+    // not a zero-token one.
+    ...(raw as ApiModel),
+
+    identityState: isServiceIdentityState(raw.identityState) ? raw.identityState : 'unknown',
+
+    // Lists and records, so no consumer has to guard before counting. Empty is
+    // the honest reading of silence here: it renders as "nothing to show", which
+    // is what we know, and it cannot be mistaken for a measured figure.
+    rejectedCandidates: raw.rejectedCandidates ?? [],
+    conflicts: raw.conflicts ?? [],
+    provenanceByField: raw.provenanceByField ?? {},
+
+    // A reason nobody sent is "not recorded", not an invented token — the panel
+    // renders a reason only when one exists, and says nothing otherwise.
+    vq: { ...vq, unratedReason: vq.unratedReason ?? null },
+
+    vo: {
+      ...vo,
+      dimensions: vo.dimensions ?? {},
+      // These two are opposite claims and must never be filled from each other:
+      // `missing` is open work nobody published, `notApplicable` is a settled
+      // answer that the question does not apply here. Collapsing one into the
+      // other either retires a real gap by renaming it, or invents a gap.
+      missingDimensions: vo.missingDimensions ?? [],
+      notApplicableDimensions: vo.notApplicableDimensions ?? [],
+    },
+    modelScore,
+    overallScore,
+    resolution: raw.resolution ?? {
+      state: 'unknown', reasons: [], firstDetectedAt: null, lastAttemptAt: null, nextAttemptAt: null,
+    },
+    modelRank: raw.modelRank ?? null,
+    tiedAtModelRank: raw.tiedAtModelRank ?? false,
+    overallRank: raw.overallRank ?? null,
+    tiedAtOverallRank: raw.tiedAtOverallRank ?? false,
+  };
+}
+
+export function normalizeMeta(raw: WireMeta): CatalogMeta {
+  const identity = raw.identity ?? {};
+
+  // `identity` is taken as one answer or not at all. A superseded shape that
+  // happens to share the key `unresolved` is not a partial version of this one —
+  // there it counted every row without a canonical id, which the current
+  // contract splits into `identityReview` + `unresolved`. Reading it across would
+  // republish an old number under a new name, which is worse than no number.
+  const identityIsCurrent =
+    typeof identity.resolved === 'number' &&
+    typeof identity.identityReview === 'number' &&
+    typeof identity.unresolved === 'number';
+
+  return {
+    ...(raw as CatalogMeta),
+    identity: identityIsCurrent
+      ? { resolved: identity.resolved!, identityReview: identity.identityReview!, unresolved: identity.unresolved! }
+      : { resolved: null, identityReview: null, unresolved: null },
+    identityDetail: raw.identityDetail ?? null,
+    conflictedModels: raw.conflictedModels ?? null,
+    conflictsByField: raw.conflictsByField ?? {},
+    modelScoreScored: raw.modelScoreScored ?? raw.qualityScored ?? 0,
+    overallScoreScored: raw.overallScoreScored ?? 0,
+    scoringPolicy: raw.scoringPolicy ?? {
+      methodologyVersion: null,
+      qualityWeight: null,
+      operationalWeight: null,
+      operationalPrecision: null,
+    },
+  };
+}
+
+function normalizeProvider(raw: Partial<ApiProvider>): ApiProvider {
+  return {
+    ...(raw as ApiProvider),
+    modelScoreScored: raw.modelScoreScored ?? raw.qualityScored ?? 0,
+    overallScoreScored: raw.overallScoreScored ?? 0,
+  };
+}
+
 async function json<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { signal });
   if (!res.ok && res.status !== 503) throw new Error(`${path} -> HTTP ${res.status}`);
@@ -121,16 +446,37 @@ async function json<T>(path: string, signal?: AbortSignal): Promise<T> {
 export async function fetchCatalog(signal?: AbortSignal): Promise<CatalogData> {
   try {
     const [modelsRes, providersRes] = await Promise.all([
-      json<{ models: ApiModel[]; meta: CatalogMeta }>('/models', signal),
+      json<{ models: WireModel[]; meta: WireMeta }>('/models', signal),
       json<{ providers: ApiProvider[] }>('/providers', signal),
     ]);
-    return { models: modelsRes.models, providers: providersRes.providers, meta: modelsRes.meta, origin: 'live' };
+    return {
+      models: modelsRes.models.map(normalizeModel),
+      providers: providersRes.providers.map(normalizeProvider),
+      meta: normalizeMeta(modelsRes.meta),
+      origin: 'live',
+    };
   } catch (err) {
     if (signal?.aborted) throw err;
     const snap = await fetch('/snapshot/catalog.json');
     if (!snap.ok) throw err;
-    const data = (await snap.json()) as { generatedAt: string; models: unknown[]; providers: unknown[] };
-    return { ...snapshotToCatalog(data), origin: 'snapshot', snapshotGeneratedAt: data.generatedAt };
+    const data = (await snap.json()) as SnapshotFile;
+
+    // The snapshot is a serialised API answer, so it goes through the same two
+    // normalisers the live path uses and nothing else. This branch used to hold
+    // a second translation — flat database columns to `ApiModel` — which is how
+    // the offline page came to publish figures the catalog never produced: it
+    // had no identity, conflict or completeness columns to read, so it filled
+    // those tiles with "MISSING" and, for `catalogReady`/`needsVerification`,
+    // with confident fabrications.
+    if (!data.meta) throw new Error('the offline snapshot is in a superseded format — regenerate it with `npm run sync`');
+
+    return {
+      models: data.models.map(normalizeModel),
+      providers: data.providers.map(normalizeProvider),
+      meta: normalizeMeta(data.meta),
+      origin: 'snapshot',
+      snapshotGeneratedAt: data.generatedAt,
+    };
   }
 }
 
@@ -141,90 +487,6 @@ export async function fetchChanges(since?: string): Promise<{ changes: Change[];
 
 export async function fetchHealth(): Promise<Record<string, any>> {
   return json('/health');
-}
-
-/**
- * Rebuild the API shape from the flat snapshot rows.
- *
- * Deliberately conservative: fields the snapshot does not carry come back as
- * null rather than as a plausible default, so the fallback view can only ever
- * show less than the live one — never something different.
- */
-function snapshotToCatalog(data: { models: any[]; providers: any[] }): Omit<CatalogData, 'origin'> {
-  const models: ApiModel[] = data.models.map((m) => ({
-    providerId: m.provider_id,
-    modelId: m.model_id,
-    canonicalId: m.vq_canonical ?? null,
-    displayName: m.display_name ?? m.model_id,
-    state: m.status,
-    contextTokens: m.context_tokens,
-    maxOutputTokens: m.output_tokens,
-    inputModalities: m.input_modalities ? JSON.parse(m.input_modalities) : null,
-    capabilities: {
-      tools: m.tools === null ? null : Boolean(m.tools),
-      reasoning: m.reasoning === null ? null : Boolean(m.reasoning),
-      structured: m.structured === null ? null : Boolean(m.structured),
-      attachment: m.attachment === null ? null : Boolean(m.attachment),
-    },
-    pricing: {
-      kind: (m.cost_kind ?? 'unknown') as ApiModel['pricing']['kind'],
-      inputPerMTokens: m.cost_in_per_m,
-      outputPerMTokens: m.cost_out_per_m,
-      referenceInPerMTokens: m.ref_cost_in_per_m ?? null,
-      referenceOutPerMTokens: m.ref_cost_out_per_m ?? null,
-      isFree: m.cost_kind === 'free' ? true : m.cost_kind === 'unknown' ? null : false,
-    },
-    vq: {
-      value: m.vq_value ?? null,
-      uncertainty: m.vq_uncertainty ?? null,
-      bound: null,
-      evidenceLevel: (m.vq_level ?? 'unrated') as EvidenceLevel,
-      precision: m.vq_precision ?? 0,
-      display: m.vq_value === null || m.vq_value === undefined ? '—' : Number(m.vq_value).toFixed(m.vq_precision ?? 0),
-      provenance: null,
-    },
-    vo: { value: m.vo_value ?? null, dimensions: {}, missingDimensions: [], profileId: 'balanced' },
-    catalogReady: true,
-    missingFacts: [],
-    qualityRank: null,
-    tiedAtRank: false,
-    firstSeenAt: m.first_seen_at,
-    lastSeenAt: m.last_seen_at,
-  }));
-
-  const providers: ApiProvider[] = data.providers.map((p) => ({
-    id: p.id,
-    name: p.name,
-    rosterUrl: p.roster_url,
-    liveModels: models.filter((m) => m.providerId === p.id).length,
-    lastSuccessfulSyncAt: p.last_success_at ?? null,
-    lastAttemptedSyncAt: p.last_sync_at ?? null,
-    lastOutcome: p.last_outcome ?? null,
-    freshness: 'stale',
-    hoursSinceSuccess: null,
-    qualityScored: models.filter((m) => m.providerId === p.id && m.vq.value !== null).length,
-    unrated: models.filter((m) => m.providerId === p.id && m.vq.value === null).length,
-  }));
-
-  const scored = models.filter((m) => m.vq.value !== null).length;
-  return {
-    models,
-    providers,
-    meta: {
-      methodologyVersion: 'venom-score-v1',
-      profileId: 'balanced',
-      liveModels: models.length,
-      catalogReady: models.length,
-      needsVerification: 0,
-      qualityScored: scored,
-      operationalScored: models.length,
-      unrated: models.length - scored,
-      identity: { resolvedWithEvidence: scored, resolvedWithoutEvidence: 0, unresolved: models.length - scored, ambiguousOpen: 0 },
-      identityRules: {},
-      calibration: null,
-      sortContracts: {},
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------

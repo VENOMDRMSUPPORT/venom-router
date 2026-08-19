@@ -1,14 +1,27 @@
-import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { LuArrowLeft } from 'react-icons/lu';
+import { Fragment, useMemo, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import {
+  LuWrench,
+  LuBrain,
+  LuBraces,
+  LuImage,
+  LuMic,
+  LuVideo,
+  LuPaperclip,
+  LuCircleCheck,
+  LuTriangleAlert,
+  LuCircleX,
+} from 'react-icons/lu';
 import { useCatalog, useProviderModels } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import { formatTokens, type ApiModel } from '../../api/client';
 import { FreshnessBadge } from '../../components/FreshnessBadge/FreshnessBadge';
-import { VQCell, VOCell, RankCell, CostCell } from '../../components/ScoreCell/ScoreCell';
+import { ModelScoreCell, ModelRankCell, CostCell } from '../../components/ScoreCell/ScoreCell';
 import { Callout } from '../../components/Callout/Callout';
 import { Toolbar } from '../../components/Toolbar/Toolbar';
 import { NotFoundPage } from '../NotFoundPage/NotFoundPage';
+import { EvidencePanel } from '../../components/EvidencePanel/EvidencePanel';
+import { FactState, factStateOf } from '../../components/FactState/FactState';
 import styles from './ProviderPage.module.css';
 
 export function ProviderPage() {
@@ -18,9 +31,18 @@ export function ProviderPage() {
 
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
-  const [view, setView] = useState<'grid' | 'table'>(() =>
-    typeof window !== 'undefined' && window.innerWidth < 768 ? 'grid' : 'table'
-  );
+  const [view, setView] = useState<'grid' | 'table'>(() => {
+    if (typeof window === 'undefined') return 'table';
+    try {
+      const saved = JSON.parse(window.localStorage.getItem('venom-catalog-settings') ?? '{}') as {
+        defaultView?: 'grid' | 'table';
+      };
+      if (saved.defaultView === 'grid' || saved.defaultView === 'table') return saved.defaultView;
+    } catch {
+      // Ignore malformed browser preferences and retain the responsive default.
+    }
+    return window.innerWidth < 768 ? 'grid' : 'table';
+  });
 
   const filteredModels = useMemo(() => {
     let list = models;
@@ -47,27 +69,66 @@ export function ProviderPage() {
   const pres = present(provider.id);
   const maxCtx = Math.max(0, ...models.map((m) => m.contextTokens ?? 0));
   const free = models.filter((m) => m.pricing.isFree === true).length;
+  const operationalReady = models.filter((m) => m.vo.value !== null).length;
 
-  // The completeness gate: rows whose operational facts are all resolved make up
-  // the catalog proper. The rest are held in a labelled section rather than
-  // dropped — the inventory stays whole, the main table stays trustworthy.
-  const ready = filteredModels.filter((m) => m.catalogReady);
-  const pending = filteredModels.filter((m) => !m.catalogReady);
+  const visibleModels = [...filteredModels].sort((a, b) => {
+    if (a.overallRank !== null && b.overallRank !== null) return a.overallRank - b.overallRank;
+    if (a.overallRank !== null) return -1;
+    if (b.overallRank !== null) return 1;
+    return a.modelId.localeCompare(b.modelId);
+  });
 
-  const rated = ready
-    .filter((m) => m.qualityRank !== null)
-    .sort((a, b) => a.qualityRank! - b.qualityRank!);
-  const unrated = ready
-    .filter((m) => m.qualityRank === null)
-    .sort((a, b) => (b.vo.value ?? -1) - (a.vo.value ?? -1));
+  // Determine status for each stat tile
+  const liveModelsStatus: 'ok' | 'warn' | 'error' = provider.liveModels > 0 ? 'ok' : 'error';
+  const maxCtxStatus: 'ok' | 'warn' | 'error' = maxCtx > 0 ? 'ok' : 'error';
+  /**
+   * Unrated rows with nothing recorded about WHY.
+   *
+   * The distinction the tile turns on. An unrated model whose reason is
+   * recorded — no benchmark publishes a figure, the index does not list it yet,
+   * the calibration was measured to have no predictive power for the vendor —
+   * is a gap in what the industry measured, and this page says exactly that
+   * three sections further down. A row with no reason at all is a hole in OUR
+   * data, and that is the one thing here we can act on.
+   */
+  const overallIncomplete = provider.liveModels - provider.overallScoreScored;
+
+  /**
+   * The provider's costing, when it is the same answer for every row.
+   *
+   * A plan covers the whole roster or it is not a plan, so this is a fact about
+   * the provider that happened to be rendered per cell — twice in the price
+   * columns and again on the VO badge, thirty-nine times over a thirteen-row
+   * table. Worse, it was rendered in the `n/a` vocabulary the catalog reserves
+   * for facts nobody published, so a settled answer read as a page of holes.
+   * Stated once here, the columns are free to show the figure that actually
+   * varies. Null when the rows disagree, which after the billing fix can only
+   * happen if a provider's policy is genuinely mixed — and then the per-cell
+   * labels are the honest rendering and come back on their own.
+   */
+  const uniformCostKind = (() => {
+    if (models.length === 0) return null;
+    const kinds = new Set(models.map((m) => m.pricing.kind));
+    if (kinds.size !== 1) return null;
+    const [only] = [...kinds];
+    return only === 'included' || only === 'free' ? only : null;
+  })();
+
+  /**
+   * The tile flags what is ours to fix, not what the world has not measured.
+   *
+   * It used to raise the same warning triangle for "one model is unrated" as it
+   * does for a provider serving zero models, so a catalog behaving exactly as
+   * designed read as a broken one. Aiming the signal is not removing it: an
+   * unrated row with no recorded reason still raises it, and so does a provider
+   * with nothing to score at all.
+   */
+  const qualityStatus: 'ok' | 'warn' | 'error' =
+    provider.liveModels === 0 || overallIncomplete > 0 ? 'warn' : 'ok';
+  const freeStatus: 'ok' | 'warn' | 'error' = 'ok';
 
   return (
     <div>
-      <Link to="/" className={styles.back}>
-        <LuArrowLeft size={14} />
-        <span>All providers</span>
-      </Link>
-
       <header className={styles.header}>
         <div className={styles.logoBox}>
           {pres.logo ? (
@@ -86,11 +147,59 @@ export function ProviderPage() {
       </header>
 
       <div className={styles.stats}>
-        <Stat value={String(provider.liveModels)} label="Live models" />
-        <Stat value={formatTokens(maxCtx)} label="Max context" />
-        <Stat value={`${provider.qualityScored}/${provider.liveModels}`} label="Quality-scored" />
-        <Stat value={free > 0 ? String(free) : '—'} label="Free models" isFree={free > 0} />
+        <Stat
+          value={String(provider.liveModels)}
+          label="Live models"
+          status={liveModelsStatus}
+          statusTitle={provider.liveModels > 0 ? `${provider.liveModels} active models available` : 'No models available'}
+        />
+        <Stat
+          value={formatTokens(maxCtx)}
+          label="Max context"
+          status={maxCtxStatus}
+          statusTitle={maxCtx > 0 ? `Max context window: ${formatTokens(maxCtx)}` : 'Context window unknown'}
+        />
+        <Stat
+          value={`${provider.overallScoreScored}/${provider.liveModels}`}
+          label="Complete evaluations"
+          status={qualityStatus}
+          statusTitle={
+            provider.overallScoreScored === provider.liveModels
+              ? 'Every published model has a complete overall-score-v1 evaluation.'
+              : `${overallIncomplete} model(s) still lack sufficient reproducible evidence. Operational data is available for ${operationalReady}/${provider.liveModels}; provider availability is not a benchmark result.`
+          }
+          testId="quality-tile-status"
+        />
+        <Stat
+          value={free > 0 ? String(free) : '0/0'}
+          label="Free models"
+          status={freeStatus}
+          statusTitle={free > 0 ? `${free} free model(s) available` : '0/0 free models (standard for commercial provider)'}
+          isFree={free > 0}
+        />
       </div>
+
+      {provider.overallScoreScored < provider.liveModels && (
+        <Callout>
+          <strong>Evaluation status:</strong> operational data is complete for{' '}
+          {operationalReady}/{provider.liveModels} models, while reproducible{' '}
+          <code>overall-score-v1</code> evaluations are complete for{' '}
+          {provider.overallScoreScored}/{provider.liveModels}. A successful API
+          request confirms availability only.
+        </Callout>
+      )}
+
+      {uniformCostKind === 'included' && (
+        <Callout>
+          <span data-testid="billing-note" />
+
+          <strong>Billing:</strong> every model here is covered by this provider's
+          subscription — there is no per-token charge for any of them, and that is not $0.
+          The <code>ref</code> figures below are the published per-million-token rates the
+          plan meters usage against, shown so models can be compared. Cost is therefore
+          excluded from every VO on this page, with the remaining weights renormalised.
+        </Callout>
+      )}
 
       {pres.note && (
         <Callout>
@@ -114,35 +223,9 @@ export function ProviderPage() {
       />
 
       {view === 'table' ? (
-        <>
-          <ModelTable title={`Ranked by quality (${rated.length})`} models={rated} />
-          {unrated.length > 0 && (
-            <ModelTable
-              title={`No quality evidence (${unrated.length})`}
-              models={unrated}
-              note="No benchmark publishes a figure for these models. Their operational data is shown as normal — unknown quality is not low quality, and they are not ranked."
-            />
-          )}
-        </>
+        <ModelTable costStatedOnce={uniformCostKind !== null} ranked title={`Models (${visibleModels.length})`} models={visibleModels} />
       ) : (
-        <>
-          <ModelGrid title={`Ranked by quality (${rated.length})`} models={rated} />
-          {unrated.length > 0 && (
-            <ModelGrid
-              title={`No quality evidence (${unrated.length})`}
-              models={unrated}
-              note="No benchmark publishes a figure for these models. Operational data is shown below."
-            />
-          )}
-        </>
-      )}
-
-      {pending.length > 0 && (
-        <ModelTable
-          title={`Needs verification (${pending.length})`}
-          models={pending}
-          note={`These models are served by the provider, but at least one operational fact could not be resolved from any source. They are listed here rather than inside the catalog so an incomplete row never sits beside a complete one: ${[...new Set(pending.flatMap((m) => m.missingFacts))].join(', ')}.`}
-        />
+        <ModelGrid costStatedOnce={uniformCostKind !== null} ranked title={`Models (${visibleModels.length})`} models={visibleModels} />
       )}
 
       <section className={styles.provenance}>
@@ -175,61 +258,239 @@ export function ProviderPage() {
   );
 }
 
-function ModelTable({ title, models, note }: { title: string; models: ApiModel[]; note?: string }) {
+const rowKey = (m: ApiModel) => `${m.providerId}/${m.modelId}`;
+
+/**
+ * The id to show under the model name, and what it means.
+ *
+ * Two questions share this slot and they are not the same: `canonicalId` is the
+ * reference-index entry a SCORE was taken from, `vendorModelId` is which model
+ * the row is. A row can have the second without the first — `cline-pass/glm-5.3`
+ * is `z-ai/glm-5.3` from Z.ai's own listing, which is also where its 1M context
+ * came from — and printing a sentence about the missing first one answered a
+ * question the column does not ask. They are told apart by their titles, because
+ * rendering them identically would claim a measurement that does not exist.
+ */
+function displayIdentity(m: ApiModel): { id: string; title: string; fromVendor: boolean } | null {
+  if (m.canonicalId && m.canonicalId.replace(/^[^/]+\//, '') !== m.modelId) {
+    return {
+      id: m.canonicalId,
+      title: 'The upstream model this row was proven to be. Two providers serving it share one score.',
+      fromVendor: false,
+    };
+  }
+  if (m.vendorModelId) {
+    return {
+      id: m.vendorModelId,
+      title:
+        "The vendor's id for this model, from its own listing in the spec feed — not the entry a benchmark figure was taken from, because no reference index lists this model yet.",
+      fromVendor: true,
+    };
+  }
+  return null;
+}
+
+/**
+ * What the rank is measured against.
+ *
+ * Without it a thirteen-row table numbered #1, #2, #5, #5, #8 … with an `=` on
+ * almost every row reads as broken. Both are correct and neither is legible on
+ * its own: the ranking is over every scored model in the catalog, so another
+ * provider's model sits in each gap, and a tie is usually the SAME model sold by
+ * another provider — filtered out of this view, leaving a tie with nobody
+ * visible. The number was never wrong; its scope was never stated.
+ */
+const RANK_SCOPE_NOTE =
+  'Global rank across all catalog offers. Global rank shown for models with a complete overall-score-v1 result only. Numbers can skip when another provider’s offer sits between two rows. An = marks a tie the evidence cannot separate.';
+
+/**
+ * What each non-resolved identity state says in the row.
+ *
+ * This slot holds a canonical id on every other row — `moonshotai/kimi-k3` —
+ * so the question it asks the reader is *which entry in the reference index is
+ * this*. It used to answer a different one: `identity review (1 refused)` names
+ * the workflow state the row is parked in, which is true, internal, and leaves a
+ * reader to guess what was reviewed and what was refused. These say what the
+ * row's identity IS, and keep the count — "investigated" and "untouched" must
+ * stay tellable apart, which is the whole reason the review state exists.
+ *
+ * They name the INDEX rather than saying "upstream", because "no upstream match"
+ * contradicted the row it sat on: models.dev identifies `cline-pass/glm-5.3`
+ * under Z.ai's own storefronts, and that listing is where the same row's 1M
+ * context and 128K max output came from. One index has no entry; upstream in
+ * general knows the model perfectly well.
+ *
+ * `unknown` gets its own wording because the other two are findings and it is
+ * not one. Printing "no upstream match" for a response that never carried the
+ * field asserts that we looked upstream and found nothing — and it would print
+ * that beside a canonical id that contradicts it.
+ */
+const IDENTITY_NOTE: Record<
+  Exclude<ApiModel['identityState'], 'resolved'>,
+  { label: (m: ApiModel) => string; title: (m: ApiModel) => string }
+> = {
+  identity_review: {
+    label: (m) =>
+      `not in the reference index · ${m.rejectedCandidates.length} candidate${m.rejectedCandidates.length === 1 ? '' : 's'} refused`,
+    title: (m) =>
+      `The reference index carries no entry for this model, so there is no canonical id to bind it to and no benchmark figure to attach. ${m.rejectedCandidates.length} candidate(s) were examined and refused on evidence — open the evidence to see which, and why. Other sources may well identify this model; this is a statement about one index.`,
+  },
+  unresolved: {
+    label: () => 'not in the reference index',
+    title: () =>
+      'The reference index carries no entry matching this id, and no candidate has been examined and recorded. Other sources may still identify this model — this is a statement about one index, not about the model.',
+  },
+  unknown: {
+    label: () => 'identity not reported',
+    title: () =>
+      'This catalog service response did not carry an identity state for this row. Unknown — not a finding that nothing matched.',
+  },
+};
+
+/**
+ * How much of this row's story is not visible in the row itself.
+ *
+ * The count is the point: a row with three conflicts and two refused identity
+ * candidates should not look the same as one with a clean provenance trail, or
+ * nobody will ever open either.
+ */
+function EvidenceToggle({ model, open, onToggle }: { model: ApiModel; open: boolean; onToggle: () => void }) {
+  const resolutionFlag = model.resolution.state === 'complete' ? 0 : 1;
+  const scoreFlag = model.overallScore.status === 'complete' ? 0 : 1;
+  const flags = model.conflicts.length + model.rejectedCandidates.length + model.missingFacts.length + resolutionFlag + scoreFlag;
+  return (
+    <button
+      type="button"
+      className={flags > 0 ? styles.evidenceBtnFlagged : styles.evidenceBtn}
+      onClick={onToggle}
+      aria-expanded={open}
+      title={
+        flags > 0
+          ? `${model.missingFacts.length} missing, ${model.conflicts.length} conflicted, ${model.rejectedCandidates.length} refused candidate(s)`
+          : 'Where every value came from'
+      }
+      data-testid={`evidence-toggle-${model.modelId}`}
+    >
+      {open ? 'hide' : 'why'}
+      {flags > 0 && <span className={styles.evidenceCount}>{flags}</span>}
+    </button>
+  );
+}
+
+function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean; ranked?: boolean }) {
+  const [openRows, setOpenRows] = useState<Set<string>>(() => new Set());
+  const toggleRow = (k: string) =>
+    setOpenRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
   if (models.length === 0) return null;
   return (
     <div className={styles.tableWrap}>
       <h3 className={styles.tableTitle}>{title}</h3>
       {note && <p className={styles.tableNote}>{note}</p>}
+      {ranked && (
+        <p className={styles.tableNote} data-testid="rank-scope-note">
+          {RANK_SCOPE_NOTE}
+        </p>
+      )}
       <div className={styles.tableScroll}>
         <table className={styles.table}>
           <thead>
             <tr>
-              <th className={styles.narrow}>Rank</th>
+              <th className={styles.narrow}>#</th>
               <th>Model</th>
-              <th>VQ</th>
-              <th>VO</th>
+              <th>Score</th>
               <th>Context</th>
               <th>Max out</th>
-              <th title="What this provider charges you per million input tokens.">In</th>
-              <th title="What this provider charges you per million output tokens.">Out</th>
+              {/* The column states its own semantics, so the cells do not have
+                  to repeat it once per row. */}
+              <th
+                data-testid="cost-column-in"
+                title={
+                  costStatedOnce
+                    ? 'The published per-million-token input rate this plan meters usage against. Not a charge.'
+                    : 'What this provider charges you per million input tokens.'
+                }
+              >
+                In{costStatedOnce ? <span className={styles.thNote}> · ref</span> : ''}
+              </th>
+              <th
+                data-testid="cost-column-out"
+                title={
+                  costStatedOnce
+                    ? 'The published per-million-token output rate this plan meters usage against. Not a charge.'
+                    : 'What this provider charges you per million output tokens.'
+                }
+              >
+                Out{costStatedOnce ? <span className={styles.thNote}> · ref</span> : ''}
+              </th>
               <th>Capabilities</th>
+              <th className={styles.narrow}>Evidence</th>
             </tr>
           </thead>
           <tbody>
             {models.map((m) => (
-              <tr key={`${m.providerId}/${m.modelId}`}>
-                <td className={styles.narrow}><RankCell model={m} /></td>
+              <Fragment key={`${m.providerId}/${m.modelId}`}>
+              <tr>
+                <td className={styles.narrow}><ModelRankCell model={m} /></td>
                 <td>
                   <span className={styles.modelName}>{m.modelId}</span>
-                  {!m.catalogReady && (
-                    <span className={styles.pendingNote} title={`Unresolved: ${m.missingFacts.join(', ')}`}>
-                      unresolved: {m.missingFacts.join(', ')}
+                  {/* Identity is its own axis. A row parked in review HAS been
+                      investigated; showing nothing would read as un-examined.
+                      Suppressed once an id can be shown instead: the column asks
+                      which model this is, and an id answers it — the review
+                      state and its refused candidates are still one click away
+                      on the evidence badge, which carries their count.
+
+                      Only when the id shown came from the VENDOR. `unknown`
+                      keeps its note precisely because a canonical id IS present
+                      and the state was not reported — the note is what stops the
+                      id from reading as a confirmed identity. */}
+                  {m.identityState !== 'resolved' && !displayIdentity(m)?.fromVendor && (
+                    <span className={styles.identityNote} title={IDENTITY_NOTE[m.identityState].title(m)}>
+                      {IDENTITY_NOTE[m.identityState].label(m)}
                     </span>
                   )}
-                  {m.canonicalId && m.canonicalId.replace(/^[^/]+\//, '') !== m.modelId && (
-                    <span className={styles.canonical} title="The upstream model this row was proven to be. Two providers serving it share one score.">
-                      {m.canonicalId}
-                    </span>
-                  )}
+                  {(() => {
+                    const shown = displayIdentity(m);
+                    return shown && (
+                      <span className={styles.canonical} title={shown.title}>
+                        {shown.id}
+                      </span>
+                    );
+                  })()}
                 </td>
-                <td><VQCell model={m} /></td>
-                <td><VOCell model={m} /></td>
-                <td className={styles.num}>{formatTokens(m.contextTokens)}</td>
-                <td className={styles.num}>{formatTokens(m.maxOutputTokens)}</td>
-                <td className={styles.num}><CostCell model={m} side="in" /></td>
-                <td className={styles.num}><CostCell model={m} side="out" /></td>
+                <td><ModelScoreCell model={m} /></td>
+                <td className={styles.num}>
+                  <FactState state={factStateOf(m, 'context', m.contextTokens)}>
+                    {formatTokens(m.contextTokens)}
+                  </FactState>
+                </td>
+                <td className={styles.num}>
+                  <FactState state={factStateOf(m, 'maxOutput', m.maxOutputTokens)}>
+                    {formatTokens(m.maxOutputTokens)}
+                  </FactState>
+                </td>
+                <td className={styles.num}><CostCell model={m} side="in" statedOnce={costStatedOnce} /></td>
+                <td className={styles.num}><CostCell model={m} side="out" statedOnce={costStatedOnce} /></td>
                 <td>
-                  <div className={styles.caps}>
-                    {m.capabilities.tools && <span className={styles.cap}>tools</span>}
-                    {m.capabilities.reasoning && <span className={styles.cap}>reasoning</span>}
-                    {m.capabilities.structured && <span className={styles.cap}>structured</span>}
-                    {(m.inputModalities ?? []).filter((x) => x !== 'text').map((x) => (
-                      <span key={x} className={styles.cap}>{x}</span>
-                    ))}
-                  </div>
+                  <CapabilityBadges model={m} showUnknown />
+                </td>
+                <td className={styles.narrow}>
+                  <EvidenceToggle model={m} open={openRows.has(rowKey(m))} onToggle={() => toggleRow(rowKey(m))} />
                 </td>
               </tr>
+              {openRows.has(rowKey(m)) && (
+                <tr className={styles.evidenceRow}>
+                  <td colSpan={9}>
+                    <EvidencePanel model={m} />
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
         </table>
@@ -238,63 +499,79 @@ function ModelTable({ title, models, note }: { title: string; models: ApiModel[]
   );
 }
 
-function ModelGrid({ title, models, note }: { title: string; models: ApiModel[]; note?: string }) {
+function ModelGrid({ title, models, note, costStatedOnce, ranked }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean; ranked?: boolean }) {
+  const [openCards, setOpenCards] = useState<Set<string>>(() => new Set());
+  const toggleCard = (key: string) => setOpenCards((previous) => {
+    const next = new Set(previous);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  });
   if (models.length === 0) return null;
   return (
     <div className={styles.tableWrap}>
       <h3 className={styles.tableTitle}>{title}</h3>
       {note && <p className={styles.tableNote}>{note}</p>}
+      {ranked && (
+        <p className={styles.tableNote} data-testid="rank-scope-note">
+          {RANK_SCOPE_NOTE}
+        </p>
+      )}
       <div className={styles.modelGrid}>
         {models.map((m) => (
           <div key={`${m.providerId}/${m.modelId}`} className={styles.modelCard}>
             <div className={styles.modelCardTop}>
               <div>
                 <span className={styles.modelName}>{m.modelId}</span>
-                {m.canonicalId && m.canonicalId.replace(/^[^/]+\//, '') !== m.modelId && (
-                  <span className={styles.canonical}>{m.canonicalId}</span>
-                )}
+                {(() => {
+                  const shown = displayIdentity(m);
+                  return shown && (
+                    <span className={styles.canonical} title={shown.title}>
+                      {shown.id}
+                    </span>
+                  );
+                })()}
               </div>
-              <RankCell model={m} />
+              <ModelRankCell model={m} />
             </div>
 
             <div className={styles.modelCardScores}>
               <div className={styles.scorePill}>
-                <span className={styles.scoreTag}>VQ</span>
-                <VQCell model={m} />
-              </div>
-              <div className={styles.scorePill}>
-                <span className={styles.scoreTag}>VO</span>
-                <VOCell model={m} />
+                <span className={styles.scoreTag}>Score</span>
+                <ModelScoreCell model={m} />
               </div>
             </div>
 
             <div className={styles.modelCardStats}>
               <div className={styles.miniStat}>
-                <span className={styles.miniVal}>{formatTokens(m.contextTokens)}</span>
+                <span className={styles.miniVal}>
+                  <FactState state={factStateOf(m, 'context', m.contextTokens)}>{formatTokens(m.contextTokens)}</FactState>
+                </span>
                 <span className={styles.miniLbl}>Context</span>
               </div>
               <div className={styles.miniStat}>
-                <span className={styles.miniVal}>{formatTokens(m.maxOutputTokens)}</span>
+                <span className={styles.miniVal}>
+                  <FactState state={factStateOf(m, 'maxOutput', m.maxOutputTokens)}>{formatTokens(m.maxOutputTokens)}</FactState>
+                </span>
                 <span className={styles.miniLbl}>Max out</span>
               </div>
               <div className={styles.miniStat}>
-                <span className={styles.miniVal}><CostCell model={m} side="in" /></span>
+                <span className={styles.miniVal}><CostCell model={m} side="in" statedOnce={costStatedOnce} /></span>
                 <span className={styles.miniLbl}>In</span>
               </div>
               <div className={styles.miniStat}>
-                <span className={styles.miniVal}><CostCell model={m} side="out" /></span>
+                <span className={styles.miniVal}><CostCell model={m} side="out" statedOnce={costStatedOnce} /></span>
                 <span className={styles.miniLbl}>Out</span>
               </div>
             </div>
 
-            <div className={styles.caps}>
-              {m.capabilities.tools && <span className={styles.cap}>tools</span>}
-              {m.capabilities.reasoning && <span className={styles.cap}>reasoning</span>}
-              {m.capabilities.structured && <span className={styles.cap}>structured</span>}
-              {(m.inputModalities ?? []).filter((x) => x !== 'text').map((x) => (
-                <span key={x} className={styles.cap}>{x}</span>
-              ))}
-            </div>
+            <CapabilityBadges model={m} />
+            <EvidenceToggle
+              model={m}
+              open={openCards.has(rowKey(m))}
+              onToggle={() => toggleCard(rowKey(m))}
+            />
+            {openCards.has(rowKey(m)) && <EvidencePanel model={m} />}
           </div>
         ))}
       </div>
@@ -302,11 +579,34 @@ function ModelGrid({ title, models, note }: { title: string; models: ApiModel[];
   );
 }
 
-function Stat({ value, label, isFree }: { value: string; label: string; isFree?: boolean }) {
+interface StatProps {
+  value: string;
+  label: string;
+  status: 'ok' | 'warn' | 'error';
+  statusTitle?: string;
+  isFree?: boolean;
+  /** Set where a test needs to read the status back rather than infer it from an icon. */
+  testId?: string;
+}
+
+function Stat({ value, label, status, statusTitle, isFree, testId }: StatProps) {
+  const Icon = status === 'ok' ? LuCircleCheck : status === 'warn' ? LuTriangleAlert : LuCircleX;
+
   return (
     <div className={`${styles.stat} ${isFree ? styles.freeStat : ''}`}>
-      <span className={styles.statValue}>{value}</span>
-      <span className={styles.statLabel}>{label}</span>
+      <div className={styles.statContent}>
+        <span className={styles.statValue}>{value}</span>
+        <span className={styles.statLabel}>{label}</span>
+      </div>
+      <div
+        className={`${styles.statStatus} ${styles[`status_${status}`]}`}
+        title={statusTitle}
+        aria-label={statusTitle}
+        data-testid={testId}
+        data-status={status}
+      >
+        <Icon size={18} />
+      </div>
     </div>
   );
 }
@@ -317,5 +617,137 @@ function Row({ k, children }: { k: string; children: React.ReactNode }) {
       <dt className={styles.provKey}>{k}</dt>
       <dd className={styles.provVal}>{children}</dd>
     </div>
+  );
+}
+
+function CapabilityBadges({ model, showUnknown = false }: { model: ApiModel; showUnknown?: boolean }) {
+  const caps: React.ReactNode[] = [];
+
+  if (model.capabilities.tools) {
+    caps.push(
+      <span
+        key="tools"
+        className={`${styles.capIcon} ${styles.capTools}`}
+        title="Tools (Function calling / API use)"
+      >
+        <LuWrench size={14} />
+      </span>
+    );
+  }
+  if (model.capabilities.reasoning) {
+    caps.push(
+      <span
+        key="reasoning"
+        className={`${styles.capIcon} ${styles.capReasoning}`}
+        title="Reasoning / Deep Thinking"
+      >
+        <LuBrain size={14} />
+      </span>
+    );
+  }
+  if (model.capabilities.structured) {
+    caps.push(
+      <span
+        key="structured"
+        className={`${styles.capIcon} ${styles.capStructured}`}
+        title="Structured Output (JSON schema / grammar)"
+      >
+        <LuBraces size={14} />
+      </span>
+    );
+  }
+
+  if (model.capabilities.attachment) {
+    caps.push(
+      <span
+        key="attachment"
+        className={`${styles.capIcon} ${styles.capAttachment}`}
+        title="Attachments (Files / Documents)"
+        aria-label="Attachments (Files / Documents)"
+      >
+        <LuPaperclip size={14} />
+      </span>
+    );
+  }
+
+  const modalities = model.inputModalities ?? [];
+  modalities.forEach((mod) => {
+    if (mod === 'image') {
+      caps.push(
+        <span
+          key="image"
+          className={`${styles.capIcon} ${styles.capImage}`}
+          title="Image Input (Vision)"
+        >
+          <LuImage size={14} />
+        </span>
+      );
+    } else if (mod === 'audio') {
+      caps.push(
+        <span
+          key="audio"
+          className={`${styles.capIcon} ${styles.capAudio}`}
+          title="Audio Input"
+        >
+          <LuMic size={14} />
+        </span>
+      );
+    } else if (mod === 'video') {
+      caps.push(
+        <span
+          key="video"
+          className={`${styles.capIcon} ${styles.capVideo}`}
+          title="Video Input"
+        >
+          <LuVideo size={14} />
+        </span>
+      );
+    }
+  });
+
+  return (
+    <div className={styles.caps}>
+      {caps}
+      {showUnknown &&
+        (['tools', 'reasoning', 'structured', 'attachment'] as const)
+          .filter((f) => model.capabilities[f] === null)
+          .map((f) => (
+            <CapabilityUnknownIcon key={f} field={f} model={model} />
+          ))}
+    </div>
+  );
+}
+
+const CAPABILITY_UNKNOWN: Record<
+  'tools' | 'reasoning' | 'structured' | 'attachment',
+  { label: string; icon: typeof LuWrench; className: string }
+> = {
+  tools: { label: 'Tools', icon: LuWrench, className: 'capTools' },
+  reasoning: { label: 'Reasoning', icon: LuBrain, className: 'capReasoning' },
+  structured: { label: 'Structured output', icon: LuBraces, className: 'capStructured' },
+  attachment: { label: 'Attachments', icon: LuPaperclip, className: 'capAttachment' },
+};
+
+function CapabilityUnknownIcon({
+  field,
+  model,
+}: {
+  field: keyof typeof CAPABILITY_UNKNOWN;
+  model: ApiModel;
+}) {
+  const state = factStateOf(model, field, null);
+  const detail = CAPABILITY_UNKNOWN[field];
+  const Icon = detail.icon;
+  const stateLabel = state === 'conflicted' ? 'sources disagree' : 'not published by any source';
+
+  return (
+    <span
+      className={`${styles.capIcon} ${styles[detail.className as keyof typeof styles]} ${styles.capState} ${styles[`capState${state[0].toUpperCase()}${state.slice(1)}` as keyof typeof styles]}`}
+      title={`${detail.label}: ${stateLabel}`}
+      aria-label={`${detail.label} — ${stateLabel}`}
+      data-state={state}
+    >
+      <Icon size={14} />
+    </span>
   );
 }

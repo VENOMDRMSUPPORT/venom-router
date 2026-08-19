@@ -95,8 +95,8 @@ export type SortKey = 'vq' | 'vo';
  * The contract a client must follow to sort a list.
  *
  * Returned rather than applied, so the API can hand the same policy to the SPA
- * and both stay in step. `sortKey: 'vq'` never consults VO, and vice versa —
- * there is no blended ordering, because there is no blended score.
+ * and both stay in step. This legacy base-score contract never blends VQ and
+ * VO; the composite ordering is declared separately in `model-score.ts`.
  */
 export interface SortContract {
   key: SortKey;

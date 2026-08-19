@@ -34,11 +34,20 @@ function migrate(db: Db): void {
       'raw_field TEXT',
       'transformation TEXT',
       'source_fetched_at TEXT',
+      'unrated_reason TEXT',
     ],
     models: [
       'ref_cost_in_per_m REAL',
       'ref_cost_out_per_m REAL',
       'cost_kind TEXT',
+      'exclusion_reason TEXT',
+    ],
+    model_facts: [
+      'source_url TEXT',
+      'evidence_state TEXT',
+      'raw_value TEXT',
+      'resolver_version TEXT',
+      'probe_version TEXT',
     ],
   };
   for (const [table, columns] of Object.entries(ADDED)) {
@@ -50,6 +59,27 @@ function migrate(db: Db): void {
       if (!existing.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${def}`);
     }
   }
+  retireSupersededFacts(db);
+}
+
+/**
+ * Drop fact rows whose field no longer exists.
+ *
+ * `cost` was one blob holding the billing kind, the effective price and the
+ * reference price under a single source label. It is now three facts with three
+ * sources, and the old row is not history worth keeping — it is a field with no
+ * provenance at all, which is exactly what the split exists to eliminate. Every
+ * value it held is fully represented by its replacements.
+ *
+ * This deletes a *superseded projection*, not a fact about the world: unlike
+ * `models` and `model_events`, `model_facts` is current-resolution state that
+ * the enrichment pass already overwrites on every run.
+ */
+const SUPERSEDED_FACT_FIELDS = ['cost'];
+
+function retireSupersededFacts(db: Db): void {
+  const placeholders = SUPERSEDED_FACT_FIELDS.map(() => '?').join(',');
+  db.prepare(`DELETE FROM model_facts WHERE field IN (${placeholders})`).run(...SUPERSEDED_FACT_FIELDS);
 }
 
 /**

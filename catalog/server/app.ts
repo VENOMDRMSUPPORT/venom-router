@@ -4,7 +4,7 @@
  */
 
 import type { Db } from '../db/index.ts';
-import { loadModels, loadProviders, loadMeta, loadProvenance, STALE_AFTER_HOURS } from './read-model.ts';
+import { loadModels, loadProviders, loadMeta, loadProvenance, loadEvaluationDiagnostics, STALE_AFTER_HOURS } from './read-model.ts';
 import { loadChanges } from './changes.ts';
 import type { SyncRunner, SchedulerHandle } from './sync-runner.ts';
 
@@ -104,12 +104,13 @@ export function route(deps: AppDeps, url: URL, method: string): HttpResult | Pro
 
   if (path === '/v1/models' && method === 'GET') {
     const includeRetired = url.searchParams.get('includeRetired') === 'true';
-    let models = loadModels(db, { includeRetired });
+    const allModels = loadModels(db, { includeRetired });
+    let models = allModels;
     const provider = url.searchParams.get('provider');
     if (provider) models = models.filter((m) => m.providerId === provider);
     const level = url.searchParams.get('evidence');
     if (level) models = models.filter((m) => m.vq.evidenceLevel === level);
-    return { status: 200, body: { models, meta: loadMeta(db, loadModels(db, { includeRetired })) } };
+    return { status: 200, body: { models, meta: loadMeta(db, allModels) } };
   }
 
   const provenance = /^\/v1\/models\/([^/]+)\/([^]+)\/provenance$/.exec(path);
@@ -118,6 +119,14 @@ export function route(deps: AppDeps, url: URL, method: string): HttpResult | Pro
     return detail
       ? { status: 200, body: detail }
       : { status: 404, body: { error: 'no scored value for that model', providerId: provenance[1], modelId: provenance[2] } };
+  }
+
+  const evaluation = /^\/v1\/models\/([^/]+)\/([^]+)\/evaluation$/.exec(path);
+  if (evaluation && method === 'GET') {
+    const detail = loadEvaluationDiagnostics(db, decodeURIComponent(evaluation[1]), decodeURIComponent(evaluation[2]));
+    return detail
+      ? { status: 200, body: detail }
+      : { status: 404, body: { error: 'model not found', providerId: evaluation[1], modelId: evaluation[2] } };
   }
 
   if (path === '/v1/changes' && method === 'GET') {

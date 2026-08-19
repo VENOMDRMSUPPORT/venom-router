@@ -8,13 +8,15 @@
  */
 
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb, type Db } from '../db/index.ts';
+import { openDb } from '../db/index.ts';
 import { SyncRunner, startScheduler } from './sync-runner.ts';
 import { route } from './app.ts';
+import { writeSnapshot } from './snapshot.ts';
 import type { ScoreProfile } from '../sync/score/venom-score.ts';
+import type { RejectionOverlay } from '../sync/identity-rejections.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const BIND_HOST = '127.0.0.1';
@@ -29,34 +31,36 @@ export function loadIdentityOverlay(): Record<string, string> {
   return JSON.parse(readFileSync(join(HERE, '..', 'overlays', 'identity.json'), 'utf8')).mappings ?? {};
 }
 
-/** Deterministic JSON mirror of the database. Also the SPA's offline fallback. */
-export function writeSnapshot(db: Db): void {
-  const dir = join(HERE, '..', 'data', 'snapshot');
-  mkdirSync(dir, { recursive: true });
-  const models = db
-    .prepare(
-      `SELECT m.*, vq.value vq_value, vq.uncertainty vq_uncertainty, vq.evidence_level vq_level,
-              vq.source_model_id vq_canonical, vq.precision_dp vq_precision, vo.value vo_value
-       FROM models m
-       LEFT JOIN model_scores vq ON vq.provider_id=m.provider_id AND vq.model_id=m.model_id AND vq.kind='VQ'
-       LEFT JOIN model_scores vo ON vo.provider_id=m.provider_id AND vo.model_id=m.model_id AND vo.kind='VO'
-       WHERE m.status != 'retired' ORDER BY m.provider_id, m.model_id`,
-    )
-    .all();
-  writeFileSync(
-    join(dir, 'catalog.json'),
-    JSON.stringify({ generatedAt: new Date().toISOString(), providers: db.prepare('SELECT * FROM providers ORDER BY id').all(), models }, null, 1),
-  );
+/**
+ * The overlay's refused-candidate records.
+ *
+ * Loaded alongside the mappings rather than folded into them, because they are
+ * opposite claims: one decision resolved an identity, the other refused a
+ * candidate. The ingestion needs both together so an id claimed by each fails
+ * the run instead of resolving to whichever was read first.
+ */
+export function loadIdentityRejections(): RejectionOverlay {
+  const raw = JSON.parse(readFileSync(join(HERE, '..', 'overlays', 'identity.json'), 'utf8'));
+  return raw.rejected ?? { entries: {} };
 }
 
-export function createApp(port = DEFAULT_PORT) {
-  const db = openDb();
+/**
+ * @param dbPath override the database file.
+ *
+ * Exists so a verification or review instance can run against a COPY. Two
+ * writers on one SQLite file is the one way to actually corrupt it, and the live
+ * service already holds the default path — so inspecting a change must never
+ * mean contending for that file.
+ */
+export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) {
+  const db = dbPath ? openDb(dbPath) : openDb();
   const { methodologyVersion, profiles } = loadProfiles();
   const runner = new SyncRunner({
     db,
     profile: profiles.find((p) => p.id === 'balanced')!,
     methodologyVersion,
     identityOverlay: loadIdentityOverlay(),
+    identityRejections: loadIdentityRejections(),
     onSnapshot: writeSnapshot,
   });
   const scheduler = startScheduler(runner);

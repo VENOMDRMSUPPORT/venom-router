@@ -101,7 +101,7 @@ describe('isAcceptable — the gate that withholds bad calibration', () => {
 describe('applyCalibration', () => {
   test('carries the LOO error as the value uncertainty', () => {
     const c = fitCalibration(linear(60, 0.11, -99, 6))!;
-    const out = applyCalibration(c, 1200);
+    const out = applyCalibration(c, 1200)!;
     assert.equal(out.uncertainty, c.looRmse);
     assert.ok(out.uncertainty > 0, 'a calibrated value must never claim zero uncertainty');
   });

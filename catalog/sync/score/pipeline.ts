@@ -10,11 +10,22 @@ import { resolveIdentity, normalizeId } from '../identity.ts';
 import type { BenchmarkSource } from '../sources/openrouter.ts';
 import { fitCalibration, isAcceptable, type Calibration } from './calibration.ts';
 import { computeVQ, computeVO, type ScoreProfile, type VOPopulations } from './venom-score.ts';
+import type { CostKind } from '../enrich/resolvers.ts';
+import type { ReviewedBound } from '../quality-bounds.ts';
 
 export interface ScoringDeps {
   db: Db;
   benchmarks: BenchmarkSource;
   overlay: Record<string, string>;
+  /**
+   * Reviewed one-sided bounds, keyed by catalog model id.
+   *
+   * The last resort, and the only route by which a row whose identity no index
+   * can settle carries a figure at all. Optional so a caller can score without
+   * one — absent means "no bound was reviewed", which leaves the row unrated,
+   * never a value invented in its place.
+   */
+  bounds?: Record<string, ReviewedBound>;
   profile: ScoreProfile;
   methodologyVersion: string;
   /** When the upstream payloads behind this pass were fetched. */
@@ -42,6 +53,7 @@ interface ModelRow {
   structured: number | null;
   attachment: number | null;
   cost_out_per_m: number | null;
+  cost_kind: string | null;
 }
 
 /**
@@ -86,7 +98,13 @@ export function scoreAll(deps: ScoringDeps): ScoringSummary {
   const pop: VOPopulations = {
     context: models.filter((m) => m.context_tokens).map((m) => Math.log(m.context_tokens!)),
     output: models.filter((m) => m.output_tokens).map((m) => Math.log(m.output_tokens!)),
-    cost: models.filter((m) => m.cost_out_per_m !== null).map((m) => m.cost_out_per_m!),
+    // `free` billing is $0 even when no per-token figure was published (a free,
+    // quota-limited provider). It joins the population as 0 so the cost
+    // percentile is computed over the same set the scorer treats as free — a
+    // feed-published zero and a declared free both count once, as 0.
+    cost: models
+      .filter((m) => m.cost_out_per_m !== null || m.cost_kind === 'free')
+      .map((m) => (m.cost_kind === 'free' ? 0 : m.cost_out_per_m!)),
   };
 
   const levels: Record<string, number> = { measured: 0, calibrated: 0, bounded: 0, unrated: 0 };
@@ -109,15 +127,15 @@ export function scoreAll(deps: ScoringDeps): ScoringSummary {
     const upsert = db.prepare(
       `INSERT INTO model_scores (provider_id, model_id, kind, value, uncertainty, bound, evidence_level, source,
                                  source_model_id, raw_value, raw_field, transformation, source_fetched_at,
-                                 identity_rule, precision_dp, dimensions, profile_id,
+                                 identity_rule, unrated_reason, precision_dp, dimensions, profile_id,
                                  methodology_ver, calibration_ver, computed_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(provider_id, model_id, kind) DO UPDATE SET
          value = excluded.value, uncertainty = excluded.uncertainty, bound = excluded.bound,
          evidence_level = excluded.evidence_level, source = excluded.source,
          source_model_id = excluded.source_model_id, raw_value = excluded.raw_value,
          raw_field = excluded.raw_field, transformation = excluded.transformation,
-         source_fetched_at = excluded.source_fetched_at, identity_rule = excluded.identity_rule,
+         source_fetched_at = excluded.source_fetched_at, identity_rule = excluded.identity_rule, unrated_reason = excluded.unrated_reason,
          precision_dp = excluded.precision_dp, dimensions = excluded.dimensions,
          profile_id = excluded.profile_id, methodology_ver = excluded.methodology_ver,
          calibration_ver = excluded.calibration_ver, computed_at = excluded.computed_at`,
@@ -138,9 +156,19 @@ export function scoreAll(deps: ScoringDeps): ScoringSummary {
       }
 
       const rec = resolution.status === 'resolved' ? benchmarks.byId.get(resolution.target) : undefined;
+      // A reviewed bound is offered alongside the measured evidence, never
+      // instead of it: `computeVQ` reaches it only after direct and calibrated
+      // have both declined, so a model that gains a real figure supersedes its
+      // bound automatically, with no overlay cleanup needed to stay correct.
+      const reviewed = deps.bounds?.[m.model_id];
       const vq = computeVQ(
         resolution,
-        { direct: rec?.intelligence, calibratable: rec?.designElo, group: rec?.vendor },
+        {
+          direct: rec?.intelligence,
+          calibratable: rec?.designElo,
+          group: rec?.vendor,
+          bound: reviewed ? { value: reviewed.value, side: reviewed.side, reason: reviewed.reason } : undefined,
+        },
         accepted ? calibration : null,
       );
       levels[vq.level]++;
@@ -155,7 +183,7 @@ export function scoreAll(deps: ScoringDeps): ScoringSummary {
 
       upsert.run(m.provider_id, m.model_id, 'VQ', vq.value, vq.uncertainty, vq.bound, vq.level,
         vq.source, vq.sourceModelId, vq.rawValue, vq.rawField, vq.transformation, deps.sourceFetchedAt,
-        vq.identityRule, vq.precision, null, null,
+        vq.identityRule, vq.unratedReason, vq.precision, null, null,
         methodologyVersion, vq.level === 'calibrated' ? calibrationVersion : null, at);
 
       const vo = computeVO(
@@ -168,6 +196,7 @@ export function scoreAll(deps: ScoringDeps): ScoringSummary {
           attachment: m.attachment === null ? undefined : Boolean(m.attachment),
           inputModalities: m.input_modalities ? (JSON.parse(m.input_modalities) as string[]) : undefined,
           costOutputPerM: m.cost_out_per_m,
+          billingKind: (m.cost_kind ?? 'unknown') as CostKind,
         },
         pop,
         profile,
@@ -175,8 +204,8 @@ export function scoreAll(deps: ScoringDeps): ScoringSummary {
       // 'derived' is VO's evidence level in the SAME vocabulary VQ uses.
       // Dimension coverage is not an evidence level and lives in `dimensions`.
       upsert.run(m.provider_id, m.model_id, 'VO', vo.value, null, null,
-        'derived', 'models.dev', null, null, null, null, deps.sourceFetchedAt, null, 0,
-        JSON.stringify({ dimensions: vo.dimensions, missing: vo.missing }), profile.id,
+        'derived', 'models.dev', null, null, null, null, deps.sourceFetchedAt, null, null, 0,
+        JSON.stringify({ dimensions: vo.dimensions, missing: vo.missing, notApplicable: vo.notApplicable }), profile.id,
         methodologyVersion, null, at);
     }
   });

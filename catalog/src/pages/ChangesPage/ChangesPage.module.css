@@ -4,22 +4,6 @@
   color: var(--foreground-tertiary);
 }
 
-.back {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--foreground-secondary);
-  margin-bottom: 24px;
-  transition: color var(--transition-fast);
-  text-decoration: none;
-}
-
-.back:hover {
-  color: var(--foreground);
-}
-
 .header {
   padding: 24px;
   border: 1px solid var(--border);

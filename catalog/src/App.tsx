@@ -7,6 +7,7 @@ import { MobileMenu } from './components/MobileMenu/MobileMenu';
 import { DashboardPage } from './pages/DashboardPage/DashboardPage';
 import { ProviderPage } from './pages/ProviderPage/ProviderPage';
 import { ChangesPage } from './pages/ChangesPage/ChangesPage';
+import { SettingsPage } from './pages/SettingsPage/SettingsPage';
 import { NotFoundPage } from './pages/NotFoundPage/NotFoundPage';
 
 export default function App() {
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/provider/:id" element={<ProviderPage />} />
           <Route path="/changes" element={<ChangesPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </main>

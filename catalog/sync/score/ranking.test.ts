@@ -7,12 +7,12 @@ import type { VQ, VO } from './venom-score.ts';
 const vq = (value: number | null, uncertainty: number | null, level: VQ['level']): VQ => ({
   kind: 'VQ', value, uncertainty, bound: null, level,
   source: null, sourceModelId: null, identityRule: null,
-  rawValue: null, rawField: null, transformation: null,
+  rawValue: null, rawField: null, transformation: null, unratedReason: null,
   precision: level === 'measured' ? 1 : 0,
 });
 const vo = (value: number): VO => ({
   kind: 'VO', value, dimensions: { context: value, output: value, capabilities: value, cost: value },
-  missing: [], profileId: 'balanced',
+  missing: [], notApplicable: [], profileId: 'balanced',
 });
 const m = (modelId: string, q: VQ, o = vo(50)): ScoredModel => ({ providerId: 'p', modelId, vq: q, vo: o });
 

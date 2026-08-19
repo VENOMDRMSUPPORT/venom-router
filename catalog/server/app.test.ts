@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { openDb, type Db } from '../db/index.ts';
 import { route, health } from './app.ts';
 import { SyncRunner } from './sync-runner.ts';
-import { loadModels, loadProviders, loadMeta } from './read-model.ts';
-import { syncProvider, type ProviderAdapter } from '../sync/engine.ts';
+import { syncProvider, type ProviderAdapter, type SpecLookup } from '../sync/engine.ts';
 import { scoreAll } from '../sync/score/pipeline.ts';
 import { enrich, canonicalFromBenchmarks } from '../sync/enrich/enrich.ts';
 import { buildIndex } from '../sync/identity.ts';
 import type { BenchmarkSource } from '../sync/sources/openrouter.ts';
 import type { ScoreProfile } from '../sync/score/venom-score.ts';
+import { beginResolutionWindow, finishResolutionAttempt } from '../sync/resolution-jobs.ts';
 
 const PROFILE: ScoreProfile = {
   id: 'balanced', label: 'Balanced',
@@ -34,7 +34,20 @@ function benchmarks(): BenchmarkSource {
   return { index: buildIndex(records), byId: new Map(records.map((r) => [r.id, r])), count: records.length } as BenchmarkSource;
 }
 
-const adapter = (id: string, ids: string[]): ProviderAdapter => ({
+/**
+ * The feed, as one function.
+ *
+ * Production hands `specs.lookup` to BOTH the roster engine and `enrich`, so a
+ * fixture that gives the two different answers is testing a wiring that does
+ * not exist.
+ */
+const SPEC: SpecLookup = (_k, modelId) => ({
+  contextTokens: modelId.includes('big') ? 1_000_000 : 128_000,
+  outputTokens: 32_000, tools: true, reasoning: true, structured: true,
+  attachment: false, inputModalities: ['text'], costInPerM: 1, costOutPerM: modelId.includes('free') ? 0 : 5,
+});
+
+const adapter = (id: string): ProviderAdapter => ({
   id, name: id.toUpperCase(), rosterUrl: `https://${id}.test/v1/models`, feedKey: id,
   parseRoster: (b) => (b as { data: { id: string }[] }).data.map((m) => m.id),
 });
@@ -45,14 +58,10 @@ const now = () => new Date(Date.UTC(2026, 7, 12, 0, 0, clock++)).toISOString();
 
 async function seed(rosters: Record<string, string[]>) {
   for (const [id, ids] of Object.entries(rosters)) {
-    await syncProvider(adapter(id, ids), {
+    await syncProvider(adapter(id), {
       db, now,
       fetchJson: async () => ({ status: 200, body: { data: ids.map((x) => ({ id: x })) } }),
-      lookupSpec: (_k, modelId) => ({
-        contextTokens: modelId.includes('big') ? 1_000_000 : 128_000,
-        outputTokens: 32_000, tools: true, reasoning: true, structured: true,
-        inputModalities: ['text'], costInPerM: 1, costOutPerM: modelId.includes('free') ? 0 : 5,
-      }),
+      lookupSpec: SPEC,
     });
   }
   // The real pipeline always enriches before scoring, so the fixture does too —
@@ -60,7 +69,10 @@ async function seed(rosters: Record<string, string[]>) {
   // for a reason production never produces.
   const bm = benchmarks();
   enrich({
-    db, canonical: canonicalFromBenchmarks(bm), overlay: {}, billing: { acme: 'per_token', other: 'per_token' },
+    db, lookupSpec: SPEC, canonical: canonicalFromBenchmarks(bm), overlay: {}, billing: {
+      acme: { model: 'per_token', evidenceUrl: 'https://acme.test/pricing', note: 'per-token' },
+      other: { model: 'per_token', evidenceUrl: 'https://other.test/pricing', note: 'per-token' },
+    },
     intrinsic: () => null, now,
   });
   scoreAll({
@@ -109,10 +121,25 @@ describe('AC2 — provider counts reconcile with the global total', () => {
     }
   });
 
+  test('provider filtering does not turn catalog metadata or ranks into provider-local values', () => {
+    const global = get('/v1/models').body;
+    const providerId = global.models[0].providerId;
+    const filtered = get(`/v1/models?provider=${providerId}`).body;
+
+    assert.ok(filtered.models.length < global.models.length);
+    assert.equal(filtered.meta.liveModels, global.meta.liveModels);
+    for (const model of filtered.models) {
+      const globalModel = global.models.find(
+        (candidate: any) => candidate.providerId === model.providerId && candidate.modelId === model.modelId,
+      );
+      assert.equal(model.modelRank, globalModel.modelRank);
+    }
+  });
+
   test('the identity partition sums to liveModels', () => {
     const m = get('/v1/models').body.meta;
     const i = m.identity;
-    assert.equal(i.resolvedWithEvidence + i.resolvedWithoutEvidence + i.unresolved, m.liveModels);
+    assert.equal(i.resolved + i.identityReview + i.unresolved, m.liveModels);
   });
 
   test('identity rules are reported on their own axis, not as a partition of scored rows', () => {
@@ -120,7 +147,7 @@ describe('AC2 — provider counts reconcile with the global total', () => {
     // sum to resolved rows — never to qualityScored. Documented, not hidden.
     const m = get('/v1/models').body.meta;
     const ruleTotal = Object.values(m.identityRules).reduce((s: number, n: any) => s + n, 0);
-    assert.equal(ruleTotal, m.identity.resolvedWithEvidence + m.identity.resolvedWithoutEvidence);
+    assert.equal(ruleTotal, m.identity.resolved);
   });
 });
 
@@ -190,6 +217,131 @@ describe('AC4/AC5 — evidence and uncertainty survive serialization', () => {
   });
 });
 
+describe('model-score-v1 is projected once by the service', () => {
+  test('publishes the hand-calculated 70/30 score and policy', () => {
+    const body = get('/v1/models').body;
+    const model = body.models.find((m: any) => m.providerId === 'acme' && m.modelId === 'measured-1');
+    const expected = model.vq.value * 0.7 + Math.round(model.vo.value) * 0.3;
+
+    assert.equal(model.modelScore.value, expected);
+    assert.equal(model.modelScore.display, `${expected.toFixed(1)}%`);
+    assert.equal(model.modelScore.methodologyVersion, 'model-score-v1');
+    assert.deepEqual(body.meta.scoringPolicy, {
+      methodologyVersion: 'model-score-v1',
+      qualityWeight: 0.7,
+      operationalWeight: 0.3,
+      operationalPrecision: 0,
+    });
+    assert.equal(body.meta.sortContracts.modelScore.field, 'modelScore.value');
+  });
+
+  test('keeps a model without VQ outside the composite ranking', () => {
+    const model = get('/v1/models').body.models.find((m: any) => m.modelId === 'nobench-1');
+
+    assert.equal(model.vo.value > 0, true);
+    assert.equal(model.modelScore.value, null);
+    assert.equal(model.modelScore.reason, 'missing_vq');
+    assert.equal(model.modelRank, null);
+    assert.equal(model.tiedAtModelRank, false);
+  });
+
+  test('gives identical provider offerings the same dense global rank', () => {
+    const rows = get('/v1/models').body.models.filter((m: any) => m.modelId === 'measured-1');
+
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].modelScore.value, rows[1].modelScore.value);
+    assert.equal(rows[0].modelRank, rows[1].modelRank);
+    assert.equal(rows[0].tiedAtModelRank, true);
+    assert.equal(rows[1].tiedAtModelRank, true);
+  });
+
+  test('provider and catalog score coverage counts composite model scores', () => {
+    const body = get('/v1/models').body;
+    const provider = get('/v1/providers').body.providers.find((p: any) => p.id === 'acme');
+    const scored = body.models.filter((m: any) => m.providerId === 'acme' && m.modelScore.value !== null).length;
+    assert.equal(provider.modelScoreScored, scored);
+    assert.equal(body.meta.modelScoreScored, body.models.filter((m: any) => m.modelScore.value !== null).length);
+  });
+});
+
+describe('overall-score-v1 coexists with the legacy composite', () => {
+  test('publishes the stored overall result and server-owned global rank', () => {
+    db.prepare(`
+      INSERT INTO overall_model_scores (
+        provider_id, model_id, overall_score, quality_score, operational_score,
+        quality_coverage_json, overall_coverage_json, included_dimensions_json,
+        excluded_dimensions_json, status, uncertainty, reasons_json,
+        methodology_ver, computed_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      'acme', 'measured-1', 65.79, 67.5, 61.8,
+      JSON.stringify({ scored: 5, applicable: 5, percent: 100 }),
+      JSON.stringify({ scored: 7, applicable: 7, percent: 100 }),
+      JSON.stringify(['coding', 'reasoning', 'longContext', 'toolCalling', 'structuredOutput', 'speed', 'costEfficiency']),
+      JSON.stringify(['vision']), 'complete', 1.25, '[]',
+      'overall-score-v1', '2026-08-19T10:00:00.000Z',
+    );
+
+    const body = get('/v1/models').body;
+    const model = body.models.find((item: any) => item.providerId === 'acme' && item.modelId === 'measured-1');
+    assert.equal(model.modelScore.methodologyVersion, 'model-score-v1');
+    assert.equal(model.overallScore.value, 65.79);
+    assert.equal(model.overallScore.display, '65.8%');
+    assert.equal(model.overallScore.methodologyVersion, 'overall-score-v1');
+    assert.equal(model.overallRank, 1);
+    assert.equal(body.meta.overallScoreScored, 1);
+  });
+
+  test('exposes sanitized evaluation diagnostics without credentials or raw provider responses', () => {
+    db.prepare(`INSERT INTO model_identity_scores (
+      identity_id, dimension, score, raw_rate, uncertainty, confidence, sample_count,
+      status, rubric_version, test_set_hash, evidence_json, evaluated_at, methodology_ver
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      'acme/measured-1', 'coding', 72, 0.72, 2, 0.98, 60,
+      'scored', 'catalog-rubrics-v1', 'sha256:test', JSON.stringify(['run:1']),
+      '2026-08-19T10:00:00.000Z', 'overall-score-v1',
+    );
+    const response = get('/v1/models/acme/measured-1/evaluation');
+    assert.equal(response.status, 200);
+    assert.equal(response.body.identityDimensions[0].dimension, 'coding');
+    assert.equal(response.body.identityDimensions[0].score, 72);
+    assert.equal(response.body.providerId, 'acme');
+    assert.equal(response.body.modelId, 'measured-1');
+    assert.equal(JSON.stringify(response.body).includes('credential'), false);
+    assert.equal(JSON.stringify(response.body).includes('raw_response'), false);
+  });
+
+  test('returns an accountable unknown result when no overall evidence was stored', () => {
+    const model = get('/v1/models').body.models.find((item: any) => item.modelId === 'nobench-1');
+    assert.deepEqual(model.overallScore.reasons, ['not_evaluated']);
+    assert.equal(model.overallScore.status, 'unknown');
+    assert.equal(model.overallScore.value, null);
+    assert.equal(model.overallRank, null);
+  });
+});
+
+describe('model resolution is projected by the service', () => {
+  test('publishes processing and then awaiting benchmark without inventing a score', () => {
+    beginResolutionWindow(db, '2026-08-19T10:00:00.000Z');
+    let model = get('/v1/models').body.models.find((m: any) => m.providerId === 'acme' && m.modelId === 'nobench-1');
+    assert.equal(model.resolution.state, 'processing');
+    assert.ok(model.resolution.reasons.includes('missing_vq'));
+    assert.equal(model.modelScore.value, null);
+
+    finishResolutionAttempt(db, 'acme', 'nobench-1', '2026-08-19T10:05:00.000Z');
+    model = get('/v1/models').body.models.find((m: any) => m.providerId === 'acme' && m.modelId === 'nobench-1');
+    assert.equal(model.resolution.state, 'awaiting_external_benchmark');
+    assert.equal(model.resolution.nextAttemptAt, null);
+  });
+
+  test('a complete scored model reports complete without a job', () => {
+    const model = get('/v1/models').body.models.find((m: any) => m.providerId === 'acme' && m.modelId === 'measured-1');
+    assert.deepEqual(model.resolution, {
+      state: 'complete', reasons: [], firstDetectedAt: null, lastAttemptAt: null, nextAttemptAt: null,
+    });
+  });
+});
+
 describe('AC6 — provenance is sufficient for reconstruction', () => {
   test('every scored row carries a compact provenance summary', () => {
     for (const m of get('/v1/models').body.models) {
@@ -227,7 +379,7 @@ describe('AC6 — provenance is sufficient for reconstruction', () => {
 describe('AC7 — a failed provider refresh preserves prior valid data', () => {
   test('an unreachable provider leaves its models and the global count intact', async () => {
     const before = get('/v1/models').body.models.length;
-    await syncProvider(adapter('acme', []), {
+    await syncProvider(adapter('acme'), {
       db, now, lookupSpec: () => null,
       fetchJson: async () => { throw new Error('upstream down'); },
     });
@@ -235,7 +387,7 @@ describe('AC7 — a failed provider refresh preserves prior valid data', () => {
   });
 
   test('freshness follows the last SUCCESS, not the last attempt', async () => {
-    await syncProvider(adapter('acme', []), {
+    await syncProvider(adapter('acme'), {
       db, now, lookupSpec: () => null,
       fetchJson: async () => { throw new Error('upstream down'); },
     });
@@ -246,11 +398,11 @@ describe('AC7 — a failed provider refresh preserves prior valid data', () => {
   });
 
   test('health reports the failure without claiming the service is broken', async () => {
-    await syncProvider(adapter('acme', []), {
+    await syncProvider(adapter('acme'), {
       db, now, lookupSpec: () => null,
       fetchJson: async () => { throw new Error('upstream down'); },
     });
-    const h = health({ db, runner: runner(), now: () => new Date(Date.UTC(2026, 7, 12, 1)) });
+    const h = health({ db, runner: runner(), now: () => new Date(Date.UTC(2026, 7, 12, 1)) }) as { status: number; body: any };
     assert.equal(h.body.service.status, 'up');
     assert.equal(h.body.catalog.liveModels, 5);
   });
@@ -293,14 +445,14 @@ describe('AC9 — the service exposes only the intended interface', () => {
   });
 
   test('health separates service liveness from catalog freshness', () => {
-    const h = health({ db, runner: runner(), now: () => new Date(Date.UTC(2026, 7, 12, 1)) });
+    const h = health({ db, runner: runner(), now: () => new Date(Date.UTC(2026, 7, 12, 1)) }) as { status: number; body: any };
     assert.equal(h.body.service.status, 'up');
     assert.ok('status' in h.body.catalog);
     assert.notEqual(h.body.service.status, h.body.catalog.status, 'the two must be distinct fields, not one value');
   });
 
   test('a stale catalog is not reported as 200 healthy', () => {
-    const h = health({ db, runner: runner(), now: () => new Date(Date.UTC(2026, 8, 30)) });
+    const h = health({ db, runner: runner(), now: () => new Date(Date.UTC(2026, 8, 30)) }) as { status: number; body: any };
     assert.equal(h.status, 503);
     assert.equal(h.body.catalog.status, 'stale');
     assert.equal(h.body.service.status, 'up');
@@ -324,7 +476,7 @@ describe('AC10 — /v1/changes produces deterministic, meaningful diffs', () => 
     // The full roster is resent: shrinking it would trip the removal gate and
     // quarantine the run, so no change would be applied at all.
     const roster = ['measured-1', 'calibrated-1', 'nobench-1', 'big-unknown'];
-    await syncProvider(adapter('acme', roster), {
+    await syncProvider(adapter('acme'), {
       db, now,
       fetchJson: async () => ({ status: 200, body: { data: roster.map((id) => ({ id })) } }),
       lookupSpec: () => ({ contextTokens: 128_000, outputTokens: 32_000, tools: true, costInPerM: 1, costOutPerM: 99 }),
@@ -338,7 +490,7 @@ describe('AC10 — /v1/changes produces deterministic, meaningful diffs', () => 
 
   test('a context change is classified separately from a price change', async () => {
     const roster = ['measured-1', 'calibrated-1', 'nobench-1', 'big-unknown'];
-    await syncProvider(adapter('acme', roster), {
+    await syncProvider(adapter('acme'), {
       db, now,
       fetchJson: async () => ({ status: 200, body: { data: roster.map((id) => ({ id })) } }),
       // context moves, price stays put
@@ -388,5 +540,220 @@ describe('the completeness gate', () => {
   test('ready + needsVerification partitions the live rows', () => {
     const r = get('/v1/models').body;
     assert.equal(r.meta.catalogReady + r.meta.needsVerification, r.meta.liveModels);
+  });
+});
+
+describe('a recorded source disagreement is visible through the API', () => {
+  /** A conflict as the enrichment pass records one. */
+  const recordConflict = (modelId: string, field: string, sides: { value: unknown; by: string }[]) =>
+    db
+      .prepare(
+        `INSERT INTO model_conflicts (provider_id, model_id, field, sides_json, conflict_type, detected_at)
+         VALUES ('acme', ?, ?, ?, 'source_disagreement', '2026-08-13T00:00:00.000Z')`,
+      )
+      .run(modelId, field, JSON.stringify(sides));
+
+  const rowFor = (modelId: string) =>
+    get('/v1/models').body.models.find((x: any) => x.modelId === modelId && x.providerId === 'acme');
+
+  test('the disputed field, both values and both sources reach the client', () => {
+    recordConflict('measured-1', 'structured', [
+      { value: true, by: 'aihubmix/measured-1' },
+      { value: false, by: 'kilo/measured-1' },
+    ]);
+
+    const conflicts = rowFor('measured-1').conflicts;
+    assert.equal(conflicts.length, 1, 'expected the conflict on the model row');
+    assert.equal(conflicts[0].field, 'structured');
+    assert.equal(conflicts[0].status, 'open');
+    assert.deepEqual(conflicts[0].sides, [
+      { value: true, by: 'aihubmix/measured-1' },
+      { value: false, by: 'kilo/measured-1' },
+    ]);
+  });
+
+  test('a model with no disagreement carries an empty list, not a missing field', () => {
+    // An absent key and "no conflicts" are different claims to a consumer.
+    assert.deepEqual(rowFor('calibrated-1').conflicts, []);
+  });
+
+  test('a conflict is attributed to its own provider offering only', () => {
+    recordConflict('measured-1', 'structured', [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }]);
+
+    const other = get('/v1/models').body.models.find((x: any) => x.providerId === 'other');
+    assert.deepEqual(other.conflicts, [], 'another seller of the same model must not inherit it');
+  });
+
+  test('meta counts the models a disagreement is withholding a field from', () => {
+    recordConflict('measured-1', 'structured', [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }]);
+    recordConflict('measured-1', 'attachment', [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }]);
+    recordConflict('calibrated-1', 'structured', [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }]);
+
+    const meta = get('/v1/models').body.meta;
+    assert.equal(meta.conflictedModels, 2, 'two models, not three conflicts');
+    assert.deepEqual(meta.conflictsByField, { attachment: 1, structured: 2 });
+  });
+});
+
+describe('rejected identity candidates reach the HTTP surface', () => {
+  test('/v1/models carries the rejection evidence and the identity state', () => {
+    // Proves the serialisation boundary, not just the read model: a field the
+    // route drops is invisible to the SPA no matter how well it is stored.
+    db.prepare(
+      `INSERT INTO identity_rejections (provider_id, model_id, rejected_candidate, verdict, reason,
+                                        evidence_json, source, source_ref, source_url, evidence_state,
+                                        resolver_version, candidate_meta_json, reviewed_at, recorded_at)
+       VALUES ('acme','big-unknown','up/refused','candidate_rejected','the reason',
+               '["line one","line two"]','identity_overlay','big-unknown','https://src.test',
+               'declared_policy','identity-rejections-v1','{"contextTokens":42}','2026-08-13','2026-08-13T00:00:00.000Z')`,
+    ).run();
+
+    const body = get('/v1/models').body;
+    const m = body.models.find((x: any) => x.providerId === 'acme' && x.modelId === 'big-unknown');
+
+    assert.equal(m.identityState, 'identity_review', 'an investigated row is not merely unresolved');
+    assert.equal(m.rejectedCandidates.length, 1);
+    const r = m.rejectedCandidates[0];
+    assert.equal(r.candidate, 'up/refused');
+    assert.equal(r.verdict, 'candidate_rejected');
+    assert.equal(r.why, 'the reason');
+    assert.deepEqual(r.evidence, ['line one', 'line two']);
+    assert.equal(r.sourceUrl, 'https://src.test');
+    assert.equal(r.evidenceState, 'declared_policy');
+    assert.equal(r.resolverVersion, 'identity-rejections-v1');
+    assert.deepEqual(r.candidateMeta, { contextTokens: 42 });
+    assert.equal(body.meta.identityDetail.rejectedCandidates, 1);
+  });
+
+  test('a row with no rejections still carries the field, as an empty list', () => {
+    const m = get('/v1/models').body.models.find((x: any) => x.modelId === 'measured-1');
+    assert.deepEqual(m.rejectedCandidates, []);
+    assert.equal(m.identityState, 'resolved');
+  });
+});
+
+/**
+ * The invariant the qwen3.8-max defect broke, asserted at the API surface.
+ *
+ * One Evidence panel reported "Context window — not published by any source we
+ * consult" directly above "Context window | 1000000 | openrouter". Both came
+ * from the same payload, so no amount of care in the component could have
+ * reconciled them: `missingFacts` and `provenanceByField` disagreed at source.
+ *
+ * Asserted here rather than only in the enrichment tests because this is the
+ * contract a consumer actually sees, and it is the shape a reader calls a lie.
+ */
+describe('a field is never both missing and provenanced', () => {
+  /**
+   * Re-run enrichment the way the sync does, against whatever the feed now
+   * publishes.
+   *
+   * A source going quiet is expressed through the LOOKUP rather than by nulling
+   * a column by hand: the column is also where enrich's own output lands, so
+   * emptying it says "this run resolved nothing", which is a different event
+   * from "the provider stopped publishing it" and no longer simulates one.
+   */
+  const reEnrich = (spec: SpecLookup = SPEC) => {
+    const bm = benchmarks();
+    enrich({
+      db, lookupSpec: spec, canonical: canonicalFromBenchmarks(bm), overlay: {},
+      billing: {
+        acme: { model: 'per_token', evidenceUrl: 'https://acme.test/pricing', note: 'per-token' },
+        other: { model: 'per_token', evidenceUrl: 'https://other.test/pricing', note: 'per-token' },
+      },
+      intrinsic: () => null, now,
+    });
+  };
+
+  test('a fact that stops resolving leaves no provenance for the consumer to trip over', () => {
+    const model = () =>
+      (get('/v1/models').body.models as any[]).find(
+        (m) => m.providerId === 'acme' && m.modelId === 'big-unknown',
+      );
+
+    assert.ok(model().provenanceByField.context, 'precondition: the field had provenance');
+
+    // Exactly the production shape: the provider stops publishing the limit,
+    // and a serving limit never travels between sellers, so nothing can prove
+    // it again.
+    reEnrich((k, id) => (id === 'big-unknown' ? { ...SPEC(k, id)!, contextTokens: undefined } : SPEC(k, id)));
+
+    const m = model();
+    assert.ok(m.missingFacts.includes('context'), 'the field is reported as a gap');
+    assert.equal(
+      m.provenanceByField.context,
+      undefined,
+      'so it must carry no provenance — a gap with a source is a contradiction, not extra detail',
+    );
+  });
+
+  test('no model in the payload contradicts itself on any field', () => {
+    // The general form, so a future field cannot reintroduce the shape one
+    // field at a time.
+    //
+    // The gate's `cost` maps to `effectivePrice` ALONE, and the two facts it
+    // does NOT map to are the interesting part:
+    //
+    //   billingKind    survives a cost gap because it records WHY the price is
+    //                  unknown — `value: "unknown"`, `sourceRef: "no price
+    //                  published"`, `evidenceState: declared_policy`. A recorded
+    //                  reason for not knowing is the opposite of a claimed value.
+    //   referencePrice is a different question — the list price ELSEWHERE. It is
+    //                  rendered as `ref` and is never what this provider charges.
+    //
+    // Only `effectivePrice` asserts "this is what it costs here", which is the
+    // one claim a `cost` gap contradicts.
+    const GATE_TO_FACT: Record<string, string[]> = { cost: ['effectivePrice'] };
+
+    // The feed stops publishing the limits, and stops publishing a price for
+    // one row — a real cost gap, so the `cost` branch above is actually
+    // exercised. Without it every fixture row had a price and the mapping was
+    // never reached, which is how a wrong mapping passes for the wrong reason.
+    reEnrich((k, id) => {
+      const base = { ...SPEC(k, id)!, contextTokens: undefined, outputTokens: undefined };
+      return id === 'big-unknown' ? { ...base, costInPerM: undefined, costOutPerM: undefined } : base;
+    });
+
+    const models = get('/v1/models').body.models as any[];
+    const gaps = models.flatMap((m) => m.missingFacts as string[]);
+    assert.ok(gaps.includes('cost'), 'the fixture must produce a cost gap or this test proves nothing about cost');
+    assert.ok(gaps.includes('context'), 'and a context gap, likewise');
+
+    for (const m of models) {
+      for (const gap of m.missingFacts as string[]) {
+        for (const field of GATE_TO_FACT[gap] ?? [gap]) {
+          assert.equal(
+            m.provenanceByField[field],
+            undefined,
+            `${m.providerId}/${m.modelId}: "${gap}" is reported missing but still carries provenance for "${field}"`,
+          );
+        }
+      }
+    }
+  });
+});
+
+describe('a row states which model it is, even with no index entry to bind to', () => {
+  test('the vendor identity is served alongside the canonical id, never instead of it', () => {
+    // `canonicalId` answers "which reference-index entry was this score taken
+    // from" and must stay null when none was. But the page rendered that field
+    // as the row's identity, so a model no index lists showed none at all —
+    // beside a context window read from a listing of that exact model. The two
+    // travel as two fields because they are two questions.
+    db.prepare(
+      `INSERT INTO model_facts (provider_id, model_id, field, value, source, source_ref, source_url,
+                                evidence_state, raw_value, resolver_version, probe_version, resolved_at)
+       VALUES ('acme','big-unknown','vendorIdentity','"z-ai/glm-5.3"','models.dev','nano-gpt/zai-org/glm-5.3',
+               'https://models.dev/api.json','vendor_default','null','v1',NULL,'2026-08-12T00:00:00.000Z')`,
+    ).run();
+
+    const m = (get('/v1/models').body.models as any[]).find((x) => x.modelId === 'big-unknown');
+    assert.equal(m.vendorModelId, 'z-ai/glm-5.3');
+    assert.equal(m.canonicalId, null, 'no score was attached, so no canonical id');
+  });
+
+  test('a row with no vendor listing reports null, not an empty string', () => {
+    const m = (get('/v1/models').body.models as any[]).find((x) => x.modelId === 'measured-1');
+    assert.equal(m.vendorModelId, null);
   });
 });

@@ -24,13 +24,12 @@
   top: 0;
   left: 0;
   bottom: 0;
-  overflow-y: auto;
+  overflow: hidden;
   z-index: 100;
   display: flex;
   flex-direction: column;
   transition: transform var(--transition);
 }
-
 .header {
   display: flex;
   align-items: center;
@@ -97,6 +96,7 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
+  overflow-y: auto;
 }
 
 .section {
@@ -162,6 +162,90 @@
   color: var(--foreground-secondary);
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.footer {
+  flex-shrink: 0;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: var(--background-secondary);
+}
+
+.workspaceCard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: var(--radius);
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  color: inherit;
+  text-decoration: none;
+}
+
+.workspaceCard:hover {
+  background: var(--accent-subtle);
+}
+
+.workspaceCard.workspaceActive {
+  background: var(--accent-subtle);
+}
+
+.workspaceAvatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  letter-spacing: -0.02em;
+}
+
+.workspaceInfo {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.workspaceName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspaceDesc {
+  font-size: 11px;
+  color: var(--foreground-tertiary);
+  line-height: 1.2;
+}
+
+.workspaceSettingsIcon {
+  color: var(--foreground-tertiary);
+  flex-shrink: 0;
+  margin-left: auto;
+  transition: transform 0.3s ease, color var(--transition-fast);
+}
+
+.workspaceCard:hover .workspaceSettingsIcon,
+.workspaceCard.workspaceActive .workspaceSettingsIcon {
+  color: var(--foreground);
+  transform: rotate(45deg);
 }
 
 .overlay {

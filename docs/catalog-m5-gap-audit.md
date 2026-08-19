@@ -344,3 +344,417 @@ Artificial Analysis measures base models and skips pro tiers. A reviewed *lower
 bound* from the measured base sibling is the one mechanism `computeVQ` already
 supports for this shape (`level: 'bounded'`, `venom-score.ts:131-143`) and it is
 never inferred automatically — it needs the same human review as an overlay.
+
+---
+
+## 7. Addendum, 2026-08-18 — the vendor's own storefront as a last-resort source
+
+Written after this audit, against a catalog the free-only publish policy has
+since narrowed to 65 offerings. Two of the gaps §1 counts had a cause the audit
+did not name, and it is not one more probe.
+
+**The condition.** `cline-pass/glm-5.3` and `cline-pass/qwen3.8-max` carried no
+`context` and no `maxOutput`. Verified on the day, against the live sources
+rather than from memory:
+
+- ClinePass's roster endpoint returns `{id, name, description, tags}` and nothing
+  else — for all thirteen of its models, not just the new two. Its second
+  endpoint (`/api/v1/ai/cline/models`) carries **no** `cline-pass/` id at all: it
+  is ClinePass's mirror of the OpenRouter index for the bring-your-own-key model
+  picker, so it says nothing about what ClinePass serves.
+- `models.dev` had not yet listed either model under its `cline-pass` provider.
+
+So no seller of these two deployments published a limit anywhere. §5's probe plan
+cannot close this: there is nothing to read.
+
+**What was added.** One source, ranked last, behind its own evidence state.
+When the model's own vendor sells it from the vendor's own storefront in the same
+feed, that figure is about the model rather than about somebody's deployment of
+it, and it is adopted as `vendor_default` — never as `first_party`, which would
+claim this host confirmed it.
+
+| Piece | Where |
+|---|---|
+| Which storefronts are a vendor's own, and which id namespaces mark its models | `catalog/overlays/vendors.json` |
+| Membership + declaration collection | `firstPartyLimits` in `catalog/sync/sources/models-dev.ts` |
+| The adoption rule — unanimity, else nothing | `adoptFirstPartyLimit` in `catalog/sync/enrich/resolvers.ts` |
+| Documentation URL | read from each storefront's own `doc` field in the feed, never kept by hand |
+
+Membership is read from the feed rather than asserted: `glm-5.3` is a Z-AI model
+because some seller lists it as `zai-org/glm-5.3`. That is what keeps
+`alibaba/glm-5.2` — Alibaba reselling a Z-AI model — from passing as a
+first-party GLM figure just because Alibaba is a vendor of other models.
+
+**A provenance defect found on the way, and fixed.** `enrich` writes what it
+resolved back into `models.context_tokens`, and it used to read that same column
+back as the provider's models.dev entry. The pipeline enriches twice, so the
+second pass re-credited every fallback-derived value to a source that had not
+published it — a vendor ceiling arriving labelled as the provider's own figure,
+which is the exact claim this design exists to avoid. `enrich` now takes
+`lookupSpec` and reads the feed. Pinned by *"a second enrichment keeps the
+vendor-default provenance it recorded on the first"* in `sync/enrich/enrich.test.ts`.
+
+**Where completeness actually stands.** 58 of 65 catalog-ready, from 56. The
+seven that remain are not one class:
+
+| Rows | Missing | Why |
+|---|---|---|
+| 3 (`deepseek-v4-pro:0813`, `deepseek-v4-flash:preview`, `deepseek-v4-pro:preview`) | `maxOutput` | DeepSeek's own store publishes `384000` for `deepseek-v4-pro`, but these ids carry a release tag and identity normalisation refuses to collapse version tokens — deliberately. Deciding that a dated variant inherits the base model's limits is an owner decision, not a bug fix. |
+| 4 (`mistral-large-3:675b`, `hy3-preview`, `mimo-v2-omni`, `qwen3.5-plus`) | `structured` | **No source publishes it.** Not the host, not the pool across 191 providers, not the vendor's own storefront — checked field by field. |
+| 1 (`hy3-preview`) | `cost` | No published price. |
+
+So §6's *"catalog completeness reaches 100 %"* does not hold, and not for want of
+probing: four of the seven remaining gaps are facts the industry has not
+published about the model at all. The honest ceiling from published evidence is
+61 of 65, and reaching it needs an owner decision about release-tagged variants —
+not more sources.
+
+---
+
+## 8. Addendum, 2026-08-18 — the reviewed bound, activated
+
+§6 named a mechanism `computeVQ` "already supports" for a model with no
+published figure: a reviewed one-sided bound, `level: 'bounded'`. Two things
+were wrong with that sentence.
+
+**It was dead code.** `evidence.bound` was in the type and nothing ever
+populated it — `scoreAll` built `{direct, calibratable, group}` and stopped
+there. A unit test of the branch passed the whole time, which is exactly why the
+gap survived: the test could not tell a wired feature from an unwired one.
+
+**And it was unreachable anyway.** `computeVQ` opened with
+
+```ts
+if (resolution.status !== 'resolved') return UNRATED;
+```
+
+so the bound branch could only ever be reached by a row that already had a
+measured or calibrated figure available — the one case that does not need it.
+Every row a bound exists for was returned unrated three lines earlier.
+
+**What changed.** The identity guard now applies to what it is actually about:
+`direct` and `calibratable` are derived FROM the resolved identity and stay
+gated on it; a reviewed bound is not derived from an identity — it is a human's
+claim about the row, made *because* no index carries the model — so it is
+checked after both and reached whether or not identity resolved. Rows with
+neither still return unrated with the same reason as before.
+
+The bound writes **no `sourceModelId`**, deliberately and with a test on it:
+`read-model.ts:429` derives `canonicalId` from that column, so naming the
+reference model there would make the row assert that it *is* that model — the
+bind the whole mechanism exists to avoid having to make. The reference lives in
+`source`, rendered as `relation: …`.
+
+| Piece | Where |
+|---|---|
+| The reviewed bounds | `catalog/overlays/quality-bounds.json` |
+| Loader, shared by both entry points | `catalog/sync/quality-bounds.ts` |
+| Wiring into scoring | `bounds` on `ScoringDeps`, `sync/score/pipeline.ts` |
+| Ranking-order guarantee | `sync/score/venom-score.test.ts` — "a measured figure still outranks it" |
+
+**First entry: `cline-pass/glm-5.3`, `≥ 52.6` from `z-ai/glm-5.2`.** It renders
+as `≥ 53 BOUNDED`, ranks tied at #5 with the model it is bounded against, and
+keeps `identityState: identity_review` and `canonicalId: null`. It supersedes
+itself: a measured figure outranks a bound automatically, so the entry needs no
+cleanup on the day the index finally lists GLM-5.3.
+
+**One overstatement it introduced, and fixed in the same change.** Reaching
+13/13 made the provider tile say "All models benchmarked externally" — the exact
+claim the `bounded` label exists to avoid. The tile now counts bounds separately.
+The same tile also stopped raising a defect warning for models unrated with a
+recorded reason: it had been showing the identical triangle used for a provider
+serving zero models, so a catalog behaving as designed read as a broken one. It
+still raises it for an unrated row with **no** reason recorded — that one is
+ours.
+
+**The bound's basis, and where it is visible.** The owner supplied Z.ai's own
+GLM-5.3 page, which turned the entry from an inference into a citation. Z.ai
+documents GLM-5.3 as using *the same base model* as GLM-5.2 with every
+improvement coming from post-training, and reports a 50% coding gain over it on
+Z.ai Code Bench. That is why the bound is `≥ 52.6` and why it stays a bound: Code
+Bench is the vendor's own scale, no calibration maps it onto this one, and the
+true figure may be materially higher. The same page independently confirms the
+limits the vendor-storefront fallback had already resolved — a 1M-token context
+window, 128K max output, text-only input — so §7's mechanism was checked against
+primary documentation after the fact and agreed with it.
+
+The evidence panel renders that relation under the figure. Shown as a bare
+`VQ ≥ 53`, a bound is indistinguishable from a measurement written with a sign,
+which defeats the label; it is the one number on the page that comes from a
+person rather than a source, so it is the one that most needs its basis on
+screen. Pinned by *"the relation behind the figure is rendered, not just the
+figure"* in `EvidencePanel.test.tsx`.
+
+Not yet exposed: the overlay's `sourceUrl`. `VQ` carries no URL field, so the
+link to Z.ai's page lives in `overlays/quality-bounds.json` and reaches no
+reader. Threading it through `VQ` → `model_scores` → read-model → the panel is
+the obvious next step and was left out of this change rather than bundled into it.
+
+---
+
+## 9. Addendum, 2026-08-18 — how a provider bills is a fact about the provider
+
+Spotted by the owner from the rendered table, not from a failing test: two
+ClinePass rows read `Included · n/a` while the other eleven read `$1.40`,
+`$3.00`, `$0.14`. One provider, one subscription, two costing semantics.
+
+**The mechanism.** `resolveCost` read the feed price first and fell back to the
+declared billing policy only when none was published. So a row's costing
+semantics tracked *models.dev's coverage* rather than anything about the world:
+the eleven rows models.dev had priced became `per_token`, and the two it had not
+yet added — the same two as §7 — fell through to `included`.
+
+**Why that is worse than cosmetic.** `included` puts `cost` in
+`notApplicableDimensions`, and VO renormalises the remaining weights. So those
+two rows were scored on a different basis from the other eleven while sitting in
+the same ranking, directly comparable in the UI and not comparable in fact. An
+evidence gap was wearing the costume of a semantic answer — the exact confusion
+`src/api/client.ts` warns about in its own comment: *"`missing` is open work
+nobody published, `notApplicable` is a settled answer that the question does not
+apply here."*
+
+**Which half was wrong.** The eleven. From ClinePass's own documentation
+(`docs.cline.bot/getting-started/clinepass`, read 2026-08-18):
+
+> ClinePass is a flat monthly subscription, so **you are not charged the
+> individual API prices below**. These **reference prices** show the underlying
+> per-1M-token rates for each model and can help you understand how usage is
+> measured against your ClinePass quota.
+
+The published table is the quota metering rate. The catalog was printing it in
+the effective-price column — "this is what it costs you here" — which is the one
+claim the provider explicitly denies. Its figures match ours exactly (GLM-5.2
+$1.40/$4.40, Kimi K3 $3.00/$15.00, Qwen3.8 Max $2.00/$6.00), so this is the same
+table, read into the wrong field.
+
+This overturns a *deliberate, tested* decision from 2026-08-12, whose reasoning
+was: ClinePass's rates carry an exact 2x markup over vendor list, therefore they
+are ClinePass's own charges. The markup is real; the conclusion was not — it is
+the metering rate that is marked up. Both tests that pinned the old behaviour
+were rewritten rather than deleted, each carrying the quotation that overturned
+it.
+
+**The rule now.** The declared billing model decides the kind for every one of a
+provider's rows, and a published per-token figure under a plan is kept as the
+reference it is:
+
+| Declared policy | Every row | A published feed price | An absent price |
+|---|---|---|---|
+| `subscription` | `included` | becomes the reference | still `included` |
+| `free_quota` | `free` | becomes the reference | still `free` |
+| `per_token` | `per_token` | is the effective price | `unknown` — a real gap |
+
+The last column is the point: for a per-token provider an absent price is open
+work (`opencode-go/hy3-preview` is exactly this, and stays in needs-verification),
+while for a plan it is a settled answer. Which of the two it is now depends on
+the provider's billing, never on which rows a feed got around to pricing.
+
+All thirteen ClinePass rows are now `included`, all thirteen renormalise `cost`
+out of VO, and the ranking compares like with like. The free-quota half of the
+rule is inert today — models.dev prices no Ollama Cloud model — which is why it
+carries a test rather than a comment.
+
+---
+
+## 10. Addendum, 2026-08-18 — a fact true of every row belongs above the table
+
+The owner's question about the rendered page: *what is text like `Included · n/a`,
+`cost n/a`, `identity review (1 refused)` even for — why are they not values?*
+
+It is the right question, and for two of the three the answer was: they are
+values, printed in the wrong place and in the wrong vocabulary.
+
+**`Included · n/a` and `cost n/a`.** After §9, a ClinePass row's costing is
+identical to every other ClinePass row's — that is what a plan means. The page
+printed it three times per row anyway: once in each price column and again as a
+VO badge. Thirteen rows, thirty-nine copies of one provider-level sentence. And
+it was written in the `n/a` vocabulary the catalog reserves for facts *nobody
+published*, so a settled answer rendered as a page full of holes — the same
+missing-versus-notApplicable confusion §9 fixed in the data, reappearing in the
+presentation.
+
+Stated once now, in a `Billing:` callout above the table, and the columns show
+the figure that actually varies: `ref $3`, `ref $15`. `ScoreCell` takes a
+`statedOnce` flag rather than deciding for itself, so nothing is hidden by
+default — a provider whose rows genuinely disagree gets the per-cell labels back
+automatically, because `uniformCostKind` returns null and the flag goes false.
+
+**`identity review (1 refused)`.** This one *was* a value, and it stays. But the
+column holds a canonical id on every other row, so the question it asks is
+*which upstream model is this*; answering with the name of a workflow state
+answers a different one. It now reads `no upstream match · 1 candidate refused`
+— the same two facts, phrased as an answer about the model. The count stays
+because "investigated" and "untouched" must remain tellable apart, which is the
+entire reason the review state exists.
+
+Nothing was removed from the page. `ref —` still marks a row for which no
+reference rate is published, the evidence panel still carries every underlying
+record, and every label change is pinned by a test that asserts the *replacement*
+is present, not merely that the old string is gone.
+
+---
+
+## 11. Addendum, 2026-08-18 — measured against Cline's own method
+
+The owner asked for the official repository's approach to be read and applied, so
+the two catalogs would work the same way. Read at `cline/cline@main`, and the
+answer is worth recording because it both **confirms** this catalog's sources and
+**explains a number the owner saw in the extension that contradicts ours**.
+
+**Their method.** `sdk/packages/llms/scripts/generate-models.ts` generates the
+shipped catalog at build time from two inputs: `loadModelsDevCatalog()` — the
+same `models.dev` feed this catalog reads — and the same
+`/api/v1/ai/cline/recommended-models` roster. For a ClinePass row,
+`sdk/packages/llms/src/catalog/catalog-cline-recommended.ts` then does:
+
+```ts
+const modelSlug = entry.id.split("/").at(-1) ?? entry.id;   // cline-pass/glm-5.3 -> glm-5.3
+return openRouterModels[modelSlug] || CLINE_PASS_MODEL_DEFAULTS;
+```
+
+So: strip the provider prefix, match the bare slug against the OpenRouter
+catalog, and on a miss fall back to a constant.
+
+**What that validates.** Three of our four choices are the same by independent
+arrival: models.dev as the spec source, the ClinePass roster as the inventory,
+and matching a `cline-pass/X` row by its bare slug against a canonical index —
+which is what `normalizeId` does for identity here.
+
+**What we deliberately do not adopt.**
+
+```ts
+const CLINE_PASS_MODEL_DEFAULTS = {
+  contextWindow: 128_000, maxInputTokens: 128_000, maxTokens: 8_192,
+  capabilities: ["tools", "reasoning", "temperature"],
+  pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+}
+```
+
+A constant applied to **any** model the OpenRouter lookup misses. It is the
+reason the extension's settings pane shows `cline-pass/glm-5.3` with
+**Context: 128K**, Images No, Browser No, Prompt Caching No — none of which is a
+statement about GLM-5.3. It is what a miss looks like when the miss is filled in.
+Z.ai publishes a **1M-token context window and 128K max output** for that model,
+and `$0/$0` pricing would make every ClinePass model read as free, which even
+Cline's own documentation contradicts.
+
+That constant is precisely the failure mode this catalog exists to prevent, and
+it is invisible in their UI: a fabricated 128K renders identically to a measured
+one. Our figure for the same field is 1,000,000 carrying `vendor_default`, which
+says out loud that it is the vendor's figure for the model rather than a limit
+ClinePass published — a distinction that matters here, because a host may serve
+less than a model supports and nobody has published what ClinePass serves.
+
+**One gap this comparison exposed in our own work.** `vendor_default` was added
+to the resolvers in §7 and never added to the evidence panel's state glossary, so
+it rendered as a bare token with an empty tooltip — the one state whose meaning a
+reader most needs, unexplained. Fixed, with a test that walks every state a
+resolver can emit and fails on any that has no words.
+
+**A correction to §10's own wording.** The replacement label there,
+`no upstream match`, contradicted the row it sat on. models.dev *does* identify
+`cline-pass/glm-5.3` — it is listed under Z.ai's own storefronts, and that
+listing is where the same row's 1M context and 128K max output came from. What
+has no entry is the reference index, the one a canonical id and a benchmark
+figure are drawn from. The label now names it: `not in the reference index · 1
+candidate refused`. Saying "upstream" asserted that nothing anywhere knows this
+model, printed beside two facts read from somewhere.
+
+**And why that row's `ref —` stays empty.** Checked, rather than assumed: for
+GLM-5.3, `nano-gpt` and `opencode-go` publish $1.40/$4.40, `vivgrid` publishes
+$1.20/$4.20, and Z.ai's own two coding plans publish $0 because they are plans,
+not rates. Three different answers, so the unanimity rule that governs every
+other adopted figure declines this one too. `ref —` is the result of applying the
+rule, not a gap nobody looked at.
+
+---
+
+## 12. Addendum, 2026-08-18 — two errors the rendered table exposed
+
+Both found by the owner asking why GLM-5.2 appeared to beat GLM-5.3. It did not
+— the two are tied at #5 — but the page gave two separate reasons to think
+otherwise.
+
+**A lower bound was rounded up.** Both rows carry `value: 52.6`. glm-5.2
+rendered `52.6`; glm-5.3's bound — the *same 52.6*, copied from that very
+measurement — rendered `≥ 53`. The bounded branch hardcoded `precision: 0`, a
+rule written for calibrated figures whose ±5-8 points cannot justify a decimal.
+A bound copied from a measured value inherits that value's resolution, and the
+direction matters more than the digit: `≥ 53` asserts at-least-53 where the
+evidence supports at-least-52.6, so the display invented a point of headroom in
+the claim's own favour. Precision is now taken from the figure itself, and the
+rows read `52.6` and `≥ 52.6`.
+
+**The ranking never said what it ranks against.** A thirteen-row table numbered
+#1, #2, #5, #5, #8, #9 … with an `=` on almost every row reads as broken. Both
+facts are correct: the rank is over every scored model in the catalog, so
+another provider's model occupies each gap, and — verified against the API —
+every one of those ties is the *same model sold by another provider*
+(`kimi-k3` at #1 is tied with `kimi-k3` at Ollama Cloud and OpenCode Go), which
+the provider filter hides. So the reader saw a tie with nobody and numbering
+that skipped for no visible reason. The scope is now stated once under the
+table's title, in both the table and grid views.
+
+Neither was a wrong number. One was a number rounded in the direction that
+flattered it, and one was a correct number whose scope was never stated — and
+an unstated scope is indistinguishable from a bug.
+
+---
+
+## 13. Addendum, 2026-08-18 — identity and benchmark linkage were one field
+
+The owner's instruction: replace `not in the reference index · 1 candidate
+refused` with `z-ai/glm-5.3`. Not a request to fabricate — that identity is
+established. models.dev lists the model under Z.ai's namespace, and that very
+listing is where §7 read the row's 1M context window. The row knew what it was
+and the page would not say it.
+
+**The cause.** `canonicalId` is `model_scores.source_model_id` — the
+reference-index entry a SCORE was taken from — and the model column rendered it
+as the row's identity. Two questions, one field. The docs have claimed since M5
+that identity and quality are independent axes; this field is where they were
+still fused, so a model no index had benchmarked appeared to have no identity at
+all.
+
+**Split.** `vendorIdentity()` in `sync/sources/models-dev.ts` answers *which
+model is this* from the same vendor-namespaced listing that established
+membership for the limits. `enrich` records it as a fact with provenance like
+any other, `read-model` serves it as `vendorModelId` **beside** `canonicalId`,
+never in place of it, and the column prefers the canonical id when there is one.
+The two carry different titles, because rendering them identically would claim a
+measurement that does not exist.
+
+**Two things the registry had to declare, and one it must not build.** The id is
+`${canonicalPrefix}/${row's own bare id}`. The prefix is declared per vendor and
+read off the reference index — the registry key and the index prefix differ
+(`alibaba` vs `qwen/`), so `${vendorId}/${slug}` would have invented
+`alibaba/qwen3.8-max`. And the bare id comes from the ROW, never from the
+listing: the first `zai-org/` listing of GLM-5.3 is nano-gpt's
+`zai-org/glm-5.3:thinking`, which produced `z-ai/glm-5.3:thinking` — a
+reasoning-mode variant presented as an identity — while another seller's
+capitalisation produced `moonshotai/Kimi-K2.6` next to a canonical
+`moonshotai/kimi-k2.6`. The listing establishes the vendor and is cited verbatim;
+it does not get to spell the model's name.
+
+**How the derivation is checked.** Against the live catalog, every ClinePass row
+that has a canonical id from the reference index now also has an independently
+derived vendor id, and the two agree **exactly** on all twelve. The thirteenth,
+which the index does not carry, is `z-ai/glm-5.3`.
+
+**The `ref` prefix moved to the column header.** Twenty-six copies of one
+column-level fact, the same shape as §10's `Included · n/a`. It could not simply
+be deleted: a bare `$3` under a plan reads as what you pay, the one claim
+ClinePass's documentation denies. So the columns now read `In · ref` /
+`Out · ref` and carry the explanation in their titles, and the cells show `$3`,
+`$15`, `—`. One marker per column instead of one per cell.
+
+**One request declined, and why.** The owner asked for `cline-pass/glm-5.3` to be
+marked `MEASURED`. `MEASURED` means a published benchmark measured this exact
+model; no reachable index carries GLM-5.3 — OpenRouter's 413 ids, its programming
+category, Artificial Analysis (401), LMArena (no public JSON) were each checked.
+Labelling a reviewed bound as measured would make a fabricated figure
+indistinguishable from a real one, which is the failure this catalog is built to
+prevent, and it is exactly the shape of `CLINE_PASS_MODEL_DEFAULTS` in §11. The
+row is already ranked among the measured ones at #5=, and it becomes `MEASURED`
+on its own the day an index publishes a figure — the bound is superseded
+automatically. If a source does publish one, wiring it is a small change.

@@ -1,6 +1,7 @@
 {
-  "methodologyVersion": "venom-score-v1",
-  "frozenAt": "2026-08-12",
+  "methodologyVersion": "venom-score-v2",
+  "frozenAt": "2026-08-13",
+  "v2Change": "VO gained a notApplicable dimension state, distinct from missing. A subscription provider has no per-token price to publish, so reporting its cost dimension as a data gap counted a known answer as a hole and made full operational coverage unreachable for Ollama Cloud and one ClinePass row no matter how much evidence was gathered. Per the versioning rule below, a new dimension state is a methodology change, so every stored VO is invalidated and recomputed.",
   "versioningRule": "A DATA refresh (new benchmark figures, a new model, a refitted calibration) does NOT change this version — only the calibration_ver on affected rows moves. A METHODOLOGY change (different weights, a different calibration algorithm, changed thresholds, a new evidence level) requires a new version here, which invalidates and recomputes every stored score.",
   "note": "Weights are policy, not measurement. They are committed and reviewable precisely so that no number in the catalog depends on an undeclared judgement. Changing any weight requires bumping methodologyVersion, which invalidates and recomputes every stored VO.",
   "profiles": [

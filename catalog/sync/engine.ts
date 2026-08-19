@@ -28,6 +28,29 @@ export interface ProviderAdapter {
    * into a best-effort parse.
    */
   parseRoster(body: unknown): string[];
+  /**
+   * What of this provider's roster reaches the PUBLISHED catalog.
+   *
+   *   'all'        (default) every rostered model is published
+   *   'free_only'  only models proven free (a models.dev zero price) are
+   *                published; the rest are `excluded` with a reason. For a
+   *                provider the owner declares fully free but whose feed still
+   *                lists paid models (OpenCode Zen), so a paid model is never
+   *                presented as if this provider served it free.
+   *
+   * Applied as a pipeline step AFTER the roster is stored, never inside the
+   * engine — it must not perturb the delta gate, and it is a publish decision,
+   * not a fetch or a lifecycle transition driven by absence.
+   */
+  publishPolicy?: 'all' | 'free_only';
+  /**
+   * Exact offer ids withheld despite appearing in the public roster.
+   *
+   * This is for a provider-owned access verdict, not a benchmark verdict. The
+   * row remains in history, but it cannot be advertised in the public catalog
+   * when the configured product tier cannot call it.
+   */
+  publishExclusions?: Record<string, 'plan_required'>;
 }
 
 /** Per-model facts from the spec feed. All optional: absent means "not published". */

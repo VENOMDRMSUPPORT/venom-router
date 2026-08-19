@@ -1,79 +1,213 @@
 {
-  "note": "Human-reviewed identity mappings. Each entry is a decision a machine may not make: it binds a catalog model id to an exact upstream benchmark id. Every entry needs a reason a later reader can re-verify from primary sources. An entry whose target leaves the upstream index resolves to nothing rather than to a guess.",
-  "reviewedAt": "2026-08-12",
-  "mappings": {
-    "nemotron-3-nano:30b": "nvidia/nemotron-3-nano-30b-a3b",
-    "nemotron-3-ultra": "nvidia/nemotron-3-ultra-550b-a55b",
-    "nemotron-3-super": "nvidia/nemotron-3-super-120b-a12b",
-    "nemotron-3-ultra-free": "nvidia/nemotron-3-ultra-550b-a55b"
+ "note": "Human-reviewed identity mappings. Each entry is a decision a machine may not make: it binds a catalog model id to an exact upstream benchmark id. Every entry needs a reason a later reader can re-verify from primary sources. An entry whose target leaves the upstream index resolves to nothing rather than to a guess.",
+ "reviewedAt": "2026-08-18",
+ "mappings": {
+  "nemotron-3-nano:30b": "nvidia/nemotron-3-nano-30b-a3b",
+  "nemotron-3-ultra": "nvidia/nemotron-3-ultra-550b-a55b",
+  "nemotron-3-super": "nvidia/nemotron-3-super-120b-a12b",
+  "nemotron-3-ultra-free": "nvidia/nemotron-3-ultra-550b-a55b",
+  "gemini-3-flash": "google/gemini-3-flash-preview",
+  "gemini-3.1-pro": "google/gemini-3.1-pro-preview",
+  "deepseek-v4-flash:preview": "deepseek/deepseek-v4-flash",
+  "deepseek-v4-pro:preview": "deepseek/deepseek-v4-pro",
+  "mistral-large-3:675b": "mistralai/mistral-large-2512"
+ },
+ "reasons": {
+  "gemini-3-flash": {
+   "target": "google/gemini-3-flash-preview",
+   "decidedBy": "owner review 2026-08-13, on the evidence below",
+   "evidence": [
+    "the reference index publishes NO unsuffixed google/gemini-3-flash: for this generation the only channel that exists upstream is -preview, so there is no second candidate the provider's unsuffixed id could denote",
+    "sibling precedent within the same provider: opencode-zen/gemini-3.5-flash, gemini-3.5-flash-lite and gemini-3.6-flash all bind exact to their unsuffixed upstream ids and are scored. This row differs only in that its generation never left preview upstream",
+    "the only other id containing the token is google/gemini-3-flash-preview:batch, which republishes identical benchmark figures (Elo 1219), so the bind is the same claim either way"
+   ],
+   "yields": "calibrated VQ from design_arena Elo 1219; no AA intelligence index is published for it",
+   "reverifyBy": "if Google later publishes an unsuffixed gemini-3-flash with figures of its own, this mapping must be re-decided rather than kept",
+   "reviewedAt": "2026-08-13"
   },
-  "reasons": {
-    "nemotron-3-nano:30b": {
-      "target": "nvidia/nemotron-3-nano-30b-a3b",
-      "rejected": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-      "decidedBy": "primary source: POST https://ollama.com/api/show {\"model\":\"nemotron-3-nano:30b\"}",
-      "evidence": [
-        "context_length: Ollama reports 262144; the chosen target reports 262144, the rejected one 256000 — an exact match on one side and a mismatch on the other",
-        "general.architecture: Ollama reports 'nemotron-3-nano'; the rejected candidate is 'nemotron-3-nano-omni', a different architecture",
-        "modality: Ollama reports capabilities [completion, tools, thinking] with no vision or audio, and the chosen target is text-only; the rejected candidate accepts text, audio, image and video",
-        "tags: https://ollama.com/library/nemotron-3-nano/tags lists 30b, 30b-a3b-fp16, 30b-a3b-q4, 30b-a3b-q8, 30b-cloud — no omni build is published at all"
-      ],
-      "reverifyBy": "re-running the /api/show call above and comparing context_length and architecture; if either stops matching, delete this mapping rather than adjusting it",
-      "reviewedAt": "2026-08-12"
-    },
-    "nemotron-3-ultra": {
-      "target": "nvidia/nemotron-3-ultra-550b-a55b",
-      "decidedBy": "primary source: POST https://ollama.com/api/show {\"model\":\"nemotron-3-ultra\"}",
-      "evidence": [
-        "general.parameter_count: Ollama reports 550000000000, and the target's own id declares 550b — an exact match on the one number that identifies this model",
-        "NVIDIA publishes exactly one Nemotron 3 Ultra, so there is no sibling for the parameter count to be confused with",
-        "context differs (Ollama 262144 vs the target's 512288), which is expected: a host may serve a shorter window than the model supports. The parameter count, not the served window, is the identity"
-      ],
-      "reverifyBy": "if NVIDIA ever ships a second Ultra at a different parameter count, this mapping must be re-decided rather than kept",
-      "reviewedAt": "2026-08-12"
-    },
-    "nemotron-3-super": {
-      "target": "nvidia/nemotron-3-super-120b-a12b",
-      "decidedBy": "primary source: POST https://ollama.com/api/show {\"model\":\"nemotron-3-super\"}",
-      "evidence": [
-        "general.parameter_count: Ollama reports 120000000000; the target declares 120b",
-        "general.architecture: Ollama reports 'nemotron_h_moe', a mixture-of-experts model, consistent with the target's 'a12b' active-parameter suffix",
-        "NVIDIA publishes one Nemotron 3 Super"
-      ],
-      "reviewedAt": "2026-08-12"
-    },
-    "nemotron-3-ultra-free": {
-      "target": "nvidia/nemotron-3-ultra-550b-a55b",
-      "decidedBy": "models.dev provider 'opencode', plus the reference index's own free variant",
-      "evidence": [
-        "context: models.dev reports 1000000 for opencode/nemotron-3-ultra-free, which is exactly the context the reference index publishes for nvidia/nemotron-3-ultra-550b-a55b:free (the paid variant reports 512288)",
-        "OpenCode Zen sells no paid nemotron-3-ultra, so the -free suffix is the plan and not a distinct model",
-        "the reference index publishes identical benchmark values for the paid and :free variants, so binding to the base is the same claim either way"
-      ],
-      "reviewedAt": "2026-08-12"
-    }
+  "gemini-3.1-pro": {
+   "target": "google/gemini-3.1-pro-preview",
+   "rejected": "google/gemini-3.1-pro-preview-customtools",
+   "decidedBy": "owner review 2026-08-13, on the evidence below",
+   "evidence": [
+    "of the two candidates carrying the token, only the base -preview is benchmarked (AA intelligence 47.7, coding 68.8, agentic 23, Elo 1281.9); -customtools carries no figures at all, so it could not supply a score even if chosen",
+    "-customtools is a tool-configuration variant of the same preview rather than a separate model, and the provider sells one gemini-3.1-pro",
+    "same generation-never-left-preview situation as gemini-3-flash, with the same sibling precedent"
+   ],
+   "yields": "measured VQ 47.7 directly from the AA intelligence index — no calibration involved",
+   "reverifyBy": "if the -customtools variant is ever benchmarked separately, re-decide rather than keep",
+   "reviewedAt": "2026-08-13"
   },
-  "rejected": {
-    "note": "Mappings that looked reasonable and were REFUSED on evidence. Recorded so the same plausible-but-wrong bind is not proposed again.",
-    "qwen3.5-plus": {
-      "candidate": "qwen/qwen3.5-plus-20260420",
-      "why": "context mismatch of roughly 4x: models.dev reports 262144 for both opencode/qwen3.5-plus and opencode-go/qwen3.5-plus, while the dated snapshot reports 1000000. A dated snapshot may well be the same family, but nothing available establishes it is the same model, and a wrong bind would attach another model's benchmark."
-    },
-    "mimo-v2-pro": {
-      "candidate": "xiaomi/mimo-v2.5-pro",
-      "why": "OpenCode Go sells mimo-v2-pro AND mimo-v2.5-pro as two separate models in the same roster. The provider itself distinguishes them, so binding one to the other would merge two products a seller lists apart. The matching context window (1048576 for both) is what makes this bind tempting and is not identity evidence."
-    },
-    "mimo-v2-omni": {
-      "candidate": "xiaomi/mimo-v2.5",
-      "why": "same as mimo-v2-pro: a version change (v2 vs v2.5) that the provider's own roster keeps distinct."
-    },
-    "mistral-large-3:675b": {
-      "candidate": null,
-      "why": "no 675b Mistral Large exists in the reference index. Binding to mistral-large-2512 would be a size and edition collapse."
-    },
-    "deepseek-v4-flash:preview": {
-      "candidate": null,
-      "why": "a preview build with no counterpart published anywhere. Binding it to the stable deepseek-v4-flash would claim a preview and a release are the same model."
-    }
+  "deepseek-v4-flash:preview": {
+   "target": "deepseek/deepseek-v4-flash",
+   "decidedBy": "reviewed source reconciliation 2026-08-18",
+   "evidence": [
+    "Ollama's roster lists deepseek-v4-flash:preview with created timestamp 2026-04-24",
+    "models.dev lists deepseek/deepseek-v4-flash with release date 2026-04-24, 1M context, 384K output, tools, reasoning and structured output",
+    "The previously refused -0731 candidate remains a distinct later release and is not used by this mapping"
+   ],
+   "yields": "measured VQ from the exact April 2026 DeepSeek V4 Flash release in the reference index",
+   "reverifyBy": "if Ollama changes the preview offering's created timestamp or DeepSeek replaces the April release with a different identifier",
+   "reviewedAt": "2026-08-18"
+  },
+  "deepseek-v4-pro:preview": {
+   "target": "deepseek/deepseek-v4-pro",
+   "decidedBy": "reviewed source reconciliation 2026-08-18",
+   "evidence": [
+    "Ollama's roster lists deepseek-v4-pro:preview with created timestamp 2026-04-24",
+    "models.dev lists deepseek/deepseek-v4-pro with release date 2026-04-24, 1M context, 384K output, tools, reasoning and structured output",
+    "DeepSeek-V4-Pro-0813 is a separate dated release and remains independently benchmarked"
+   ],
+   "yields": "measured VQ from the exact April 2026 DeepSeek V4 Pro release in the reference index",
+   "reverifyBy": "if Ollama changes the preview offering's created timestamp or DeepSeek publishes another preview snapshot",
+   "reviewedAt": "2026-08-18"
+  },
+  "mistral-large-3:675b": {
+   "target": "mistralai/mistral-large-2512",
+   "decidedBy": "reviewed source reconciliation 2026-08-18",
+   "evidence": [
+    "Ollama publishes mistral-large-3:675b as a December 2025 cloud model with 675B total parameters and a 256K context window",
+    "Mistral's own Mistral Large 3 documentation identifies the release as mistral-large-2512, dated December 2 2025, with 675B total parameters and 256K context",
+    "OpenRouter identifies mistralai/mistral-large-2512 as Mistral Large 3 2512 and publishes its benchmark fields"
+   ],
+   "yields": "measured VQ from the exact Mistral Large 3 2512 release in the reference index",
+   "reverifyBy": "if Ollama changes the model's published parameter count, date, or Mistral model identifier",
+   "reviewedAt": "2026-08-18"
+  },
+  "nemotron-3-nano:30b": {
+   "target": "nvidia/nemotron-3-nano-30b-a3b",
+   "rejected": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+   "decidedBy": "primary source: POST https://ollama.com/api/show {\"model\":\"nemotron-3-nano:30b\"}",
+   "evidence": [
+    "context_length: Ollama reports 262144; the chosen target reports 262144, the rejected one 256000 — an exact match on one side and a mismatch on the other",
+    "general.architecture: Ollama reports 'nemotron-3-nano'; the rejected candidate is 'nemotron-3-nano-omni', a different architecture",
+    "modality: Ollama reports capabilities [completion, tools, thinking] with no vision or audio, and the chosen target is text-only; the rejected candidate accepts text, audio, image and video",
+    "tags: https://ollama.com/library/nemotron-3-nano/tags lists 30b, 30b-a3b-fp16, 30b-a3b-q4, 30b-a3b-q8, 30b-cloud — no omni build is published at all"
+   ],
+   "reverifyBy": "re-running the /api/show call above and comparing context_length and architecture; if either stops matching, delete this mapping rather than adjusting it",
+   "reviewedAt": "2026-08-12"
+  },
+  "nemotron-3-ultra": {
+   "target": "nvidia/nemotron-3-ultra-550b-a55b",
+   "decidedBy": "primary source: POST https://ollama.com/api/show {\"model\":\"nemotron-3-ultra\"}",
+   "evidence": [
+    "general.parameter_count: Ollama reports 550000000000, and the target's own id declares 550b — an exact match on the one number that identifies this model",
+    "NVIDIA publishes exactly one Nemotron 3 Ultra, so there is no sibling for the parameter count to be confused with",
+    "context differs (Ollama 262144 vs the target's 512288), which is expected: a host may serve a shorter window than the model supports. The parameter count, not the served window, is the identity"
+   ],
+   "reverifyBy": "if NVIDIA ever ships a second Ultra at a different parameter count, this mapping must be re-decided rather than kept",
+   "reviewedAt": "2026-08-12"
+  },
+  "nemotron-3-super": {
+   "target": "nvidia/nemotron-3-super-120b-a12b",
+   "decidedBy": "primary source: POST https://ollama.com/api/show {\"model\":\"nemotron-3-super\"}",
+   "evidence": [
+    "general.parameter_count: Ollama reports 120000000000; the target declares 120b",
+    "general.architecture: Ollama reports 'nemotron_h_moe', a mixture-of-experts model, consistent with the target's 'a12b' active-parameter suffix",
+    "NVIDIA publishes one Nemotron 3 Super"
+   ],
+   "reviewedAt": "2026-08-12"
+  },
+  "nemotron-3-ultra-free": {
+   "target": "nvidia/nemotron-3-ultra-550b-a55b",
+   "decidedBy": "models.dev provider 'opencode', plus the reference index's own free variant",
+   "evidence": [
+    "context: models.dev reports 1000000 for opencode/nemotron-3-ultra-free, which is exactly the context the reference index publishes for nvidia/nemotron-3-ultra-550b-a55b:free (the paid variant reports 512288)",
+    "OpenCode Zen sells no paid nemotron-3-ultra, so the -free suffix is the plan and not a distinct model",
+    "the reference index publishes identical benchmark values for the paid and :free variants, so binding to the base is the same claim either way"
+   ],
+   "reviewedAt": "2026-08-12"
   }
+ },
+ "rejected": {
+  "note": "Identity candidates that were examined and REFUSED on evidence, plus the cases where the search established that no candidate exists at all. These are records of a DECISION, never a resolution: nothing here may ever become a resolved identity. They are ingested into the catalog so the dashboard can answer 'what did we actually do to reach identity_review' rather than leaving the work in a file no consumer reads. Each candidate is kept as its own record — two rejected candidates are two facts, not one paragraph.",
+  "reviewedAt": "2026-08-18",
+  "entries": {
+   "qwen3.5-plus": {
+    "verdict": "identity_review",
+    "candidates": [
+     {
+      "candidate": "qwen/qwen3.5-plus-20260420",
+      "why": "context mismatch of roughly 4x: models.dev reports 262144 for both opencode/qwen3.5-plus and opencode-go/qwen3.5-plus, while this dated snapshot reports 1000000. A dated snapshot may well be the same family, but nothing available establishes it is the same model, and a wrong bind would attach another model's benchmark.",
+      "evidence": [
+       "models.dev limit.context for opencode/qwen3.5-plus and opencode-go/qwen3.5-plus: 262144",
+       "reference index context_length for qwen/qwen3.5-plus-20260420: 1000000",
+       "this candidate carries NO benchmark fields, so binding to it would not even produce a score"
+      ],
+      "sourceUrl": "https://openrouter.ai/api/v1/models",
+      "candidateMeta": {
+       "contextTokens": 1000000,
+       "benchmarked": false
+      }
+     },
+     {
+      "candidate": "qwen/qwen3.5-plus-02-15",
+      "why": "found 2026-08-13 by searching every upstream id for the token instead of relying on the resolver's rules. There are TWO dated snapshots and only this one is benchmarked, so choosing it would mean picking the snapshot that happens to carry a score — the worst possible basis for an identity decision. Neither OpenCode roster carries version metadata that could settle which snapshot is served: both stamp every entry with one identical build timestamp.",
+      "evidence": [
+       "reference index design_arena Elo for qwen/qwen3.5-plus-02-15: 1171.875",
+       "opencode.ai/zen/v1/models and /zen/go/v1/models stamp every entry with the same `created` value, so the roster cannot distinguish snapshots",
+       "binding this one yields a calibrated VQ of roughly 36 while binding the other yields nothing — a 36-point swing decided by nothing but which snapshot was measured"
+      ],
+      "sourceUrl": "https://openrouter.ai/api/v1/models",
+      "candidateMeta": {
+       "designElo": 1171.875,
+       "benchmarked": true
+      }
+     }
+    ]
+   },
+   "mimo-v2-pro": {
+    "verdict": "identity_review",
+    "candidates": [
+     {
+      "candidate": "xiaomi/mimo-v2.5-pro",
+      "why": "OpenCode Go sells mimo-v2-pro AND mimo-v2.5-pro as two separate models in the same roster. The provider itself distinguishes them, so binding one to the other would merge two products a seller lists apart. The matching context window is what makes this bind tempting and is not identity evidence.",
+      "evidence": [
+       "https://opencode.ai/zen/go/v1/models lists both `mimo-v2-pro` and `mimo-v2.5-pro`",
+       "context window is 1048576 for both, which is a coincidence rather than an identity signal"
+      ],
+      "sourceUrl": "https://opencode.ai/zen/go/v1/models",
+      "candidateMeta": {
+       "contextTokens": 1048576
+      }
+     }
+    ]
+   },
+   "mimo-v2-omni": {
+    "verdict": "identity_review",
+    "candidates": [
+     {
+      "candidate": "xiaomi/mimo-v2.5",
+      "why": "same as mimo-v2-pro: a version change (v2 vs v2.5) that the provider's own roster keeps distinct.",
+      "evidence": [
+       "https://opencode.ai/zen/go/v1/models lists `mimo-v2-omni`, `mimo-v2.5` and `mimo-v2.5-pro` as separate entries"
+      ],
+      "sourceUrl": "https://opencode.ai/zen/go/v1/models"
+     }
+    ]
+   },
+   "cline-pass/glm-5.3": {
+    "verdict": "identity_review",
+    "candidates": [
+     {
+      "candidate": null,
+      "why": "GLM-5.3 exists and is identified upstream, but no benchmark index publishes a figure for it, so there is no canonical id to bind to. The nearest present id, z-ai/glm-5.2, is a different release: binding to it would attach another model's measured score, which is the exact failure the exact-match identity rules exist to prevent. This is a dated finding about the index, not about the model — it resolves itself the day the index lists GLM-5.3, and nothing here blocks that resolution.",
+      "evidence": [
+       "token search across all 413 reference-index ids for `glm-5.3`: no match. The only id containing `5.3` is openai/gpt-5.3-codex",
+       "the index carries 14 z-ai models and the newest is z-ai/glm-5.2, created 2026-06-16 — GLM-5.3 postdates the snapshot the index was built from",
+       "models.dev does list the model (zai-org/glm-5.3 at nano-gpt, glm-5.3 at zai-coding-plan and zhipuai-coding-plan), which is why its context and output limits ARE resolved — but models.dev publishes no benchmark figures and so cannot supply a canonical id",
+       "ClinePass itself publishes no benchmark data either: its roster returns {id, name, description, tags} for all 13 models"
+      ],
+      "sourceUrl": "https://openrouter.ai/api/v1/models",
+      "candidateMeta": {
+       "newestZaiIdInIndex": "z-ai/glm-5.2",
+       "newestZaiIdCreated": "2026-06-16",
+       "indexSize": 413,
+       "limitsResolvedFrom": "zhipuai-coding-plan/glm-5.3 (vendor_default)"
+      }
+     }
+    ]
+   }
+  }
+ }
 }
