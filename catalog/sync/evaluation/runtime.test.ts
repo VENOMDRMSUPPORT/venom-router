@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { runDimensionEvaluation, runSpeedEvaluation, type RuntimeScenario } from './runtime.ts';
+import { buildEvaluationFixtures } from './fixtures.ts';
 import { OVERALL_SCORE_POLICY } from './score.ts';
 import type { EvaluationTransport } from './transport.ts';
 
@@ -57,5 +58,52 @@ describe('runtime evaluation scheduling', () => {
     assert.equal(result.metrics.successRate, 2 / 3);
     assert.equal(result.metrics.ttftMedianSeconds, 1.5);
     assert.equal(result.metrics.endToEndP95Seconds, 20);
+  });
+});
+
+describe('stopping a dimension part-way', () => {
+  const scenarios = () => buildEvaluationFixtures().structuredOutput;
+
+  test('stops issuing requests once asked, and refuses to score what it has', async () => {
+    const fixtures = scenarios();
+    const bodies = new Map(fixtures.map((item) => [JSON.stringify(item.payload), item.expectedResponse]));
+    let calls = 0;
+    let stop = false;
+    const result = await runDimensionEvaluation({
+      providerId: 'p', modelId: 'm', dimension: 'structuredOutput',
+      scenarios: fixtures,
+      credential: 'secret',
+      now: () => '2026-08-20T00:00:00.000Z',
+      shouldStop: () => stop,
+      transport: async (payload) => {
+        calls++;
+        if (calls >= 10) stop = true;
+        return { kind: 'success', attempts: 1, response: { status: 200, headers: {}, body: bodies.get(JSON.stringify(payload)) } };
+      },
+    });
+
+    assert.equal(result.status, 'insufficient_evidence');
+    assert.equal(result.reason, 'stopped');
+    assert.ok(calls < 63, `a stop must halt the run, but it issued ${calls} of 63 requests`);
+    assert.ok(result.samples.length > 0, 'the samples already paid for are kept');
+    assert.ok(result.samples.every((sample) => sample !== undefined), 'no holes in the retained samples');
+  });
+
+  test('a run nobody stopped is unaffected', async () => {
+    const fixtures = scenarios();
+    const bodies = new Map(fixtures.map((item) => [JSON.stringify(item.payload), item.expectedResponse]));
+    const result = await runDimensionEvaluation({
+      providerId: 'p', modelId: 'm', dimension: 'structuredOutput',
+      scenarios: fixtures,
+      credential: 'secret',
+      now: () => '2026-08-20T00:00:00.000Z',
+      shouldStop: () => false,
+      transport: async (payload) => ({
+        kind: 'success', attempts: 1,
+        response: { status: 200, headers: {}, body: bodies.get(JSON.stringify(payload)) },
+      }),
+    });
+    assert.equal(result.status, 'complete');
+    assert.equal(result.samples.length, 60);
   });
 });

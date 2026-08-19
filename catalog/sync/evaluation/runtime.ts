@@ -34,24 +34,38 @@ export interface DimensionEvaluationRequest {
   now: () => string;
   existingSamples?: RuntimeSample[];
   onSample?: (sample: RuntimeSample) => void | Promise<void>;
+  /**
+   * Asked between samples, so a stop costs at most the requests already in
+   * flight. Checking only between dimensions would let a cancelled run keep
+   * spending for another sixty requests, which is the whole reason a stop
+   * button exists.
+   */
+  shouldStop?: () => boolean;
 }
 
 export type DimensionEvaluationResult =
   | { status: 'complete'; reason: null; score: CriterionScore; samples: RuntimeSample[]; evaluatedAt: string }
   | { status: 'insufficient_evidence'; reason: string; score: null; samples: RuntimeSample[]; evaluatedAt: string };
 
-async function runPool<T>(tasks: (() => Promise<T>)[], concurrency: number): Promise<T[]> {
-  const results = new Array<T>(tasks.length);
+async function runPool<T>(
+  tasks: (() => Promise<T>)[],
+  concurrency: number,
+  shouldStop?: () => boolean,
+): Promise<T[]> {
+  const results = new Array<T | undefined>(tasks.length);
   let next = 0;
   const worker = async () => {
     while (true) {
+      if (shouldStop?.()) return;
       const index = next++;
       if (index >= tasks.length) return;
       results[index] = await tasks[index]();
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker));
-  return results;
+  // A stop leaves holes where tasks were never started; the caller must see the
+  // samples that were actually paid for and nothing else.
+  return results.filter((entry): entry is T => entry !== undefined);
 }
 
 function outcomeSample(scenario: RuntimeScenario, repetition: number, outcome: TransportOutcome): RuntimeSample {
@@ -109,12 +123,18 @@ export async function runDimensionEvaluation(request: DimensionEvaluationRequest
   }
   if (tasks.length > 0) {
     for (let warmup = 0; warmup < OVERALL_SCORE_POLICY.warmupRequests; warmup++) {
+      if (request.shouldStop?.()) break;
       await request.transport(request.scenarios[warmup % request.scenarios.length].payload, request.credential);
     }
   }
-  const fresh = await runPool(tasks, OVERALL_SCORE_POLICY.qualityProviderConcurrency);
+  const fresh = await runPool(tasks, OVERALL_SCORE_POLICY.qualityProviderConcurrency, request.shouldStop);
   const samples = [...prior.values(), ...fresh]
     .sort((left, right) => left.scenarioId.localeCompare(right.scenarioId) || left.repetition - right.repetition);
+  // Checked before anything else: a stopped run is incomplete by construction,
+  // and scoring the fraction it managed would publish a number nobody asked for.
+  if (request.shouldStop?.()) {
+    return { status: 'insufficient_evidence', reason: 'stopped', score: null, samples, evaluatedAt };
+  }
   const evaluatorFailures = samples.filter((sample) => sample.outcome === 'evaluator_failure' || sample.outcome === 'provider_failure');
   if (evaluatorFailures.length > 0) {
     return { status: 'insufficient_evidence', reason: 'incomplete_valid_scenarios', score: null, samples, evaluatedAt };

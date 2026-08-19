@@ -44,6 +44,7 @@ describe('the service-side evaluation executor', () => {
       identityId: 'vendor/model',
       dimension: 'structuredOutput',
       onSample: (completed, total) => progress.push({ completed, total }),
+      shouldStop: () => false,
     });
 
     assert.equal(result.status, 'complete');
@@ -83,6 +84,7 @@ describe('the service-side evaluation executor', () => {
     const result = await executor.runDimension({
       providerId: 'p', modelId: 'm', identityId: 'vendor/model', dimension: 'structuredOutput',
       onSample: () => {},
+      shouldStop: () => false,
     });
 
     assert.equal(result.status, 'insufficient_evidence');
@@ -107,9 +109,44 @@ describe('the service-side evaluation executor', () => {
     const result = await executor.runDimension({
       providerId: 'p', modelId: 'm', identityId: 'vendor/model', dimension: 'structuredOutput',
       onSample: () => {},
+      shouldStop: () => false,
     });
     assert.equal(result.status, 'insufficient_evidence');
     assert.equal(called, false);
+    db.close();
+  });
+});
+
+describe('stopping a dimension the service is running', () => {
+  test('halts inside the dimension instead of paying out the rest of it', async () => {
+    const db = seed();
+    let stopping = false;
+    let calls = 0;
+    const executor = createEvaluationExecutor(db, {
+      credential: () => 'secret',
+      transport: () => async (payload, secret) => {
+        calls++;
+        if (calls >= 12) stopping = true;
+        return perfectTransport('structuredOutput')(payload, secret);
+      },
+      now: () => '2026-08-20T00:00:00.000Z',
+    });
+
+    const result = await executor.runDimension({
+      providerId: 'p', modelId: 'm', identityId: 'vendor/model', dimension: 'structuredOutput',
+      onSample: () => {},
+      shouldStop: () => stopping,
+    });
+
+    assert.equal(result.status, 'insufficient_evidence');
+    assert.ok(calls < REQUESTS_PER_DIMENSION,
+      `a stop must not pay out the dimension: issued ${calls} of ${REQUESTS_PER_DIMENSION}`);
+    const scored = db.prepare(`SELECT COUNT(*) n FROM model_identity_scores
+      WHERE identity_id='vendor/model' AND status='scored'`).get() as unknown as { n: number };
+    assert.equal(scored.n, 0, 'a stopped dimension is never published');
+    // The requests already bought are kept, so resuming does not pay twice.
+    const samples = db.prepare(`SELECT COUNT(*) n FROM evaluation_samples`).get() as unknown as { n: number };
+    assert.ok(samples.n > 0, 'samples already paid for are retained');
     db.close();
   });
 });

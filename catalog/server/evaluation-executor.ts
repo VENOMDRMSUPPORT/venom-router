@@ -45,7 +45,7 @@ export function createEvaluationExecutor(db: Db, overrides: ExecutorOverrides = 
   const transportFor = overrides.transport ?? createEvaluationTransport;
 
   return {
-    async runDimension({ providerId, modelId, identityId, dimension, onSample }) {
+    async runDimension({ providerId, modelId, identityId, dimension, onSample, shouldStop }) {
       const credential = credentialFor(providerId);
       // Should not happen — the plan refuses a provider with no credential
       // before a job is queued — but returning the typed incomplete state is
@@ -71,6 +71,7 @@ export function createEvaluationExecutor(db: Db, overrides: ExecutorOverrides = 
         credential,
         testSetHash,
         now,
+        shouldStop,
       });
       return {
         status: result.status,

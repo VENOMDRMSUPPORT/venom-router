@@ -21,6 +21,8 @@ export interface EvaluationJobExecutor {
     identityId: string;
     dimension: QualityDimension;
     onSample: (completed: number, total: number) => void;
+    /** Asked between samples: a stop must not cost another full dimension. */
+    shouldStop: () => boolean;
   }): Promise<{ status: 'complete' | 'insufficient_evidence'; score: number | null }>;
   runSpeed(input: { providerId: string; modelId: string }): Promise<{ status: 'complete' | 'insufficient_evidence' }>;
   recalculate(): void;
@@ -191,6 +193,7 @@ export class EvaluationRunner {
           current.samplesCompleted = completed;
           current.samplesTotal = total;
         },
+        shouldStop: () => this.stopping,
       });
       current.dimensionsCompleted.push({ dimension, score: result.score, status: result.status });
       current.dimensionsRemaining = current.dimensionsRemaining.filter((entry) => entry !== dimension);

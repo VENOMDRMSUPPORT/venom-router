@@ -16,6 +16,8 @@ export interface PersistDimensionEvaluationInput {
   credential: string | null;
   testSetHash: string;
   now: () => string;
+  /** Asked between samples so a stop costs at most the requests in flight. */
+  shouldStop?: () => boolean;
   /**
    * Start a new run instead of resuming an existing one.
    *
@@ -73,6 +75,7 @@ export async function persistDimensionEvaluation(
     transport: input.transport,
     credential: input.credential,
     now: input.now,
+    shouldStop: input.shouldStop,
     existingSamples,
     onSample: (sample) => {
       repository.upsertSample({
