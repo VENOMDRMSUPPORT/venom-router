@@ -8,6 +8,7 @@ function model(over: Partial<ApiModel> = {}): ApiModel {
   return {
     providerId: 'p',
     modelId: 'm',
+    lifecycle: null,
     canonicalId: 'up/m',
     vendorModelId: null,
     identityState: 'resolved',
