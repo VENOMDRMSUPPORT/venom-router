@@ -502,11 +502,12 @@ function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: st
               <th className={styles.narrow}>#</th>
               <th>Model</th>
               <th>Score</th>
-              <th>Context</th>
-              <th>Max out</th>
+              <th className={styles.num}>Context</th>
+              <th className={styles.num}>Max out</th>
               {/* The column states its own semantics, so the cells do not have
                   to repeat it once per row. */}
               <th
+                className={styles.num}
                 data-testid="cost-column-in"
                 title={
                   costStatedOnce
@@ -517,6 +518,7 @@ function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: st
                 In{costStatedOnce ? <span className={styles.thNote}> · ref</span> : ''}
               </th>
               <th
+                className={styles.num}
                 data-testid="cost-column-out"
                 title={
                   costStatedOnce
@@ -531,9 +533,13 @@ function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: st
             </tr>
           </thead>
           <tbody>
-            {models.map((m) => (
+            {models.map((m, index) => (
               <Fragment key={`${m.providerId}/${m.modelId}`}>
-              <tr>
+              <tr className={
+                m.overallRank === null && models[index - 1]?.overallRank !== null && index > 0
+                  ? styles.firstUnplaced
+                  : undefined
+              }>
                 <td className={styles.narrow}><ModelRankCell model={m} /></td>
                 <td>
                   <span className={styles.modelName}>{m.modelId}</span>

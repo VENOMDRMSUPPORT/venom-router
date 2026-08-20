@@ -184,7 +184,10 @@ describe('the provider table presents one server-derived model score', () => {
     expect(headers).not.toContain('VQ');
     expect(headers).not.toContain('VO');
     expect(screen.getByText('65.8%')).toBeInTheDocument();
-    expect(screen.getByText('100% coverage')).toBeInTheDocument();
+    // A complete score no longer carries a coverage badge: a column of identical
+    // "100% coverage" pills states per row that nothing is missing. The badge
+    // now marks the exception, which is the row a reader must not miss.
+    expect(screen.queryByText(/coverage/i)).not.toBeInTheDocument();
   });
 
   test('states the global scope and renders a dense-rank tie marker', async () => {
@@ -211,7 +214,7 @@ describe('the provider table presents one server-derived model score', () => {
     })]);
     renderProviderPage();
 
-    expect(await screen.findByText('86% coverage')).toBeInTheDocument();
+    expect(await screen.findByText('6 of 7 dimensions')).toBeInTheDocument();
   });
 
   test('shows one Score block in grid view instead of separate VQ and VO blocks', async () => {

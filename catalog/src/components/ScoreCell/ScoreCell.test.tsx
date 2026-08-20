@@ -73,7 +73,9 @@ describe('ModelScoreCell', () => {
     );
 
     expect(screen.getByText('56.3%')).toHaveAttribute('title', expect.stringContaining('overall-score-v1'));
-    expect(screen.getByText('86% coverage')).toBeInTheDocument();
+    // Counts, not a rounded percentage: "86% coverage" does not say what is
+    // missing, and "6 of 7 dimensions" does — from the same two numbers.
+    expect(screen.getByText('6 of 7 dimensions')).toBeInTheDocument();
   });
 
   test.each([
@@ -177,5 +179,38 @@ describe('CostCell — the billingKind FactState branch', () => {
     );
     expect(screen.getByText('Included · n/a')).toBeInTheDocument();
     expect(screen.queryByText('missing')).not.toBeInTheDocument();
+  });
+});
+
+const scored = (coverage: { percent: number; scored: number; applicable: number }) => model({
+  overallScore: { ...model().overallScore, value: 91.3, display: '91.3%', status: 'complete', overallCoverage: coverage },
+});
+const unscored = () => model({
+  overallScore: {
+    ...model().overallScore, value: null, display: '—', status: 'insufficient_evidence',
+    reasons: ['unknown_speed'],
+  },
+});
+
+describe('what the score cell says, and what it stops repeating', () => {
+  test('a complete score shows the number and no coverage badge', () => {
+    // Thirteen rows each carrying "100% coverage" is thirteen statements that
+    // nothing is missing. A badge should mark the exception, not the norm.
+    render(<ModelScoreCell model={scored({ percent: 100, scored: 6, applicable: 6 })} />);
+    expect(screen.getByText('91.3%')).toBeInTheDocument();
+    expect(screen.queryByText(/coverage/i)).not.toBeInTheDocument();
+  });
+
+  test('partial coverage is still called out, because that one matters', () => {
+    render(<ModelScoreCell model={scored({ percent: 67, scored: 4, applicable: 6 })} />);
+    expect(screen.getByText('4 of 6 dimensions')).toBeInTheDocument();
+  });
+
+  test('an unscored row states its state once, not twice', () => {
+    // It used to render an em dash AND an "Insufficient evidence" badge: two
+    // glyphs for one fact, stacked, on every unplaced row.
+    render(<ModelScoreCell model={unscored()} />);
+    expect(screen.getByText('Insufficient evidence')).toBeInTheDocument();
+    expect(screen.queryByText('—')).not.toBeInTheDocument();
   });
 });

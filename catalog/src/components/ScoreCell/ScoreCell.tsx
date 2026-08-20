@@ -17,24 +17,31 @@ export function ModelScoreCell({ model }: { model: ApiModel }) {
     const state = OVERALL_PRESENTATION[score.status];
     const reason = score.reasons.length > 0 ? score.reasons.join(', ') : undefined;
     return (
+      // One glyph for one fact. An em dash stacked above "Insufficient
+      // evidence" said the same thing twice on every unplaced row.
       <div className={styles.cell}>
-        <span className={styles.unknown} title={reason}>
-          —
-        </span>
-        <span className={`${styles.badge} ${styles[state.className]}`}>{state.label}</span>
+        <span className={`${styles.badge} ${styles[state.className]}`} title={reason}>{state.label}</span>
       </div>
     );
   }
 
   const breakdown = `${score.methodologyVersion ?? 'overall-score-v1'}: quality ${score.qualityScore?.toFixed(1) ?? 'unknown'} × 70% + operations ${score.operationalScore?.toFixed(1) ?? 'unknown'} × 30% = ${score.display}`;
-  const coverage = `${Math.round(score.overallCoverage.percent)}% coverage`;
+  // The badge marks the EXCEPTION. A column of identical "100% coverage" pills
+  // is one sentence repeated per row; a score that is missing a dimension is
+  // the thing a reader has to notice.
+  const complete = score.overallCoverage.scored >= score.overallCoverage.applicable;
 
   return (
     <div className={styles.cell}>
       <span className={styles.value} title={breakdown}>{score.display}</span>
-      <span className={`${styles.badge} ${styles.partial}`} title={`${score.overallCoverage.scored} of ${score.overallCoverage.applicable} applicable dimensions scored.`}>
-        {coverage}
-      </span>
+      {!complete && (
+        <span
+          className={`${styles.badge} ${styles.partial}`}
+          title={`Scored on ${score.overallCoverage.scored} of ${score.overallCoverage.applicable} applicable dimensions.`}
+        >
+          {score.overallCoverage.scored} of {score.overallCoverage.applicable} dimensions
+        </span>
+      )}
     </div>
   );
 }

@@ -587,6 +587,14 @@
   font-size: 0.84rem;
 }
 
+/* The header stays put while 23 rows scroll past; a column nobody can name is
+   a column nobody can read. */
+.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
 .table th {
   text-align: left;
   padding: 12px 14px;
@@ -601,9 +609,16 @@
 }
 
 .table td {
-  padding: 12px 14px;
+  padding: 11px 14px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
   vertical-align: middle;
+}
+
+/* Placement is a real boundary in this data, not a sort order: above the line
+   every row has a complete overall-score-v1 result, below it none do. The rule
+   is drawn once, where the two groups meet. */
+.table tbody tr.firstUnplaced td {
+  border-top: 1px solid var(--border-strong);
 }
 
 .table tbody tr {
@@ -623,9 +638,18 @@
 }
 
 .num {
+  /* Right-aligned tabular figures. This grid exists to be compared down a
+     column — $0.02 against $2.50, 250K against 1M — and left-aligned numerals
+     put the magnitudes in different places on every row. */
   font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  text-align: right;
   white-space: nowrap;
   color: var(--foreground-secondary);
+}
+
+.table th.num {
+  text-align: right;
 }
 
 .modelName {
