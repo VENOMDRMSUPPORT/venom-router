@@ -11,13 +11,23 @@ import {
   LuCircleCheck,
   LuTriangleAlert,
   LuCircleX,
+  LuLayers,
+  LuZap,
+  LuActivity,
+  LuSparkles,
+  LuInfo,
+  LuShieldCheck,
+  LuCreditCard,
+  LuBookOpen,
+  LuExternalLink,
+  LuChevronDown,
+  LuChevronUp,
 } from 'react-icons/lu';
 import { useCatalog, useProviderModels } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import { formatTokens, type ApiModel } from '../../api/client';
 import { FreshnessBadge } from '../../components/FreshnessBadge/FreshnessBadge';
 import { ModelScoreCell, ModelRankCell, CostCell } from '../../components/ScoreCell/ScoreCell';
-import { Callout } from '../../components/Callout/Callout';
 import { Toolbar } from '../../components/Toolbar/Toolbar';
 import { NotFoundPage } from '../NotFoundPage/NotFoundPage';
 import { EvidencePanel } from '../../components/EvidencePanel/EvidencePanel';
@@ -128,6 +138,8 @@ export function ProviderPage() {
     provider.liveModels === 0 || overallIncomplete > 0 ? 'warn' : 'ok';
   const freeStatus: 'ok' | 'warn' | 'error' = 'ok';
 
+  const hasContext = provider.overallScoreScored < provider.liveModels || uniformCostKind === 'included' || Boolean(pres.note);
+
   return (
     <div>
       <header className={styles.header}>
@@ -153,12 +165,18 @@ export function ProviderPage() {
           label="Live models"
           status={liveModelsStatus}
           statusTitle={provider.liveModels > 0 ? `${provider.liveModels} active models available` : 'No models available'}
+          icon={<LuLayers size={15} />}
+          subtext={provider.liveModels > 0 ? 'Active in roster' : 'No models listed'}
+          accent="emerald"
         />
         <Stat
           value={formatTokens(maxCtx)}
           label="Max context"
           status={maxCtxStatus}
           statusTitle={maxCtx > 0 ? `Max context window: ${formatTokens(maxCtx)}` : 'Context window unknown'}
+          icon={<LuZap size={15} />}
+          subtext="Peak context window"
+          accent="blue"
         />
         <Stat
           value={`${provider.overallScoreScored}/${provider.liveModels}`}
@@ -170,47 +188,87 @@ export function ProviderPage() {
               : `${overallIncomplete} model(s) still lack sufficient reproducible evidence. Operational data is available for ${operationalReady}/${provider.liveModels}; provider availability is not a benchmark result.`
           }
           testId="quality-tile-status"
+          icon={<LuActivity size={15} />}
+          progress={provider.liveModels > 0 ? Math.round((provider.overallScoreScored / provider.liveModels) * 100) : 0}
+          subtext={provider.liveModels > 0 ? 'Reproducible overall-score-v1' : 'Pending evaluation'}
+          accent={qualityStatus === 'ok' ? 'emerald' : 'amber'}
         />
         <Stat
-          value={free > 0 ? String(free) : '0/0'}
+          value={free > 0 ? String(free) : 'None'}
           label="Free models"
           status={freeStatus}
-          statusTitle={free > 0 ? `${free} free model(s) available` : '0/0 free models (standard for commercial provider)'}
+          statusTitle={free > 0 ? `${free} free model(s) available` : 'No zero-cost models, which is normal for a subscription provider.'}
           isFree={free > 0}
+          icon={<LuSparkles size={15} />}
+          subtext={free > 0 ? 'Zero-cost models' : 'Commercial / subscription'}
+          accent={free > 0 ? 'emerald' : 'neutral'}
         />
       </div>
 
-      {provider.overallScoreScored < provider.liveModels && (
-        <Callout>
-          <strong>Evaluation status:</strong> operational data is complete for{' '}
-          {operationalReady}/{provider.liveModels} models, while reproducible{' '}
-          <code>overall-score-v1</code> evaluations are complete for{' '}
-          {provider.overallScoreScored}/{provider.liveModels}. A successful API
-          request confirms availability only.
-        </Callout>
-      )}
+      {/* Unified Enterprise Context Hub */}
+      {hasContext && (
+        <div className={styles.contextHub}>
+          <div className={styles.contextHubHeader}>
+            <div className={styles.contextHubTitle}>
+              <LuInfo size={15} className={styles.contextHubIcon} />
+              <span>What to know before reading these rows</span>
+            </div>
+          </div>
 
-      {uniformCostKind === 'included' && (
-        <Callout>
-          <span data-testid="billing-note" />
+          <div className={styles.contextGrid}>
+            {provider.overallScoreScored < provider.liveModels && (
+              <div className={styles.contextCard}>
+                <div className={styles.contextCardHeader}>
+                  <div className={`${styles.contextBadge} ${styles.contextBadgeWarn}`}>
+                    <LuShieldCheck size={14} />
+                    <span>Evaluation Integrity</span>
+                  </div>
+                </div>
+                <p className={styles.contextCardText}>
+                  Operational data is complete for {operationalReady}/{provider.liveModels}.
+                  A successful API request proves a model is reachable, not that it is good —
+                  the score above counts only reproducible <code>overall-score-v1</code> evidence.
+                </p>
+              </div>
+            )}
 
-          <strong>Billing:</strong> every model here is covered by this provider's
-          subscription — there is no per-token charge for any of them, and that is not $0.
-          The <code>ref</code> figures below are the published per-million-token rates the
-          plan meters usage against, shown so models can be compared. Cost is therefore
-          excluded from every VO on this page, with the remaining weights renormalised.
-        </Callout>
-      )}
+            {uniformCostKind === 'included' && (
+              <div className={styles.contextCard}>
+                <div className={styles.contextCardHeader}>
+                  <div className={`${styles.contextBadge} ${styles.contextBadgeInfo}`}>
+                    <LuCreditCard size={14} />
+                    <span>Billing Policy</span>
+                  </div>
+                  <span data-testid="billing-note" />
+                  <span className={styles.contextMeta}>Included Plan</span>
+                </div>
+                <p className={styles.contextCardText}>
+                  Every model here is covered by the subscription, which is not the same as free.
+                  The <code>ref</code> prices are the rates the plan meters against, shown only so
+                  models can be compared — cost is excluded from VO on this page.
+                </p>
+              </div>
+            )}
 
-      {pres.note && (
-        <Callout>
-          <strong>Note:</strong> {pres.note}{' '}
-          {pres.docsUrl && (
-            <a href={pres.docsUrl} target="_blank" rel="noopener noreferrer">
-              Provider docs →
-            </a>
-          )}
-        </Callout>
+            {pres.note && (
+              <div className={styles.contextCard}>
+                <div className={styles.contextCardHeader}>
+                  <div className={`${styles.contextBadge} ${styles.contextBadgeScope}`}>
+                    <LuBookOpen size={14} />
+                    <span>Provider Scope</span>
+                  </div>
+                  {pres.docsUrl && (
+                    <a href={pres.docsUrl} target="_blank" rel="noopener noreferrer" className={styles.contextDocsLink}>
+                      Provider docs
+                      <LuExternalLink size={12} />
+                    </a>
+                  )}
+                </div>
+                <p className={styles.contextCardText}>{pres.note}</p>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Unified Toolbar */}
@@ -302,7 +360,8 @@ function displayIdentity(m: ApiModel): { id: string; title: string; fromVendor: 
  * visible. The number was never wrong; its scope was never stated.
  */
 const RANK_SCOPE_NOTE =
-  'Global rank across all catalog offers. Global rank shown for models with a complete overall-score-v1 result only. Numbers can skip when another provider’s offer sits between two rows. An = marks a tie the evidence cannot separate.';
+  'Ranked against every scored offer in the catalog, so numbers skip where another provider’s offer sits between two rows. '
+  + 'Only models with a complete overall-score-v1 result are placed; an = marks a tie the evidence cannot separate.';
 
 /**
  * What each non-resolved identity state says in the row.
@@ -413,13 +472,28 @@ function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: st
   if (models.length === 0) return null;
   return (
     <div className={styles.tableWrap}>
-      <h3 className={styles.tableTitle}>{title}</h3>
-      {note && <p className={styles.tableNote}>{note}</p>}
-      {ranked && (
-        <p className={styles.tableNote} data-testid="rank-scope-note">
-          {RANK_SCOPE_NOTE}
-        </p>
-      )}
+      <div className={styles.tableHeaderSection}>
+        <div className={styles.tableHeaderMain}>
+          <div className={styles.tableTitleRow}>
+            <h3 className={styles.tableTitle}>{title}</h3>
+          </div>
+          {note && <p className={styles.tableNote}>{note}</p>}
+        </div>
+
+        {ranked && (
+          <div className={styles.rankScopeBanner}>
+            <div className={styles.rankScopeIconBox}>
+              <LuInfo size={14} />
+            </div>
+            <p className={styles.tableNote} data-testid="rank-scope-note">
+              {RANK_SCOPE_NOTE}
+            </p>
+          </div>
+        )}
+      </div>
+
+      <CapabilitiesLegend />
+
       <div className={styles.tableScroll}>
         <table className={styles.table}>
           <thead>
@@ -539,13 +613,28 @@ function ModelGrid({ title, models, note, costStatedOnce, ranked }: { title: str
   if (models.length === 0) return null;
   return (
     <div className={styles.tableWrap}>
-      <h3 className={styles.tableTitle}>{title}</h3>
-      {note && <p className={styles.tableNote}>{note}</p>}
-      {ranked && (
-        <p className={styles.tableNote} data-testid="rank-scope-note">
-          {RANK_SCOPE_NOTE}
-        </p>
-      )}
+      <div className={styles.tableHeaderSection}>
+        <div className={styles.tableHeaderMain}>
+          <div className={styles.tableTitleRow}>
+            <h3 className={styles.tableTitle}>{title}</h3>
+          </div>
+          {note && <p className={styles.tableNote}>{note}</p>}
+        </div>
+
+        {ranked && (
+          <div className={styles.rankScopeBanner}>
+            <div className={styles.rankScopeIconBox}>
+              <LuInfo size={14} />
+            </div>
+            <p className={styles.tableNote} data-testid="rank-scope-note">
+              {RANK_SCOPE_NOTE}
+            </p>
+          </div>
+        )}
+      </div>
+
+      <CapabilitiesLegend />
+
       <div className={styles.modelGrid}>
         {models.map((m) => (
           <div key={`${m.providerId}/${m.modelId}`} className={styles.modelCard}>
@@ -620,26 +709,56 @@ interface StatProps {
   isFree?: boolean;
   /** Set where a test needs to read the status back rather than infer it from an icon. */
   testId?: string;
+  icon?: React.ReactNode;
+  progress?: number;
+  subtext?: string;
+  accent?: 'emerald' | 'blue' | 'amber' | 'neutral';
 }
 
-function Stat({ value, label, status, statusTitle, isFree, testId }: StatProps) {
+function Stat({ value, label, status, statusTitle, isFree, testId, icon, progress, subtext, accent = 'neutral' }: StatProps) {
   const Icon = status === 'ok' ? LuCircleCheck : status === 'warn' ? LuTriangleAlert : LuCircleX;
 
   return (
-    <div className={`${styles.stat} ${isFree ? styles.freeStat : ''}`}>
+    <div
+      className={`${styles.stat} ${isFree ? styles.freeStat : ''} ${styles[`accent_${accent}`] ?? ''}`}
+      title={statusTitle}
+    >
+      <div className={styles.statTop}>
+        <div className={styles.statLabelRow}>
+          {icon && <span className={styles.statIconBadge}>{icon}</span>}
+          <span className={styles.statLabel}>{label}</span>
+        </div>
+        <div
+          className={`${styles.statStatus} ${styles[`status_${status}`]}`}
+          title={statusTitle}
+          aria-label={statusTitle}
+          data-testid={testId}
+          data-status={status}
+        >
+          <Icon size={14} />
+        </div>
+      </div>
+
       <div className={styles.statContent}>
         <span className={styles.statValue}>{value}</span>
-        <span className={styles.statLabel}>{label}</span>
       </div>
-      <div
-        className={`${styles.statStatus} ${styles[`status_${status}`]}`}
-        title={statusTitle}
-        aria-label={statusTitle}
-        data-testid={testId}
-        data-status={status}
-      >
-        <Icon size={18} />
-      </div>
+
+      {progress !== undefined && (
+        <div className={styles.statProgress}>
+          <div className={styles.statProgressBg}>
+            <div
+              className={styles.statProgressFill}
+              style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {subtext && (
+        <div className={styles.statSubtext}>
+          <span>{subtext}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -649,6 +768,62 @@ function Row({ k, children }: { k: string; children: React.ReactNode }) {
     <div className={styles.provRow}>
       <dt className={styles.provKey}>{k}</dt>
       <dd className={styles.provVal}>{children}</dd>
+    </div>
+  );
+}
+
+function CapabilitiesLegend() {
+  const [open, setOpen] = useState(false);
+  const items = [
+    { icon: LuWrench, name: 'Tools', desc: 'Function calling & external API integration', cls: 'capTools' },
+    { icon: LuBrain, name: 'Reasoning', desc: 'Deep thinking & chain-of-thought processing', cls: 'capReasoning' },
+    { icon: LuBraces, name: 'Structured', desc: 'Strict JSON schema & grammar-constrained output', cls: 'capStructured' },
+    { icon: LuImage, name: 'Vision', desc: 'Image & visual comprehension', cls: 'capImage' },
+    { icon: LuMic, name: 'Audio', desc: 'Voice input & speech understanding', cls: 'capAudio' },
+    { icon: LuVideo, name: 'Video', desc: 'Video sequence processing', cls: 'capVideo' },
+    { icon: LuPaperclip, name: 'Files', desc: 'File & document upload support', cls: 'capAttachment' },
+  ];
+
+  return (
+    <div className={styles.capLegendWrap}>
+      <button
+        type="button"
+        className={styles.capLegendToggle}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <div className={styles.capLegendToggleLeft}>
+          <span className={styles.capLegendIconGroup}>
+            <LuWrench size={12} className={styles.capTools} />
+            <LuBrain size={12} className={styles.capReasoning} />
+            <LuImage size={12} className={styles.capImage} />
+          </span>
+          <span className={styles.capLegendTitle}>Model Capabilities Legend</span>
+        </div>
+        <div className={styles.capLegendToggleRight}>
+          <span className={styles.capLegendAction}>{open ? 'Hide legend' : 'Explore capabilities (7)'}</span>
+          {open ? <LuChevronUp size={14} /> : <LuChevronDown size={14} />}
+        </div>
+      </button>
+
+      {open && (
+        <div className={styles.capLegendGrid}>
+          {items.map((item) => {
+            const Icon = item.icon;
+            return (
+              <div key={item.name} className={styles.capLegendItem}>
+                <span className={`${styles.capIcon} ${styles[item.cls]}`}>
+                  <Icon size={14} />
+                </span>
+                <div className={styles.capLegendText}>
+                  <strong className={styles.capLegendName}>{item.name}</strong>
+                  <span className={styles.capLegendDesc}>{item.desc}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

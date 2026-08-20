@@ -192,7 +192,13 @@ describe('the provider table presents one server-derived model score', () => {
     renderProviderPage();
 
     await screen.findByText('65.8%');
-    expect(screen.getByTestId('rank-scope-note')).toHaveTextContent(/global rank across all catalog offers/i);
+    // Asserts the FACTS the note has to carry, not one phrasing of them: the
+    // ranking is catalog-wide, only complete results are placed, and "=" is a
+    // tie. Pinning the sentence made an editorial trim look like a regression.
+    const scopeNote = screen.getByTestId('rank-scope-note');
+    expect(scopeNote).toHaveTextContent(/catalog/i);
+    expect(scopeNote).toHaveTextContent(/overall-score-v1/i);
+    expect(scopeNote).toHaveTextContent(/tie/i);
     expect(screen.getByTestId('model-rank-cline-pass/deepseek-v4-flash')).toHaveTextContent('#9=');
   });
 
@@ -634,8 +640,9 @@ describe('the ranking says what it ranks against', () => {
 
     expect(await screen.findByText('cline-pass/deepseek-v4-flash')).toBeInTheDocument();
     const note = screen.getByTestId('rank-scope-note').textContent ?? '';
-    expect(note).toMatch(/global rank across all catalog offers/i);
+    expect(note).toMatch(/catalog/i);
     expect(note).toMatch(/another provider/i);
+    expect(note).toMatch(/skip/i);
   });
 });
 

@@ -98,26 +98,37 @@
 .kpi {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  justify-content: space-between;
+  gap: 8px;
   padding: 16px 18px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--surface);
-  box-shadow: var(--shadow-sm);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), var(--shadow-sm);
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.kpi:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), var(--shadow);
 }
 
 .kpiValue {
-  font-size: 1.55rem;
-  font-weight: 650;
+  font-size: 1.6rem;
+  font-weight: 700;
   color: var(--foreground);
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
+  letter-spacing: -0.02em;
 }
 
 .kpiLabel {
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   color: var(--foreground-tertiary);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+  text-transform: uppercase;
 }
 
 .warnBar {
