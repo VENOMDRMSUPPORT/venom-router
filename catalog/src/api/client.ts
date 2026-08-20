@@ -133,6 +133,8 @@ export interface ModelResolution {
 }
 
 export interface ApiModel {
+  /** The vendor's lifecycle marker: 'deprecated' when it says so. */
+  lifecycle: string | null;
   providerId: string;
   modelId: string;
   canonicalId: string | null;
@@ -363,6 +365,10 @@ export function normalizeModel(raw: WireModel): ApiModel {
     ...(raw as ApiModel),
 
     identityState: isServiceIdentityState(raw.identityState) ? raw.identityState : 'unknown',
+
+    // A service that predates this field says nothing about lifecycle, which is
+    // not the same as saying the model is current.
+    lifecycle: (raw as { lifecycle?: string | null }).lifecycle ?? null,
 
     // Lists and records, so no consumer has to guard before counting. Empty is
     // the honest reading of silence here: it renders as "nothing to show", which

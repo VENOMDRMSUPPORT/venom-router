@@ -616,6 +616,14 @@ function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: st
                 <td className={styles.narrow}><ModelRankCell model={m} /></td>
                 <td>
                   <span className={styles.modelName}>{m.modelId}</span>
+                  {m.lifecycle === 'deprecated' && (
+                    <span
+                      className={styles.lifecycleBadge}
+                      title="The provider has marked this model deprecated. It still answers, and its own app no longer offers it."
+                    >
+                      deprecated
+                    </span>
+                  )}
                   {vendorQualifier(m.modelId, m.displayName) && (
                     <VendorQualifierBadge qualifier={vendorQualifier(m.modelId, m.displayName)!} />
                   )}
@@ -707,6 +715,14 @@ function ModelGrid({ title, models, note, costStatedOnce, ranked }: { title: str
             <div className={styles.modelCardTop}>
               <div>
                 <span className={styles.modelName}>{m.modelId}</span>
+                {m.lifecycle === 'deprecated' && (
+                  <span
+                    className={styles.lifecycleBadge}
+                    title="The provider has marked this model deprecated. It still answers, and its own app no longer offers it."
+                  >
+                    deprecated
+                  </span>
+                )}
                 {vendorQualifier(m.modelId, m.displayName) && (
                   <VendorQualifierBadge qualifier={vendorQualifier(m.modelId, m.displayName)!} />
                 )}

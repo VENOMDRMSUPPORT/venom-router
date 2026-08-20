@@ -89,6 +89,7 @@ function classify(spec: ModelSpec | null): { free: boolean; reason: ExclusionRea
   return { free: false, reason: 'not_proven_free' };
 }
 
+
 /** Apply every free-only provider's publish policy to the rows already stored. */
 export function applyPublishPolicy(deps: PublishPolicyDeps): PublishPolicySummary {
   const { db, adapters, lookupSpec, now } = deps;

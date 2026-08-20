@@ -52,6 +52,11 @@ interface FeedModel {
   modalities?: { input?: string[] };
   limit?: { context?: number; output?: number };
   cost?: { input?: number; output?: number };
+  /**
+   * The vendor's own lifecycle marker. `deprecated` means the provider is
+   * retiring the model — it still answers, and OpenCode's own picker hides it.
+   */
+  status?: string;
 }
 
 /** `doc` is the provider's own documentation URL, published by the feed itself. */
@@ -69,6 +74,7 @@ function toSpec(m: FeedModel): ModelSpec {
     attachment: m.attachment,
     costInPerM: m.cost?.input,
     costOutPerM: m.cost?.output,
+    status: m.status,
   };
 }
 

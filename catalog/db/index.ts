@@ -37,6 +37,7 @@ function migrate(db: Db): void {
       'unrated_reason TEXT',
     ],
     models: [
+      'lifecycle_status TEXT',
       'ref_cost_in_per_m REAL',
       'ref_cost_out_per_m REAL',
       'cost_kind TEXT',

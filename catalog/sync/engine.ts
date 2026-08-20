@@ -70,6 +70,12 @@ export interface ModelSpec {
   attachment?: boolean;
   costInPerM?: number;
   costOutPerM?: number;
+  /**
+   * The vendor's own lifecycle marker, straight from the feed. `deprecated`
+   * means the provider is retiring the model — its own app stops offering it —
+   * so a catalog for CHOOSING a model must stop recommending it.
+   */
+  status?: string;
 }
 
 export type SpecLookup = (feedKey: string | undefined, modelId: string) => ModelSpec | null;
@@ -280,15 +286,15 @@ export async function syncProvider(adapter: ProviderAdapter, deps: SyncDeps): Pr
       db.prepare(
         `INSERT INTO models (provider_id, model_id, display_name, context_tokens, output_tokens, input_modalities,
                              tools, reasoning, structured, attachment, cost_in_per_m, cost_out_per_m, spec_source,
-                             status, first_seen_at, last_seen_at, missing_since, miss_count)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'active', ?, ?, NULL, 0)
+                             lifecycle_status, status, first_seen_at, last_seen_at, missing_since, miss_count)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'active', ?, ?, NULL, 0)
          ON CONFLICT(provider_id, model_id) DO UPDATE SET
            display_name = excluded.display_name, context_tokens = excluded.context_tokens,
            output_tokens = excluded.output_tokens, input_modalities = excluded.input_modalities,
            tools = excluded.tools, reasoning = excluded.reasoning, structured = excluded.structured,
            attachment = excluded.attachment, cost_in_per_m = excluded.cost_in_per_m,
            cost_out_per_m = excluded.cost_out_per_m, spec_source = excluded.spec_source,
-           status = 'active', last_seen_at = excluded.last_seen_at, missing_since = NULL, miss_count = 0`,
+           lifecycle_status = excluded.lifecycle_status, status = 'active', last_seen_at = excluded.last_seen_at, missing_since = NULL, miss_count = 0`,
       ).run(
         adapter.id, id, spec?.displayName ?? id, spec?.contextTokens ?? null, spec?.outputTokens ?? null,
         spec?.inputModalities ? JSON.stringify(spec.inputModalities) : null,
@@ -296,7 +302,8 @@ export async function syncProvider(adapter: ProviderAdapter, deps: SyncDeps): Pr
         spec?.reasoning === undefined ? null : Number(spec.reasoning),
         spec?.structured === undefined ? null : Number(spec.structured),
         spec?.attachment === undefined ? null : Number(spec.attachment),
-        spec?.costInPerM ?? null, spec?.costOutPerM ?? null, spec ? 'models.dev' : null, at, at,
+        spec?.costInPerM ?? null, spec?.costOutPerM ?? null, spec ? 'models.dev' : null,
+        spec?.status ?? null, at, at,
       );
 
       if (!before) event.run(runId, adapter.id, id, 'added', null, null, id, null, at);

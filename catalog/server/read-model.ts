@@ -143,6 +143,8 @@ export interface ApiModel {
    */
   rejectedCandidates: RejectedCandidateView[];
   displayName: string;
+  /** `deprecated` when the vendor says so, else null. */
+  lifecycle: string | null;
   /** active = served now; missing = absent from the last roster; retired = gone. */
   state: 'active' | 'missing' | 'retired';
   contextTokens: number | null;
@@ -286,6 +288,7 @@ interface ScoreRow {
 
 interface ModelRow {
   provider_id: string; model_id: string; display_name: string | null; status: string;
+  lifecycle_status: string | null;
   context_tokens: number | null; output_tokens: number | null; input_modalities: string | null;
   tools: number | null; reasoning: number | null; structured: number | null; attachment: number | null;
   cost_in_per_m: number | null; cost_out_per_m: number | null;
@@ -506,6 +509,11 @@ export function loadModels(db: Db, opts: { includeRetired?: boolean; now?: () =>
       ),
       rejectedCandidates: rejections,
       displayName: m.display_name ?? m.model_id,
+      // The vendor's own lifecycle marker, reported rather than acted on. A
+      // deprecated model still answers — OpenCode's picker hides it, but a
+      // reference catalog that silently dropped a working model would be hiding
+      // evidence it had already paid for. The reader is told and decides.
+      lifecycle: m.lifecycle_status ?? null,
       state: m.status as ApiModel['state'],
       contextTokens: m.context_tokens,
       maxOutputTokens: m.output_tokens,

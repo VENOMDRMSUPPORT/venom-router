@@ -1370,3 +1370,17 @@
   border: 1px solid var(--border);
   color: var(--foreground-secondary);
 }
+
+/* The vendor's lifecycle marker. Reported, not enforced: the model still
+   answers and its evidence is real, so it stays listed and says what it is. */
+.lifecycleBadge {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--background-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
