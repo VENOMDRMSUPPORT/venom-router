@@ -115,10 +115,35 @@ export const OLLAMA_CLOUD: ProviderAdapter = {
   rosterUrl: 'https://ollama.com/v1/models',
   feedKey: 'ollama-cloud',
   parseRoster: parseOpenAiList,
-  // Verified against the configured Ollama Cloud access on 2026-08-19. The
-  // provider returned HTTP 403 and explicitly required Pro/Max/Team plus Extra
-  // Usage. A roster listing is not evidence that this free offering can call it.
-  publishExclusions: { 'kimi-k3': 'plan_required' },
+  // Verified against the configured Ollama Cloud access. The provider returns
+  // HTTP 403 with "this model requires a subscription, upgrade for access" for
+  // each of these. A roster listing is not evidence that this free offering can
+  // call the model, and publishing one it cannot reach makes the catalog claim
+  // availability the account does not have.
+  //
+  // `kimi-k3` was confirmed on 2026-08-19; the rest on 2026-08-20 by sending one
+  // minimal completion per rostered id and recording the status. Seven ids
+  // answered 200 and stay published: gemma4:31b, gpt-oss:120b, gpt-oss:20b,
+  // minimax-m3, nemotron-3-nano:30b, nemotron-3-super, nemotron-3-ultra.
+  //
+  // This list is hand-maintained on purpose. It is the record of what a specific
+  // account could reach on a specific day, which is not something a roster or a
+  // price feed can tell us — so it is stated, dated, and re-checkable rather than
+  // inferred.
+  publishExclusions: {
+    'deepseek-v4-flash:0731': 'plan_required',
+    'deepseek-v4-flash:preview': 'plan_required',
+    'deepseek-v4-pro:0813': 'plan_required',
+    'deepseek-v4-pro:preview': 'plan_required',
+    'glm-5.1': 'plan_required',
+    'glm-5.2': 'plan_required',
+    'kimi-k2.6': 'plan_required',
+    'kimi-k2.7-code': 'plan_required',
+    'kimi-k3': 'plan_required',
+    'minimax-m2.7': 'plan_required',
+    'mistral-large-3:675b': 'plan_required',
+    'qwen3.5:397b': 'plan_required',
+  },
 };
 
 /**
