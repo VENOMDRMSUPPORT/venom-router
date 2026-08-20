@@ -78,7 +78,7 @@ describe('a provider that says come back much later', () => {
     const slept: number[] = [];
     let calls = 0;
     const outcome = await callWithPolicy(
-      async () => {
+      async (): Promise<TransportResponse> => {
         calls++;
         if (calls === 1) return { status: 429, headers: { 'retry-after': '2' }, body: null };
         return { status: 200, headers: {}, body: { ok: true } };
