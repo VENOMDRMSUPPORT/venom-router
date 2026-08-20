@@ -21,18 +21,24 @@ export function Header({ theme, onToggleTheme }: HeaderProps) {
   const path = location.pathname;
   let title = 'AI Model Catalogs';
   let subtitle = 'Live model inventories & benchmark matrix';
-  let iconNode: React.ReactNode = <LuLayoutGrid size={18} className={styles.pageIcon} />;
+  let iconNode: React.ReactNode = <LuLayoutGrid size={16} className={styles.pageIcon} />;
+  let breadcrumbs: Array<{ label: string; to?: string }> | null = null;
 
   if (path === '/') {
     title = 'AI Model Catalogs';
     subtitle = 'Live model inventories & benchmark matrix';
-    iconNode = <LuLayoutGrid size={18} className={styles.pageIcon} />;
+    iconNode = <LuLayoutGrid size={16} className={styles.pageIcon} />;
   } else if (path.startsWith('/provider/')) {
     const providerId = path.split('/provider/')[1];
     const provider = data?.providers.find((p) => p.id === providerId);
     const pres = present(providerId);
     title = provider?.name ?? providerId;
     subtitle = pres.blurb || 'Provider model roster & quality evidence';
+    breadcrumbs = [
+      { label: 'Overview', to: '/' },
+      { label: 'Providers', to: '/' },
+      { label: title },
+    ];
     if (pres.logo) {
       iconNode = (
         <img
@@ -42,16 +48,20 @@ export function Header({ theme, onToggleTheme }: HeaderProps) {
         />
       );
     } else {
-      iconNode = <LuCpu size={18} className={styles.pageIcon} />;
+      iconNode = <LuCpu size={16} className={styles.pageIcon} />;
     }
   } else if (path === '/changes') {
     title = "What's New";
     subtitle = 'Audit log of model additions, retirements & price changes';
-    iconNode = <LuHistory size={18} className={styles.pageIcon} />;
+    iconNode = <LuHistory size={16} className={styles.pageIcon} />;
+    breadcrumbs = [
+      { label: 'Overview', to: '/' },
+      { label: "What's New" },
+    ];
   } else {
     title = 'Venom Catalog';
     subtitle = 'AI Model Matrix';
-    iconNode = <LuInfo size={18} className={styles.pageIcon} />;
+    iconNode = <LuInfo size={16} className={styles.pageIcon} />;
   }
 
   // Global keyboard shortcut for Ctrl+K / Cmd+K
@@ -73,7 +83,22 @@ export function Header({ theme, onToggleTheme }: HeaderProps) {
         <div className={styles.left}>
           <div className={styles.iconWrapper}>{iconNode}</div>
           <div className={styles.pageMeta}>
-            <h1 className={styles.pageTitle}>{title}</h1>
+            {breadcrumbs ? (
+              <nav className={styles.breadcrumbs} aria-label="Breadcrumb">
+                {breadcrumbs.map((b, idx) => (
+                  <span key={b.label} className={styles.breadcrumbItem}>
+                    {idx > 0 && <span className={styles.breadcrumbDivider}>/</span>}
+                    {idx === breadcrumbs.length - 1 ? (
+                      <span className={styles.breadcrumbActive}>{b.label}</span>
+                    ) : (
+                      <span className={styles.breadcrumbLink}>{b.label}</span>
+                    )}
+                  </span>
+                ))}
+              </nav>
+            ) : (
+              <h1 className={styles.pageTitle}>{title}</h1>
+            )}
             <span className={styles.pageDesc}>{subtitle}</span>
           </div>
         </div>

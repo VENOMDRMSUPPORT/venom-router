@@ -22,6 +22,8 @@ import {
   LuExternalLink,
   LuChevronDown,
   LuChevronUp,
+  LuFileSearch,
+  LuPlay,
 } from 'react-icons/lu';
 import { useCatalog, useProviderModels } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
@@ -141,8 +143,21 @@ export function ProviderPage() {
 
   const hasContext = provider.overallScoreScored < provider.liveModels || uniformCostKind === 'included' || Boolean(pres.note);
 
+  const formatSyncDate = (str: string | null | undefined) => {
+    if (!str || str === 'never') return 'never';
+    try {
+      const d = new Date(str);
+      if (isNaN(d.getTime())) return str;
+      const formatted = d.toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+      return formatted;
+    } catch {
+      return str;
+    }
+  };
+
   return (
-    <div>
+    <div className={styles.pageContainer}>
+      {/* Enterprise Provider Hero */}
       <header className={styles.header}>
         <div className={styles.logoBox}>
           {pres.logo ? (
@@ -155,11 +170,35 @@ export function ProviderPage() {
           <div className={styles.titleRow}>
             <h1 className={styles.title}>{provider.name}</h1>
             <FreshnessBadge provider={provider} />
+            <span className={styles.heroTag}>
+              <LuLayers size={12} />
+              <span>{provider.liveModels} Active Models</span>
+            </span>
+            {uniformCostKind === 'included' && (
+              <span className={styles.heroTagAccent}>
+                <LuCreditCard size={12} />
+                <span>Subscription Included</span>
+              </span>
+            )}
+            {pres.docsUrl && (
+              <a
+                href={pres.docsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={styles.heroDocsBtn}
+                title="Open provider official documentation"
+              >
+                <LuBookOpen size={12} />
+                <span>Documentation</span>
+                <LuExternalLink size={11} />
+              </a>
+            )}
           </div>
           <p className={styles.subtitle}>{pres.blurb}</p>
         </div>
       </header>
 
+      {/* KPI Stats Grid */}
       <div className={styles.stats}>
         <Stat
           value={String(provider.liveModels)}
@@ -214,9 +253,24 @@ export function ProviderPage() {
               <LuInfo size={15} className={styles.contextHubIcon} />
               <span>What to know before reading these rows</span>
             </div>
+            <span className={styles.contextHubTag}>Context & Policies</span>
           </div>
 
           <div className={styles.contextGrid}>
+            {/* Global Catalog Ranking Scope Note */}
+            <div className={styles.contextCard}>
+              <div className={styles.contextCardHeader}>
+                <div className={`${styles.contextBadge} ${styles.contextBadgeScope}`}>
+                  <LuLayers size={14} />
+                  <span>Catalog Ranking</span>
+                </div>
+                <span className={styles.contextMeta}>Global Scope</span>
+              </div>
+              <p className={styles.contextCardText} data-testid="rank-scope-note">
+                {RANK_SCOPE_NOTE}
+              </p>
+            </div>
+
             {provider.overallScoreScored < provider.liveModels && (
               <div className={styles.contextCard}>
                 <div className={styles.contextCardHeader}>
@@ -280,6 +334,7 @@ export function ProviderPage() {
         onFilterChange={setFilter}
         view={view}
         onViewChange={setView}
+        placeholder={`Search ${provider.name} models by name or ID...`}
       />
 
       {view === 'table' ? (
@@ -288,8 +343,15 @@ export function ProviderPage() {
         <ModelGrid costStatedOnce={uniformCostKind !== null} ranked title={`Models (${visibleModels.length})`} models={visibleModels} />
       )}
 
+      {/* Data Provenance & Compliance Audit */}
       <section className={styles.provenance}>
-        <h3 className={styles.provTitle}>Where this data comes from</h3>
+        <div className={styles.provHeader}>
+          <div className={styles.provHeaderTitle}>
+            <LuShieldCheck size={16} className={styles.provHeaderIcon} />
+            <h3 className={styles.provTitle}>Where this data comes from</h3>
+          </div>
+          <span className={styles.provBadge}>Audit & Verification</span>
+        </div>
         <dl className={styles.provGrid}>
           <Row k="Roster">
             <code>{provider.rosterUrl}</code> — the provider's own API, the only
@@ -304,7 +366,9 @@ export function ProviderPage() {
             rather than a similar model's score.
           </Row>
           <Row k="Last successful sync">
-            {provider.lastSuccessfulSyncAt ?? 'never'}
+            <span title={provider.lastSuccessfulSyncAt ?? undefined}>
+              {provider.lastSuccessfulSyncAt ?? 'never'}
+            </span>
             {provider.lastAttemptedSyncAt !== provider.lastSuccessfulSyncAt && (
               <> · last attempt {provider.lastAttemptedSyncAt} ({provider.lastOutcome})</>
             )}
@@ -427,12 +491,14 @@ function EvidenceToggle({ model, open, onToggle }: { model: ApiModel; open: bool
       aria-expanded={open}
       title={
         flags > 0
-          ? `${model.missingFacts.length} missing, ${model.conflicts.length} conflicted, ${model.rejectedCandidates.length} refused candidate(s)`
-          : 'Where every value came from'
+          ? `Inspect evidence: ${model.missingFacts.length} missing, ${model.conflicts.length} conflicted, ${model.rejectedCandidates.length} refused candidate(s)`
+          : 'Inspect evidence & provenance trail'
       }
+      aria-label={`Inspect evidence for ${model.modelId}`}
       data-testid={`evidence-toggle-${model.modelId}`}
     >
-      {open ? 'hide' : 'why'}
+      <LuFileSearch size={13} className={styles.btnIcon} />
+      <span className={styles.srOnly}>{open ? 'hide' : 'why'}</span>
       {flags > 0 && <span className={styles.evidenceCount}>{flags}</span>}
     </button>
   );
@@ -451,12 +517,36 @@ function EvaluateButton({ model, onOpen }: { model: ApiModel; onOpen: () => void
       type="button"
       className={styles.evaluateBtn}
       onClick={onOpen}
-      title="Run the evaluations this model is still missing"
+      title="Run missing evaluations for this model"
       aria-label={`Evaluate ${model.modelId}`}
       data-testid={`evaluate-${model.modelId}`}
     >
-      run
+      <LuPlay size={12} className={styles.btnIcon} />
+      <span className={styles.srOnly}>run</span>
     </button>
+  );
+}
+
+function VendorQualifierBadge({ qualifier }: { qualifier: string }) {
+  const lower = qualifier.toLowerCase();
+  const isNew = lower.includes('new');
+  const isMultiplier = lower.includes('usage') || /\d+x/i.test(lower);
+  const isDiscount = lower.includes('off') || lower.includes('free') || lower.includes('%');
+
+  let typeClass = styles.promoDefault;
+  if (isNew) typeClass = styles.promoNew;
+  else if (isMultiplier) typeClass = styles.promoMultiplier;
+  else if (isDiscount) typeClass = styles.promoDiscount;
+
+  return (
+    <span
+      className={`${styles.vendorQualifier} ${typeClass}`}
+      title={`The provider lists this model with qualifier: "${qualifier}".`}
+    >
+      {isNew && <span className={styles.promoPulseDot} />}
+      {isMultiplier && <LuZap size={10} className={styles.promoIcon} />}
+      <span>{qualifier}</span>
+    </span>
   );
 }
 
@@ -473,25 +563,8 @@ function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: st
   if (models.length === 0) return null;
   return (
     <div className={styles.tableWrap}>
-      <div className={styles.tableHeaderSection}>
-        <div className={styles.tableHeaderMain}>
-          <div className={styles.tableTitleRow}>
-            <h3 className={styles.tableTitle}>{title}</h3>
-          </div>
-          {note && <p className={styles.tableNote}>{note}</p>}
-        </div>
-
-        {ranked && (
-          <div className={styles.rankScopeBanner}>
-            <div className={styles.rankScopeIconBox}>
-              <LuInfo size={14} />
-            </div>
-            <p className={styles.tableNote} data-testid="rank-scope-note">
-              {RANK_SCOPE_NOTE}
-            </p>
-          </div>
-        )}
-      </div>
+      <h3 className={styles.srOnly}>{title}</h3>
+      {note && <p className={styles.tableNote}>{note}</p>}
 
       <CapabilitiesLegend />
 
@@ -544,12 +617,7 @@ function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: st
                 <td>
                   <span className={styles.modelName}>{m.modelId}</span>
                   {vendorQualifier(m.modelId, m.displayName) && (
-                    <span
-                      className={styles.vendorQualifier}
-                      title={`The provider lists this model as "${m.displayName}".`}
-                    >
-                      {vendorQualifier(m.modelId, m.displayName)}
-                    </span>
+                    <VendorQualifierBadge qualifier={vendorQualifier(m.modelId, m.displayName)!} />
                   )}
                   {/* Identity is its own axis. A row parked in review HAS been
                       investigated; showing nothing would read as un-examined.
@@ -628,25 +696,8 @@ function ModelGrid({ title, models, note, costStatedOnce, ranked }: { title: str
   if (models.length === 0) return null;
   return (
     <div className={styles.tableWrap}>
-      <div className={styles.tableHeaderSection}>
-        <div className={styles.tableHeaderMain}>
-          <div className={styles.tableTitleRow}>
-            <h3 className={styles.tableTitle}>{title}</h3>
-          </div>
-          {note && <p className={styles.tableNote}>{note}</p>}
-        </div>
-
-        {ranked && (
-          <div className={styles.rankScopeBanner}>
-            <div className={styles.rankScopeIconBox}>
-              <LuInfo size={14} />
-            </div>
-            <p className={styles.tableNote} data-testid="rank-scope-note">
-              {RANK_SCOPE_NOTE}
-            </p>
-          </div>
-        )}
-      </div>
+      <h3 className={styles.srOnly}>{title}</h3>
+      {note && <p className={styles.tableNote}>{note}</p>}
 
       <CapabilitiesLegend />
 
@@ -657,12 +708,7 @@ function ModelGrid({ title, models, note, costStatedOnce, ranked }: { title: str
               <div>
                 <span className={styles.modelName}>{m.modelId}</span>
                 {vendorQualifier(m.modelId, m.displayName) && (
-                  <span
-                    className={styles.vendorQualifier}
-                    title={`The provider lists this model as "${m.displayName}".`}
-                  >
-                    {vendorQualifier(m.modelId, m.displayName)}
-                  </span>
+                  <VendorQualifierBadge qualifier={vendorQualifier(m.modelId, m.displayName)!} />
                 )}
                 {(() => {
                   const shown = displayIdentity(m);
@@ -763,7 +809,10 @@ function Stat({ value, label, status, statusTitle, isFree, testId, icon, progres
       </div>
 
       <div className={styles.statContent}>
-        <span className={styles.statValue}>{value}</span>
+        <span className={`${styles.statValue} ${value === 'None' ? styles.statValueMuted : ''}`}>{value}</span>
+        {progress !== undefined && (
+          <span className={styles.statProgressPill}>{progress}%</span>
+        )}
       </div>
 
       {progress !== undefined && (

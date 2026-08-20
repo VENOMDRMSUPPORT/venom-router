@@ -17,8 +17,6 @@ export function ModelScoreCell({ model }: { model: ApiModel }) {
     const state = OVERALL_PRESENTATION[score.status];
     const reason = score.reasons.length > 0 ? score.reasons.join(', ') : undefined;
     return (
-      // One glyph for one fact. An em dash stacked above "Insufficient
-      // evidence" said the same thing twice on every unplaced row.
       <div className={styles.cell}>
         <span className={`${styles.badge} ${styles[state.className]}`} title={reason}>{state.label}</span>
       </div>
@@ -26,14 +24,15 @@ export function ModelScoreCell({ model }: { model: ApiModel }) {
   }
 
   const breakdown = `${score.methodologyVersion ?? 'overall-score-v1'}: quality ${score.qualityScore?.toFixed(1) ?? 'unknown'} × 70% + operations ${score.operationalScore?.toFixed(1) ?? 'unknown'} × 30% = ${score.display}`;
-  // The badge marks the EXCEPTION. A column of identical "100% coverage" pills
-  // is one sentence repeated per row; a score that is missing a dimension is
-  // the thing a reader has to notice.
   const complete = score.overallCoverage.scored >= score.overallCoverage.applicable;
+  const numVal = score.value ?? 0;
+  const scoreStyle = numVal >= 90 ? styles.scoreHigh : numVal >= 80 ? styles.scoreMid : styles.scoreStandard;
 
   return (
     <div className={styles.cell}>
-      <span className={styles.value} title={breakdown}>{score.display}</span>
+      <div className={styles.scoreValueWrap}>
+        <span className={`${styles.value} ${scoreStyle}`} title={breakdown}>{score.display}</span>
+      </div>
       {!complete && (
         <span
           className={`${styles.badge} ${styles.partial}`}
@@ -59,7 +58,7 @@ export function ModelRankCell({ model }: { model: ApiModel }) {
     );
   }
   return (
-    <span className={styles.rank} data-testid={`model-rank-${model.modelId}`}>
+    <span className={`${styles.rank} ${model.overallRank <= 3 ? styles.topRank : ''}`} data-testid={`model-rank-${model.modelId}`}>
       #{model.overallRank}
       {model.tiedAtOverallRank ? (
         <span className={styles.tie} title="Tied: the overall-score uncertainty intervals overlap.">

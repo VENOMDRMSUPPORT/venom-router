@@ -9,6 +9,7 @@ interface ToolbarProps {
   onFilterChange: (value: string) => void;
   view: 'grid' | 'table';
   onViewChange: (view: 'grid' | 'table') => void;
+  placeholder?: string;
 }
 
 const FILTER_OPTIONS = [
@@ -26,6 +27,7 @@ export function Toolbar({
   onFilterChange,
   view,
   onViewChange,
+  placeholder = 'Search models by name or ID...',
 }: ToolbarProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -52,10 +54,20 @@ export function Toolbar({
           type="text"
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
-          placeholder="Search providers or models..."
+          placeholder={placeholder}
           aria-label="Search providers"
           className={styles.input}
         />
+        {query && (
+          <button
+            type="button"
+            className={styles.clearBtn}
+            onClick={() => onQueryChange('')}
+            aria-label="Clear search"
+          >
+            ×
+          </button>
+        )}
       </div>
 
       {/* Custom Sleek Filter Dropdown */}

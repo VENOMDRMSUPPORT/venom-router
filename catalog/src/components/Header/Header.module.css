@@ -48,8 +48,39 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 1px;
+  gap: 2px;
   min-width: 0;
+}
+
+.breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.breadcrumbItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.breadcrumbLink {
+  color: var(--foreground-tertiary);
+  font-weight: 500;
+  transition: color var(--transition-fast);
+}
+
+.breadcrumbDivider {
+  color: var(--border-strong);
+  font-size: 11px;
+}
+
+.breadcrumbActive {
+  color: var(--foreground);
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .pageTitle {

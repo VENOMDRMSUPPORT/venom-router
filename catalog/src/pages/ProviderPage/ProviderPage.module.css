@@ -1,18 +1,28 @@
+.pageContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
 .header {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 24px;
+  gap: 18px;
+  padding: 22px 24px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
-  margin-bottom: 24px;
+  margin-bottom: 14px;
+  position: relative;
+  overflow: hidden;
 }
 
 .logoBox {
-  width: 52px;
-  height: 52px;
+  width: 56px;
+  height: 56px;
   border-radius: 12px;
   background: var(--background);
   border: 1px solid var(--border-subtle);
@@ -22,6 +32,7 @@
   padding: 8px;
   flex-shrink: 0;
   box-sizing: border-box;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .logo {
@@ -31,7 +42,7 @@
 }
 
 .fallbackLogo {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   color: var(--foreground-secondary);
 }
@@ -54,10 +65,62 @@
 .title {
   font-size: 22px;
   font-weight: 650;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
   color: var(--foreground);
   margin: 0;
   line-height: 1.2;
+}
+
+.heroTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--background);
+  border: 1px solid var(--border-subtle);
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--foreground-secondary);
+}
+
+.heroTagAccent {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  font-size: 11px;
+  font-weight: 600;
+  color: #2563eb;
+}
+:global([data-theme="dark"]) .heroTagAccent {
+  color: #60a5fa;
+  border-color: rgba(96, 165, 250, 0.25);
+}
+
+.heroDocsBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
+  background: var(--pill-bg);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--foreground-secondary);
+  text-decoration: none;
+  transition: all var(--transition-fast);
+  margin-left: auto;
+}
+
+.heroDocsBtn:hover {
+  background: var(--pill-bg-hover);
+  color: var(--foreground);
+  border-color: var(--border-strong);
 }
 
 .subtitle {
@@ -70,20 +133,20 @@
 .stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-bottom: 24px;
+  gap: 14px;
+  margin-bottom: 14px;
 }
 
 .stat {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   padding: 16px 18px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--surface);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), var(--shadow-sm);
+  box-shadow: var(--shadow-sm);
   position: relative;
   overflow: hidden;
   transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -92,7 +155,7 @@
 .stat:hover {
   transform: translateY(-2px);
   border-color: var(--border-strong);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), var(--shadow);
+  box-shadow: var(--shadow);
 }
 
 .statTop {
@@ -132,8 +195,8 @@
   font-size: 0.72rem;
   color: var(--foreground-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-weight: 600;
+  letter-spacing: 0.05em;
+  font-weight: 650;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -142,7 +205,8 @@
 .statContent {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -152,15 +216,36 @@
   color: var(--foreground);
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
+}
+
+.statValueMuted {
+  color: var(--foreground-tertiary);
+  font-weight: 600;
+  font-size: 1.35rem;
+}
+
+.statProgressPill {
+  font-size: 0.72rem;
+  font-weight: 650;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  font-variant-numeric: tabular-nums;
+}
+:global([data-theme="dark"]) .statProgressPill {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.25);
 }
 
 .statStatus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   flex-shrink: 0;
   transition: transform var(--transition-fast);
@@ -225,7 +310,7 @@
 }
 
 .statSubtext {
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   color: var(--foreground-tertiary);
   font-weight: 500;
   display: flex;
@@ -234,8 +319,8 @@
 }
 
 .freeStat {
-  background: rgba(16, 185, 129, 0.05);
-  border-color: rgba(16, 185, 129, 0.25);
+  background: rgba(16, 185, 129, 0.04);
+  border-color: rgba(16, 185, 129, 0.2);
 }
 
 .freeStat .statValue {
@@ -260,7 +345,7 @@
    Unified Enterprise Context Hub
    ============================================================ */
 .contextHub {
-  margin-bottom: 24px;
+  margin-bottom: 14px;
   padding: 16px 20px;
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -421,14 +506,14 @@
 }
 
 .tableWrap {
-  margin-top: 32px;
+  margin-top: 0;
 }
 
 .tableHeaderSection {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .tableHeaderMain {
@@ -444,8 +529,8 @@
 }
 
 .tableTitle {
-  font-size: 1.1rem;
-  font-weight: 700;
+  font-size: 1.05rem;
+  font-weight: 650;
   margin: 0;
   color: var(--foreground);
   letter-spacing: -0.015em;
@@ -453,41 +538,46 @@
 
 .rankScopeBanner {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border-subtle);
-  border-left: 3px solid var(--foreground-tertiary);
-  border-radius: 8px;
-  margin-top: 4px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(59, 130, 246, 0.04);
+  border: 1px solid rgba(59, 130, 246, 0.16);
+  border-radius: var(--radius-sm);
+}
+:global([data-theme="dark"]) .rankScopeBanner {
+  background: rgba(59, 130, 246, 0.07);
+  border-color: rgba(96, 165, 250, 0.2);
 }
 
 .rankScopeIconBox {
-  color: var(--foreground-tertiary);
+  color: #2563eb;
   flex-shrink: 0;
-  margin-top: 2px;
+}
+:global([data-theme="dark"]) .rankScopeIconBox {
+  color: #60a5fa;
 }
 
 .tableNote {
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   color: var(--foreground-secondary);
   margin: 0;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
-/* Capabilities Legend Component */
+/* Capabilities Legend Component - Responsive Balanced Grid */
 .capLegendWrap {
-  margin-bottom: 14px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   background: var(--surface);
   overflow: hidden;
-  transition: border-color var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  box-shadow: var(--shadow-sm);
 }
 
 .capLegendWrap:hover {
-  border-color: var(--border);
+  border-color: var(--border-strong);
 }
 
 .capLegendToggle {
@@ -495,7 +585,7 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 9px 14px;
+  padding: 8px 12px;
   background: transparent;
   cursor: pointer;
   border: none;
@@ -521,7 +611,7 @@
 }
 
 .capLegendTitle {
-  font-size: 0.76rem;
+  font-size: 0.75rem;
   font-weight: 650;
   color: var(--foreground);
   letter-spacing: -0.01em;
@@ -541,41 +631,72 @@
 
 .capLegendGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 10px;
-  padding: 12px 14px 14px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 12px;
   border-top: 1px solid var(--border-subtle);
-  background: var(--background);
+  background: var(--surface);
+}
+
+@media (max-width: 1200px) {
+  .capLegendGrid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  .capLegendGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .capLegendGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .capLegendItem {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--background);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+  box-sizing: border-box;
+}
+
+.capLegendItem:hover {
+  border-color: var(--border);
+  background: var(--surface-hover);
 }
 
 .capLegendText {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .capLegendName {
   font-size: 0.74rem;
   font-weight: 650;
   color: var(--foreground);
+  line-height: 1.2;
 }
 
 .capLegendDesc {
   font-size: 0.7rem;
-  color: var(--foreground-tertiary);
+  color: var(--foreground-secondary);
   line-height: 1.35;
 }
 
 .tableScroll {
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   -webkit-overflow-scrolling: touch;
@@ -587,36 +708,39 @@
   font-size: 0.84rem;
 }
 
-/* The header stays put while 23 rows scroll past; a column nobody can name is
-   a column nobody can read. */
 .table thead th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
 }
 
 .table th {
   text-align: left;
-  padding: 12px 14px;
+  padding: 10px 14px;
   font-size: 0.68rem;
-  font-weight: 600;
+  font-weight: 650;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--foreground-tertiary);
-  background: var(--background);
+  background: var(--background-secondary);
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
 
+.table th:not(:last-child) {
+  border-right: 1px solid var(--border-subtle);
+}
+
 .table td {
-  padding: 11px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
   vertical-align: middle;
 }
 
-/* Placement is a real boundary in this data, not a sort order: above the line
-   every row has a complete overall-score-v1 result, below it none do. The rule
-   is drawn once, where the two groups meet. */
+.table td:not(:last-child) {
+  border-right: 1px solid var(--border-subtle);
+}
+
 .table tbody tr.firstUnplaced td {
   border-top: 1px solid var(--border-strong);
 }
@@ -634,13 +758,10 @@
 }
 
 .narrow {
-  width: 66px;
+  width: 68px;
 }
 
 .num {
-  /* Right-aligned tabular figures. This grid exists to be compared down a
-     column — $0.02 against $2.50, 250K against 1M — and left-aligned numerals
-     put the magnitudes in different places on every row. */
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
   text-align: right;
@@ -653,21 +774,24 @@
 }
 
 .modelName {
-  display: block;
+  display: inline-block;
   font-weight: 600;
   color: var(--foreground);
+  letter-spacing: -0.01em;
 }
 
 .canonical {
   display: block;
   font-size: 0.7rem;
   color: var(--foreground-tertiary);
+  font-family: var(--font-mono);
   margin-top: 2px;
 }
 
 .caps {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 4px;
 }
 
@@ -687,7 +811,7 @@
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 6px;
+  border-radius: 5px;
   border: 1px solid transparent;
   flex-shrink: 0;
   transition: transform var(--transition-fast), border-color var(--transition-fast);
@@ -699,70 +823,82 @@
 }
 
 .capTools {
-  background: rgba(245, 158, 11, 0.08);
-  border-color: rgba(245, 158, 11, 0.2);
-  color: #d97706;
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #b45309;
 }
 :global([data-theme="dark"]) .capTools {
   color: #fbbf24;
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(251, 191, 36, 0.3);
 }
 
 .capReasoning {
-  background: rgba(139, 92, 246, 0.08);
-  border-color: rgba(139, 92, 246, 0.2);
-  color: #7c3aed;
+  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(139, 92, 246, 0.3);
+  color: #6d28d9;
 }
 :global([data-theme="dark"]) .capReasoning {
   color: #a78bfa;
+  background: rgba(139, 92, 246, 0.14);
+  border-color: rgba(167, 139, 250, 0.3);
 }
 
 .capStructured {
-  background: rgba(59, 130, 246, 0.08);
-  border-color: rgba(59, 130, 246, 0.2);
-  color: #2563eb;
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: #1d4ed8;
 }
 :global([data-theme="dark"]) .capStructured {
   color: #60a5fa;
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(96, 165, 250, 0.3);
 }
 
 .capImage {
-  background: rgba(16, 185, 129, 0.08);
-  border-color: rgba(16, 185, 129, 0.2);
-  color: #059669;
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: #047857;
 }
 :global([data-theme="dark"]) .capImage {
   color: #34d399;
+  background: rgba(16, 185, 129, 0.14);
+  border-color: rgba(52, 211, 153, 0.3);
 }
 
 .capAudio {
-  background: rgba(244, 63, 94, 0.08);
-  border-color: rgba(244, 63, 94, 0.2);
-  color: #e11d48;
+  background: rgba(244, 63, 94, 0.12);
+  border-color: rgba(244, 63, 94, 0.3);
+  color: #be123c;
 }
 :global([data-theme="dark"]) .capAudio {
   color: #fb7185;
+  background: rgba(244, 63, 94, 0.14);
+  border-color: rgba(251, 113, 133, 0.3);
 }
 
 .capVideo {
-  background: rgba(6, 182, 212, 0.08);
-  border-color: rgba(6, 182, 212, 0.2);
-  color: #0891b2;
+  background: rgba(6, 182, 212, 0.12);
+  border-color: rgba(6, 182, 212, 0.3);
+  color: #0e7490;
 }
 :global([data-theme="dark"]) .capVideo {
   color: #22d3ee;
+  background: rgba(6, 182, 212, 0.14);
+  border-color: rgba(34, 211, 238, 0.3);
 }
 
 .capAttachment {
-  background: rgba(20, 184, 166, 0.08);
-  border-color: rgba(20, 184, 166, 0.2);
+  background: rgba(20, 184, 166, 0.12);
+  border-color: rgba(20, 184, 166, 0.3);
   color: #0f766e;
 }
 :global([data-theme="dark"]) .capAttachment {
   color: #2dd4bf;
+  background: rgba(20, 184, 166, 0.14);
+  border-color: rgba(45, 212, 191, 0.3);
 }
 
-/* Unknown capability facts keep the same icon geometry, with the state carried
-   by the border and tooltip instead of a second text badge. */
 .capState {
   border-style: dashed;
   opacity: 0.72;
@@ -786,20 +922,52 @@
   color: #f472b6;
 }
 
-
 .provenance {
-  margin-top: 36px;
-  padding: 22px 24px;
+  margin-top: 28px;
+  padding: 20px 22px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
 }
 
+.provHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.provHeaderTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.provHeaderIcon {
+  color: var(--foreground-secondary);
+}
+
+.provBadge {
+  font-size: 0.68rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--background);
+  border: 1px solid var(--border-subtle);
+  color: var(--foreground-tertiary);
+  font-weight: 600;
+}
+
 .provTitle {
-  font-size: 0.95rem;
+  font-size: 0.92rem;
   font-weight: 650;
-  margin: 0 0 16px;
+  margin: 0;
   color: var(--foreground);
 }
 
@@ -807,7 +975,7 @@
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .provRow {
@@ -818,24 +986,24 @@
 }
 
 .provKey {
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   color: var(--foreground-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .provVal {
   margin: 0;
-  font-size: 0.84rem;
+  font-size: 0.82rem;
   color: var(--foreground-secondary);
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 @media (max-width: 900px) {
   .stats {
     grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
+    gap: 10px;
   }
 }
 
@@ -856,15 +1024,15 @@
 .modelGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-  margin-top: 14px;
+  gap: 14px;
+  margin-top: 12px;
 }
 
 .modelCard {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px;
+  gap: 12px;
+  padding: 15px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -921,7 +1089,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 6px 4px;
+  padding: 5px 4px;
   border-radius: var(--radius-sm);
   background: var(--background);
   border: 1px solid var(--border-subtle);
@@ -948,48 +1116,68 @@
   margin-top: 2px;
 }
 
-/*
- * Evidence affordances.
- *
- * A row's absences and disagreements are summarised on the row and explained in
- * the panel. The flagged variant exists because an unflagged "why" button reads
- * as decoration — the count is what makes someone open it.
- */
+/* Accessibility hidden text */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.btnIcon {
+  flex-shrink: 0;
+}
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .evidenceBtn,
 .evidenceBtnFlagged {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  padding: 3px 9px;
-  border-radius: var(--radius-full);
+  min-width: 28px;
+  height: 26px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
   font-size: 0.68rem;
   font-weight: 650;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   cursor: pointer;
   font-family: var(--font-mono);
   background: var(--background);
   color: var(--foreground-secondary);
   border: 1px solid var(--border);
   transition: all var(--transition-fast);
+  position: relative;
 }
 
 .evidenceBtn:hover {
   background: var(--surface-hover);
   color: var(--foreground);
   border-color: var(--border-strong);
+  transform: scale(1.04);
 }
 
 .evidenceBtnFlagged {
-  color: #92400e;
-  border-color: rgba(217, 119, 6, 0.4);
-  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.08);
 }
 
 .evidenceBtnFlagged:hover {
-  background: rgba(245, 158, 11, 0.22);
-  border-color: rgba(217, 119, 6, 0.6);
-  color: #78350f;
+  background: rgba(245, 158, 11, 0.18);
+  border-color: rgba(245, 158, 11, 0.55);
+  color: #92400e;
+  transform: scale(1.04);
 }
 
 :global([data-theme="dark"]) .evidenceBtnFlagged {
@@ -1015,8 +1203,8 @@
   height: 15px;
   padding: 0 4px;
   border-radius: var(--radius-full);
-  background: rgba(217, 119, 6, 0.22);
-  color: #78350f;
+  background: rgba(245, 158, 11, 0.2);
+  color: #92400e;
 }
 
 :global([data-theme="dark"]) .evidenceCount {
@@ -1027,9 +1215,9 @@
 .evidenceRow > td {
   padding: 0 0 14px;
   background: transparent;
+  border-right: none !important;
 }
 
-/* Identity is a separate axis from completeness, so it gets its own note. */
 .identityNote {
   display: block;
   margin-top: 2px;
@@ -1039,7 +1227,6 @@
   font-family: var(--font-mono);
 }
 
-/* A capability nobody settled, labelled rather than simply absent. */
 .capUnknown {
   display: inline-flex;
   align-items: center;
@@ -1049,8 +1236,6 @@
   font-family: var(--font-mono);
 }
 
-/* The reference marker on a cost column header. Quieter than the label it sits
-   beside: it qualifies the column, it is not a second column. */
 .thNote {
   font-weight: 400;
   opacity: 0.6;
@@ -1058,40 +1243,130 @@
   letter-spacing: 0;
 }
 
-/* The two row actions sit together: "why is this value what it is" and
-   "go measure it" are the pair an incomplete row needs. */
-.rowActions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .evaluateBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
   background: var(--pill-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: 11px;
-  padding: 2px 7px;
+  color: var(--foreground-secondary);
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition: all var(--transition-fast);
 }
 
 .evaluateBtn:hover {
-  background: var(--pill-bg-hover);
-  color: var(--text-primary);
+  background: var(--accent-subtle);
+  border-color: var(--border-strong);
+  color: var(--foreground);
+  transform: scale(1.06);
 }
 
-/* The provider's own label for a model, when it says more than the id does —
-   "8x usage", "New". Reported, not asserted: the title names the source string. */
+/* Promotional & Vendor Qualifiers ("New", "8x usage", "50% Off") */
 .vendorQualifier {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   margin-left: 6px;
-  padding: 1px 6px;
+  padding: 1.5px 7px;
   border-radius: var(--radius-full);
-  background: var(--accent-subtle);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
   font-size: 10px;
-  letter-spacing: 0.02em;
+  font-weight: 700;
+  letter-spacing: 0.03em;
   white-space: nowrap;
+  vertical-align: middle;
+  line-height: 1.2;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.vendorQualifier:hover {
+  transform: translateY(-1px);
+}
+
+/* "New" Badge - Pulsing Emerald Live Indicator */
+.promoNew {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #047857;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.15);
+}
+:global([data-theme="dark"]) .promoNew {
+  background: rgba(52, 211, 153, 0.15);
+  border-color: rgba(52, 211, 153, 0.45);
+  color: #34d399;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.2);
+}
+
+.promoPulseDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 6px #10b981;
+  animation: pulsePromoDot 1.8s infinite ease-in-out;
+  flex-shrink: 0;
+}
+:global([data-theme="dark"]) .promoPulseDot {
+  background: #34d399;
+  box-shadow: 0 0 8px #34d399;
+}
+
+@keyframes pulsePromoDot {
+  0%, 100% {
+    transform: scale(0.85);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 1;
+  }
+}
+
+/* "8x usage" Badge - High Energy Amber/Orange with Zap Icon */
+.promoMultiplier {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #b45309;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.15);
+}
+:global([data-theme="dark"]) .promoMultiplier {
+  background: rgba(251, 191, 36, 0.15);
+  border-color: rgba(251, 191, 36, 0.45);
+  color: #fbbf24;
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.2);
+}
+
+.promoIcon {
+  color: currentColor;
+  flex-shrink: 0;
+  animation: promoZapBounce 2.5s infinite ease-in-out;
+}
+
+@keyframes promoZapBounce {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.25) rotate(-6deg);
+  }
+}
+
+/* "50% Off" / Discount Badge - Vibrant Violet */
+.promoDiscount {
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  color: #6d28d9;
+}
+:global([data-theme="dark"]) .promoDiscount {
+  background: rgba(167, 139, 250, 0.15);
+  border-color: rgba(167, 139, 250, 0.45);
+  color: #a78bfa;
+}
+
+.promoDefault {
+  background: var(--accent-subtle);
+  border: 1px solid var(--border);
+  color: var(--foreground-secondary);
 }
