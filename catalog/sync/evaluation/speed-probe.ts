@@ -83,7 +83,6 @@ export function createStreamingSpeedProbe(input: CreateStreamingSpeedProbeInput)
         } : {
           model: input.modelId,
           messages: [{ role: 'user', content: SPEED_PROMPT }],
-          temperature: 0,
           // The prompt asks for 512 output tokens. Capping at 512 left a
           // reasoning model no room to think and then answer, so it spent the
           // whole budget on `reasoning_content` and streamed no answer at all —

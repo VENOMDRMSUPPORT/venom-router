@@ -88,3 +88,27 @@ describe('streaming speed probe', () => {
     assert.ok(result.outputTokensPerSecond !== null && result.outputTokensPerSecond > 0);
   });
 });
+
+describe('what the speed probe is entitled to ask for', () => {
+  test('does not pin temperature, because latency does not depend on it', async () => {
+    // kimi-k3 and kimi-k2.7-code on OpenCode Go reject anything but temperature
+    // 1: "invalid temperature: only 1 is allowed for this model". The probe was
+    // sending 0 — a determinism setting that belongs to QUALITY grading, where
+    // the same prompt must produce a comparable answer. This measures how fast
+    // tokens arrive, and sending a parameter it does not need cost two models
+    // their speed score.
+    let sent: Record<string, unknown> = {};
+    const probe = createStreamingSpeedProbe({
+      providerId: 'opencode-go', modelId: 'kimi-k3', credential: 'secret',
+      nowMs: () => 1000,
+      fetchImpl: (async (_url: string | URL, init?: RequestInit) => {
+        sent = JSON.parse(String(init?.body));
+        return new Response(new ReadableStream({ start(c) { c.close(); } }), { status: 200 });
+      }) as typeof fetch,
+    });
+
+    await probe();
+    assert.equal(sent.temperature, undefined);
+    assert.equal(sent.stream, true, 'streaming is what makes time-to-first-token measurable');
+  });
+});
