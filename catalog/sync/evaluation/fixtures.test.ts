@@ -114,3 +114,43 @@ describe('grading a reasoning model', () => {
     );
   });
 });
+
+describe('grading whether the model solved it, not how it wrote it', () => {
+  const fixtures = buildEvaluationFixtures();
+  const answer = (content: string): unknown => ({ choices: [{ message: { content } }] });
+
+  // reasoning-01: 7x + 5 = 26, original 3. Captured verbatim from evaluation
+  // runs, where each of these scored 4/5 on its answer alone — the fifth
+  // criterion required a division sign, which none of them needs to write.
+  const CORRECT = [
+    'Equation: $7x + 5 = 26$\n\nAnswer: $3$',
+    '**Equation and solution**\n\n\[\n7x + 5 = 26 \quad\Longrightarrow\quad x = 3\n\]\n\nSo the original number is **3**.',
+    'Equation: 7x + 5 = 26\nAnswer: 3',
+    '(26 - 5) / 7 = 3',
+  ];
+
+  test('accepts a correct solution however it is written', () => {
+    for (const content of CORRECT) {
+      assert.deepEqual(
+        fixtures.reasoning[0].grade(answer(content)),
+        { weightedSuccesses: 5, weightedCriteria: 5 },
+        `scored short: ${JSON.stringify(content)}`,
+      );
+    }
+  });
+
+  test('still refuses an answer that is simply wrong', () => {
+    // The right equation with the wrong root, and a bare number with no working.
+    assert.ok(fixtures.reasoning[0].grade(answer('7x + 5 = 26, so x = 9')).weightedSuccesses < 5);
+    assert.ok(fixtures.reasoning[0].grade(answer('3')).weightedSuccesses < 5);
+  });
+
+  test('leaves the test-set digest untouched, so no stored score is invalidated', () => {
+    // Grading is outside the digest by design. Repairing a criterion corrects
+    // what future evidence means without silently discarding what was paid for.
+    assert.equal(
+      fixtureDigest(buildEvaluationFixtures()),
+      'cbb5148e0fe42d3f7bee86aefe87d875e7ce263d682950e5bf15d2c6acc1e223',
+    );
+  });
+});

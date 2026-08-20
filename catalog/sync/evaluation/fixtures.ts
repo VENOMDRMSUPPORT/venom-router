@@ -133,6 +133,24 @@ const coding = Array.from({ length: 20 }, (_, index) => {
   );
 });
 
+/** Wrapping that carries no meaning: LaTeX delimiters, markdown, whitespace. */
+const NOTATION_NOISE = ['$', '{', '}', '(', ')', '[', ']', '*', '`', ' ', '\t', '\n', '\r', String.fromCharCode(92)];
+
+/**
+ * Whether the response states the relation the prompt asked for.
+ *
+ * Accepts the two shapes a correct answer actually takes: the forward equation
+ * (`7x + 5 = 26`, however it is spaced and whether or not it arrives wrapped in
+ * LaTeX or markdown), or the rearranged division (`(26 - 5) / 7`). Notation is
+ * not the thing under test — solving is.
+ */
+function solvesTheEquation(text: string, multiplier: number, added: number, result: number): boolean {
+  const flat = NOTATION_NOISE.reduce((value, character) => value.split(character).join(''), text);
+  const forward = new RegExp(`${multiplier}[a-z*·×]*[+]?${added}=${result}`, 'i');
+  const rearranged = new RegExp(`${result}-${added}[/÷]${multiplier}`, 'i');
+  return forward.test(flat) || rearranged.test(flat);
+}
+
 const reasoning = Array.from({ length: 20 }, (_, index) => {
   const multiplier = index + 7;
   const original = index + 3;
@@ -150,7 +168,18 @@ const reasoning = Array.from({ length: 20 }, (_, index) => {
         out.includes(String(result)),
         out.includes(String(added)),
         out.includes(String(multiplier)),
-        out.includes('/') || out.includes('÷'),
+        // Did it produce the EQUATION the prompt asked for — not a division,
+        // which the prompt never mentions.
+        //
+        // The old check was `includes('/')`. A model answering
+        // "7x + 5 = 26  =>  x = 3" solves it perfectly and writes no division,
+        // so a correct answer scored 4 of 5. It passed anyway only because the
+        // grader also reads the reasoning trace, which nearly always contains a
+        // slash somewhere. Replaying 1,200 retained samples showed what that was
+        // covering: graded on their answers alone, eleven of twenty identities
+        // dropped, one by 93 points — every one of them for notation rather than
+        // for being wrong.
+        solvesTheEquation(out, multiplier, added, result),
       ]);
     },
   );
