@@ -15,7 +15,8 @@
     "serve": "node server/index.ts",
     "serve:verify": "node scripts/serve-verify.mjs",
     "test:backend": "node --test \"sync/**/*.test.ts\" \"server/**/*.test.ts\" \"scripts/**/*.test.ts\"",
-    "test:spa": "vitest run"
+    "test:spa": "vitest run",
+    "queue": "node scripts/queue-provider.ts"
   },
   "dependencies": {
     "react": "^19.0.0",
