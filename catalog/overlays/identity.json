@@ -10,7 +10,8 @@
   "gemini-3.1-pro": "google/gemini-3.1-pro-preview",
   "deepseek-v4-flash:preview": "deepseek/deepseek-v4-flash",
   "deepseek-v4-pro:preview": "deepseek/deepseek-v4-pro",
-  "mistral-large-3:675b": "mistralai/mistral-large-2512"
+  "mistral-large-3:675b": "mistralai/mistral-large-2512",
+  "muse-spark-1.2-contributor-free": "meta/muse-spark-1.2"
  },
  "reasons": {
   "gemini-3-flash": {
@@ -73,6 +74,19 @@
    "yields": "measured VQ from the exact Mistral Large 3 2512 release in the reference index",
    "reverifyBy": "if Ollama changes the model's published parameter count, date, or Mistral model identifier",
    "reviewedAt": "2026-08-18"
+  },
+  "muse-spark-1.2-contributor-free": {
+   "target": "meta/muse-spark-1.2",
+   "decidedBy": "owner review 2026-08-20, on the OpenCode Zen contributor disclosure",
+   "evidence": [
+    "OpenCode documents the exact free contributor offer as muse-spark-1.2-contributor-free and identifies it as the Muse Spark 1.2 contributor variant.",
+    "The reference index publishes meta/muse-spark-1.2 as the base model identity, and Muse Spark is listed under meta/ by several independent resellers, so the vendor attribution is not inferred from OpenCode alone.",
+    "The index ALSO publishes meta/muse-spark-1.2-contributor as a separate entry. Compared field by field it is the same model: identical release date, 1,048,576 context, 131,072 output, attachment and reasoning. Only the price differs — $1.25/$4.25 against $0.10/$0.20 — so the contributor entry records different commercial terms, not different capabilities. Quality belongs to the model and is attributed to the base identity; the contributor terms stay on the offer, where cost is already scored per provider/model.",
+    "Contributor evaluation is explicitly owner-approved and remains recorded separately as a consented evaluation identity."
+   ],
+   "yields": "measured VQ from the exact meta/muse-spark-1.2 benchmark entry; local contributor runtime evidence remains on the provider offer",
+   "reverifyBy": "if OpenCode changes the contributor offer disclosure, or if meta/muse-spark-1.2-contributor stops matching the base model on capabilities and limits rather than only on price",
+   "reviewedAt": "2026-08-20"
   },
   "nemotron-3-nano:30b": {
    "target": "nvidia/nemotron-3-nano-30b-a3b",
