@@ -49,8 +49,27 @@ function exponentialBackoffMilliseconds(attempt: number, policy: TransportPolicy
   return Math.round(unjittered * (0.5 + random() * 0.5));
 }
 
+/**
+ * How long a provider has asked us to wait, or null when it did not say.
+ *
+ * A Retry-After longer than the backoff cap is not a retry instruction — it is a
+ * refusal with a time on it. OpenCode Zen answers a free-usage 429 with
+ * `Retry-After: 41922`: eleven and a half hours. Sleeping that off would park
+ * the single evaluation worker mid-dimension, with the whole queue behind it and
+ * a progress modal frozen at whatever it last reported, for half a day, silently.
+ * The caller is told instead, so the run ends cheaply and the queue moves on.
+ */
+function requestedWaitMs(response: TransportResponse | null, policy: TransportPolicy): number | null {
+  if (!response) return null;
+  return retryAfterMilliseconds(response.headers, (policy.now ?? Date.now)());
+}
+
+function exceedsWaitBudget(waitMs: number | null, policy: TransportPolicy): boolean {
+  return waitMs !== null && waitMs > (policy.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS);
+}
+
 async function waitBeforeRetry(response: TransportResponse | null, attempt: number, policy: TransportPolicy): Promise<void> {
-  const retryAfter = response ? retryAfterMilliseconds(response.headers, (policy.now ?? Date.now)()) : null;
+  const retryAfter = requestedWaitMs(response, policy);
   const delay = Math.max(retryAfter ?? 0, exponentialBackoffMilliseconds(attempt, policy));
   const sleep = policy.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   await sleep(delay);
@@ -78,6 +97,9 @@ export async function callWithPolicy(
       if (response.status >= 200 && response.status < 300) return { kind: 'success', response, attempts: attempt };
       const transient = response.status === 429 || response.status >= 500;
       if (!transient) return { kind: 'model_failure', status: response.status, attempts: attempt, errorCode: `http_${response.status}` };
+      if (exceedsWaitBudget(requestedWaitMs(response, policy), policy)) {
+        return { kind: 'provider_failure', status: response.status, attempts: attempt, errorCode: 'retry_after_too_long' };
+      }
       if (attempt === maxAttempts) {
         return { kind: 'provider_failure', status: response.status, attempts: attempt, errorCode: `http_${response.status}` };
       }

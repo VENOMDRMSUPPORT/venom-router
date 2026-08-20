@@ -47,3 +47,53 @@ describe('evaluation transport policy', () => {
     });
   });
 });
+
+describe('a provider that says come back much later', () => {
+  test('does not sleep for hours holding the only worker', async () => {
+    // OpenCode Zen answers a free-usage 429 with Retry-After: 41922 — eleven and
+    // a half hours. Honouring that literally parks the single evaluation worker
+    // mid-dimension, with the queue behind it and a progress modal frozen at
+    // whatever it last reported. A wait that long is not a retry; it is a
+    // refusal with a time on it.
+    const slept: number[] = [];
+    const outcome = await callWithPolicy(
+      async () => ({ status: 429, headers: { 'retry-after': '41922' }, body: null }),
+      {
+        timeoutMs: 1000,
+        transientRetries: 3,
+        sleep: async (ms) => { slept.push(ms); },
+        random: () => 0.5,
+        now: () => 0,
+        maxBackoffMs: 30_000,
+      },
+    );
+
+    assert.equal(outcome.kind, 'provider_failure');
+    assert.equal(outcome.kind === 'provider_failure' && outcome.errorCode, 'retry_after_too_long');
+    assert.deepEqual(slept, [], 'nothing was waited on');
+    assert.equal(outcome.attempts, 1, 'and nothing was retried into the same wall');
+  });
+
+  test('still honours a short Retry-After, which is what the header is for', async () => {
+    const slept: number[] = [];
+    let calls = 0;
+    const outcome = await callWithPolicy(
+      async () => {
+        calls++;
+        if (calls === 1) return { status: 429, headers: { 'retry-after': '2' }, body: null };
+        return { status: 200, headers: {}, body: { ok: true } };
+      },
+      {
+        timeoutMs: 1000,
+        transientRetries: 3,
+        sleep: async (ms) => { slept.push(ms); },
+        random: () => 0.5,
+        now: () => 0,
+        maxBackoffMs: 30_000,
+      },
+    );
+
+    assert.equal(outcome.kind, 'success');
+    assert.deepEqual(slept, [2000]);
+  });
+});
