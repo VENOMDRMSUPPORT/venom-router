@@ -149,11 +149,135 @@ function normalizeResponseBody(providerId: string, body: unknown): unknown {
     : body;
 }
 
+
+/**
+ * Which wire protocol a model is actually served on.
+ *
+ * OpenCode's own model table names an endpoint per model, and they are not all
+ * the same one: GPT, Grok and Muse Spark sit on `/responses`, Claude and the
+ * Qwen Max/Plus line on `/messages`, Gemini on a per-model path, and the rest on
+ * `/chat/completions`. Assuming one endpoint for the whole provider made
+ * `grok-4.5` answer 503 and look like a dead endpoint, when it answers fine on
+ * the path it is published under.
+ *
+ * Only `/responses` is implemented, because it is the one carrying models this
+ * catalog cannot otherwise evaluate. The `/messages` models answer on
+ * `/chat/completions` through this gateway, so they need nothing yet — when one
+ * stops, this is the function that should learn about it, not the caller.
+ *
+ * Source: https://opencode.ai/docs/zen (the Endpoints table), read 2026-08-20.
+ */
+const RESPONSES_MODEL_PREFIXES = ['gpt-', 'grok-', 'muse-spark-'];
+
+export function protocolFor(providerId: string, modelId: string): EvaluationProtocol {
+  if (providerId !== 'opencode-go' && providerId !== 'opencode-zen') return 'chat-completions';
+  const bare = modelId.includes('/') ? modelId.slice(modelId.lastIndexOf('/') + 1) : modelId;
+  return RESPONSES_MODEL_PREFIXES.some((prefix) => bare.startsWith(prefix)) ? 'responses' : 'chat-completions';
+}
+
+/**
+ * The Responses API, translated at the boundary.
+ *
+ * OpenCode serves some models through OpenAI's Responses API rather than
+ * chat/completions — the official model table names the endpoint per model, and
+ * `grok-4.5`, `gpt-5.6-luna` and the Muse Spark family are on `/responses`.
+ * Calling them on `/chat/completions` produced an upstream 503 that looked
+ * exactly like an outage, which is how a perfectly healthy model came within one
+ * commit of being withheld as unreachable.
+ *
+ * Everything downstream — every grader, the runner, the score — reads
+ * `choices[0].message`. So the translation lives here and nothing else learns a
+ * second wire format. A grader quietly reading the wrong field is the failure
+ * that already cost this catalog a full paid evaluation run.
+ */
+function toResponsesContent(content: unknown): unknown {
+  if (typeof content === 'string') return [{ type: 'input_text', text: content }];
+  if (!Array.isArray(content)) return content;
+  return content.map((part) => {
+    if (typeof part !== 'object' || part === null) return part;
+    const entry = part as Record<string, unknown>;
+    if (entry.type === 'text') return { type: 'input_text', text: entry.text };
+    if (entry.type === 'image_url') {
+      const image = entry.image_url as Record<string, unknown> | undefined;
+      return { type: 'input_image', image_url: image?.url ?? entry.image_url };
+    }
+    return part;
+  });
+}
+
+/**
+ * Chat nests a tool under `function`; the Responses API keeps the same fields at
+ * the top level. Sending the nested shape is rejected, which reads as the model
+ * refusing to call tools rather than as a payload we never translated.
+ */
+function toResponsesTools(tools: unknown): unknown {
+  if (!Array.isArray(tools)) return tools;
+  return tools.map((tool) => {
+    if (typeof tool !== 'object' || tool === null) return tool;
+    const entry = tool as Record<string, unknown>;
+    const fn = entry.function;
+    if (typeof fn !== 'object' || fn === null) return tool;
+    const { name, description, parameters } = fn as Record<string, unknown>;
+    return { type: 'function', name, description, parameters };
+  });
+}
+
+function toResponsesRequest(body: Record<string, unknown>, modelId: string): Record<string, unknown> {
+  const { messages, max_tokens: maxTokens, stream, tools, ...rest } = body;
+  const request: Record<string, unknown> = { ...rest, model: modelId };
+  if (tools !== undefined) request.tools = toResponsesTools(tools);
+  if (Array.isArray(messages)) {
+    request.input = messages.map((message) => {
+      const entry = message as Record<string, unknown>;
+      return { ...entry, content: toResponsesContent(entry.content) };
+    });
+  }
+  if (typeof maxTokens === 'number') request.max_output_tokens = maxTokens;
+  return request;
+}
+
+/** Fold a Responses envelope back into the one message shape every grader reads. */
+function fromResponsesBody(body: unknown): unknown {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return body;
+  const envelope = body as Record<string, unknown>;
+  if (!Array.isArray(envelope.output)) return body;
+
+  let content = '';
+  let reasoning = '';
+  const toolCalls: unknown[] = [];
+  for (const item of envelope.output as Record<string, unknown>[]) {
+    if (item?.type === 'function_call') {
+      toolCalls.push({
+        id: item.call_id ?? item.id,
+        type: 'function',
+        function: { name: item.name, arguments: item.arguments },
+      });
+      continue;
+    }
+    const parts = Array.isArray(item?.content) ? item.content as Record<string, unknown>[] : [];
+    for (const part of parts) {
+      const text = typeof part?.text === 'string' ? part.text : '';
+      if (!text) continue;
+      // Reasoning is kept, and kept SEPARATE: folding it into the answer is the
+      // concatenation that scored perfect answers zero across three dimensions.
+      if (item.type === 'reasoning' || part.type === 'reasoning_text') reasoning += text;
+      else content += text;
+    }
+  }
+
+  const message: Record<string, unknown> = { role: 'assistant', content };
+  if (reasoning) message.reasoning = reasoning;
+  if (toolCalls.length > 0) message.tool_calls = toolCalls;
+  return { ...envelope, choices: [{ index: 0, message, finish_reason: 'stop' }] };
+}
+
 export function createEvaluationTransport(input: CreateEvaluationTransportInput): EvaluationTransport {
   const baseUrl = PROVIDER_BASE_URLS[input.providerId];
   if (!baseUrl) throw new Error(`unsupported_evaluation_provider:${input.providerId}`);
-  const protocol = input.protocol ?? 'chat-completions';
-  if (protocol !== 'chat-completions') throw new Error(`unsupported_evaluation_protocol:${protocol}`);
+  const protocol = input.protocol ?? protocolFor(input.providerId, input.modelId);
+  if (protocol !== 'chat-completions' && protocol !== 'responses') {
+    throw new Error(`unsupported_evaluation_protocol:${protocol}`);
+  }
   const fetchImpl = input.fetchImpl ?? fetch;
   return async (payload, credential) => callWithPolicy(async (): Promise<TransportResponse> => {
     const body = typeof payload === 'object' && payload !== null && !Array.isArray(payload)
@@ -162,10 +286,14 @@ export function createEvaluationTransport(input: CreateEvaluationTransportInput)
     const normalizedBody = input.providerId === 'clinepass'
       ? normalizeClinePayload(body) as Record<string, unknown>
       : body;
-    const response = await fetchImpl(`${baseUrl}/chat/completions`, {
+    const path = protocol === 'responses' ? '/responses' : '/chat/completions';
+    const requestBody = protocol === 'responses'
+      ? toResponsesRequest(normalizedBody, input.modelId)
+      : { ...normalizedBody, model: input.modelId, stream: false };
+    const response = await fetchImpl(`${baseUrl}${path}`, {
       method: 'POST',
       headers: evaluationHeaders(input.providerId, credential),
-      body: JSON.stringify({ ...normalizedBody, model: input.modelId, stream: false }),
+      body: JSON.stringify(requestBody),
     });
     const text = await response.text();
     let responseBody: unknown = null;
@@ -178,7 +306,9 @@ export function createEvaluationTransport(input: CreateEvaluationTransportInput)
     }
     return {
       status: response.status,
-      body: normalizeResponseBody(input.providerId, responseBody),
+      body: protocol === 'responses'
+        ? fromResponsesBody(responseBody)
+        : normalizeResponseBody(input.providerId, responseBody),
       headers: headersToRecord(response.headers),
     };
   }, {

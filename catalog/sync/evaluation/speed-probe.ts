@@ -1,4 +1,5 @@
 import { OVERALL_SCORE_POLICY } from './score.ts';
+import { protocolFor } from './provider-transport.ts';
 import type { SpeedProbe } from './speed-runner.ts';
 import { evaluationHeaders } from './provider-transport.ts';
 
@@ -25,6 +26,15 @@ function completionTokens(event: Record<string, unknown>): number | null {
 }
 
 function deltaContent(event: Record<string, unknown>): string {
+  // The Responses API streams its answer as `response.output_text.delta`, with
+  // the text on the event itself. Reasoning arrives on its own event type and is
+  // deliberately not counted: the wait for a model to finish thinking belongs in
+  // time-to-first-token, not in its throughput.
+  if (event.type === 'response.output_text.delta') {
+    return typeof event.delta === 'string' ? event.delta : '';
+  }
+  if (typeof event.type === 'string' && event.type.startsWith('response.')) return '';
+
   const choices = event.choices;
   if (!Array.isArray(choices) || typeof choices[0] !== 'object' || choices[0] === null) return '';
   const delta = (choices[0] as Record<string, unknown>).delta;
@@ -61,10 +71,16 @@ export function createStreamingSpeedProbe(input: CreateStreamingSpeedProbeInput)
   return async () => {
     const started = nowMs();
     try {
-      const response = await fetchImpl(`${baseUrl}/chat/completions`, {
+      const usesResponses = protocolFor(input.providerId, input.modelId) === 'responses';
+      const response = await fetchImpl(`${baseUrl}${usesResponses ? '/responses' : '/chat/completions'}`, {
         method: 'POST',
         headers: evaluationHeaders(input.providerId, input.credential),
-        body: JSON.stringify({
+        body: JSON.stringify(usesResponses ? {
+          model: input.modelId,
+          input: [{ role: 'user', content: [{ type: 'input_text', text: SPEED_PROMPT }] }],
+          max_output_tokens: 2048,
+          stream: true,
+        } : {
           model: input.modelId,
           messages: [{ role: 'user', content: SPEED_PROMPT }],
           temperature: 0,

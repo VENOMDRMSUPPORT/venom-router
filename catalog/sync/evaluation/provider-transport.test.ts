@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { createEvaluationTransport, evaluationHeaders, resolveEvaluationCredential } from './provider-transport.ts';
+import { createEvaluationTransport, evaluationHeaders, resolveEvaluationCredential, protocolFor } from './provider-transport.ts';
 
 describe('provider evaluation transport', () => {
   test('normalizes the Cline vision fixture to a supported PNG without changing other providers', async () => {
@@ -93,5 +93,142 @@ describe('provider evaluation transport', () => {
       if (previous === undefined) delete process.env.VENOM_CATALOG_OLLAMA_CLOUD_API_KEY;
       else process.env.VENOM_CATALOG_OLLAMA_CLOUD_API_KEY = previous;
     }
+  });
+});
+
+describe('the Responses protocol', () => {
+  test('sends what the Responses API expects, not a chat payload', async () => {
+    const seen: { url: string; body: Record<string, unknown> }[] = [];
+    const transport = createEvaluationTransport({
+      providerId: 'opencode-go',
+      modelId: 'grok-4.5',
+      protocol: 'responses',
+      credential: 'secret',
+      fetchImpl: (async (url: string | URL, init?: RequestInit) => {
+        seen.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return new Response(JSON.stringify({
+          output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'catalog' }] }],
+        }), { status: 200 });
+      }) as typeof fetch,
+    });
+
+    await transport({ messages: [{ role: 'user', content: 'Say catalog.' }], max_tokens: 512, temperature: 0 }, 'secret');
+
+    assert.match(seen[0].url, /\/responses$/);
+    assert.equal(seen[0].body.model, 'grok-4.5');
+    assert.equal(seen[0].body.max_output_tokens, 512, 'max_tokens has a different name here');
+    assert.equal(seen[0].body.max_tokens, undefined, 'and the chat name must not be sent');
+    assert.deepEqual(seen[0].body.input, [{ role: 'user', content: [{ type: 'input_text', text: 'Say catalog.' }] }]);
+  });
+
+  test('hands the graders the shape they already read', async () => {
+    // The graders read choices[0].message.content. Normalising here is what keeps
+    // every one of them from having to learn a second wire format — and a grader
+    // that silently reads nothing is exactly how a whole paid run scored zero.
+    const transport = createEvaluationTransport({
+      providerId: 'opencode-go', modelId: 'grok-4.5', protocol: 'responses', credential: 'secret',
+      fetchImpl: (async () => new Response(JSON.stringify({
+        output: [
+          { type: 'reasoning', content: [{ type: 'reasoning_text', text: 'thinking' }] },
+          { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '{"recordId": 1}' }] },
+        ],
+      }), { status: 200 })) as typeof fetch,
+    });
+
+    const outcome = await transport({ messages: [{ role: 'user', content: 'x' }] }, 'secret');
+    assert.equal(outcome.kind, 'success');
+    const body = outcome.kind === 'success' ? outcome.response.body as any : null;
+    assert.equal(body.choices[0].message.content, '{"recordId": 1}');
+    assert.equal(body.choices[0].message.reasoning, 'thinking', 'thinking is kept, and kept separate');
+  });
+
+  test('carries an image the way this API names it', async () => {
+    const seen: Record<string, unknown>[] = [];
+    const transport = createEvaluationTransport({
+      providerId: 'opencode-go', modelId: 'grok-4.5', protocol: 'responses', credential: 'secret',
+      fetchImpl: (async (_url: string | URL, init?: RequestInit) => {
+        seen.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ output: [] }), { status: 200 });
+      }) as typeof fetch,
+    });
+
+    await transport({
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: 'what digit' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+      ] }],
+    }, 'secret');
+
+    assert.deepEqual((seen[0].input as any[])[0].content, [
+      { type: 'input_text', text: 'what digit' },
+      { type: 'input_image', image_url: 'data:image/png;base64,AAA' },
+    ]);
+  });
+
+  test('surfaces a tool call where the tool-calling grader looks for it', async () => {
+    const transport = createEvaluationTransport({
+      providerId: 'opencode-go', modelId: 'grok-4.5', protocol: 'responses', credential: 'secret',
+      fetchImpl: (async () => new Response(JSON.stringify({
+        output: [{ type: 'function_call', call_id: 'call-1', name: 'get_weather', arguments: '{"city":"Cairo"}' }],
+      }), { status: 200 })) as typeof fetch,
+    });
+
+    const outcome = await transport({ messages: [{ role: 'user', content: 'x' }] }, 'secret');
+    const body = outcome.kind === 'success' ? outcome.response.body as any : null;
+    assert.deepEqual(body.choices[0].message.tool_calls, [
+      { id: 'call-1', type: 'function', function: { name: 'get_weather', arguments: '{"city":"Cairo"}' } },
+    ]);
+  });
+});
+
+describe('choosing the protocol a model is actually served on', () => {
+  test('routes the Responses-API families to /responses', () => {
+    for (const modelId of ['grok-4.5', 'gpt-5.6-luna', 'muse-spark-1.2-contributor']) {
+      assert.equal(protocolFor('opencode-go', modelId), 'responses', modelId);
+    }
+  });
+
+  test('leaves the chat-completions models alone', () => {
+    for (const modelId of ['glm-5.3', 'kimi-k3', 'minimax-m3', 'deepseek-v4-pro', 'qwen3.7-max']) {
+      assert.equal(protocolFor('opencode-go', modelId), 'chat-completions', modelId);
+    }
+  });
+
+  test('does not apply OpenCode routing to other providers', () => {
+    // clinepass prefixes its ids; a `gpt-` model there is still its own gateway.
+    assert.equal(protocolFor('clinepass', 'cline-pass/glm-5.3'), 'chat-completions');
+    assert.equal(protocolFor('ollama-cloud', 'gpt-oss:120b'), 'chat-completions');
+  });
+});
+
+describe('translating a tool definition for the Responses API', () => {
+  test('flattens the chat tool shape, which nests what this API keeps at the top', async () => {
+    const seen: Record<string, unknown>[] = [];
+    const transport = createEvaluationTransport({
+      providerId: 'opencode-go', modelId: 'grok-4.5', protocol: 'responses', credential: 'secret',
+      fetchImpl: (async (_url: string | URL, init?: RequestInit) => {
+        seen.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ output: [] }), { status: 200 });
+      }) as typeof fetch,
+    });
+
+    await transport({
+      messages: [{ role: 'user', content: 'weather in Cairo' }],
+      tools: [{
+        type: 'function',
+        function: {
+          name: 'get_weather',
+          description: 'Get current weather for a city.',
+          parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
+        },
+      }],
+    }, 'secret');
+
+    assert.deepEqual(seen[0].tools, [{
+      type: 'function',
+      name: 'get_weather',
+      description: 'Get current weather for a city.',
+      parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
+    }]);
   });
 });
