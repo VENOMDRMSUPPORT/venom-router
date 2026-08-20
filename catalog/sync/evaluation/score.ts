@@ -273,13 +273,20 @@ export function rankOverallScores(items: OverallRankInput[]): OverallRankResult[
   while (index < scored.length) {
     rank += 1;
     const members = [scored[index]];
-    let groupLower = scored[index].value - (scored[index].uncertainty ?? 0);
+    // Anchored on the LEADER's lower bound, and never moved.
+    //
+    // Lowering it as members joined made ties transitive: the leader tied the
+    // second, the second widened the floor so the third tied too, and the chain
+    // ran all the way down. Eleven live offers spanning 81.5 to 94.5 — intervals
+    // that do not come close to overlapping — all came out ranked 1, which is a
+    // column with one value in it rather than a ranking. A tie has to mean "the
+    // evidence cannot separate THESE TWO".
+    const leaderLower = scored[index].value - (scored[index].uncertainty ?? 0);
     let next = index + 1;
     while (next < scored.length) {
       const candidateUpper = scored[next].value + (scored[next].uncertainty ?? 0);
-      if (candidateUpper < groupLower) break;
+      if (candidateUpper < leaderLower) break;
       members.push(scored[next]);
-      groupLower = Math.min(groupLower, scored[next].value - (scored[next].uncertainty ?? 0));
       next += 1;
     }
     for (const member of members) ranked.push({ ...member, rank, tied: members.length > 1 });

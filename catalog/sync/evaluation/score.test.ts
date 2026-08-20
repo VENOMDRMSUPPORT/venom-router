@@ -118,3 +118,51 @@ describe('overall-score-v1 math', () => {
     ]);
   });
 });
+
+describe('ranking offers whose intervals overlap', () => {
+  const offer = (modelId: string, value: number, uncertainty: number) =>
+    ({ providerId: 'p', modelId, value, uncertainty });
+
+  test('a tie is with the leader, not with whoever last joined the group', () => {
+    // The real catalog, rounded: eleven offers spanning 81.5 to 94.5 with
+    // uncertainties near 3. Chaining the group floor downwards made every one of
+    // them rank 1 — a column with one value in it is not a ranking.
+    const ranked = rankOverallScores([
+      offer('a', 94.5, 2.5),
+      offer('b', 93.9, 2.6),
+      offer('c', 89.8, 3.1),
+      offer('d', 88.0, 2.1),
+      offer('e', 85.9, 3.0),
+      offer('f', 81.5, 3.2),
+    ]);
+    const rankOf = new Map(ranked.map((item) => [item.modelId, item.rank]));
+
+    // 88.0 + 2.1 = 90.1, which is below the leader's floor of 92.0, so it cannot
+    // be tied with the leader however many offers sit between them.
+    assert.notEqual(rankOf.get('a'), rankOf.get('d'));
+    assert.ok(new Set(ranked.map((item) => item.rank)).size > 1, 'the ranking must separate something');
+    assert.equal(rankOf.get('a'), 1);
+    assert.equal(rankOf.get('b'), 1, 'these two genuinely overlap');
+  });
+
+  test('two offers the evidence cannot separate share a rank and are marked tied', () => {
+    const ranked = rankOverallScores([offer('a', 90, 3), offer('b', 89, 3)]);
+    assert.deepEqual(ranked.map((item) => [item.modelId, item.rank, item.tied]),
+      [['a', 1, true], ['b', 1, true]]);
+  });
+
+  test('a clearly better offer outranks a clearly worse one', () => {
+    const ranked = rankOverallScores([offer('a', 90, 1), offer('b', 60, 1)]);
+    assert.deepEqual(ranked.map((item) => [item.modelId, item.rank, item.tied]),
+      [['a', 1, false], ['b', 2, false]]);
+  });
+
+  test('rank numbering stays dense: tie groups are numbered, not counted', () => {
+    // Deliberately dense. The provider page's note about numbers skipping is
+    // about FILTERING — #1 and #3 appear together when #2 belongs to another
+    // provider — not about how a tie group is numbered.
+    const ranked = rankOverallScores([offer('a', 90, 3), offer('b', 89, 3), offer('c', 50, 1)]);
+    const rankOf = new Map(ranked.map((item) => [item.modelId, item.rank]));
+    assert.equal(rankOf.get('c'), 2, 'the group after a tie group is the second group');
+  });
+});
