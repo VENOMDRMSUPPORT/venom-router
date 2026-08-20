@@ -32,6 +32,7 @@ import { Toolbar } from '../../components/Toolbar/Toolbar';
 import { NotFoundPage } from '../NotFoundPage/NotFoundPage';
 import { EvidencePanel } from '../../components/EvidencePanel/EvidencePanel';
 import { EvaluateModal } from '../../components/EvaluateModal/EvaluateModal';
+import { vendorQualifier } from '../../api/presentation';
 import { FactState, factStateOf } from '../../components/FactState/FactState';
 import styles from './ProviderPage.module.css';
 
@@ -536,6 +537,14 @@ function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: st
                 <td className={styles.narrow}><ModelRankCell model={m} /></td>
                 <td>
                   <span className={styles.modelName}>{m.modelId}</span>
+                  {vendorQualifier(m.modelId, m.displayName) && (
+                    <span
+                      className={styles.vendorQualifier}
+                      title={`The provider lists this model as "${m.displayName}".`}
+                    >
+                      {vendorQualifier(m.modelId, m.displayName)}
+                    </span>
+                  )}
                   {/* Identity is its own axis. A row parked in review HAS been
                       investigated; showing nothing would read as un-examined.
                       Suppressed once an id can be shown instead: the column asks
@@ -641,6 +650,14 @@ function ModelGrid({ title, models, note, costStatedOnce, ranked }: { title: str
             <div className={styles.modelCardTop}>
               <div>
                 <span className={styles.modelName}>{m.modelId}</span>
+                {vendorQualifier(m.modelId, m.displayName) && (
+                  <span
+                    className={styles.vendorQualifier}
+                    title={`The provider lists this model as "${m.displayName}".`}
+                  >
+                    {vendorQualifier(m.modelId, m.displayName)}
+                  </span>
+                )}
                 {(() => {
                   const shown = displayIdentity(m);
                   return shown && (

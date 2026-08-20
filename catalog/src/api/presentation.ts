@@ -49,3 +49,26 @@ export const PRESENTATION: Record<string, ProviderPresentation> = {
 
 export const present = (id: string): ProviderPresentation =>
   PRESENTATION[id] ?? { logo: '', blurb: '', docsUrl: '' };
+
+/**
+ * The part of a vendor's display name that the model id does not already say.
+ *
+ * models.dev serves each provider's own display name, and OpenCode uses it to
+ * advertise: "Hy3 (8x usage)", "DeepSeek V4 Pro (New)", "GPT-5.6 Sol (50% Off)".
+ * That is worth showing — but only the part that adds something. "GLM-5.3"
+ * beside `glm-5.3` is the same fact twice, which is the duplication this page
+ * was just cleared of.
+ *
+ * The catalog is not claiming the offer is real or current. It is reporting what
+ * the provider calls the model, which is a fact with a source and a fetch date.
+ */
+export function vendorQualifier(modelId: string, displayName: string | null | undefined): string | null {
+  if (!displayName) return null;
+  const match = /\(([^)]+)\)\s*$/.exec(displayName.trim());
+  if (!match) return null;
+  const qualifier = match[1].trim();
+  if (!qualifier) return null;
+  // A parenthetical that only repeats part of the id is not extra information.
+  const flatten = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return flatten(modelId).includes(flatten(qualifier)) ? null : qualifier;
+}
