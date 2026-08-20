@@ -115,21 +115,33 @@ export const OLLAMA_CLOUD: ProviderAdapter = {
   rosterUrl: 'https://ollama.com/v1/models',
   feedKey: 'ollama-cloud',
   parseRoster: parseOpenAiList,
-  // Verified against the configured Ollama Cloud access. The provider returns
-  // HTTP 403 with "this model requires a subscription, upgrade for access" for
-  // each of these. A roster listing is not evidence that this free offering can
-  // call the model, and publishing one it cannot reach makes the catalog claim
-  // availability the account does not have.
+  // Withheld because the configured Ollama Cloud access cannot call them. A
+  // roster listing is not evidence of access, and publishing a model this
+  // account cannot reach makes the catalog claim availability it does not have.
   //
-  // `kimi-k3` was confirmed on 2026-08-19; the rest on 2026-08-20 by sending one
-  // minimal completion per rostered id and recording the status. Seven ids
-  // answered 200 and stay published: gemma4:31b, gpt-oss:120b, gpt-oss:20b,
-  // minimax-m3, nemotron-3-nano:30b, nemotron-3-super, nemotron-3-ultra.
+  // Established by sending one minimal completion per rostered id and reading
+  // the error back. Two DIFFERENT refusals came back, and the difference decides
+  // what an upgrade would buy:
   //
-  // This list is hand-maintained on purpose. It is the record of what a specific
-  // account could reach on a specific day, which is not something a roster or a
-  // price feed can tell us — so it is stated, dated, and re-checkable rather than
-  // inferred.
+  //   * eleven ids — "this model requires a subscription, upgrade for access".
+  //     A plan would unlock these.
+  //
+  //   * `kimi-k3` — "requires both a Pro, Max, or Team plan AND extra usage (it
+  //     does not use included plan usage)". A plan alone does NOT unlock this
+  //     one; it is metered separately on top, so it can never be part of a free
+  //     offering. Confirmed 2026-08-19 and again 2026-08-20.
+  //
+  // Both are `plan_required` because the catalog's question is only "can this
+  // account call it", but the distinction is recorded here rather than flattened
+  // away: it is the difference between "buy the plan" and "this will never be
+  // free".
+  //
+  // Seven ids answered 200 and stay published: gemma4:31b, gpt-oss:120b,
+  // gpt-oss:20b, minimax-m3, nemotron-3-nano:30b, nemotron-3-super,
+  // nemotron-3-ultra.
+  //
+  // Hand-maintained on purpose: this records what one account could reach on one
+  // day, which no roster or price feed reports. Dated, and re-checkable.
   publishExclusions: {
     'deepseek-v4-flash:0731': 'plan_required',
     'deepseek-v4-flash:preview': 'plan_required',
@@ -139,11 +151,13 @@ export const OLLAMA_CLOUD: ProviderAdapter = {
     'glm-5.2': 'plan_required',
     'kimi-k2.6': 'plan_required',
     'kimi-k2.7-code': 'plan_required',
+    // Subscription AND extra usage — see above; not merely un-subscribed.
     'kimi-k3': 'plan_required',
     'minimax-m2.7': 'plan_required',
     'mistral-large-3:675b': 'plan_required',
     'qwen3.5:397b': 'plan_required',
   },
+
 };
 
 /**
