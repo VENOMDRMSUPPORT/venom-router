@@ -107,6 +107,35 @@ export const OPENCODE_GO: ProviderAdapter = {
   rosterUrl: 'https://opencode.ai/zen/go/v1/models',
   feedKey: 'opencode-go',
   parseRoster: parseOpenAiList,
+  // Withheld after probing every rostered id on 2026-08-20. Twenty-two answered
+  // and stay published; these five cannot be called, for three different reasons
+  // that are worth keeping apart:
+  //
+  //   * `provider_unsupported` — the provider itself says it cannot serve the
+  //     id. "Model is unavailable", "Unsupported model mimo-v2", "Model
+  //     muse-spark-1.2 is not supported". Nothing on our side unlocks these.
+  //
+  //   * `consent_required` — muse-spark-1.2-contributor is callable only by
+  //     opting in to the model collecting data to improve its own quality. That
+  //     would send evaluation prompts upstream for training, which is a decision
+  //     for the owner and not one to take by default.
+  //
+  // `grok-4.5` is deliberately NOT here. It answers 503 "Endpoint is
+  // unavailable" — three times running, so not a blip, but an outage is not a
+  // permanent condition and withholding it would record the wrong reason. It
+  // stays published and simply has no measurement until the endpoint returns.
+  //
+  // One warning for whoever re-runs this sweep: probing with `max_tokens: 1`
+  // made gpt-5.6-luna look broken — HTTP 400 around an otherwise valid empty
+  // completion. At 16 tokens it answers normally. A probe that starves the model
+  // tests the probe, not the model.
+  publishExclusions: {
+    'hy3-preview': 'provider_unsupported',
+    'mimo-v2-omni': 'provider_unsupported',
+    'mimo-v2-pro': 'provider_unsupported',
+    'muse-spark-1.2': 'provider_unsupported',
+    'muse-spark-1.2-contributor': 'consent_required',
+  },
 };
 
 export const OLLAMA_CLOUD: ProviderAdapter = {

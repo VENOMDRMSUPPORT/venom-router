@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { OLLAMA_CLOUD } from './index.ts';
+import { OLLAMA_CLOUD, OPENCODE_GO } from './index.ts';
 
 /**
  * The reachability of a provider's roster is evidence, not configuration.
@@ -84,6 +84,46 @@ describe('Ollama Cloud publish access', () => {
     assert.deepEqual(
       Object.keys(OLLAMA_CLOUD.publishExclusions ?? {}).sort(),
       [...WITHHELD].sort(),
+    );
+  });
+});
+
+describe('OpenCode Go publish access', () => {
+  /** The provider answers that it cannot serve these at all. */
+  const UNSUPPORTED = ['hy3-preview', 'mimo-v2-omni', 'mimo-v2-pro', 'muse-spark-1.2'];
+
+  test('withholds ids the provider says it cannot serve', () => {
+    const exclusions = OPENCODE_GO.publishExclusions ?? {};
+    for (const modelId of UNSUPPORTED) {
+      assert.equal(exclusions[modelId], 'provider_unsupported', modelId);
+    }
+  });
+
+  test('withholds the model that is only callable by opting in to data collection', () => {
+    // Calling it would send evaluation prompts upstream to improve that model.
+    // That is the owner's decision, and the default has to be no.
+    assert.equal((OPENCODE_GO.publishExclusions ?? {})['muse-spark-1.2-contributor'], 'consent_required');
+  });
+
+  test('does not withhold a model whose endpoint is merely down', () => {
+    // grok-4.5 answered 503 "Endpoint is unavailable" three times running. That
+    // is an outage, not a permanent condition, and withholding it would file the
+    // wrong reason against a model that may answer tomorrow. It stays published
+    // with no measurement until it does.
+    assert.equal((OPENCODE_GO.publishExclusions ?? {})['grok-4.5'], undefined);
+  });
+
+  test('does not withhold a model that a starved probe made look broken', () => {
+    // gpt-5.6-luna returns HTTP 400 around a valid empty completion when asked
+    // for one token, and answers normally at sixteen. The first sweep would have
+    // excluded a working model.
+    assert.equal((OPENCODE_GO.publishExclusions ?? {})['gpt-5.6-luna'], undefined);
+  });
+
+  test('withholds nothing beyond what was probed', () => {
+    assert.deepEqual(
+      Object.keys(OPENCODE_GO.publishExclusions ?? {}).sort(),
+      [...UNSUPPORTED, 'muse-spark-1.2-contributor'].sort(),
     );
   });
 });

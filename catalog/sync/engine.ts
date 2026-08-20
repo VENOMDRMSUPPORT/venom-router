@@ -50,7 +50,12 @@ export interface ProviderAdapter {
    * row remains in history, but it cannot be advertised in the public catalog
    * when the configured product tier cannot call it.
    */
-  publishExclusions?: Record<string, 'plan_required'>;
+  /**
+   * Ids the provider rosters but this deployment cannot publish, each with the
+   * reason it cannot. Not every refusal is the same refusal, and flattening
+   * them loses the only thing an owner can act on.
+   */
+  publishExclusions?: Record<string, 'plan_required' | 'provider_unsupported' | 'consent_required'>;
 }
 
 /** Per-model facts from the spec feed. All optional: absent means "not published". */

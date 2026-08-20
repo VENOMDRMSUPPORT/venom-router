@@ -39,7 +39,15 @@ import type { Db } from '../db/index.ts';
 import { transaction } from '../db/index.ts';
 import type { ProviderAdapter, ModelSpec, SpecLookup } from './engine.ts';
 
-export type ExclusionReason = 'paid' | 'not_proven_free' | 'not_served' | 'plan_required';
+export type ExclusionReason =
+  | 'paid'
+  | 'not_proven_free'
+  | 'not_served'
+  | 'plan_required'
+  /** The provider itself answers that it cannot serve this id at all. */
+  | 'provider_unsupported'
+  /** Callable only by agreeing to something the owner has not agreed to. */
+  | 'consent_required';
 
 export interface PublishPolicyDeps {
   db: Db;
@@ -61,6 +69,8 @@ const EMPTY_EXCLUDED = (): Record<ExclusionReason, number> => ({
   not_proven_free: 0,
   not_served: 0,
   plan_required: 0,
+  provider_unsupported: 0,
+  consent_required: 0,
 });
 
 /**
