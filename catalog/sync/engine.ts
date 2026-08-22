@@ -56,6 +56,21 @@ export interface ProviderAdapter {
    * them loses the only thing an owner can act on.
    */
   publishExclusions?: Record<string, 'plan_required' | 'provider_unsupported' | 'consent_required'>;
+  /**
+   * The provider's own published free-model ids, reviewed by hand.
+   *
+   * When set on a `free_only` provider, THIS list is the proof of freeness —
+   * not a third-party price feed. The roster endpoint carries no prices, so an
+   * index transcribing a zero for an id the provider has not listed as free is
+   * a claim about an offer the provider has not made, and publishing it would
+   * put the catalog ahead of the provider's own storefront. Review date and
+   * source are carried with the ids so the list is auditable and re-checkable.
+   */
+  officialFreeList?: {
+    ids: readonly string[];
+    reviewedAt: string;
+    sourceUrl: string;
+  };
 }
 
 /** Per-model facts from the spec feed. All optional: absent means "not published". */
@@ -101,6 +116,14 @@ export interface SyncDeps {
   now: () => string;
   lookupSpec: SpecLookup;
   options?: Partial<EngineOptions>;
+  /**
+   * Reviewed display name for an offering, or undefined to fall through.
+   *
+   * Wins over the spec feed's transcription: the provider's own documentation is
+   * first party about its own product names, the same precedence the fact
+   * resolvers apply. See sync/display-names.ts for the overlay contract.
+   */
+  displayNameFor?: (providerId: string, modelId: string) => string | undefined;
 }
 
 export type Outcome = 'ok' | 'failed' | 'quarantined';
@@ -136,15 +159,25 @@ interface StoredModel {
   model_id: string;
   status: string;
   miss_count: number;
-  context_tokens: number | null;
-  output_tokens: number | null;
-  cost_in_per_m: number | null;
-  cost_out_per_m: number | null;
-  tools: number | null;
-  reasoning: number | null;
-  structured: number | null;
-  attachment: number | null;
-  input_modalities: string | null;
+  /**
+   * What the feed published for the TRACKED fields the last time this row was
+   * synced, as written by this engine and by nothing else.
+   *
+   * The diff cannot use the `models` columns for this. Those hold the RESOLVED
+   * answer, and the enrichment pass is authoritative over them: it moves a
+   * subscription provider's per-token numbers into the reference columns and
+   * NULLs the effective ones, and it lets a reviewed fact override the feed's
+   * output limit. Comparing the feed against a column someone else owns
+   * re-reported the same difference on every single run — `cost_out_per_m
+   * null -> 1.6` thirteen times for one row, 298 of 459 events in the live
+   * ledger — while a genuine price change would have been invisible in the
+   * noise. So the feed is compared against the feed.
+   *
+   * NULL means no baseline was ever recorded (a row written before this column
+   * existed). That is not evidence of a change, so the run seeds it and reports
+   * nothing: an unknown previous value cannot support a claim about movement.
+   */
+  feed_tracked_json: string | null;
 }
 
 /**
@@ -159,23 +192,55 @@ interface StoredModel {
 const TRACKED: {
   field: string;
   cls: 'context' | 'price' | 'capability';
-  stored: (m: StoredModel) => string | null;
   incoming: (s: ModelSpec) => string | null;
 }[] = [
-  { field: 'context_tokens', cls: 'context', stored: (m) => str(m.context_tokens), incoming: (s) => str(s.contextTokens) },
-  { field: 'output_tokens', cls: 'context', stored: (m) => str(m.output_tokens), incoming: (s) => str(s.outputTokens) },
-  { field: 'cost_in_per_m', cls: 'price', stored: (m) => str(m.cost_in_per_m), incoming: (s) => str(s.costInPerM) },
-  { field: 'cost_out_per_m', cls: 'price', stored: (m) => str(m.cost_out_per_m), incoming: (s) => str(s.costOutPerM) },
-  { field: 'tools', cls: 'capability', stored: (m) => bit(m.tools), incoming: (s) => bool(s.tools) },
-  { field: 'reasoning', cls: 'capability', stored: (m) => bit(m.reasoning), incoming: (s) => bool(s.reasoning) },
-  { field: 'structured', cls: 'capability', stored: (m) => bit(m.structured), incoming: (s) => bool(s.structured) },
-  { field: 'attachment', cls: 'capability', stored: (m) => bit(m.attachment), incoming: (s) => bool(s.attachment) },
-  { field: 'input_modalities', cls: 'capability', stored: (m) => m.input_modalities, incoming: (s) => (s.inputModalities ? JSON.stringify(s.inputModalities) : null) },
+  { field: 'context_tokens', cls: 'context', incoming: (s) => str(s.contextTokens) },
+  { field: 'output_tokens', cls: 'context', incoming: (s) => str(s.outputTokens) },
+  { field: 'cost_in_per_m', cls: 'price', incoming: (s) => str(s.costInPerM) },
+  { field: 'cost_out_per_m', cls: 'price', incoming: (s) => str(s.costOutPerM) },
+  { field: 'tools', cls: 'capability', incoming: (s) => bool(s.tools) },
+  { field: 'reasoning', cls: 'capability', incoming: (s) => bool(s.reasoning) },
+  { field: 'structured', cls: 'capability', incoming: (s) => bool(s.structured) },
+  { field: 'attachment', cls: 'capability', incoming: (s) => bool(s.attachment) },
+  { field: 'input_modalities', cls: 'capability', incoming: (s) => (s.inputModalities ? JSON.stringify(s.inputModalities) : null) },
 ];
 
 const str = (v: number | null | undefined) => (v === null || v === undefined ? null : String(v));
-const bit = (v: number | null) => (v === null ? null : String(Boolean(v)));
 const bool = (v: boolean | undefined) => (v === undefined ? null : String(v));
+
+/**
+ * The feed's own answer for every tracked field, in the exact string form the
+ * diff compares. Written to `models.feed_tracked_json` on every sync, so the
+ * next run has a baseline that belongs to the feed.
+ */
+export function feedSnapshot(spec: ModelSpec | null): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const t of TRACKED) out[t.field] = spec ? t.incoming(spec) : null;
+  return out;
+}
+
+function readSnapshot(json: string | null): Record<string, string | null> | null {
+  if (json === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const snapshot: Record<string, string | null> = {};
+    for (const [field, value] of Object.entries(parsed as Record<string, unknown>)) {
+      // Every value is a string or null, because that is the only shape this
+      // engine writes. One value of any other type discards the WHOLE snapshot:
+      // a number 1.6 would never equal the feed's `'1.6'` and would report a
+      // change nobody made, and a wrong previous value is worse than no
+      // baseline — for which the rule is already "seed it, claim nothing".
+      if (value !== null && typeof value !== 'string') return null;
+      snapshot[field] = value;
+    }
+    return snapshot;
+  } catch {
+    // A snapshot we cannot read is not a previous value we can cite. Same rule
+    // as a missing one: seed it, claim nothing.
+    return null;
+  }
+}
 
 export interface FieldChange {
   field: string;
@@ -193,9 +258,11 @@ export interface FieldChange {
  */
 function specChanges(before: StoredModel | undefined, spec: ModelSpec | null): FieldChange[] {
   if (!before || !spec) return [];
+  const baseline = readSnapshot(before.feed_tracked_json);
+  if (!baseline) return [];
   const out: FieldChange[] = [];
   for (const t of TRACKED) {
-    const from = t.stored(before);
+    const from = baseline[t.field] ?? null;
     const to = t.incoming(spec);
     if (to === null) continue;
     if (from !== to) out.push({ field: t.field, cls: t.cls, from, to });
@@ -242,8 +309,7 @@ export async function syncProvider(adapter: ProviderAdapter, deps: SyncDeps): Pr
   }
 
   const stored = db
-    .prepare(`SELECT model_id, status, miss_count, context_tokens, output_tokens, cost_in_per_m,
-                     cost_out_per_m, tools, reasoning, structured, attachment, input_modalities
+    .prepare(`SELECT model_id, status, miss_count, feed_tracked_json
               FROM models WHERE provider_id = ? AND status != 'retired'`)
     .all(adapter.id) as unknown as StoredModel[];
   const storedById = new Map(stored.map((m) => [m.model_id, m]));
@@ -276,6 +342,22 @@ export async function syncProvider(adapter: ProviderAdapter, deps: SyncDeps): Pr
     const event = db.prepare(
       'INSERT INTO model_events (run_id, provider_id, model_id, kind, field, old_value, new_value, reason, at) VALUES (?,?,?,?,?,?,?,?,?)',
     );
+    // Prepared once per provider, like `event` beside it. Inside the loop this
+    // compiled the same statement again for every id in the roster.
+    const upsertModel = db.prepare(
+      `INSERT INTO models (provider_id, model_id, display_name, context_tokens, output_tokens, input_modalities,
+                           tools, reasoning, structured, attachment, cost_in_per_m, cost_out_per_m, spec_source,
+                           feed_tracked_json, lifecycle_status, status, first_seen_at, last_seen_at, missing_since, miss_count)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'active', ?, ?, NULL, 0)
+       ON CONFLICT(provider_id, model_id) DO UPDATE SET
+         display_name = excluded.display_name, context_tokens = excluded.context_tokens,
+         output_tokens = excluded.output_tokens, input_modalities = excluded.input_modalities,
+         tools = excluded.tools, reasoning = excluded.reasoning, structured = excluded.structured,
+         attachment = excluded.attachment, cost_in_per_m = excluded.cost_in_per_m,
+         cost_out_per_m = excluded.cost_out_per_m, spec_source = excluded.spec_source,
+         feed_tracked_json = excluded.feed_tracked_json,
+         lifecycle_status = excluded.lifecycle_status, status = 'active', last_seen_at = excluded.last_seen_at, missing_since = NULL, miss_count = 0`,
+    );
 
     for (const id of roster) {
       const spec = deps.lookupSpec(adapter.feedKey, id);
@@ -283,26 +365,19 @@ export async function syncProvider(adapter: ProviderAdapter, deps: SyncDeps): Pr
       const diffs = specChanges(before, spec);
       changed += diffs.length;
 
-      db.prepare(
-        `INSERT INTO models (provider_id, model_id, display_name, context_tokens, output_tokens, input_modalities,
-                             tools, reasoning, structured, attachment, cost_in_per_m, cost_out_per_m, spec_source,
-                             lifecycle_status, status, first_seen_at, last_seen_at, missing_since, miss_count)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'active', ?, ?, NULL, 0)
-         ON CONFLICT(provider_id, model_id) DO UPDATE SET
-           display_name = excluded.display_name, context_tokens = excluded.context_tokens,
-           output_tokens = excluded.output_tokens, input_modalities = excluded.input_modalities,
-           tools = excluded.tools, reasoning = excluded.reasoning, structured = excluded.structured,
-           attachment = excluded.attachment, cost_in_per_m = excluded.cost_in_per_m,
-           cost_out_per_m = excluded.cost_out_per_m, spec_source = excluded.spec_source,
-           lifecycle_status = excluded.lifecycle_status, status = 'active', last_seen_at = excluded.last_seen_at, missing_since = NULL, miss_count = 0`,
-      ).run(
-        adapter.id, id, spec?.displayName ?? id, spec?.contextTokens ?? null, spec?.outputTokens ?? null,
+      upsertModel.run(
+        adapter.id, id, deps.displayNameFor?.(adapter.id, id) ?? spec?.displayName ?? id,
+        spec?.contextTokens ?? null, spec?.outputTokens ?? null,
         spec?.inputModalities ? JSON.stringify(spec.inputModalities) : null,
         spec?.tools === undefined ? null : Number(spec.tools),
         spec?.reasoning === undefined ? null : Number(spec.reasoning),
         spec?.structured === undefined ? null : Number(spec.structured),
         spec?.attachment === undefined ? null : Number(spec.attachment),
         spec?.costInPerM ?? null, spec?.costOutPerM ?? null, spec ? 'models.dev' : null,
+        // The baseline for the NEXT run's diff. Written unconditionally, so a
+        // feed that goes quiet leaves a recorded "published nothing" rather
+        // than a stale copy of what it used to say.
+        JSON.stringify(feedSnapshot(spec)),
         spec?.status ?? null, at, at,
       );
 

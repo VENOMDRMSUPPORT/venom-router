@@ -449,3 +449,66 @@ roadmap and CI differently (see [08 §5](08-engineering-standards.md#5-testing-s
 **Rule:** a test that requires a live provider or a real credential must **never** become a flaky
 universal CI gate. CI blocks only on the offline fixture/contract tests; live checks are recorded
 evidence attached to the corresponding roadmap phase.
+
+---
+
+## 6. The catalog's runtime environment contract
+
+Applies to `catalog/` (the TypeScript catalog service and its CLIs), not to the Go
+tray. Written 2026-08-22 after `missing_credentials` was reported for a provider
+whose key had been configured the whole time.
+
+### The variables
+
+| Variable | Needed by | Absent means |
+|---|---|---|
+| `VENOM_CATALOG_CLINEPASS_API_KEY` | evaluation | that provider cannot be evaluated locally |
+| `VENOM_CATALOG_OLLAMA_CLOUD_API_KEY` | evaluation | ” |
+| `VENOM_CATALOG_OPENCODE_GO_API_KEY` | evaluation | ” |
+| `VENOM_CATALOG_OPENCODE_ZEN_API_KEY` | evaluation | ” |
+| `VENOM_CATALOG_OPENCODE_ZEN_PROXY_LIST_URL` | evaluation transport | exit rotation is off; calls go out directly |
+
+The names are owned in exactly two places — `CREDENTIAL_ENV` in
+`catalog/sync/evaluation/provider-transport.ts` and `PROXY_LIST_ENV` in
+`catalog/sync/evaluation/proxy-pool.ts` — and `catalog/.env.example` is the
+committed, valueless copy of the contract. A missing key is **not** an error: the
+provider's models are still catalogued and scored from published facts, and only
+local evaluation is unavailable.
+
+### How they are loaded
+
+Every npm script that needs them passes `node --env-file-if-exists=.env`, so
+`catalog/.env` (gitignored) is the one place a value is written.
+
+**Nothing loads it implicitly.** `node server/index.ts` run directly gets the
+shell's environment only. That is the first of the two causes below.
+
+### The two failures this contract exists to prevent
+
+Both produced the same symptom — every provider reporting `missing_credentials`
+in the Evaluate modal, or exactly one provider reporting it while its siblings
+worked — and neither named a variable.
+
+1. **Nothing loaded the file.** `catalog/.env` held four valid keys and no entry
+   point read it, so `process.env` never saw one. Fixed by the flag above.
+
+2. **A BOM corrupted the first variable's name.** PowerShell's `>`, `Out-File`
+   and `Set-Content` write UTF-8 **with** a BOM by default. The BOM binds to the
+   first variable name in the env file, and `node --env-file` does **not** strip
+   it (verified on Node v24.19.0): the process holds `﻿VENOM_..._API_KEY`,
+   so every lookup by the real name misses while every other line in the same
+   file works. Save `catalog/.env` as UTF-8 **without** a BOM.
+
+### How to see the state instead of guessing
+
+```bash
+npm run env:check          # in catalog/ — names every variable and its state
+npm run env:check -- --strict   # exit 1 if any name is corrupted
+```
+
+`evaluationCredentialReport()` distinguishes `present` / `missing` /
+`malformed_name`, and the service prints `credentials: N/4 readable` at startup.
+It reads **presence only**: a credential value is never returned, printed, or
+compared, and a canary test asserts no value can reach the report or its
+rendering. That rule holds for diagnostics specifically — a diagnostic is where a
+secret leaks by accident.

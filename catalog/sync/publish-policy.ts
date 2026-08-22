@@ -8,13 +8,15 @@
  * the same class of error the cost split exists to prevent.
  *
  * A free tier publishes only what it currently SERVES for free: a model must be
- * both `active` (present in the latest roster) and proven free. A paid model is
- * withheld (`paid`), a model whose price cannot be shown to be zero is withheld
- * (`not_proven_free`), and a model the provider has dropped from its roster —
- * status `missing` — is withheld too (`not_served`), because a free tier must not
- * advertise a model nobody can call. The published roster is therefore exactly
- * the currently-served free set, deterministic and independent of retirement
- * timing.
+ * both `active` (present in the latest roster) and proven free. Proof of free
+ * is the provider's own published free listing when the adapter carries one
+ * (`officialFreeList`); otherwise it is a zero price in the spec feed. A paid
+ * model is withheld (`paid`), a model whose freeness cannot be shown is
+ * withheld (`not_proven_free`), and a model the provider has dropped from its
+ * roster — status `missing` — is withheld too (`not_served`), because a free
+ * tier must not advertise a model nobody can call. The published roster is
+ * therefore exactly the currently-served free set, deterministic and
+ * independent of retirement timing.
  *
  * This runs as a pipeline step AFTER the roster is stored and BEFORE enrich/score,
  * so every downstream reader (enrich, scoring, the read model) — all of which
@@ -76,15 +78,31 @@ const EMPTY_EXCLUDED = (): Record<ExclusionReason, number> => ({
 /**
  * Whether a spec proves the model is free at this provider.
  *
- * Proven free means BOTH per-token figures are published AND both are zero.
- * Anything else is not published: a positive figure is `paid`, and a missing or
- * partial figure is `not_proven_free` — the conservative default the owner chose,
- * so a model whose price cannot be shown to be zero is never presented as free.
+ * `officiallyFree` is tri-state and decides the shape of the proof:
+ *
+ *   true    the provider's own published free list names this id. That is the
+ *           first-party offer, and it wins outright — even over a third-party
+ *           price that disagrees.
+ *   false   the provider's free list exists and does NOT name this id. The id
+ *           is withheld: a zero transcribed by an index is not the provider
+ *           making the offer. A positive third-party figure still reads as
+ *           `paid` (it is a stronger statement than mere absence), everything
+ *           else is `not_proven_free`.
+ *   null    no official list is configured, so the third-party figures remain
+ *           the proof, exactly as before: proven free means BOTH per-token
+ *           figures are published AND both are zero.
+ *
+ * The conservative default is unchanged: a model whose freeness cannot be
+ * shown is never presented as free.
  */
-function classify(spec: ModelSpec | null): { free: boolean; reason: ExclusionReason | null } {
+function classify(
+  spec: ModelSpec | null,
+  officiallyFree: boolean | null,
+): { free: boolean; reason: ExclusionReason | null } {
+  if (officiallyFree === true) return { free: true, reason: null };
   if (!spec) return { free: false, reason: 'not_proven_free' };
   const { costInPerM: ci, costOutPerM: co } = spec;
-  if (ci === 0 && co === 0) return { free: true, reason: null };
+  if (ci === 0 && co === 0 && officiallyFree === null) return { free: true, reason: null };
   if ((typeof ci === 'number' && ci > 0) || (typeof co === 'number' && co > 0)) return { free: false, reason: 'paid' };
   return { free: false, reason: 'not_proven_free' };
 }
@@ -128,11 +146,18 @@ export function applyPublishPolicy(deps: PublishPolicyDeps): PublishPolicySummar
       }[];
       for (const m of stored) {
         // A model absent from the latest roster (status 'missing') is not served,
-        // so a free tier withholds it whatever its price. Otherwise the price
-        // decides: free publishes, paid / unproven is withheld.
+        // so a free tier withholds it whatever its price. Otherwise the proof
+        // decides: the provider's own free listing when one is configured, the
+        // third-party figures otherwise.
+        const official = adapter.officialFreeList;
         const reason: ExclusionReason | null = explicit[m.model_id]
           ?? (adapter.publishPolicy === 'free_only'
-            ? (m.status === 'missing' ? 'not_served' : classify(lookupSpec(adapter.feedKey, m.model_id)).reason)
+            ? (m.status === 'missing'
+                ? 'not_served'
+                : classify(
+                    lookupSpec(adapter.feedKey, m.model_id),
+                    official ? official.ids.includes(m.model_id) : null,
+                  ).reason)
             : null);
         if (reason) {
           // Only a change of the policy verdict writes an event; a re-assert with

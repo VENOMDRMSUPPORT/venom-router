@@ -227,6 +227,101 @@ describe('a seller disagreement is recorded, not merely dropped', () => {
     assert.equal(conflictsFor('agreed').length, 0);
   });
 
+  /**
+   * `model_conflicts.status` allowed 'resolved' and `resolved_to` a value, but
+   * nothing in the sync ever wrote either: 128 live conflicts were all 'open'
+   * and no path existed to close one. A state the schema permits and the code
+   * cannot reach is half a mechanism — and it mattered, because a disputed
+   * capability decides which dimensions a model is graded on: the same
+   * canonical model scored 85.9% at one provider and 74.6% at another purely
+   * because `attachment` was settled differently for each, both labelled
+   * "complete, 100%". The verdict already exists as a reviewed fact; the
+   * conflict row just has to record that the dispute was settled by it.
+   */
+  test('a reviewed fact settles the dispute it answers, and is recorded as the verdict', () => {
+    seed({ modelId: 'settled', attachment: null });
+    const intrinsic: IntrinsicFacts = {
+      declaredBy: '',
+      conflicts: [{ field: 'attachment', sides: [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }] }],
+    };
+
+    enrich(deps({
+      intrinsic: () => intrinsic,
+      reviewedFacts: {
+        'p/settled': {
+          attachment: {
+            value: false, ref: 'p/settled.attachment', sourceUrl: 'https://example.test/docs',
+            evidence: ['the provider documents text-only input'], reviewedAt: '2026-08-21',
+          },
+        },
+      },
+    }));
+
+    const rows = conflictsFor('settled');
+    assert.equal(rows.length, 1, 'the dispute stays on the record after being settled');
+    assert.equal(rows[0].status, 'resolved');
+    assert.equal(rows[0].resolved_to, 'false');
+  });
+
+  test('the settled value is the one the model carries', () => {
+    seed({ modelId: 'settled-2', attachment: null });
+    const intrinsic: IntrinsicFacts = {
+      declaredBy: '',
+      conflicts: [{ field: 'attachment', sides: [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }] }],
+    };
+
+    enrich(deps({
+      intrinsic: () => intrinsic,
+      reviewedFacts: {
+        'p/settled-2': {
+          attachment: {
+            value: true, ref: 'p/settled-2.attachment', sourceUrl: 'https://example.test/docs',
+            evidence: ['the provider documents image input'], reviewedAt: '2026-08-21',
+          },
+        },
+      },
+    }));
+
+    assert.equal(storedAttachment('settled-2'), 1);
+    assert.equal(factFor('settled-2', 'attachment')?.source, 'reviewed_source');
+  });
+
+  test('a dispute nobody reviewed stays open — the fix must not close it by default', () => {
+    seed({ modelId: 'unsettled', attachment: null });
+    const intrinsic: IntrinsicFacts = {
+      declaredBy: '',
+      conflicts: [{ field: 'attachment', sides: [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }] }],
+    };
+
+    enrich(deps({ intrinsic: () => intrinsic }));
+
+    const rows = conflictsFor('unsettled');
+    assert.equal(rows[0].status, 'open');
+    assert.equal(rows[0].resolved_to, null);
+  });
+
+  test('a review of a DIFFERENT field leaves the dispute open', () => {
+    seed({ modelId: 'other-field', attachment: null, structured: null });
+    const intrinsic: IntrinsicFacts = {
+      declaredBy: '',
+      conflicts: [{ field: 'attachment', sides: [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }] }],
+    };
+
+    enrich(deps({
+      intrinsic: () => intrinsic,
+      reviewedFacts: {
+        'p/other-field': {
+          structured: {
+            value: true, ref: 'p/other-field.structured', sourceUrl: 'https://example.test/docs',
+            evidence: ['unrelated'], reviewedAt: '2026-08-21',
+          },
+        },
+      },
+    }));
+
+    assert.equal(conflictsFor('other-field')[0].status, 'open');
+  });
+
   test('re-running the pass updates the conflict instead of duplicating it', () => {
     // enrich is documented as reproducible: running it twice must not
     // accumulate drift, and a primary key is the only thing that guarantees it.
@@ -537,27 +632,69 @@ describe('derived state is rebuilt by every run, never accumulated', () => {
     );
   });
 
-  test('a conflict that persists keeps a human resolution decision', () => {
-    // The guard that stops the prune from being a blunt DELETE-then-INSERT:
-    // `status` and `resolved_to` are owned by a person, not by the run, and
-    // rebuilding the row from the sources must not overwrite their decision.
+  test('a human verdict outlives the run that re-detected the conflict', () => {
+    // The guard that stops the prune from being a blunt DELETE-then-INSERT: the
+    // conflict row survives re-detection carrying its verdict.
+    //
+    // The verdict's HOME is the reviewed overlay, not these two columns. It used
+    // to be the other way round — the columns were described as owned by a
+    // person — but no interface ever wrote them, so all 128 live conflicts were
+    // 'open' and the resolved state was unreachable. Every other decision a
+    // machine may not make (identity, bounds, reviewed facts) lives in a cited
+    // file under review; a second channel for this one would be the same
+    // mechanism twice, and a value typed straight into the database has no
+    // citation and no reviewer. So the row is derived from the overlay, which is
+    // why withdrawing the review reopens the dispute — see the test below.
     seed({ modelId: 'judged', structured: null });
     const disputed: IntrinsicFacts = {
       declaredBy: '',
       conflicts: [{ field: 'structured', sides: [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }] }],
     };
-    enrich(deps({ intrinsic: () => disputed }));
-    db.prepare(
-      `UPDATE model_conflicts SET status='resolved', resolved_to='true'
-       WHERE provider_id='p' AND model_id='judged' AND field='structured'`,
-    ).run();
+    const reviewedFacts = {
+      'p/judged': {
+        structured: {
+          value: true, ref: 'p/judged.structured', sourceUrl: 'https://example.test/docs',
+          evidence: ['the provider documents structured output'], reviewedAt: '2026-08-21',
+        },
+      },
+    };
+    enrich(deps({ intrinsic: () => disputed, reviewedFacts }));
 
-    enrich(deps({ intrinsic: () => disputed }));
+    enrich(deps({ intrinsic: () => disputed, reviewedFacts }));
 
     const rows = conflictsFor('judged');
     assert.equal(rows.length, 1);
     assert.equal(rows[0].status, 'resolved', 'a human verdict outlives the run that re-detected the conflict');
     assert.equal(rows[0].resolved_to, 'true');
+  });
+
+  test('withdrawing the review reopens the dispute', () => {
+    // The reason the row is derived rather than latched. A verdict that outlives
+    // its own evidence is the provenance failure this catalog exists to avoid:
+    // the dispute is still real, so it has to read as open again.
+    seed({ modelId: 'unjudged', structured: null });
+    const disputed: IntrinsicFacts = {
+      declaredBy: '',
+      conflicts: [{ field: 'structured', sides: [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }] }],
+    };
+    enrich(deps({
+      intrinsic: () => disputed,
+      reviewedFacts: {
+        'p/unjudged': {
+          structured: {
+            value: true, ref: 'p/unjudged.structured', sourceUrl: 'https://example.test/docs',
+            evidence: ['reviewed, then withdrawn'], reviewedAt: '2026-08-21',
+          },
+        },
+      },
+    }));
+    assert.equal(conflictsFor('unjudged')[0].status, 'resolved', 'guard: the verdict was recorded first');
+
+    enrich(deps({ intrinsic: () => disputed }));
+
+    const rows = conflictsFor('unjudged');
+    assert.equal(rows[0].status, 'open');
+    assert.equal(rows[0].resolved_to, null);
   });
 
   test('one model losing a fact does not disturb another model', () => {

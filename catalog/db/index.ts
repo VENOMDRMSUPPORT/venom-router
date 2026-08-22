@@ -42,6 +42,7 @@ function migrate(db: Db): void {
       'ref_cost_out_per_m REAL',
       'cost_kind TEXT',
       'exclusion_reason TEXT',
+      'feed_tracked_json TEXT',
     ],
     evaluation_samples: [
       'response_json TEXT',

@@ -15,6 +15,8 @@ import { loadSpecs } from '../sync/sources/models-dev.ts';
 import { loadVendors } from '../sync/vendor-registry.ts';
 import { loadQualityBounds } from '../sync/quality-bounds.ts';
 import { loadReviewedFacts } from '../sync/reviewed-facts.ts';
+import { loadDisplayNames } from '../sync/display-names.ts';
+import { loadEvaluationIdentities, type EvaluationIdentityOverlay } from '../sync/evaluation/identity.ts';
 import { loadBenchmarks } from '../sync/sources/openrouter.ts';
 import type { ScoringSummary } from '../sync/score/pipeline.ts';
 import {
@@ -49,6 +51,7 @@ export interface RunnerConfig {
   profile: ScoreProfile;
   methodologyVersion: string;
   identityOverlay: Record<string, string>;
+  evaluationIdentities?: EvaluationIdentityOverlay;
   /**
    * The overlay's refused-candidate records.
    *
@@ -109,7 +112,7 @@ export class SyncRunner {
     this.startedAt = startedAt;
 
     try {
-      const { db, profile, methodologyVersion, identityOverlay, identityRejections, post, detailFetchers } = this.config;
+      const { db, profile, methodologyVersion, identityOverlay, identityRejections, evaluationIdentities, post, detailFetchers } = this.config;
       const fetchJson = this.config.fetchJson ?? createFetchJson();
       const sourceFetchedAt = currentDate().toISOString();
 
@@ -138,11 +141,11 @@ export class SyncRunner {
       // had withdrawn.
       const result = await runSyncPipeline({
         db, fetchJson, adapters: ADAPTERS, specs, benchmarks, billing: BILLING,
-        overlay: identityOverlay, rejections: identityRejections, profile, methodologyVersion,
+        overlay: identityOverlay, rejections: identityRejections, evaluationIdentities: evaluationIdentities ?? loadEvaluationIdentities(), profile, methodologyVersion,
         // Read here rather than taken from config for the same reason as the
         // vendor registry: a source the CLI passes and the scheduler does not
         // is a six-hourly run that silently drops every reviewed bound.
-        bounds: loadQualityBounds(), reviewedFacts: loadReviewedFacts(),
+        bounds: loadQualityBounds(), reviewedFacts: loadReviewedFacts(), displayNames: loadDisplayNames(),
         sourceFetchedAt, now: () => currentDate().toISOString(), post, detailFetchers,
       });
 
@@ -180,7 +183,7 @@ export class SyncRunner {
     this.mode = 'resolution';
     this.startedAt = startedAt;
     try {
-      const { db, profile, methodologyVersion, identityOverlay, post, detailFetchers } = this.config;
+      const { db, profile, methodologyVersion, identityOverlay, evaluationIdentities, post, detailFetchers } = this.config;
       const fetchJson = this.config.fetchJson ?? createFetchJson();
       const sourceFetchedAt = currentDate().toISOString();
       let specs, benchmarks;
@@ -197,7 +200,7 @@ export class SyncRunner {
       }
 
       const result = await runResolutionPipeline({
-        db, fetchJson, jobs, specs, benchmarks, billing: BILLING, overlay: identityOverlay,
+        db, fetchJson, jobs, specs, benchmarks, billing: BILLING, overlay: identityOverlay, evaluationIdentities: evaluationIdentities ?? loadEvaluationIdentities(),
         profile, methodologyVersion, bounds: loadQualityBounds(), reviewedFacts: loadReviewedFacts(),
         sourceFetchedAt, now: () => currentDate().toISOString(), post, detailFetchers,
       });

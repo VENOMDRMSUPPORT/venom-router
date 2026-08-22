@@ -187,3 +187,45 @@ describe('the policy only touches free-only providers', () => {
     assert.deepEqual(loadModels(db).filter((model) => model.providerId === 'ollama-cloud').map((model) => model.modelId), ['gpt-oss:20b']);
   });
 });
+
+describe("a provider's own free listing is the proof when configured", () => {
+  const ZEN_OFFICIAL: ProviderAdapter = {
+    ...ZEN,
+    officialFreeList: {
+      ids: ['listed-free'],
+      reviewedAt: '2026-08-21',
+      sourceUrl: 'https://official.example/docs',
+    },
+  };
+  const applyOfficial = (prices: Record<string, ModelSpec | null>) =>
+    applyPublishPolicy({ db, adapters: [ZEN_OFFICIAL], lookupSpec: lookupFrom(prices), now });
+
+  test('an id the provider lists as free is published even when the feed disagrees', () => {
+    seed('listed-free');
+    applyOfficial({ 'listed-free': { costInPerM: 0.5, costOutPerM: 2 } });
+    assert.deepEqual(statusOf('listed-free'), { status: 'active', exclusion_reason: null });
+  });
+
+  test('an id the provider does not list is withheld even at a transcribed zero price', () => {
+    seed('unlisted-zero');
+    applyOfficial({ 'unlisted-zero': { costInPerM: 0, costOutPerM: 0 } });
+    assert.deepEqual(statusOf('unlisted-zero'), { status: 'excluded', exclusion_reason: 'not_proven_free' });
+    assert.ok(!loadModels(db).map((m) => m.modelId).includes('unlisted-zero'));
+  });
+
+  test('naming the id later restores it to the published roster', () => {
+    seed('unlisted-zero');
+    applyOfficial({ 'unlisted-zero': { costInPerM: 0, costOutPerM: 0 } });
+    const restored = applyPublishPolicy({
+      db,
+      adapters: [{
+        ...ZEN_OFFICIAL,
+        officialFreeList: { ids: ['listed-free', 'unlisted-zero'], reviewedAt: '2026-08-21', sourceUrl: 'https://official.example/docs' },
+      }],
+      lookupSpec: lookupFrom({ 'unlisted-zero': { costInPerM: 0, costOutPerM: 0 } }),
+      now,
+    });
+    assert.deepEqual(statusOf('unlisted-zero'), { status: 'active', exclusion_reason: null });
+    assert.equal(restored.restored, 1);
+  });
+});

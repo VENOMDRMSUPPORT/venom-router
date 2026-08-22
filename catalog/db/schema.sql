@@ -43,6 +43,13 @@ CREATE TABLE IF NOT EXISTS models (
   -- for a subscription model, not a missing number.
   cost_kind       TEXT,
   spec_source     TEXT,                    -- 'models.dev' | NULL when the feed has no entry
+  -- What the FEED published for the change-tracked fields on the last sync, as
+  -- JSON. The diff compares the feed against this, never against the columns
+  -- above: enrichment is authoritative over those (it NULLs the effective price
+  -- of a subscription provider and lets a reviewed fact override an output
+  -- limit), so comparing against them re-reported the same difference on every
+  -- run. NULL = no baseline recorded yet, which reports nothing.
+  feed_tracked_json TEXT,
   -- active   served now and PUBLISHED
   -- missing  absent from the last roster (still published while it counts down)
   -- retired  gone from upstream for good (kept for history, never served)

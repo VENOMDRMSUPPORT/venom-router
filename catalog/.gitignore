@@ -3,3 +3,8 @@ node_modules/
 dist/
 *.tsbuildinfo
 public/snapshot/
+
+# Agent workflow scratch (plans/specs written during a task). The reviewed docs
+# tree is /docs at the repo root; these are working notes, not project docs, and
+# `git add -A` was about to commit them as if they were.
+docs/superpowers/

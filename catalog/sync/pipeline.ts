@@ -29,10 +29,12 @@ import type { SpecSource } from './sources/models-dev.ts';
 import type { BenchmarkSource } from './sources/openrouter.ts';
 import { DETAIL_FETCHERS, makePost, type ProviderDetail } from './sources/provider-detail.ts';
 import { ingestRejections, type RejectionOverlay } from './identity-rejections.ts';
+import type { DisplayNameOverlay } from './display-names.ts';
 import { scoreAll, type ScoringSummary } from './score/pipeline.ts';
 import { recalculatePublishedOffers, type OverallRecalculationSummary } from './evaluation/recalculate.ts';
 import type { ScoreProfile } from './score/venom-score.ts';
 import type { ReviewedFacts } from './reviewed-facts.ts';
+import type { EvaluationIdentityOverlay } from './evaluation/identity.ts';
 import {
   finishResolutionAttempt,
   type ModelResolution,
@@ -58,6 +60,13 @@ export interface SyncPipelineConfig {
   bounds?: Record<string, import('./quality-bounds.ts').ReviewedBound>;
   /** Human-reviewed field facts that are persisted with their source evidence. */
   reviewedFacts?: ReviewedFacts;
+  /**
+   * Human-reviewed display names that override the spec feed's transcription.
+   * Absent means none is configured, and the feed's name stands.
+   */
+  displayNames?: DisplayNameOverlay;
+  /** Exact reviewed identities for provider offers that have no safe index match. */
+  evaluationIdentities?: EvaluationIdentityOverlay;
   profile: ScoreProfile;
   methodologyVersion: string;
   sourceFetchedAt: string;
@@ -108,14 +117,20 @@ export interface ResolutionPipelineResult {
  */
 export async function runSyncPipeline(cfg: SyncPipelineConfig): Promise<SyncPipelineResult> {
   const {
-    db, fetchJson, adapters, specs, benchmarks, billing, overlay, rejections, bounds, reviewedFacts,
-    profile, methodologyVersion, sourceFetchedAt, now,
+    db, fetchJson, adapters, specs, benchmarks, billing, overlay, rejections, bounds, reviewedFacts, evaluationIdentities,
+    displayNames, profile, methodologyVersion, sourceFetchedAt, now,
   } = cfg;
   const detailFetchers = cfg.detailFetchers ?? DETAIL_FETCHERS;
 
+  const displayNameFor = displayNames
+    ? (providerId: string, modelId: string) => displayNames[`${providerId}/${modelId}`]?.value
+    : undefined;
+
   const providers: RunResult[] = [];
   for (const adapter of adapters) {
-    providers.push(await syncProvider(adapter, { db, fetchJson, now, lookupSpec: specs.lookup }));
+    providers.push(
+      await syncProvider(adapter, { db, fetchJson, now, lookupSpec: specs.lookup, displayNameFor }),
+    );
   }
 
   // Withhold what a free-only provider's roster should not publish, BEFORE enrich
@@ -129,7 +144,7 @@ export async function runSyncPipeline(cfg: SyncPipelineConfig): Promise<SyncPipe
   const base = {
     db, canonical, overlay, billing,
     lookupSpec: specs.lookup, intrinsic: specs.intrinsic,
-    firstPartyLimits: specs.firstPartyLimits, vendorIdentity: specs.vendorIdentity, reviewedFacts,
+    firstPartyLimits: specs.firstPartyLimits, vendorIdentity: specs.vendorIdentity, reviewedFacts, evaluationIdentities,
     now,
   };
 
@@ -163,7 +178,7 @@ export async function runResolutionPipeline(cfg: ResolutionPipelineConfig): Prom
     return { attempted: 0, detail: { asked: 0, answered: 0 }, enrich: null, scoring: null, overall: null, resolutions: [] };
   }
   const {
-    db, specs, benchmarks, billing, overlay, bounds, reviewedFacts,
+    db, specs, benchmarks, billing, overlay, bounds, reviewedFacts, evaluationIdentities,
     profile, methodologyVersion, sourceFetchedAt, now,
   } = cfg;
   const targets = new Set(cfg.jobs.map((job) => `${job.providerId}/${job.modelId}`));
@@ -172,7 +187,7 @@ export async function runResolutionPipeline(cfg: ResolutionPipelineConfig): Prom
     db, canonical, overlay, billing,
     lookupSpec: specs.lookup, intrinsic: specs.intrinsic,
     firstPartyLimits: specs.firstPartyLimits, vendorIdentity: specs.vendorIdentity,
-    reviewedFacts, targets, now,
+    reviewedFacts, evaluationIdentities, targets, now,
   };
 
   enrich(base);

@@ -95,10 +95,32 @@ export const OPENCODE_ZEN: ProviderAdapter = {
   parseRoster: parseOpenAiList,
   // Owner decision (2026-08-13): OpenCode Zen is a free tier, kept distinct from
   // the paid OpenCode Go. Its roster mixes free and paid ids and models.dev
-  // prices most of them, so only the models proven free (a published zero price)
-  // are published; the rest are excluded as paid / not-proven-free. Conservative
-  // on purpose — a model whose price we cannot prove is zero is NOT published.
+  // prices most of them, so only the models proven free are published; the rest
+  // are excluded as paid / not-proven-free. Conservative on purpose — a model
+  // whose price we cannot prove is zero is NOT published.
+  //
+  // Proof of free is the provider's OWN lineup below, not the price feed: read
+  // from the official Zen documentation inside the provider's public repository
+  // (packages/web/src/content/docs/zen.mdx, endpoints + pricing tables, where
+  // every id below is priced "Free" in every column). The roster endpoint
+  // carries no prices, so a zero transcribed by models.dev for an id this list
+  // does not name (laguna-s-2.1-free and deepseek-v4-flash-free at review time)
+  // is a claim about an offer the provider has not made — its own app does not
+  // show them as free. Re-check against the source when refreshing this list.
   publishPolicy: 'free_only',
+  officialFreeList: {
+    ids: [
+      'big-pickle',
+      'x-preview-f-free',
+      'mimo-v2.5-free',
+      'hy3-free',
+      'nemotron-3-ultra-free',
+      'nemotron-3.5-lightning-free',
+      'muse-spark-1.2-contributor-free',
+    ],
+    reviewedAt: '2026-08-21',
+    sourceUrl: 'https://github.com/anomalyco/opencode/blob/dev/packages/web/src/content/docs/zen.mdx',
+  },
 };
 
 export const OPENCODE_GO: ProviderAdapter = {

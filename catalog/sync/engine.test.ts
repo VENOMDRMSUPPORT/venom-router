@@ -179,3 +179,81 @@ describe('layer 1 — providers are isolated', () => {
     assert.equal(otherRows.c, 2);
   });
 });
+
+describe('display names', () => {
+  test('a reviewed name wins over the spec feed transcription', async () => {
+    await syncProvider(ADAPTER, deps(['a'], {
+      lookupSpec: () => ({ displayName: 'Feed Spelling' }),
+      displayNameFor: (_providerId, modelId) => (modelId === 'a' ? 'Provider Spelling' : undefined),
+    }));
+    const row = db.prepare('SELECT display_name FROM models WHERE model_id = ?').get('a') as unknown as { display_name: string };
+    assert.equal(row.display_name, 'Provider Spelling');
+  });
+
+  test('without a review the feed name stands, and without a feed the id stands', async () => {
+    await syncProvider(ADAPTER, deps(['a', 'b'], {
+      lookupSpec: (_feedKey, modelId) => (modelId === 'a' ? { displayName: 'Feed Spelling' } : null),
+    }));
+    const names = Object.fromEntries(
+      (db.prepare('SELECT model_id, display_name FROM models').all() as unknown as { model_id: string; display_name: string }[])
+        .map((r) => [r.model_id, r.display_name]),
+    );
+    assert.equal(names.a, 'Feed Spelling');
+    assert.equal(names.b, 'b');
+  });
+});
+
+/**
+ * The change ledger's whole promise is "a sync that finds nothing different adds
+ * nothing here". It was broken for every field a LATER stage owns: the diff read
+ * the same mutable column enrich rewrites, so the feed's value was compared
+ * against the resolved value and re-reported as a change on every single run.
+ * Live evidence at the time of the fix: `cost_out_per_m null -> 1.6` recorded 13
+ * times for one ClinePass row, one distinct from/to pair, and 298 of 459 events
+ * in the feed were this. The diff has to compare the feed against WHAT THE FEED
+ * LAST SAID, never against a column somebody else is authoritative over.
+ */
+describe('the change ledger only reports what actually changed upstream', () => {
+  const priced = (over: Partial<SyncDeps> = {}) =>
+    deps(['a'], { lookupSpec: () => ({ contextTokens: 128_000, outputTokens: 32_000, costInPerM: 0.8, costOutPerM: 1.6 }), ...over });
+  const priceEvents = () =>
+    (db.prepare(`SELECT field, old_value, new_value FROM model_events WHERE kind='changed' AND reason='price'`)
+      .all() as unknown as { field: string; old_value: string | null; new_value: string | null }[])
+      // node:sqlite rows have a null prototype, which deepEqual will not match
+      // against a literal. Re-shaped so the assertion is about the values.
+      .map((r) => ({ field: r.field, from: r.old_value, to: r.new_value }));
+
+  test('an unchanged feed produces no event even after enrich rewrites the effective price', async () => {
+    await syncProvider(ADAPTER, priced());
+    // What enrich does to a subscription provider: the per-token number is not
+    // what this provider charges, so it moves to the reference columns and the
+    // effective ones become NULL.
+    db.prepare(`UPDATE models SET cost_in_per_m = NULL, cost_out_per_m = NULL,
+                                  ref_cost_in_per_m = 0.8, ref_cost_out_per_m = 1.6, cost_kind = 'included'`).run();
+
+    await syncProvider(ADAPTER, priced());
+
+    assert.deepEqual(priceEvents(), []);
+  });
+
+  test('an unchanged feed produces no event after enrich adopts a reviewed output limit', async () => {
+    await syncProvider(ADAPTER, deps(['a'], { lookupSpec: () => ({ contextTokens: 128_000, outputTokens: 1_048_576 }) }));
+    // A reviewed fact overriding the feed's limit — the ollama-cloud case.
+    db.prepare(`UPDATE models SET output_tokens = 384000`).run();
+
+    await syncProvider(ADAPTER, deps(['a'], { lookupSpec: () => ({ contextTokens: 128_000, outputTokens: 1_048_576 }) }));
+
+    const fields = (db.prepare(`SELECT field FROM model_events WHERE kind='changed' AND reason='context'`)
+      .all() as unknown as { field: string }[]).map((r) => r.field);
+    assert.deepEqual(fields, []);
+  });
+
+  test('a real upstream price change is still reported, once', async () => {
+    await syncProvider(ADAPTER, priced());
+    db.prepare(`UPDATE models SET cost_in_per_m = NULL, cost_out_per_m = NULL, cost_kind = 'included'`).run();
+
+    await syncProvider(ADAPTER, deps(['a'], { lookupSpec: () => ({ contextTokens: 128_000, outputTokens: 32_000, costInPerM: 0.8, costOutPerM: 2.4 }) }));
+
+    assert.deepEqual(priceEvents(), [{ field: 'cost_out_per_m', from: '1.6', to: '2.4' }]);
+  });
+});

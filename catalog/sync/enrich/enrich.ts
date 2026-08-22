@@ -21,7 +21,9 @@ import {
 } from './resolvers.ts';
 import type { SpecLookup } from '../engine.ts';
 import type { ProviderDetail } from '../sources/provider-detail.ts';
+import { isReviewableField } from '../reviewed-facts.ts';
 import type { ReviewedFacts } from '../reviewed-facts.ts';
+import type { EvaluationIdentityOverlay } from '../evaluation/identity.ts';
 
 export interface EnrichDeps {
   db: Db;
@@ -70,6 +72,8 @@ export interface EnrichDeps {
   details?: Map<string, ProviderDetail>;
   /** Source-backed, human-reviewed facts for fields omitted by provider vocabularies. */
   reviewedFacts?: ReviewedFacts;
+  /** Exact provider-offer identities that are allowed to enter local evaluation. */
+  evaluationIdentities?: EvaluationIdentityOverlay;
   /** Optional exact offering keys for a targeted resolution pass. */
   targets?: ReadonlySet<string>;
   now: () => string;
@@ -150,7 +154,7 @@ const DEFAULT_BILLING: BillingPolicy = {
  * ordering honest without holding the whole feed in memory a second time.
  */
 export function enrich(deps: EnrichDeps): EnrichSummary {
-  const { db, canonical, overlay, billing, now } = deps;
+  const { db, canonical, overlay, billing, evaluationIdentities, now } = deps;
   // The feed is keyed by the provider's feed name, the rows by its id.
   const feedKeys = new Map(
     (db.prepare('SELECT id, feed_key FROM providers').all() as unknown as { id: string; feed_key: string | null }[])
@@ -221,6 +225,23 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
          sides_json = excluded.sides_json, conflict_type = excluded.conflict_type,
          detected_at = excluded.detected_at`,
     );
+    /**
+     * Record the verdict on a dispute a reviewed fact answers.
+     *
+     * Written on every run from the overlay rather than latched once, for the
+     * same reason the overlay itself is re-read from disk: the verdict lives in
+     * the reviewed file, so withdrawing a review has to reopen the dispute. It
+     * is a separate statement from the upsert above precisely because that one
+     * must never overwrite a verdict with a default while re-detecting.
+     */
+    const settleConflict = db.prepare(
+      `UPDATE model_conflicts SET status = 'resolved', resolved_to = ?
+       WHERE provider_id = ? AND model_id = ? AND field = ?`,
+    );
+    const reopenConflict = db.prepare(
+      `UPDATE model_conflicts SET status = 'open', resolved_to = NULL
+       WHERE provider_id = ? AND model_id = ? AND field = ?`,
+    );
     const update = db.prepare(
       `UPDATE models SET context_tokens = ?, output_tokens = ?, input_modalities = ?,
                          tools = ?, reasoning = ?, structured = ?, attachment = ?,
@@ -253,12 +274,24 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
         firstParty: deps.firstPartyLimits?.(r.model_id) ?? null,
       };
 
+      // Exact offering key only. Falling back to `model_id` would let a fact
+      // reviewed for one seller silently cross into every other seller carrying
+      // the same id.
+      const reviewed = deps.reviewedFacts?.[`${r.provider_id}/${r.model_id}`];
+
       // Recorded before any field resolves, so a disputed field is visible
       // whether or not some later source happened to settle it anyway.
       for (const c of input.intrinsic?.conflicts ?? []) {
         provenConflicts.add(c.field);
         conflict.run(r.provider_id, r.model_id, c.field, JSON.stringify(c.sides), 'source_disagreement', at);
         conflicts[c.field] = (conflicts[c.field] ?? 0) + 1;
+        // The reviewed fact for this exact field IS the verdict on this dispute:
+        // a disputed capability decides which dimensions a model is graded on,
+        // so leaving a settled one marked open understates what is known and
+        // lets two records of the same model be scored on different sets.
+        const verdict = isReviewableField(c.field) ? reviewed?.[c.field] : undefined;
+        if (verdict) settleConflict.run(JSON.stringify(verdict.value), r.provider_id, r.model_id, c.field);
+        else reopenConflict.run(r.provider_id, r.model_id, c.field);
       }
 
       // Identity first: it is a fact about the row like any other, and the
@@ -276,10 +309,22 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
         });
       }
 
-      // Exact offering key only. Falling back to `model_id` would let a fact
-      // reviewed for one seller silently cross into every other seller carrying
-      // the same id.
-      const reviewed = deps.reviewedFacts?.[`${r.provider_id}/${r.model_id}`];
+      const evaluationIdentity = evaluationIdentities?.[`${r.provider_id}/${r.model_id}`];
+      if (evaluationIdentity) {
+        writeFact(r, 'evaluationIdentity', {
+          value: {
+            id: evaluationIdentity.identityId,
+            kind: evaluationIdentity.kind,
+            consent: evaluationIdentity.consent,
+          },
+          source: 'reviewed_source',
+          ref: `${r.provider_id}/${r.model_id}.evaluationIdentity`,
+          url: evaluationIdentity.sourceUrl,
+          state: 'reviewed',
+          raw: { evidence: evaluationIdentity.evidence, reviewedAt: evaluationIdentity.reviewedAt },
+        });
+      }
+
       type Resolved = {
         value: unknown; source: string; ref: string; url: string | null; state: string; raw: unknown;
       };
