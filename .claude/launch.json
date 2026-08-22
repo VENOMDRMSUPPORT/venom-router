@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "catalog"],
       "port": 5173
+    },
+    {
+      "name": "catalog-api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "serve", "--prefix", "catalog"],
+      "port": 8791
     }
   ]
 }

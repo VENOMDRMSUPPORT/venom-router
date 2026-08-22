@@ -118,6 +118,12 @@ Source: [docs/08-engineering-standards.md §1.2, §1.3, §10](docs/08-engineerin
 - **Docs are updated in the same change** as the behavior or extension point they
   describe. Code and spec must not diverge. (08 §6.7)
 - **Never `git checkout <file>` with uncommitted work** in the tree.
+- **Land work as commits on `main`; do not open side branches or PRs.** History
+  here is linear and trunk-based — one merge commit in the repository's life, and
+  `origin` carries `main` alone. Branching is not the safer default here, it is a
+  divergence from the only convention this repo has, and it strands work behind a
+  push permission nobody granted. *(owner rule, no doc anchor — the second such
+  rule, for the same reason as §3.)*
 
 ## Definition of Done
 
@@ -139,3 +145,4 @@ no new duplication, no leaked secret, docs updated in the same breath*.
 | Design system (visual drift gates) | [docs/07-design-system.md](docs/07-design-system.md) |
 | Engineering standards (process contract) | [docs/08-engineering-standards.md](docs/08-engineering-standards.md) |
 | Control API contracts | [docs/09-control-api.md](docs/09-control-api.md) |
+| Catalog product rules | [catalog/CLAUDE.md](catalog/CLAUDE.md) |
