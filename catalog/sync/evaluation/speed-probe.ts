@@ -2,6 +2,7 @@ import { OVERALL_SCORE_POLICY } from './score.ts';
 import { protocolFor } from './provider-transport.ts';
 import type { SpeedProbe } from './speed-runner.ts';
 import { evaluationHeaders } from './provider-transport.ts';
+import { fetchForEvaluationProvider } from './proxy-pool.ts';
 
 const PROVIDER_BASE_URLS: Record<string, string> = {
   'ollama-cloud': 'https://ollama.com/v1',
@@ -65,7 +66,7 @@ export const SPEED_PROMPT =
 export function createStreamingSpeedProbe(input: CreateStreamingSpeedProbeInput): SpeedProbe {
   const baseUrl = PROVIDER_BASE_URLS[input.providerId];
   if (!baseUrl) throw new Error(`unsupported_evaluation_provider:${input.providerId}`);
-  const fetchImpl = input.fetchImpl ?? fetch;
+  const fetchImpl = input.fetchImpl ?? fetchForEvaluationProvider(input.providerId);
   const nowMs = input.nowMs ?? (() => performance.now());
 
   return async () => {

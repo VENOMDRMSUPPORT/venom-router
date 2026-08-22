@@ -96,6 +96,35 @@ function isFinalSample(sample: RuntimeSample): boolean {
   return sample.outcome === 'passed' || sample.outcome === 'failed';
 }
 
+// A temporary gateway/rate-limit failure must not stop the whole dimension.
+// The sample is retained as pending and will be retried by the next resumable
+// run. Permanent evaluator failures still stop immediately because continuing
+// would only buy requests that cannot be graded correctly.
+function stopsDimension(outcome: TransportOutcome): boolean {
+  if (outcome.kind !== 'provider_failure') return outcome.kind === 'evaluator_failure';
+  return ![
+    'retry_after_too_long',
+    // Both proxy-pool failures belong here. `proxy_list_unavailable` is one
+    // fetch of a third-party list URL failing, which is if anything MORE
+    // transient than an exhausted pool — treating it as permanent stopped a
+    // whole dimension over a blip on a host that is not even the provider's.
+    'proxy_pool_exhausted',
+    'proxy_list_unavailable',
+    'http_503',
+    'network_transient',
+    'evaluation_request_timeout',
+  ].includes(outcome.errorCode);
+}
+
+function stopsSample(sample: RuntimeSample): boolean {
+  if (sample.outcome === 'evaluator_failure') return true;
+  if (sample.outcome !== 'provider_failure') return false;
+  return stopsDimension({
+    kind: 'provider_failure', status: null, attempts: 1,
+    errorCode: sample.errorCode ?? 'provider_failure',
+  });
+}
+
 export async function runDimensionEvaluation(request: DimensionEvaluationRequest): Promise<DimensionEvaluationResult> {
   const evaluatedAt = request.now();
   if (!request.credential) {
@@ -121,7 +150,7 @@ export async function runDimensionEvaluation(request: DimensionEvaluationRequest
         const sample = outcomeSample(
           scenario, repetition, await request.transport(scenario.payload, request.credential!),
         );
-        if (sample.outcome === 'provider_failure' || sample.outcome === 'evaluator_failure') doomed = true;
+        if (stopsSample(sample)) doomed = true;
         await request.onSample?.(sample);
         return sample;
       });

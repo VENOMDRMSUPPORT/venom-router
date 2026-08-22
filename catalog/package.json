@@ -3,17 +3,22 @@
   "private": true,
   "version": "2.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc -b && tsc --noEmit -p tsconfig.node.json",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
-    "sync": "node sync/run.ts",
-    "evaluate": "node scripts/run-overall-evaluations.ts",
-    "evaluate:speed": "node scripts/run-speed-evaluations.ts",
+    "sync": "node --env-file-if-exists=.env sync/run.ts",
+    "evaluate": "node --env-file-if-exists=.env scripts/run-overall-evaluations.ts",
+    "evaluate:speed": "node --env-file-if-exists=.env scripts/run-speed-evaluations.ts",
     "test": "npm run test:backend && npm run test:spa",
-    "serve": "node server/index.ts",
+    "serve": "node --env-file-if-exists=.env server/index.ts",
     "serve:verify": "node scripts/serve-verify.mjs",
+    "proxy:check": "node --env-file-if-exists=.env scripts/check-proxy-rotation.ts",
+    "env:check": "node --env-file-if-exists=.env scripts/env-check.ts",
     "test:backend": "node --test \"sync/**/*.test.ts\" \"server/**/*.test.ts\" \"scripts/**/*.test.ts\"",
     "test:spa": "vitest run",
     "queue": "node scripts/queue-provider.ts"
@@ -22,7 +27,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-icons": "^5.5.0",
-    "react-router-dom": "^7.0.0"
+    "react-router-dom": "^7.0.0",
+    "socks-proxy-agent": "^10.1.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",

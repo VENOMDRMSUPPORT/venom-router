@@ -109,6 +109,24 @@ describe('stopping a dimension part-way', () => {
 });
 
 describe('abandoning a dimension the moment it cannot be scored', () => {
+  test('keeps transient proxy failures in the pool instead of abandoning the dimension', async () => {
+    const fixtures = buildEvaluationFixtures().structuredOutput;
+    const bodies = new Map(fixtures.map((item) => [JSON.stringify(item.payload), item.expectedResponse]));
+    let calls = 0;
+    const result = await runDimensionEvaluation({
+      providerId: 'p', modelId: 'm', dimension: 'structuredOutput',
+      scenarios: fixtures, credential: 'secret', now: () => '2026-08-20T00:00:00.000Z',
+      transport: async (payload) => {
+        calls++;
+        if (calls === 10) return { kind: 'provider_failure', status: 429, attempts: 1, errorCode: 'retry_after_too_long' };
+        return { kind: 'success', attempts: 1, response: { status: 200, headers: {}, body: bodies.get(JSON.stringify(payload)) } };
+      },
+    });
+    assert.equal(result.status, 'insufficient_evidence');
+    assert.equal(result.samples.length, 60);
+    assert.equal(calls, 63, 'the transient failure does not stop the remaining samples');
+  });
+
   test('stops paying once a provider failure has already doomed the run', async () => {
     const fixtures = buildEvaluationFixtures().structuredOutput;
     const bodies = new Map(fixtures.map((item) => [JSON.stringify(item.payload), item.expectedResponse]));
@@ -131,5 +149,36 @@ describe('abandoning a dimension the moment it cannot be scored', () => {
     assert.equal(result.reason, 'incomplete_valid_scenarios');
     assert.ok(calls < 40, `a doomed dimension must stop early, but it issued ${calls} of 63 requests`);
     assert.ok(result.samples.some((sample) => sample.outcome === 'provider_failure'));
+  });
+});
+
+/**
+ * Both proxy-pool failures are transient.
+ *
+ * `proxy_list_unavailable` is one fetch of a third-party list URL failing —
+ * if anything more transient than an exhausted pool. Treating it as permanent
+ * abandoned a whole dimension, and the paid samples already collected with it,
+ * over a blip on a host that is not even the provider's.
+ */
+describe('a proxy pool that cannot be refreshed is not a permanent failure', () => {
+  test('keeps the dimension running when the proxy list is briefly unreachable', async () => {
+    const fixtures = buildEvaluationFixtures().structuredOutput;
+    const bodies = new Map(fixtures.map((item) => [JSON.stringify(item.payload), item.expectedResponse]));
+    let calls = 0;
+    const result = await runDimensionEvaluation({
+      providerId: 'p', modelId: 'm', dimension: 'structuredOutput',
+      scenarios: fixtures, credential: 'secret', now: () => '2026-08-20T00:00:00.000Z',
+      transport: async (payload) => {
+        calls++;
+        if (calls === 10) {
+          return { kind: 'provider_failure', status: null, attempts: 1, errorCode: 'proxy_list_unavailable' };
+        }
+        return { kind: 'success', attempts: 1, response: { status: 200, headers: {}, body: bodies.get(JSON.stringify(payload)) } };
+      },
+    });
+
+    assert.equal(result.status, 'insufficient_evidence');
+    assert.equal(result.samples.length, 60);
+    assert.equal(calls, 63, 'a list blip does not stop the remaining samples');
   });
 });

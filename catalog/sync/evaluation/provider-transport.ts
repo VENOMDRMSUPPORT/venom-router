@@ -1,5 +1,6 @@
 import { deflateSync } from 'node:zlib';
 import { OVERALL_SCORE_POLICY } from './score.ts';
+import { fetchForEvaluationProvider } from './proxy-pool.ts';
 import { callWithPolicy, type EvaluationTransport, type TransportResponse } from './transport.ts';
 
 export type EvaluationProtocol = 'chat-completions' | 'responses' | 'messages';
@@ -23,6 +24,48 @@ export function resolveEvaluationCredential(providerId: string): string | null {
   if (!name) return null;
   const value = process.env[name];
   return value?.trim() ? value : null;
+}
+
+export type CredentialState = 'present' | 'missing' | 'malformed_name';
+
+export interface CredentialStatus {
+  providerId: string;
+  /** The variable this code asks for. Public by construction — it is in this file. */
+  envName: string;
+  state: CredentialState;
+  /** The corrupted key the value is actually filed under, when there is one. */
+  foundAs?: string;
+}
+
+/** A variable name as it would read once the junk an editor may prepend is gone. */
+const normalizeEnvName = (key: string) => key.replace(/^﻿/, '').trim();
+
+/**
+ * Which evaluation credentials THIS process can actually see, by name.
+ *
+ * The gap this closes: `missing_credentials` is decided by `process.env`, and a
+ * key can be perfectly present in `catalog/.env` and still be invisible here —
+ * either because nothing loaded the file, or because its NAME is corrupted. A
+ * UTF-8 BOM (which PowerShell writes at the head of any redirected file) binds
+ * to the first variable name in an env file, and `node --env-file` does not
+ * strip it: the process ends up holding `﻿VENOM_..._API_KEY`, so every
+ * lookup by the real name misses. That failure is indistinguishable from "no key
+ * configured" unless something looks for it on purpose, which is what this does.
+ *
+ * Reads presence only. A credential VALUE is never returned, printed, compared,
+ * or included in any state — the P1-SEC-006 rule applies to diagnostics too, and
+ * a diagnostic is exactly where a secret would leak by accident.
+ */
+export function evaluationCredentialReport(
+  env: Record<string, string | undefined> = process.env,
+): CredentialStatus[] {
+  return Object.entries(CREDENTIAL_ENV).map(([providerId, envName]): CredentialStatus => {
+    if (env[envName]?.trim()) return { providerId, envName, state: 'present' };
+    const foundAs = Object.keys(env)
+      .find((key) => key !== envName && normalizeEnvName(key) === envName && env[key]?.trim());
+    if (foundAs) return { providerId, envName, state: 'malformed_name', foundAs };
+    return { providerId, envName, state: 'missing' };
+  });
 }
 
 export interface CreateEvaluationTransportInput {
@@ -166,13 +209,36 @@ function normalizeResponseBody(providerId: string, body: unknown): unknown {
  * stops, this is the function that should learn about it, not the caller.
  *
  * Source: https://opencode.ai/docs/zen (the Endpoints table), read 2026-08-20.
+ *
+ * One row per family, carrying every wire fact this gateway needs about it. A
+ * second table keyed by the same prefixes would be a second place to remember
+ * when the next family arrives — and the one that gets forgotten is the one
+ * that returns a valid 200 with nothing in it to grade.
  */
-const RESPONSES_MODEL_PREFIXES = ['gpt-', 'grok-', 'muse-spark-'];
+const MODEL_FAMILIES: {
+  prefix: string;
+  protocol: EvaluationProtocol;
+  /** A floor the family needs before it emits any message at all. */
+  minOutputTokens?: number;
+}[] = [
+  { prefix: 'gpt-', protocol: 'responses' },
+  { prefix: 'grok-', protocol: 'responses' },
+  // Muse Spark commonly spends about 500 tokens on hidden reasoning before it
+  // emits any message. The shared 512-token fixture cap therefore produced a
+  // valid HTTP 200 with `status: incomplete` and no answer to grade.
+  { prefix: 'muse-spark-', protocol: 'responses', minOutputTokens: 2048 },
+];
+
+/** The id without its vendor namespace, which is what the family names match. */
+const bareModelId = (modelId: string): string =>
+  modelId.includes('/') ? modelId.slice(modelId.lastIndexOf('/') + 1) : modelId;
+
+const familyFor = (modelId: string): (typeof MODEL_FAMILIES)[number] | null =>
+  MODEL_FAMILIES.find((family) => bareModelId(modelId).startsWith(family.prefix)) ?? null;
 
 export function protocolFor(providerId: string, modelId: string): EvaluationProtocol {
   if (providerId !== 'opencode-go' && providerId !== 'opencode-zen') return 'chat-completions';
-  const bare = modelId.includes('/') ? modelId.slice(modelId.lastIndexOf('/') + 1) : modelId;
-  return RESPONSES_MODEL_PREFIXES.some((prefix) => bare.startsWith(prefix)) ? 'responses' : 'chat-completions';
+  return familyFor(modelId)?.protocol ?? 'chat-completions';
 }
 
 /**
@@ -232,8 +298,19 @@ function toResponsesRequest(body: Record<string, unknown>, modelId: string): Rec
       return { ...entry, content: toResponsesContent(entry.content) };
     });
   }
-  if (typeof maxTokens === 'number') request.max_output_tokens = maxTokens;
+  if (typeof maxTokens === 'number') {
+    // The family's own floor, from the one table above. Families without one
+    // take the caller's cap unchanged.
+    request.max_output_tokens = Math.max(maxTokens, familyFor(modelId)?.minOutputTokens ?? 0);
+  }
   return request;
+}
+
+function incompleteResponsesEnvelope(body: unknown): boolean {
+  return typeof body === 'object'
+    && body !== null
+    && !Array.isArray(body)
+    && (body as Record<string, unknown>).status === 'incomplete';
 }
 
 /** Fold a Responses envelope back into the one message shape every grader reads. */
@@ -278,7 +355,7 @@ export function createEvaluationTransport(input: CreateEvaluationTransportInput)
   if (protocol !== 'chat-completions' && protocol !== 'responses') {
     throw new Error(`unsupported_evaluation_protocol:${protocol}`);
   }
-  const fetchImpl = input.fetchImpl ?? fetch;
+  const fetchImpl = input.fetchImpl ?? fetchForEvaluationProvider(input.providerId);
   return async (payload, credential) => callWithPolicy(async (): Promise<TransportResponse> => {
     const body = typeof payload === 'object' && payload !== null && !Array.isArray(payload)
       ? payload as Record<string, unknown>
@@ -294,6 +371,7 @@ export function createEvaluationTransport(input: CreateEvaluationTransportInput)
       method: 'POST',
       headers: evaluationHeaders(input.providerId, credential),
       body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(OVERALL_SCORE_POLICY.requestTimeoutMs),
     });
     const text = await response.text();
     let responseBody: unknown = null;
@@ -305,7 +383,12 @@ export function createEvaluationTransport(input: CreateEvaluationTransportInput)
       }
     }
     return {
-      status: response.status,
+      // A partial Responses envelope is not a model answer. Present it to the
+      // existing retry policy as transient provider state so it can never be
+      // persisted as a final failed grader sample.
+      status: protocol === 'responses' && response.ok && incompleteResponsesEnvelope(responseBody)
+        ? 503
+        : response.status,
       body: protocol === 'responses'
         ? fromResponsesBody(responseBody)
         : normalizeResponseBody(input.providerId, responseBody),

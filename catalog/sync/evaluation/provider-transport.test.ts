@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { createEvaluationTransport, evaluationHeaders, resolveEvaluationCredential, protocolFor } from './provider-transport.ts';
+import { createEvaluationTransport, evaluationCredentialReport, evaluationHeaders, resolveEvaluationCredential, protocolFor } from './provider-transport.ts';
 
 describe('provider evaluation transport', () => {
   test('normalizes the Cline vision fixture to a supported PNG without changing other providers', async () => {
@@ -43,6 +43,20 @@ describe('provider evaluation transport', () => {
     const body = await requests[0].json() as Record<string, unknown>;
     assert.equal(body.model, 'kimi-k3');
     assert.equal(body.stream, false);
+  });
+
+  test('bounds the underlying request so a dead proxy cannot outlive the evaluation timeout', async () => {
+    let signal: AbortSignal | null | undefined;
+    const transport = createEvaluationTransport({
+      providerId: 'opencode-zen', modelId: 'mimo-v2.5-free', credential: 'secret',
+      fetchImpl: (async (_input: string | URL | Request, init?: RequestInit) => {
+        signal = init?.signal;
+        return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 });
+      }) as typeof fetch,
+    });
+
+    await transport({ messages: [{ role: 'user', content: 'hello' }] }, 'secret');
+    assert.ok(signal instanceof AbortSignal);
   });
 
   test('normalizes the ClinePass data envelope to the OpenAI response shape', async () => {
@@ -230,5 +244,95 @@ describe('translating a tool definition for the Responses API', () => {
       description: 'Get current weather for a city.',
       parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
     }]);
+  });
+
+  test('gives Muse enough output budget to finish reasoning before its answer', async () => {
+    const seen: Record<string, unknown>[] = [];
+    const transport = createEvaluationTransport({
+      providerId: 'opencode-zen', modelId: 'muse-spark-1.2-contributor-free', credential: 'secret',
+      fetchImpl: (async (_url: string | URL, init?: RequestInit) => {
+        seen.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({
+          status: 'completed',
+          output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] }],
+        }), { status: 200 });
+      }) as typeof fetch,
+    });
+
+    await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
+    assert.equal(seen[0].max_output_tokens, 2048);
+  });
+
+  test('does not grade an incomplete Responses envelope with no answer', async () => {
+    const transport = createEvaluationTransport({
+      providerId: 'opencode-zen', modelId: 'muse-spark-1.2-contributor-free', credential: 'secret',
+      fetchImpl: (async () => new Response(JSON.stringify({
+        status: 'incomplete',
+        incomplete_details: { reason: 'max_output_tokens' },
+        output: [],
+      }), { status: 200 })) as typeof fetch,
+    });
+
+    const outcome = await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
+    assert.equal(outcome.kind, 'provider_failure');
+    if (outcome.kind !== 'provider_failure') throw new Error('expected provider failure');
+    assert.equal(outcome.status, 503);
+  });
+});
+
+/**
+ * `missing_credentials` is decided here, from `process.env` alone. A key can be
+ * perfectly present in `catalog/.env` and still be invisible — because nothing
+ * loaded the file, or because its NAME carries a UTF-8 BOM that `node --env-file`
+ * does not strip. Both produced the identical unactionable sentence in the UI,
+ * so the report exists to tell them apart by name.
+ */
+describe('reporting which evaluation credentials this process can see', () => {
+  const NAME = 'VENOM_CATALOG_OPENCODE_ZEN_API_KEY';
+  const find = (report: ReturnType<typeof evaluationCredentialReport>, providerId: string) =>
+    report.find((row) => row.providerId === providerId)!;
+
+  test('every evaluable provider is reported, by variable name', () => {
+    const report = evaluationCredentialReport({});
+    assert.deepEqual(
+      report.map((row) => row.providerId).sort(),
+      ['clinepass', 'ollama-cloud', 'opencode-go', 'opencode-zen'],
+    );
+    assert.equal(find(report, 'opencode-zen').envName, NAME);
+    assert.ok(report.every((row) => row.state === 'missing'));
+  });
+
+  test('a set variable reads as present', () => {
+    assert.equal(find(evaluationCredentialReport({ [NAME]: 'DO_NOT_PRINT' }), 'opencode-zen').state, 'present');
+  });
+
+  test('a blank value is missing, not present', () => {
+    assert.equal(find(evaluationCredentialReport({ [NAME]: '   ' }), 'opencode-zen').state, 'missing');
+  });
+
+  /**
+   * The whole reason this function exists. PowerShell's `>` / `Out-File` /
+   * `Set-Content` write a UTF-8 BOM, it binds to the FIRST variable name in the
+   * env file, and the process then holds a key nothing asks for — while every
+   * other line in the same file works perfectly.
+   */
+  test('a name corrupted by a BOM is named as corrupted, not reported missing', () => {
+    const row = find(evaluationCredentialReport({ [`﻿${NAME}`]: 'DO_NOT_PRINT' }), 'opencode-zen');
+    assert.equal(row.state, 'malformed_name');
+    assert.equal(row.foundAs, `﻿${NAME}`);
+  });
+
+  test('a corrupted name with no value is still just missing', () => {
+    assert.equal(find(evaluationCredentialReport({ [`﻿${NAME}`]: '' }), 'opencode-zen').state, 'missing');
+  });
+
+  test('no credential value reaches the report, in any state', () => {
+    const secret = 'VENOM_CATALOG_SECRET_CANARY_VALUE';
+    const serialized = JSON.stringify(evaluationCredentialReport({
+      [NAME]: secret,
+      [`﻿VENOM_CATALOG_CLINEPASS_API_KEY`]: secret,
+      VENOM_CATALOG_OLLAMA_CLOUD_API_KEY: secret,
+    }));
+    assert.ok(!serialized.includes(secret), 'a diagnostic is exactly where a secret leaks by accident');
   });
 });

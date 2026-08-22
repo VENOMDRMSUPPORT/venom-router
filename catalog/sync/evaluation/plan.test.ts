@@ -140,6 +140,28 @@ describe('planEvaluation', () => {
     db.close();
   });
 
+  test('queues a provider-scoped identity without inventing a benchmark id', () => {
+    const db = seedModel(false);
+    db.prepare(`INSERT INTO model_facts (provider_id,model_id,field,value,source,resolved_at)
+      VALUES ('p','m','evaluationIdentity',?,'reviewed_source','2026-08-20')`)
+      .run(JSON.stringify({ id: 'p/m', kind: 'provider_scoped', consent: 'not_required' }));
+    const plan = planEvaluation(db, { providerId: 'p', modelId: 'm', testSetHash: HASH, hasCredential: yes });
+    assert.equal(plan.identityId, 'p/m');
+    assert.equal(plan.blocked, null);
+    db.close();
+  });
+
+  test('blocks a contributor identity until reviewed consent is granted', () => {
+    const db = seedModel(false);
+    db.prepare(`INSERT INTO model_facts (provider_id,model_id,field,value,source,resolved_at)
+      VALUES ('p','m','evaluationIdentity',?,'reviewed_source','2026-08-20')`)
+      .run(JSON.stringify({ id: 'meta/muse-spark-1.2', kind: 'benchmark', consent: 'required' }));
+    const plan = planEvaluation(db, { providerId: 'p', modelId: 'm', testSetHash: HASH, hasCredential: yes });
+    assert.equal(plan.blocked, 'consent_required');
+    assert.equal(plan.estimatedRequests, 0);
+    db.close();
+  });
+
   test('blocks when the provider has no credential', () => {
     const db = seedModel();
     const plan = planEvaluation(db, { providerId: 'p', modelId: 'm', testSetHash: HASH, hasCredential: no });
