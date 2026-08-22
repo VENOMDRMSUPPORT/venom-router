@@ -5,7 +5,7 @@
 
 import type { Db } from '../db/index.ts';
 import { loadModels, loadProviders, loadMeta, loadProvenance, loadEvaluationDiagnostics, STALE_AFTER_HOURS } from './read-model.ts';
-import { loadChanges } from './changes.ts';
+import { clampChangesLimit, loadChanges } from './changes.ts';
 import type { SyncRunner, SchedulerHandle } from './sync-runner.ts';
 import type { EvaluationRunner } from './evaluation-runner.ts';
 import { planEvaluation } from '../sync/evaluation/plan.ts';
@@ -154,8 +154,8 @@ export function route(deps: AppDeps, url: URL, method: string, body?: unknown): 
 
   if (path === '/v1/changes' && method === 'GET') {
     const since = url.searchParams.get('since') ?? undefined;
-    const limit = Number(url.searchParams.get('limit') ?? 500);
-    return { status: 200, body: loadChanges(db, { since, limit: Number.isFinite(limit) ? limit : 500 }) };
+    const limit = clampChangesLimit(Number(url.searchParams.get('limit') ?? 500));
+    return { status: 200, body: loadChanges(db, { since, limit }) };
   }
 
   if (path === '/v1/sync' && method === 'POST') {

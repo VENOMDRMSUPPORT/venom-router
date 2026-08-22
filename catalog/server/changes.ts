@@ -53,6 +53,14 @@ interface EventRow {
  * wobble after a refit is not news — reporting it would bury the real changes.
  */
 export const MATERIAL_SCORE_DELTA = 1;
+export const DEFAULT_CHANGES_LIMIT = 500;
+export const MAX_CHANGES_LIMIT = 500;
+
+/** Keep public change reads bounded and deterministic for every caller. */
+export function clampChangesLimit(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_CHANGES_LIMIT;
+  return Math.max(0, Math.min(MAX_CHANGES_LIMIT, Math.trunc(value)));
+}
 
 function classify(e: EventRow): ChangeClass | null {
   switch (e.kind) {
@@ -99,11 +107,12 @@ export interface ChangesResult {
   changes: Change[];
 }
 
-export function loadChanges(db: Db, { since, limit = 500 }: ChangesQuery = {}): ChangesResult {
+export function loadChanges(db: Db, { since, limit = DEFAULT_CHANGES_LIMIT }: ChangesQuery = {}): ChangesResult {
+  const safeLimit = clampChangesLimit(limit);
   const rows = (
     since
-      ? db.prepare('SELECT * FROM model_events WHERE at > ? ORDER BY at DESC, id DESC LIMIT ?').all(since, limit * 4)
-      : db.prepare('SELECT * FROM model_events ORDER BY at DESC, id DESC LIMIT ?').all(limit * 4)
+      ? db.prepare('SELECT * FROM model_events WHERE at > ? ORDER BY at DESC, id DESC LIMIT ?').all(since, safeLimit * 4)
+      : db.prepare('SELECT * FROM model_events ORDER BY at DESC, id DESC LIMIT ?').all(safeLimit * 4)
   ) as unknown as EventRow[];
 
   const changes: Change[] = [];
@@ -120,7 +129,7 @@ export function loadChanges(db: Db, { since, limit = 500 }: ChangesQuery = {}): 
       note: e.reason,
       observedAt: e.at,
     });
-    if (changes.length >= limit) break;
+    if (changes.length >= safeLimit) break;
   }
 
   const newest = db.prepare('SELECT MAX(at) at FROM model_events').get() as unknown as { at: string | null };

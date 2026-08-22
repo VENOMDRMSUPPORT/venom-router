@@ -546,6 +546,18 @@ describe('AC10 — /v1/changes produces deterministic, meaningful diffs', () => 
   test('the same query twice returns the same result', () => {
     assert.deepEqual(get('/v1/changes').body, get('/v1/changes').body);
   });
+
+  test('a huge limit is clamped to the public maximum', () => {
+    const insert = db.prepare(`
+      INSERT INTO model_events (provider_id, model_id, kind, field, old_value, new_value, reason, at)
+      VALUES ('probe', ?, 'changed', 'context', '1', '2', 'context', '2026-08-12T00:00:00.000Z')
+    `);
+    for (let i = 0; i < 600; i++) insert.run(`model-${i}`);
+
+    const result = get('/v1/changes?limit=1000000').body;
+    assert.equal(result.total, 500);
+    assert.equal(result.changes.length, 500);
+  });
 });
 
 describe('the completeness gate', () => {
@@ -853,3 +865,30 @@ describe('evaluation control routes', () => {
     assert.equal(typeof result.body.plan.estimatedRequests, 'number');
   });
 });
+
+describe('HTTP server payload limit guard', () => {
+  test('rejects payload exceeding MAX_BODY_BYTES with HTTP 413', async () => {
+    const { createApp, MAX_BODY_BYTES } = await import('./index.ts');
+    const app = createApp(0, ':memory:');
+    await new Promise<void>((resolve) => app.server.listen(0, '127.0.0.1', () => resolve()));
+    const address = app.server.address() as { port: number };
+
+    try {
+      // Send an oversized body exceeding MAX_BODY_BYTES
+      const oversized = Buffer.alloc(MAX_BODY_BYTES + 1024, 'a');
+      const res = await fetch(`http://127.0.0.1:${address.port}/v1/sync`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: oversized,
+      });
+
+      assert.equal(res.status, 413);
+      const data = await res.json() as { error?: string };
+      assert.equal(data.error, 'payload too large');
+    } finally {
+      await new Promise<void>((resolve) => app.server.close(() => resolve()));
+      app.scheduler.stop();
+    }
+  });
+});
+
