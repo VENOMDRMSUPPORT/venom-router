@@ -1,0 +1,27 @@
+{
+  "note": "Human-reviewed display names that override the models.dev transcription with the provider's own published spelling. Keyed by provider/model. An entry exists only where the two disagree: pinning a name that already matches would shadow a future upstream correction with a stale copy. Every entry quotes the provider's official documentation inside its public repository.",
+  "reviewedAt": "2026-08-21",
+  "names": {
+    "opencode-zen/mimo-v2.5-free": {
+      "value": "MiMo-V2.5 Free",
+      "ref": "opencode docs zen.mdx endpoints table, row mimo-v2.5-free",
+      "sourceUrl": "https://github.com/anomalyco/opencode/blob/dev/packages/web/src/content/docs/zen.mdx",
+      "evidence": [
+        "The official Zen documentation lists the model as 'MiMo-V2.5 Free' (hyphenated) with id mimo-v2.5-free, priced Free in every column.",
+        "models.dev currently publishes the name as 'MiMo V2.5 Free' (spaced), which does not match the provider's own spelling."
+      ],
+      "reviewedAt": "2026-08-21"
+    },
+    "opencode-zen/muse-spark-1.2-contributor-free": {
+      "value": "Muse Spark 1.2 Contributor Free",
+      "ref": "opencode docs zen.mdx endpoints and pricing tables, row muse-spark-1.2-contributor-free",
+      "sourceUrl": "https://github.com/anomalyco/opencode/blob/dev/packages/web/src/content/docs/zen.mdx",
+      "evidence": [
+        "The official Zen documentation lists the model as 'Muse Spark 1.2 Contributor Free' with id muse-spark-1.2-contributor-free, priced Free in every column.",
+        "'Contributor' names the Meta contributor tier — free usage in exchange for permission to train on prompts and completions, per the same page's data-use section. Omitting it hides the consent distinction that separates this offering from a plain free tier.",
+        "models.dev currently publishes the name as 'Muse Spark 1.2 Free', which omits the tier marker."
+      ],
+      "reviewedAt": "2026-08-21"
+    }
+  }
+}

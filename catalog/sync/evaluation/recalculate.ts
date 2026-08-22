@@ -11,11 +11,19 @@ import {
   type QualityDimension,
 } from './score.ts';
 import { scoreCostEfficiency } from './score.ts';
+import { parseEvaluationIdentityFact, resolveOfferIdentityId } from './identity.ts';
 
 export interface RecalculateOfferInput {
   providerId: string;
   modelId: string;
   identityId: string | null;
+  /**
+   * Set when a reviewed declaration forbids publishing a score for this offer.
+   *
+   * The string is recorded verbatim as the leading reason, so a withheld score
+   * says WHY it is withheld rather than looking like missing evidence.
+   */
+  withheldReason?: string;
   computedAt: string;
 }
 
@@ -200,9 +208,19 @@ export function recalculateOfferOverall(
   repository: EvaluationRepository,
   input: RecalculateOfferInput,
 ): OverallScoreResult {
-  const identity = new Map((input.identityId ? repository.identityDimensions(input.identityId) : [])
-    .map((row) => [row.dimension, row]));
-  const offer = new Map(repository.offerDimensions(input.providerId, input.modelId).map((row) => [row.dimension, row]));
+  // A withheld offer reads NO evidence — neither identity-level nor
+  // offer-level. Nulling the identity alone would still aggregate whatever
+  // offer-scoped rows exist and publish a number, which is the outcome being
+  // refused.
+  const withheld = input.withheldReason;
+  const identityRows: IdentityDimensionRow[] = input.identityId && !withheld
+    ? repository.identityDimensions(input.identityId)
+    : [];
+  const offerRows: OfferDimensionRow[] = withheld
+    ? []
+    : repository.offerDimensions(input.providerId, input.modelId);
+  const identity = new Map(identityRows.map((row) => [row.dimension, row]));
+  const offer = new Map(offerRows.map((row) => [row.dimension, row]));
   const quality = Object.fromEntries(QUALITY_DIMENSIONS.map((dimension) => [
     dimension,
     offer.has(dimension)
@@ -220,9 +238,11 @@ export function recalculateOfferOverall(
     fromOffer(offer.get(dimension)),
   ])) as Record<OperationalDimension, DimensionEvaluation>;
   const aggregated = aggregateOverallScore({ quality, operational });
-  const result = input.identityId
-    ? aggregated
-    : { ...aggregated, reasons: ['identity_unresolved', ...aggregated.reasons] };
+  const result = withheld
+    ? { ...aggregated, reasons: [withheld, ...aggregated.reasons] }
+    : input.identityId
+      ? aggregated
+      : { ...aggregated, reasons: ['identity_unresolved', ...aggregated.reasons] };
   repository.saveOverall(toStored(input, result));
   return result;
 }
@@ -251,6 +271,7 @@ interface PublishedOfferRow {
   model_id: string;
   canonical_id: string | null;
   vendor_identity_json: string | null;
+  evaluation_identity_json: string | null;
 }
 
 export function recalculatePublishedOffers(db: Db, computedAt: string): OverallRecalculationSummary {
@@ -262,25 +283,31 @@ export function recalculatePublishedOffers(db: Db, computedAt: string): OverallR
         WHERE s.provider_id=m.provider_id AND s.model_id=m.model_id AND s.kind='VQ') canonical_id,
       (SELECT value FROM model_facts f
         WHERE f.provider_id=m.provider_id AND f.model_id=m.model_id AND f.field='vendorIdentity') vendor_identity_json
+      ,(SELECT value FROM model_facts f
+        WHERE f.provider_id=m.provider_id AND f.model_id=m.model_id AND f.field='evaluationIdentity') evaluation_identity_json
     FROM models m
     WHERE m.status IN ('active','missing')
     ORDER BY m.provider_id, m.model_id
   `).all() as unknown as PublishedOfferRow[];
   let complete = 0;
   for (const row of rows) {
-    let vendorIdentity: string | null = null;
-    if (row.vendor_identity_json) {
-      try {
-        const parsed = JSON.parse(row.vendor_identity_json) as unknown;
-        if (typeof parsed === 'string') vendorIdentity = parsed;
-      } catch {
-        vendorIdentity = null;
-      }
-    }
+    // Parsed from the row the projection already selected, never re-queried per
+    // offer: asking again was one extra statement per published offer for an
+    // answer already in hand.
+    const evaluationIdentity = parseEvaluationIdentityFact(row.evaluation_identity_json);
     const result = recalculateOfferOverall(repository, {
       providerId: row.provider_id,
       modelId: row.model_id,
-      identityId: row.canonical_id ?? vendorIdentity,
+      identityId: resolveOfferIdentityId({
+        canonicalId: row.canonical_id,
+        vendorIdentityJson: row.vendor_identity_json,
+        evaluationIdentity,
+      }),
+      // Consent governs PUBLICATION, not only acquisition. `planEvaluation`
+      // refuses to buy samples for an offering whose review demands consent;
+      // a score still standing on samples bought before that review would make
+      // the same claim anyway, so it is withheld with its reason attached.
+      withheldReason: evaluationIdentity?.consent === 'required' ? 'consent_required' : undefined,
       computedAt,
     });
     if (result.status === 'complete') complete++;

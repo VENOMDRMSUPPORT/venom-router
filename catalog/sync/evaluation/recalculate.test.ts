@@ -109,4 +109,88 @@ describe('overall score recalculation', () => {
     assert.deepEqual(summary, { complete: 0, incomplete: 1, total: 1 });
     assert.equal(repo.overall('p1', 'm1')?.status, 'insufficient_evidence');
   });
+
+  test('uses a reviewed provider-scoped identity for published-offer recalculation', () => {
+    const { db, repo } = seeded();
+    db.prepare(`DELETE FROM model_facts WHERE provider_id='p1' AND model_id='m1' AND field='vendorIdentity'`).run();
+    db.prepare(`INSERT INTO model_facts (provider_id,model_id,field,value,source,resolved_at)
+      VALUES ('p1','m1','evaluationIdentity',?,'reviewed_source','2026-08-19')`)
+      .run(JSON.stringify({ id: 'p1/m1', kind: 'provider_scoped', consent: 'not_required' }));
+    for (const dimension of QUALITY_DIMENSIONS) repo.saveIdentityDimension({
+      identityId: 'p1/m1', dimension, score: 80, rawRate: 0.8, uncertainty: 1,
+      confidence: 0.99, sampleCount: 60, status: dimension === 'vision' ? 'unsupported' : 'scored',
+      rubricVersion: 'catalog-rubrics-v1', testSetHash: 'hash', evidence: [],
+      evaluatedAt: '2026-08-19', methodologyVersion: 'overall-score-v1',
+    });
+    db.prepare(`UPDATE models SET tools=1, reasoning=1, structured=1, attachment=0,
+      input_modalities='["text"]', cost_kind='free' WHERE provider_id='p1' AND model_id='m1'`).run();
+    repo.saveOfferDimension({ providerId: 'p1', modelId: 'm1', dimension: 'speed', score: 60,
+      rawRate: 0.6, uncertainty: 1, confidence: 0.99, sampleCount: 60, status: 'scored', evidence: [],
+      evaluatedAt: '2026-08-19', methodologyVersion: 'overall-score-v1' });
+    const summary = recalculatePublishedOffers(db, '2026-08-19');
+    assert.equal(summary.complete, 1);
+    assert.equal(repo.overall('p1', 'm1')?.status, 'complete');
+  });
+});
+
+/**
+ * Consent governs PUBLICATION, not only acquisition.
+ *
+ * `planEvaluation` already refuses to buy samples for an offering whose reviewed
+ * declaration says consent is required. A score still standing on samples bought
+ * before that review would publish the same claim anyway, so the recalculation
+ * withholds it — and says which reason withheld it, so it cannot be misread as
+ * missing evidence.
+ */
+describe('a reviewed consent requirement withholds the published score', () => {
+  /**
+   * A fully scored offer whose identity came from a review — the same shape as
+   * "uses a reviewed provider-scoped identity" above, so the ONLY difference
+   * between the two cases below is the declared consent.
+   */
+  function withEvaluationIdentity(consent: 'granted' | 'required') {
+    const { db, repo } = seeded();
+    db.prepare(`DELETE FROM model_facts WHERE provider_id='p1' AND model_id='m1' AND field='vendorIdentity'`).run();
+    db.prepare(`INSERT INTO model_facts (provider_id,model_id,field,value,source,resolved_at)
+      VALUES ('p1','m1','evaluationIdentity',?,'reviewed_source','2026-08-21')`)
+      .run(JSON.stringify({ id: 'vendor/m1', kind: 'benchmark', consent }));
+    for (const dimension of QUALITY_DIMENSIONS) {
+      repo.saveIdentityDimension({
+        identityId: 'vendor/m1', dimension, score: 80, rawRate: 0.8, uncertainty: 1,
+        confidence: 0.99, sampleCount: 60, status: dimension === 'vision' ? 'unsupported' : 'scored',
+        rubricVersion: 'catalog-rubrics-v1', testSetHash: 'hash', evidence: [],
+        evaluatedAt: '2026-08-21', methodologyVersion: 'overall-score-v1',
+      });
+    }
+    db.prepare(`UPDATE models SET tools=1, reasoning=1, structured=1, attachment=0,
+      input_modalities='["text"]', cost_kind='free' WHERE provider_id='p1' AND model_id='m1'`).run();
+    repo.saveOfferDimension({
+      providerId: 'p1', modelId: 'm1', dimension: 'speed', score: 60, rawRate: 0.6,
+      uncertainty: 1, confidence: 0.99, sampleCount: 60, status: 'scored', evidence: [],
+      evaluatedAt: '2026-08-21', methodologyVersion: 'overall-score-v1',
+    });
+    return { db, repo };
+  }
+
+  // The control case. Without it, a fixture that never produced a score would
+  // let the withholding test below pass for a reason that has nothing to do
+  // with consent.
+  test('a granted consent publishes a real score', () => {
+    const { db, repo } = withEvaluationIdentity('granted');
+    recalculatePublishedOffers(db, '2026-08-21');
+    const overall = repo.overall('p1', 'm1');
+    assert.ok(overall);
+    assert.ok(overall.value !== null, 'the fixture must be able to produce a score at all');
+    assert.ok(!overall.reasons.includes('consent_required'));
+  });
+
+  test('a required consent publishes no value, and names the reason', () => {
+    const { db, repo } = withEvaluationIdentity('required');
+    recalculatePublishedOffers(db, '2026-08-21');
+    const overall = repo.overall('p1', 'm1');
+    assert.ok(overall);
+    assert.equal(overall.value, null, 'a withheld offer must not carry a score');
+    assert.equal(overall.status, 'insufficient_evidence');
+    assert.equal(overall.reasons[0], 'consent_required', 'the reason leads, so it is not read as missing evidence');
+  });
 });

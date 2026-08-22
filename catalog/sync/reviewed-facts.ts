@@ -41,6 +41,18 @@ const VALUE_IS_VALID: Record<ReviewedFactField, (value: unknown) => boolean> = {
   attachment: (value) => typeof value === 'boolean',
 };
 
+/**
+ * Whether a field name is one a review can answer.
+ *
+ * Derived from the validator table rather than restated, so a field added to
+ * `ReviewedFactSet` cannot be reviewable in one place and unknown in another.
+ * Callers use it to ask "is there a reviewed verdict for this disputed field?"
+ * without hardcoding a second copy of the field list.
+ */
+export function isReviewableField(field: string): field is ReviewedFactField {
+  return Object.prototype.hasOwnProperty.call(VALUE_IS_VALID, field);
+}
+
 const EXPECTED_TYPE: Record<ReviewedFactField, string> = {
   context: 'a positive number',
   maxOutput: 'a positive number',

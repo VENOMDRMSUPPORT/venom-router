@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "note": "Exact provider-offer evaluation identities. These declarations decide what may enter the local evaluation queue; they do not create external benchmark values.",
+  "entries": {
+    "opencode-zen/big-pickle": {
+      "kind": "provider_scoped",
+      "identityId": "opencode-zen/big-pickle",
+      "consent": "not_required",
+      "sourceUrl": "https://opencode.ai/docs/zen",
+      "evidence": [
+        "OpenCode documents Big Pickle as a limited-time stealth model and does not publish an underlying vendor model identity.",
+        "The Zen endpoint exposes the exact offer id big-pickle, so local measurements must remain scoped to opencode-zen/big-pickle."
+      ],
+      "reviewedAt": "2026-08-20"
+    },
+    "opencode-zen/muse-spark-1.2-contributor-free": {
+      "kind": "benchmark",
+      "identityId": "meta/muse-spark-1.2",
+      "consent": "granted",
+      "sourceUrl": "https://opencode.ai/docs/zen",
+      "evidence": [
+        "OpenCode documents muse-spark-1.2-contributor-free as the contributor variant of Muse Spark 1.2.",
+        "The exact benchmark target meta/muse-spark-1.2 exists in the reference index and matches the declared family; no fuzzy sibling is used.",
+        "Owner approval for contributor evaluation is recorded on 2026-08-20; this variant sends prompts upstream for model improvement."
+      ],
+      "reviewedAt": "2026-08-20"
+    },
+    "opencode-zen/x-preview-f-free": {
+      "kind": "provider_scoped",
+      "identityId": "opencode-zen/x-preview-f-free",
+      "consent": "not_required",
+      "sourceUrl": "https://opencode.ai/docs/zen",
+      "evidence": [
+        "OpenCode documents Ox Alpha Free (offer id x-preview-f-free) as a limited-time stealth model and publishes no underlying vendor identity for it; no reference-index entry exists to bind a benchmark figure.",
+        "The same documentation states this model's provider follows a zero-retention policy and does not use your data for model training, so evaluation prompts carry no training consent.",
+        "The Zen endpoint exposes the exact offer id x-preview-f-free, so local measurements must remain scoped to opencode-zen/x-preview-f-free."
+      ],
+      "reviewedAt": "2026-08-21"
+    }
+  }
+}
