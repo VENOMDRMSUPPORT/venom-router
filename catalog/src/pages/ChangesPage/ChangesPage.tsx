@@ -21,6 +21,19 @@ const LABEL: Record<string, { text: string; tone: 'add' | 'remove' | 'change' | 
   quality_lost: { text: 'Score withdrawn', tone: 'score' },
 };
 
+/**
+ * The filters this page actually has.
+ *
+ * Derived from the same map that labels the events, so a class can never be
+ * offered as a filter without a label or labelled without being filterable. It
+ * used to share the model filters — "Free Models", "1M+ Context" — which
+ * compared a change class against a model predicate and emptied the page.
+ */
+const CHANGE_FILTERS = [
+  { value: 'all', label: 'All Events' },
+  ...Object.entries(LABEL).map(([value, meta]) => ({ value, label: meta.text })),
+];
+
 export function ChangesPage() {
   const [changes, setChanges] = useState<Change[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +91,7 @@ export function ChangesPage() {
         onQueryChange={setQuery}
         filter={filter}
         onFilterChange={setFilter}
+        options={CHANGE_FILTERS}
         view={view}
         onViewChange={setView}
       />

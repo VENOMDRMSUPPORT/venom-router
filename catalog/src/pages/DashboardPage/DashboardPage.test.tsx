@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { DashboardPage } from './DashboardPage';
 import type { CatalogData } from '../../api/client';
@@ -98,5 +98,32 @@ describe('final evaluation coverage is distinct from operational readiness', () 
 
     expect(screen.getByText('Complete overall scores')).toBeInTheDocument();
     expect(screen.getByTitle(/Operational data is available for 115\/116 models/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * This page lists PROVIDERS, and its filter predicate has branches for free,
+ * paid, 1M+ context and multimodal — and for nothing else. It took the model
+ * filter list only as the Toolbar's default, so "Not Deprecated" arrived here
+ * with no branch to act on: an offered control whose only possible effect was
+ * none at all. That is the same defect the change-class page was just fixed for.
+ */
+describe('the dashboard offers the filters it can actually apply', () => {
+  test('the filter menu holds provider filters, and nothing it cannot act on', () => {
+    catalogMock.current = { data: baseData(), error: null, loading: false };
+    renderDashboard();
+
+    fireEvent.click(screen.getByRole('button', { name: /all providers/i }));
+    const offered = screen.getAllByRole('option').map((option) => option.textContent);
+
+    expect(offered).toEqual(['All Providers', 'Free Models', 'Paid Models', '1M+ Context', 'Multimodal']);
+    expect(offered).not.toContain('Not Deprecated');
+  });
+
+  test('the search box says what it actually searches', () => {
+    catalogMock.current = { data: baseData(), error: null, loading: false };
+    renderDashboard();
+
+    expect(screen.getByPlaceholderText('Search providers by name or ID...')).toBeInTheDocument();
   });
 });

@@ -128,7 +128,9 @@ describe('SearchModal', () => {
     const input = screen.getByPlaceholderText(/search models, providers/i);
     fireEvent.change(input, { target: { value: 'claude' } });
 
-    expect(screen.getByText('anthropic/claude-3.5-sonnet')).toBeInTheDocument();
+    // The official display name leads the result; the raw id is searchable but
+    // no longer the title.
+    expect(screen.getByText('Claude 3.5 Sonnet')).toBeInTheDocument();
     expect(screen.getByText('VQ 78')).toBeInTheDocument();
   });
 

@@ -15,7 +15,7 @@
  */
 
 import { describe, test, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { CatalogProvider } from '../../hooks/useCatalog';
 import { ProviderPage } from './ProviderPage';
@@ -567,25 +567,22 @@ describe('the identity slot answers the question the column asks', () => {
     renderProviderPage();
 
     expect(await screen.findByText('cline-pass/glm-5.3')).toBeInTheDocument();
-    // Phrased as an answer about the row rather than as a workflow state. The
-    // exact wording is pinned by the precision test below; what this one holds
-    // is that the label is not `identity review`.
+    // Owner decision (2026-08-21): identity findings print nothing inline. The
+    // row names the model; the finding and its refused candidates live one
+    // click away on the evidence badge and panel.
     expect(screen.queryByText(/identity review/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/not in the reference index/i)).toBeInTheDocument();
-    // The count survives: "investigated" and "untouched" must stay tellable
-    // apart, which is the entire reason the review state exists.
-    expect(screen.getByText(/1 candidate refused/i)).toBeInTheDocument();
+    expect(screen.queryByText(/not in the reference index/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/candidate[s]? refused/i)).not.toBeInTheDocument();
   });
 });
 
 describe('the identity label does not overstate what is unknown', () => {
-  test('it names the index that has no entry, not "upstream" in general', async () => {
-    // "no upstream match" contradicts the row it sits on. Upstream DOES identify
-    // cline-pass/glm-5.3: models.dev lists it under Z.ai’s own storefronts, and
-    // that is where this very row’s 1M context and 128K max output came from.
-    // What has no entry is the REFERENCE INDEX — the one a canonical id and a
-    // benchmark figure are drawn from. Saying "upstream" for that asserts nothing
-    // anywhere knows this model, beside facts that were read from somewhere.
+  test('no inline identity wording prints at all, so none can overstate', async () => {
+    // The precision concern below was about a label the row no longer prints
+    // (owner decision 2026-08-21): the finding moved to the evidence panel,
+    // whose identity section names the state and each refused candidate. What
+    // the row must now guarantee is silence — no "reference index", no
+    // "upstream", no candidate count beside the model name.
     providerOver = { liveModels: 1, qualityScored: 1, unrated: 0 };
     stubStaleService([
       staleWireModel({
@@ -600,9 +597,9 @@ describe('the identity label does not overstate what is unknown', () => {
     renderProviderPage();
 
     expect(await screen.findByText('cline-pass/glm-5.3')).toBeInTheDocument();
-    expect(screen.getByText(/reference index/i)).toBeInTheDocument();
+    expect(screen.queryByText(/reference index/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/no upstream match/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/1 candidate refused/i)).toBeInTheDocument();
+    expect(screen.queryByText(/candidate[s]? refused/i)).not.toBeInTheDocument();
   });
 });
 
@@ -688,7 +685,7 @@ describe('the model column shows which model the row is', () => {
     expect(id.getAttribute('title') ?? '').toMatch(/vendor|no benchmark|not the entry/i);
   });
 
-  test('a row with neither id still says so plainly', async () => {
+  test('a row with neither id prints no identity finding inline', async () => {
     providerOver = { liveModels: 1, qualityScored: 1, unrated: 0 };
     stubStaleService([
       staleWireModel({ modelId: 'cline-pass/mystery', canonicalId: null, vendorModelId: null, identityState: 'unresolved', rejectedCandidates: [] }),
@@ -696,7 +693,9 @@ describe('the model column shows which model the row is', () => {
     renderProviderPage();
 
     expect(await screen.findByText('cline-pass/mystery')).toBeInTheDocument();
-    expect(screen.getByText(/not in the reference index/i)).toBeInTheDocument();
+    // Owner decision (2026-08-21): the finding moved entirely to the evidence
+    // panel; the row itself stays quiet.
+    expect(screen.queryByText(/not in the reference index/i)).not.toBeInTheDocument();
   });
 });
 
@@ -740,5 +739,40 @@ describe('the reference marker sits on the column, not on every price', () => {
 
     expect(await screen.findByText('cline-pass/deepseek-v4-flash')).toBeInTheDocument();
     expect(screen.getByTestId('cost-column-in').textContent ?? '').not.toMatch(/ref/i);
+  });
+});
+
+/**
+ * Four live models carry the vendor's own `deprecated` marker while still being
+ * served, ranked, and indistinguishable from the rest at a glance. They belong in
+ * the roster — a model still answering requests is a fact — but "show me what I
+ * can build on" had no way to ask.
+ */
+describe('a deprecated model can be filtered out of the roster', () => {
+  const roster = () => [
+    staleWireModel({ modelId: 'kept', displayName: 'Kept', lifecycle: null }),
+    staleWireModel({ modelId: 'sunsetting', displayName: 'Sunsetting', lifecycle: 'deprecated' }),
+  ];
+
+  test('both are listed by default, because both are still served', () => {
+    stubStaleService(roster());
+    renderProviderPage();
+
+    return waitFor(() => {
+      expect(screen.getByText('Kept')).toBeInTheDocument();
+      expect(screen.getByText('Sunsetting')).toBeInTheDocument();
+    });
+  });
+
+  test('the Not Deprecated filter hides the one the vendor is retiring', async () => {
+    stubStaleService(roster());
+    renderProviderPage();
+    await waitFor(() => expect(screen.getByText('Sunsetting')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /all models/i }));
+    fireEvent.click(screen.getByRole('option', { name: 'Not Deprecated' }));
+
+    expect(screen.getByText('Kept')).toBeInTheDocument();
+    expect(screen.queryByText('Sunsetting')).toBeNull();
   });
 });

@@ -61,7 +61,14 @@ describe('EvaluateModal', () => {
     });
     render(<EvaluateModal model={model} onClose={() => {}} />);
     const blocked = await screen.findByTestId('evaluate-blocked');
-    expect(blocked).toHaveTextContent('No API key is configured');
+    // Asserted on what makes the message actionable, not its exact wording: the
+    // file to edit and the command that names the variable. The old sentence
+    // ("No API key is configured for this provider") named neither, and covered
+    // two unrelated causes — an env file nothing loaded, and a variable name
+    // corrupted by a BOM — so it could not tell a reader which one they had.
+    expect(blocked).toHaveTextContent('cannot read an API key');
+    expect(blocked).toHaveTextContent('catalog/.env');
+    expect(blocked).toHaveTextContent('npm run env:check');
     expect(blocked).toHaveTextContent('missing_credentials');
     expect(screen.queryByRole('button', { name: /start/i })).not.toBeInTheDocument();
   });

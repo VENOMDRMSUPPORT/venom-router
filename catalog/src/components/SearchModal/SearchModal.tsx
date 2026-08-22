@@ -165,10 +165,14 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
     const matchedModels: SearchResultItem[] = (data?.models ?? [])
       .filter((m) => {
+        // Users search the name the provider's app shows, not the raw id, so
+        // both must match. "ox alpha" finds x-preview-f-free; "x-preview" still
+        // does, because the id stays searchable.
         const idMatch = m.modelId.toLowerCase().includes(q);
+        const nameMatch = m.displayName?.toLowerCase().includes(q) ?? false;
         const canonMatch = m.canonicalId?.toLowerCase().includes(q) ?? false;
         const provMatch = m.providerId.toLowerCase().includes(q);
-        return idMatch || canonMatch || provMatch;
+        return idMatch || nameMatch || canonMatch || provMatch;
       })
       .slice(0, 10)
       .map((m) => {
@@ -176,7 +180,7 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
         return {
           type: 'model',
           id: `model-${m.providerId}-${m.modelId}`,
-          title: m.modelId,
+          title: m.displayName || m.modelId,
           subtitle: m.canonicalId && m.canonicalId !== m.modelId ? `Proven as ${m.canonicalId}` : '',
           path: `/provider/${m.providerId}`,
           providerName: prov?.name ?? m.providerId,

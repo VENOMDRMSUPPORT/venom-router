@@ -36,7 +36,12 @@ const DIMENSION_LABELS: Record<string, string> = {
 const BLOCKED_EXPLANATIONS: Record<string, string> = {
   model_not_found: 'This model is not in the catalog.',
   identity_unresolved: 'No proven model identity, so evidence cannot be attributed to anything.',
-  missing_credentials: 'No API key is configured for this provider.',
+  // Names the fix, not just the symptom. This one sentence covered two unrelated
+  // causes — an env file nothing loaded, and a variable name corrupted by a BOM —
+  // and named neither, so it survived every attempt to fix it looking identical.
+  missing_credentials: 'This process cannot read an API key for this provider. Set it in catalog/.env and '
+    + 'restart the service — `npm run env:check` names the exact variable and says whether the file was '
+    + 'loaded at all.',
 };
 
 const label = (dimension: string) => DIMENSION_LABELS[dimension] ?? dimension;

@@ -306,7 +306,12 @@ export function SettingsPage() {
             <div className={styles.healthGrid}>
               <HealthMetric label="Live models" value={loading ? '…' : String(modelsCount)} />
               <HealthMetric label="Providers" value={loading ? '…' : String(providerCount)} />
-              <HealthMetric label="Needs attention" value={loading ? '…' : String(staleProviders)} tone={staleProviders > 0 ? 'warning' : 'good'} />
+              {/* Named for the one thing it counts. Labelled "Needs attention" it
+                  read 0 while the dashboard reported 40 models carrying an
+                  unresolved source conflict — the per-model tiles live there,
+                  and a second surface implying the catalog is clean contradicted
+                  them. */}
+              <HealthMetric label="Stale providers" value={loading ? '…' : String(staleProviders)} tone={staleProviders > 0 ? 'warning' : 'good'} />
               <HealthMetric label="Last successful sync" value={loading ? '…' : formatSyncTime(lastSuccessfulSync)} compact />
             </div>
             {error && <div className={`${styles.statusMessage} ${styles.error}`}><LuInfo size={16} /> Live catalog data could not be refreshed: {error}</div>}

@@ -19,7 +19,7 @@
  */
 
 import { describe, test, expect, vi, afterEach } from 'vitest';
-import { fetchCatalog, fetchEvaluationPlan, fetchEvaluationState, startEvaluation } from './client';
+import { fetchCatalog, fetchEvaluationPlan, fetchEvaluationState, startEvaluation, fetchHealth } from './client';
 
 /**
  * One model exactly as the pre-M5.1 service shape puts it on the wire.
@@ -613,3 +613,48 @@ describe('the evaluation control client', () => {
     );
   });
 });
+
+describe('fetchHealth', () => {
+  test('returns typed health response from /v1/health', async () => {
+    const mockHealth = {
+      service: {
+        status: 'up',
+        databaseReadable: true,
+        startedAt: '2026-08-22T00:00:00Z',
+        syncInFlight: false,
+        currentRunStartedAt: null,
+        schedulerEnabled: true,
+        nextScheduledRunAt: '2026-08-22T06:00:00Z',
+      },
+      catalog: {
+        status: 'current',
+        liveModels: 116,
+        methodologyVersion: 'overall-score-v1',
+        staleAfterHours: 24,
+        staleProviders: [],
+        providers: [],
+      },
+      lastSync: null,
+    };
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).includes('/v1/health')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => mockHealth,
+          } as unknown as Response;
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    const res = await fetchHealth();
+    expect(res.service.status).toBe('up');
+    expect(res.catalog.status).toBe('current');
+    expect(res.catalog.liveModels).toBe(116);
+  });
+});
+

@@ -9,8 +9,9 @@
 .header {
   display: flex;
   align-items: center;
-  gap: 18px;
-  padding: 22px 24px;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 22px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -18,21 +19,36 @@
   margin-bottom: 14px;
   position: relative;
   overflow: hidden;
+  transition: border-color var(--transition-fast);
+}
+
+.headerMain {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  flex: 1;
 }
 
 .logoBox {
-  width: 56px;
-  height: 56px;
+  width: 52px;
+  height: 52px;
   border-radius: 12px;
   background: var(--background);
   border: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px;
+  padding: 7px;
   flex-shrink: 0;
   box-sizing: border-box;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: transform var(--transition-fast), border-color var(--transition-fast);
+}
+
+.header:hover .logoBox {
+  transform: scale(1.03);
+  border-color: var(--border-strong);
 }
 
 .logo {
@@ -47,87 +63,191 @@
   color: var(--foreground-secondary);
 }
 
-.headerText {
+.headerInfo {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
-  flex: 1;
-}
-
-.titleRow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
 .title {
-  font-size: 22px;
-  font-weight: 650;
-  letter-spacing: -0.025em;
+  font-size: 1.28rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
   color: var(--foreground);
   margin: 0;
   line-height: 1.2;
 }
 
-.heroTag {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  background: var(--background);
-  border: 1px solid var(--border-subtle);
-  font-size: 11px;
-  font-weight: 550;
-  color: var(--foreground-secondary);
-}
-
-.heroTagAccent {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  background: rgba(59, 130, 246, 0.08);
-  border: 1px solid rgba(59, 130, 246, 0.25);
-  font-size: 11px;
-  font-weight: 600;
-  color: #2563eb;
-}
-:global([data-theme="dark"]) .heroTagAccent {
-  color: #60a5fa;
-  border-color: rgba(96, 165, 250, 0.25);
-}
-
-.heroDocsBtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 9px;
-  border-radius: var(--radius-full);
-  background: var(--pill-bg);
-  border: 1px solid var(--border);
-  font-size: 11px;
-  font-weight: 550;
-  color: var(--foreground-secondary);
-  text-decoration: none;
-  transition: all var(--transition-fast);
-  margin-left: auto;
-}
-
-.heroDocsBtn:hover {
-  background: var(--pill-bg-hover);
-  color: var(--foreground);
-  border-color: var(--border-strong);
-}
-
 .subtitle {
-  font-size: 13.5px;
+  font-size: 0.82rem;
   color: var(--foreground-secondary);
   margin: 0;
-  line-height: 1.45;
+  line-height: 1.4;
+  max-width: 480px;
+}
+
+/* Right-aligned Hero Mini-Cards Cluster */
+.heroMiniGrid {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.heroMiniCard {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 11px;
+  border-radius: var(--radius-md);
+  background: var(--background);
+  border: 1px solid var(--border-subtle);
+  transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
+  cursor: default;
+  height: 38px;
+  box-sizing: border-box;
+}
+
+.heroMiniCard:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.06);
+}
+
+.heroMiniContent {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.heroMiniValue {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--foreground);
+  line-height: 1.1;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.heroMiniLabel {
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--foreground-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+
+.heroMiniIconEmerald {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  flex-shrink: 0;
+}
+:global([data-theme="dark"]) .heroMiniIconEmerald {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.16);
+}
+
+.heroMiniIconBlue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
+  flex-shrink: 0;
+}
+:global([data-theme="dark"]) .heroMiniIconBlue {
+  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.16);
+}
+
+.heroMiniCardBlue {
+  background: rgba(59, 130, 246, 0.03);
+  border-color: rgba(59, 130, 246, 0.18);
+}
+:global([data-theme="dark"]) .heroMiniCardBlue {
+  background: rgba(59, 130, 246, 0.06);
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
+.heroDocsCard {
+  text-decoration: none;
+  cursor: pointer;
+  background: rgba(139, 92, 246, 0.03);
+  border-color: rgba(139, 92, 246, 0.18);
+}
+:global([data-theme="dark"]) .heroDocsCard {
+  background: rgba(139, 92, 246, 0.06);
+  border-color: rgba(139, 92, 246, 0.25);
+}
+
+.heroDocsCard:hover {
+  border-color: rgba(139, 92, 246, 0.45);
+  background: rgba(139, 92, 246, 0.08);
+  transform: translateY(-2px);
+  box-shadow: 0 3px 10px rgba(139, 92, 246, 0.15);
+}
+
+.heroMiniIconDocs {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(139, 92, 246, 0.12);
+  color: #7c3aed;
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+:global([data-theme="dark"]) .heroMiniIconDocs {
+  color: #a78bfa;
+  background: rgba(139, 92, 246, 0.16);
+}
+
+.heroDocsCard:hover .heroMiniIconDocs {
+  transform: scale(1.1);
+}
+
+.docsArrow {
+  color: var(--foreground-tertiary);
+  transition: transform var(--transition-fast), color var(--transition-fast);
+}
+
+.heroDocsCard:hover .docsArrow {
+  color: #7c3aed;
+  transform: translate(2px, -2px);
+}
+:global([data-theme="dark"]) .heroDocsCard:hover .docsArrow {
+  color: #a78bfa;
+}
+
+@media (max-width: 900px) {
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 16px;
+  }
+  .heroMiniGrid {
+    justify-content: flex-start;
+    width: 100%;
+  }
 }
 
 .stats {
@@ -345,6 +465,7 @@
    Unified Enterprise Context Hub
    ============================================================ */
 .contextHub {
+  margin-top: 16px;
   margin-bottom: 14px;
   padding: 16px 20px;
   border: 1px solid var(--border);
@@ -923,7 +1044,7 @@
 }
 
 .provenance {
-  margin-top: 28px;
+  margin-top: 14px;
   padding: 20px 22px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);

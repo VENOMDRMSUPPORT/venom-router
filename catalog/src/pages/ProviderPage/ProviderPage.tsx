@@ -36,6 +36,7 @@ import { EvidencePanel } from '../../components/EvidencePanel/EvidencePanel';
 import { EvaluateModal } from '../../components/EvaluateModal/EvaluateModal';
 import { vendorQualifier } from '../../api/presentation';
 import { FactState, factStateOf } from '../../components/FactState/FactState';
+import { modelMatchesFilter } from '../../api/filters';
 import styles from './ProviderPage.module.css';
 
 export function ProviderPage() {
@@ -68,11 +69,9 @@ export function ProviderPage() {
           (m.canonicalId && m.canonicalId.toLowerCase().includes(q))
       );
     }
-    if (filter === 'free') list = list.filter((m) => m.pricing.isFree === true);
-    if (filter === 'paid') list = list.filter((m) => m.pricing.isFree !== true);
-    if (filter === '1m') list = list.filter((m) => (m.contextTokens ?? 0) >= 1000000);
-    if (filter === 'multimodal')
-      list = list.filter((m) => (m.inputModalities ?? []).some((x) => x !== 'text'));
+    if (filter !== 'all') {
+      list = list.filter((m) => modelMatchesFilter(m, filter));
+    }
     return list;
   }, [models, query, filter]);
 
@@ -143,58 +142,74 @@ export function ProviderPage() {
 
   const hasContext = provider.overallScoreScored < provider.liveModels || uniformCostKind === 'included' || Boolean(pres.note);
 
-  const formatSyncDate = (str: string | null | undefined) => {
-    if (!str || str === 'never') return 'never';
-    try {
-      const d = new Date(str);
-      if (isNaN(d.getTime())) return str;
-      const formatted = d.toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
-      return formatted;
-    } catch {
-      return str;
-    }
-  };
-
   return (
     <div className={styles.pageContainer}>
       {/* Enterprise Provider Hero */}
       <header className={styles.header}>
-        <div className={styles.logoBox}>
-          {pres.logo ? (
-            <img src={pres.logo} alt="" className={`${styles.logo} ${pres.invertInDark ? 'logo-invert-dark' : ''}`} />
-          ) : (
-            <span className={styles.fallbackLogo}>{provider.name.charAt(0)}</span>
-          )}
-        </div>
-        <div className={styles.headerText}>
-          <div className={styles.titleRow}>
-            <h1 className={styles.title}>{provider.name}</h1>
-            <FreshnessBadge provider={provider} />
-            <span className={styles.heroTag}>
-              <LuLayers size={12} />
-              <span>{provider.liveModels} Active Models</span>
-            </span>
-            {uniformCostKind === 'included' && (
-              <span className={styles.heroTagAccent}>
-                <LuCreditCard size={12} />
-                <span>Subscription Included</span>
-              </span>
-            )}
-            {pres.docsUrl && (
-              <a
-                href={pres.docsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={styles.heroDocsBtn}
-                title="Open provider official documentation"
-              >
-                <LuBookOpen size={12} />
-                <span>Documentation</span>
-                <LuExternalLink size={11} />
-              </a>
+        <div className={styles.headerMain}>
+          <div className={styles.logoBox}>
+            {pres.logo ? (
+              <img src={pres.logo} alt="" className={`${styles.logo} ${pres.invertInDark ? 'logo-invert-dark' : ''}`} />
+            ) : (
+              <span className={styles.fallbackLogo}>{provider.name.charAt(0)}</span>
             )}
           </div>
-          <p className={styles.subtitle}>{pres.blurb}</p>
+          <div className={styles.headerInfo}>
+            <h1 className={styles.title}>{provider.name}</h1>
+            <p className={styles.subtitle}>{pres.blurb}</p>
+          </div>
+        </div>
+
+        {/* Right-Aligned Metadata & Action Mini-Cards */}
+        <div className={styles.heroMiniGrid}>
+          {/* Sync Freshness Mini-Card */}
+          <FreshnessBadge provider={provider} />
+
+          {/* Active Models Mini-Card */}
+          <div className={styles.heroMiniCard} title={`${provider.liveModels} models currently active in provider roster`}>
+            <span className={styles.heroMiniIconEmerald}>
+              <LuLayers size={13} />
+            </span>
+            <div className={styles.heroMiniContent}>
+              <span className={styles.heroMiniValue}>{provider.liveModels}</span>
+              <span className={styles.heroMiniLabel}>Active Models</span>
+            </div>
+          </div>
+
+          {/* Subscription / Plan Mini-Card */}
+          {uniformCostKind === 'included' && (
+            <div className={`${styles.heroMiniCard} ${styles.heroMiniCardBlue}`} title="Included under provider subscription plan">
+              <span className={styles.heroMiniIconBlue}>
+                <LuCreditCard size={13} />
+              </span>
+              <div className={styles.heroMiniContent}>
+                <span className={styles.heroMiniValue}>Included</span>
+                <span className={styles.heroMiniLabel}>Subscription</span>
+              </div>
+            </div>
+          )}
+
+          {/* Official Documentation Action Card */}
+          {pres.docsUrl && (
+            <a
+              href={pres.docsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`${styles.heroMiniCard} ${styles.heroDocsCard}`}
+              title="Open provider official documentation"
+            >
+              <span className={styles.heroMiniIconDocs}>
+                <LuBookOpen size={13} />
+              </span>
+              <div className={styles.heroMiniContent}>
+                <span className={styles.heroMiniValue}>
+                  Docs
+                  <LuExternalLink size={10} className={styles.docsArrow} />
+                </span>
+                <span className={styles.heroMiniLabel}>Official API</span>
+              </div>
+            </a>
+          )}
         </div>
       </header>
 
@@ -244,6 +259,23 @@ export function ProviderPage() {
           accent={free > 0 ? 'emerald' : 'neutral'}
         />
       </div>
+
+      {/* Unified Toolbar */}
+      <Toolbar
+        query={query}
+        onQueryChange={setQuery}
+        filter={filter}
+        onFilterChange={setFilter}
+        view={view}
+        onViewChange={setView}
+        placeholder={`Search ${provider.name} models by name or ID...`}
+      />
+
+      {view === 'table' ? (
+        <ModelTable costStatedOnce={uniformCostKind !== null} title={`Models (${visibleModels.length})`} models={visibleModels} />
+      ) : (
+        <ModelGrid costStatedOnce={uniformCostKind !== null} title={`Models (${visibleModels.length})`} models={visibleModels} />
+      )}
 
       {/* Unified Enterprise Context Hub */}
       {hasContext && (
@@ -324,23 +356,6 @@ export function ProviderPage() {
             )}
           </div>
         </div>
-      )}
-
-      {/* Unified Toolbar */}
-      <Toolbar
-        query={query}
-        onQueryChange={setQuery}
-        filter={filter}
-        onFilterChange={setFilter}
-        view={view}
-        onViewChange={setView}
-        placeholder={`Search ${provider.name} models by name or ID...`}
-      />
-
-      {view === 'table' ? (
-        <ModelTable costStatedOnce={uniformCostKind !== null} ranked title={`Models (${visibleModels.length})`} models={visibleModels} />
-      ) : (
-        <ModelGrid costStatedOnce={uniformCostKind !== null} ranked title={`Models (${visibleModels.length})`} models={visibleModels} />
       )}
 
       {/* Data Provenance & Compliance Audit */}
@@ -429,42 +444,21 @@ const RANK_SCOPE_NOTE =
   + 'Only models with a complete overall-score-v1 result are placed; an = marks a tie the evidence cannot separate.';
 
 /**
- * What each non-resolved identity state says in the row.
+ * What the row says when the service did not report an identity state.
  *
- * This slot holds a canonical id on every other row — `moonshotai/kimi-k3` —
- * so the question it asks the reader is *which entry in the reference index is
- * this*. It used to answer a different one: `identity review (1 refused)` names
- * the workflow state the row is parked in, which is true, internal, and leaves a
- * reader to guess what was reviewed and what was refused. These say what the
- * row's identity IS, and keep the count — "investigated" and "untouched" must
- * stay tellable apart, which is the whole reason the review state exists.
- *
- * They name the INDEX rather than saying "upstream", because "no upstream match"
- * contradicted the row it sat on: models.dev identifies `cline-pass/glm-5.3`
- * under Z.ai's own storefronts, and that listing is where the same row's 1M
- * context and 128K max output came from. One index has no entry; upstream in
- * general knows the model perfectly well.
- *
- * `unknown` gets its own wording because the other two are findings and it is
- * not one. Printing "no upstream match" for a response that never carried the
- * field asserts that we looked upstream and found nothing — and it would print
- * that beside a canonical id that contradicts it.
+ * `unknown` is the one non-resolved state that still prints inline, because it
+ * is not a finding about the model at all — it says the response carried no
+ * identity field, and nothing else on the row can say that. The two findings
+ * (`identity_review`, `unresolved`) stopped printing inline at the owner's
+ * direction (2026-08-21): the "not in the reference index" wording sat on every
+ * affected row and read as a defect. They remain one click away — the evidence
+ * badge carries the refused-candidate count, and the evidence panel's identity
+ * section shows the state and every refusal with its evidence.
  */
 const IDENTITY_NOTE: Record<
-  Exclude<ApiModel['identityState'], 'resolved'>,
+  'unknown',
   { label: (m: ApiModel) => string; title: (m: ApiModel) => string }
 > = {
-  identity_review: {
-    label: (m) =>
-      `not in the reference index · ${m.rejectedCandidates.length} candidate${m.rejectedCandidates.length === 1 ? '' : 's'} refused`,
-    title: (m) =>
-      `The reference index carries no entry for this model, so there is no canonical id to bind it to and no benchmark figure to attach. ${m.rejectedCandidates.length} candidate(s) were examined and refused on evidence — open the evidence to see which, and why. Other sources may well identify this model; this is a statement about one index.`,
-  },
-  unresolved: {
-    label: () => 'not in the reference index',
-    title: () =>
-      'The reference index carries no entry matching this id, and no candidate has been examined and recorded. Other sources may still identify this model — this is a statement about one index, not about the model.',
-  },
   unknown: {
     label: () => 'identity not reported',
     title: () =>
@@ -550,7 +544,7 @@ function VendorQualifierBadge({ qualifier }: { qualifier: string }) {
   );
 }
 
-function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean; ranked?: boolean }) {
+function ModelTable({ title, models, note, costStatedOnce }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean }) {
   const [openRows, setOpenRows] = useState<Set<string>>(() => new Set());
   const [evaluating, setEvaluating] = useState<ApiModel | null>(null);
   const toggleRow = (k: string) =>
@@ -615,7 +609,15 @@ function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: st
               }>
                 <td className={styles.narrow}><ModelRankCell model={m} /></td>
                 <td>
-                  <span className={styles.modelName}>{m.modelId}</span>
+                  <span className={styles.modelName}>{m.displayName || m.modelId}</span>
+                  {/* The raw id is the API call — keep it one glance away, but
+                      the official name leads because it is what the provider's
+                      own app calls this model. */}
+                  {m.displayName && m.displayName !== m.modelId && (
+                    <span className={styles.canonical} title="The provider's model id, as called in the API">
+                      {m.modelId}
+                    </span>
+                  )}
                   {m.lifecycle === 'deprecated' && (
                     <span
                       className={styles.lifecycleBadge}
@@ -627,20 +629,18 @@ function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: st
                   {vendorQualifier(m.modelId, m.displayName) && (
                     <VendorQualifierBadge qualifier={vendorQualifier(m.modelId, m.displayName)!} />
                   )}
-                  {/* Identity is its own axis. A row parked in review HAS been
-                      investigated; showing nothing would read as un-examined.
-                      Suppressed once an id can be shown instead: the column asks
-                      which model this is, and an id answers it — the review
-                      state and its refused candidates are still one click away
-                      on the evidence badge, which carries their count.
-
-                      Only when the id shown came from the VENDOR. `unknown`
-                      keeps its note precisely because a canonical id IS present
-                      and the state was not reported — the note is what stops the
-                      id from reading as a confirmed identity. */}
-                  {m.identityState !== 'resolved' && !displayIdentity(m)?.fromVendor && (
-                    <span className={styles.identityNote} title={IDENTITY_NOTE[m.identityState].title(m)}>
-                      {IDENTITY_NOTE[m.identityState].label(m)}
+                  {/* Identity findings (identity_review, unresolved) print
+                      nothing inline — owner decision 2026-08-21. Their state
+                      and refused candidates stay one click away on the evidence
+                      badge, which carries the count. Only `unknown` keeps a
+                      note, because it reports a missing field in the response,
+                      not a finding about the model, and nothing else on the row
+                      can say it. Suppressed once an id can be shown instead:
+                      the column asks which model this is, and an id answers
+                      it. */}
+                  {m.identityState === 'unknown' && !displayIdentity(m)?.fromVendor && (
+                    <span className={styles.identityNote} title={IDENTITY_NOTE.unknown.title(m)}>
+                      {IDENTITY_NOTE.unknown.label(m)}
                     </span>
                   )}
                   {(() => {
@@ -692,7 +692,7 @@ function ModelTable({ title, models, note, costStatedOnce, ranked }: { title: st
   );
 }
 
-function ModelGrid({ title, models, note, costStatedOnce, ranked }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean; ranked?: boolean }) {
+function ModelGrid({ title, models, note, costStatedOnce }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean }) {
   const [openCards, setOpenCards] = useState<Set<string>>(() => new Set());
   const [evaluating, setEvaluating] = useState<ApiModel | null>(null);
   const toggleCard = (key: string) => setOpenCards((previous) => {

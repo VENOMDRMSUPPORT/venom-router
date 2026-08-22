@@ -5,8 +5,9 @@ import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import { formatTokens, formatAgo } from '../../api/client';
 import { FreshnessBadge } from '../../components/FreshnessBadge/FreshnessBadge';
-import { Toolbar } from '../../components/Toolbar/Toolbar';
+import { Toolbar, PROVIDER_FILTERS } from '../../components/Toolbar/Toolbar';
 import { FactState } from '../../components/FactState/FactState';
+import { providerMatchesFilter } from '../../api/filters';
 import styles from './DashboardPage.module.css';
 
 export function DashboardPage() {
@@ -45,11 +46,7 @@ export function DashboardPage() {
     return data.providers.filter((p) => {
       const blurb = present(p.id).blurb.toLowerCase();
       if (q && !p.name.toLowerCase().includes(q) && !blurb.includes(q) && !p.id.includes(q)) return false;
-      if (filter === 'free') return data.models.some((m) => m.providerId === p.id && m.pricing.isFree === true);
-      if (filter === 'paid') return data.models.some((m) => m.providerId === p.id && m.pricing.outputPerMTokens !== null && m.pricing.outputPerMTokens > 0);
-      if (filter === '1m') return data.models.some((m) => m.providerId === p.id && (m.contextTokens ?? 0) >= 1_000_000);
-      if (filter === 'multimodal') return data.models.some((m) => m.providerId === p.id && (m.inputModalities?.length ?? 0) > 1);
-      return true;
+      return providerMatchesFilter(p.id, data.models, filter);
     });
   }, [data, query, filter]);
 
@@ -181,11 +178,16 @@ export function DashboardPage() {
         </div>
       )}
 
+      {/* This page lists providers, so it takes the provider filters. The model
+          filters reached it only as a default, which is how "Not Deprecated"
+          arrived with no branch to act on and no effect a reader could see. */}
       <Toolbar
         query={query}
         onQueryChange={setQuery}
         filter={filter}
         onFilterChange={setFilter}
+        options={PROVIDER_FILTERS}
+        placeholder="Search providers by name or ID..."
         view={view}
         onViewChange={handleViewChange}
       />
@@ -231,7 +233,7 @@ export function DashboardPage() {
                   <div className={styles.modelChips}>
                     {topModels.map((m) => (
                       <span key={`${m.providerId}/${m.modelId}`} className={styles.modelChip}>
-                        {m.modelId}
+                        {m.displayName || m.modelId}
                       </span>
                     ))}
                     {mine.length > 3 && (

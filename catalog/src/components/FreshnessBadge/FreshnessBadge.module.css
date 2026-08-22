@@ -1,40 +1,64 @@
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 500;
-  border: 1px solid transparent;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: var(--radius-md);
+  font-size: 0.76rem;
+  font-weight: 600;
+  border: 1px solid var(--border-subtle);
+  background: var(--background);
   white-space: nowrap;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
+  height: 38px;
+  box-sizing: border-box;
+}
+
+.badge:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.06);
 }
 
 .compact {
-  padding: 1px 7px;
+  padding: 2px 7px;
   font-size: 0.68rem;
+  height: 24px;
 }
 
 .ok {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
-  color: var(--accent);
+  background: rgba(16, 185, 129, 0.04);
+  border-color: rgba(16, 185, 129, 0.22);
+  color: #059669;
+}
+:global([data-theme="dark"]) .ok {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(52, 211, 153, 0.28);
+  color: #34d399;
 }
 
 .stale,
 .warn {
-  background: transparent;
-  border-color: color-mix(in srgb, var(--text-muted) 40%, transparent);
-  color: var(--text-secondary);
+  background: rgba(245, 158, 11, 0.04);
+  border-color: rgba(245, 158, 11, 0.22);
+  color: #d97706;
+}
+:global([data-theme="dark"]) .stale,
+:global([data-theme="dark"]) .warn {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(251, 191, 36, 0.28);
+  color: #fbbf24;
 }
 
 .never {
-  background: transparent;
-  border-color: color-mix(in srgb, var(--text-muted) 26%, transparent);
-  color: var(--text-muted);
+  background: var(--background);
+  border-color: var(--border-subtle);
+  color: var(--foreground-tertiary);
 }
 
 .suffix {
-  color: var(--text-muted);
+  color: var(--foreground-tertiary);
   font-size: 0.68rem;
+  font-weight: 500;
 }

@@ -491,8 +491,63 @@ export async function fetchChanges(since?: string): Promise<{ changes: Change[];
   return json(`/changes${q}`);
 }
 
-export async function fetchHealth(): Promise<Record<string, any>> {
-  return json('/health');
+export interface HealthServiceState {
+  status: 'up' | 'degraded';
+  databaseReadable: boolean;
+  startedAt: string | null;
+  syncInFlight: boolean;
+  currentRunStartedAt: string | null;
+  schedulerEnabled: boolean;
+  nextScheduledRunAt: string | null;
+}
+
+export interface HealthCatalogProviderSummary {
+  id: string;
+  liveModels: number;
+  freshness: 'fresh' | 'stale' | 'never';
+  lastSuccessfulSyncAt: string | null;
+  lastAttemptedSyncAt: string | null;
+  lastOutcome: 'ok' | 'failed' | 'quarantined' | null;
+  hoursSinceSuccess: number | null;
+}
+
+export interface HealthStaleProvider {
+  id: string;
+  freshness: string;
+  lastSuccessfulSyncAt: string | null;
+  lastOutcome: string | null;
+}
+
+export interface HealthCatalogState {
+  status: 'current' | 'stale';
+  liveModels: number;
+  methodologyVersion: string | null;
+  staleAfterHours: number;
+  staleProviders: HealthStaleProvider[];
+  providers: HealthCatalogProviderSummary[];
+}
+
+export interface HealthLastSyncProvider {
+  provider: string;
+  outcome: string;
+  error: string | null;
+}
+
+export interface HealthLastSync {
+  startedAt: string;
+  finishedAt: string | null;
+  aborted: string | null;
+  providers: HealthLastSyncProvider[];
+}
+
+export interface HealthResponse {
+  service: HealthServiceState;
+  catalog: HealthCatalogState;
+  lastSync: HealthLastSync | null;
+}
+
+export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
+  return json<HealthResponse>('/health', signal);
 }
 
 // ---------------------------------------------------------------------------

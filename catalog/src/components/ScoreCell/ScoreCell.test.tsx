@@ -215,3 +215,43 @@ describe('what the score cell says, and what it stops repeating', () => {
     expect(screen.queryByText('—')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Two records of the same canonical model scored 85.9% and 74.6%, both labelled
+ * complete at 100% coverage, because a disputed `attachment` fact made vision
+ * applicable to one and not the other. The percentage is computed against the
+ * APPLICABLE dimensions, so a narrower test set certifies itself as 100% — and
+ * 24 rows graded on 7 dimensions sat in one ranking beside 25 graded on 8, with
+ * nothing on screen saying so.
+ */
+describe('a score says how much of the test set produced it', () => {
+  test('an excluded dimension is named, with the count out of the full set', () => {
+    render(<ModelScoreCell model={model()} />);
+
+    const badge = screen.getByTestId('overall-graded-on');
+    expect(badge).toHaveTextContent('7 of 8');
+    expect(badge.getAttribute('title')).toContain('vision');
+  });
+
+  test('a model graded on everything carries no such badge', () => {
+    render(<ModelScoreCell model={model({
+      overallScore: {
+        ...model().overallScore,
+        includedDimensions: ['coding', 'reasoning', 'longContext', 'toolCalling', 'structuredOutput', 'vision', 'speed', 'costEfficiency'],
+        excludedDimensions: [],
+        overallCoverage: { scored: 8, applicable: 8, percent: 100 },
+      },
+    })} />);
+
+    expect(screen.queryByTestId('overall-graded-on')).toBeNull();
+  });
+
+  test('an unscored model shows its state, not a dimension count', () => {
+    render(<ModelScoreCell model={model({
+      overallScore: { ...model().overallScore, value: null, display: '—', status: 'insufficient_evidence' },
+    })} />);
+
+    expect(screen.queryByTestId('overall-graded-on')).toBeNull();
+    expect(screen.getByText('Insufficient evidence')).toBeInTheDocument();
+  });
+});

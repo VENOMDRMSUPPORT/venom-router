@@ -25,6 +25,8 @@ export function ModelScoreCell({ model }: { model: ApiModel }) {
 
   const breakdown = `${score.methodologyVersion ?? 'overall-score-v1'}: quality ${score.qualityScore?.toFixed(1) ?? 'unknown'} × 70% + operations ${score.operationalScore?.toFixed(1) ?? 'unknown'} × 30% = ${score.display}`;
   const complete = score.overallCoverage.scored >= score.overallCoverage.applicable;
+  const excluded = score.excludedDimensions;
+  const totalDimensions = score.includedDimensions.length + excluded.length;
   const numVal = score.value ?? 0;
   const scoreStyle = numVal >= 90 ? styles.scoreHigh : numVal >= 80 ? styles.scoreMid : styles.scoreStandard;
 
@@ -39,6 +41,23 @@ export function ModelScoreCell({ model }: { model: ApiModel }) {
           title={`Scored on ${score.overallCoverage.scored} of ${score.overallCoverage.applicable} applicable dimensions.`}
         >
           {score.overallCoverage.scored} of {score.overallCoverage.applicable} dimensions
+        </span>
+      )}
+      {/* How much of the test set produced this number.
+          `overallCoverage.percent` is measured against the APPLICABLE
+          dimensions, so a model that vision does not apply to reads 100% on a
+          narrower set than its neighbour in the same ranking — and two records
+          of the same canonical model came out 11 points apart, both "complete",
+          purely because a disputed capability made vision applicable to one of
+          them. The score is right; comparing the two without knowing that is
+          not. */}
+      {excluded.length > 0 && (
+        <span
+          className={`${styles.badge} ${styles.scope}`}
+          title={`Graded on ${score.includedDimensions.length} of ${totalDimensions} dimensions. Not graded: ${excluded.join(', ')} — it does not apply to this offering, so it is excluded and the remaining weights are renormalised. A model graded on all ${totalDimensions} took a wider test.`}
+          data-testid="overall-graded-on"
+        >
+          graded on {score.includedDimensions.length} of {totalDimensions}
         </span>
       )}
     </div>
