@@ -17,23 +17,15 @@
  * Writes to the database, so the service must be stopped: it is the single
  * writer, and this is the same guard the evaluation batch uses.
  */
-import { openDb } from '../db/index.ts';
+import { openBatchDb } from './batch-db.ts';
 import { recalculatePublishedOffers } from '../sync/evaluation/recalculate.ts';
 import { regradeFromRetainedResponses } from '../sync/evaluation/regrade.ts';
 import type { QualityDimension } from '../sync/evaluation/score.ts';
-import { assertServiceNotListening } from './service-guard.ts';
 
 const dimension = process.argv.find((a) => a.startsWith('--dimension='))?.split('=')[1] as QualityDimension | undefined;
 const dryRun = process.argv.includes('--dry-run');
 
-try {
-  await assertServiceNotListening();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-}
-
-const db = openDb(process.env.CATALOG_DB);
+const db = await openBatchDb(process.env.CATALOG_DB);
 const now = () => new Date().toISOString();
 
 try {

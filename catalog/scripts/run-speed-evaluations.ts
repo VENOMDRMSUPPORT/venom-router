@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { openDb } from '../db/index.ts';
+import { openBatchDb } from './batch-db.ts';
 import { resolveEvaluationCredential } from '../sync/evaluation/provider-transport.ts';
 import { recalculatePublishedOffers } from '../sync/evaluation/recalculate.ts';
 import { createEvaluationRepository } from '../sync/evaluation/repository.ts';
@@ -14,7 +14,7 @@ const valueOf = (name: string): string | null => {
 const providers = valueOf('providers')?.split(',').filter(Boolean) ?? ['clinepass', 'ollama-cloud'];
 const models = valueOf('models')?.split(',').filter(Boolean) ?? [];
 const force = process.argv.includes('--force');
-const db = openDb(process.env.CATALOG_DB);
+const db = await openBatchDb(process.env.CATALOG_DB);
 const now = () => new Date().toISOString();
 
 try {

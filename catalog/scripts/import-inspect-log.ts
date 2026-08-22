@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { openDb } from '../db/index.ts';
+import { openBatchDb } from './batch-db.ts';
 import { importInspectEvaluation, type InspectEvaluationLog } from '../sync/evaluation/inspect-import.ts';
 import { recalculatePublishedOffers } from '../sync/evaluation/recalculate.ts';
 import type { QualityDimension } from '../sync/evaluation/score.ts';
@@ -16,7 +16,7 @@ const raw = execFileSync('uv', [
   'inspect', 'log', 'dump', artifact,
 ], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
 const log = JSON.parse(raw) as InspectEvaluationLog;
-const db = openDb(process.env.CATALOG_DB);
+const db = await openBatchDb(process.env.CATALOG_DB);
 try {
   const imported = importInspectEvaluation(db, log, {
     providerId, modelId, identityId, dimension: dimension as QualityDimension, artifactRef: artifact,

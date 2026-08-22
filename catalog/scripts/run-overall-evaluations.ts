@@ -1,12 +1,11 @@
 #!/usr/bin/env node
-import { openDb } from '../db/index.ts';
+import { openBatchDb } from './batch-db.ts';
 import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
 import { createEvaluationTransport, resolveEvaluationCredential } from '../sync/evaluation/provider-transport.ts';
 import { recalculatePublishedOffers } from '../sync/evaluation/recalculate.ts';
 import { planEvaluation } from '../sync/evaluation/plan.ts';
 import { persistDimensionEvaluation } from '../sync/evaluation/runner.ts';
 import { QUALITY_DIMENSIONS, type QualityDimension } from '../sync/evaluation/score.ts';
-import { assertServiceNotListening } from './service-guard.ts';
 
 interface OfferRow {
   provider_id: string;
@@ -26,16 +25,7 @@ for (const dimension of dimensionFilter) {
   if (!QUALITY_DIMENSIONS.includes(dimension)) throw new Error(`unknown_dimension:${dimension}`);
 }
 
-// A refusal here is an expected outcome, not a crash: print the reason and
-// leave, rather than burying it under a stack trace.
-try {
-  await assertServiceNotListening();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-}
-
-const db = openDb(process.env.CATALOG_DB);
+const db = await openBatchDb(process.env.CATALOG_DB);
 const fixtures = buildEvaluationFixtures();
 const testSetHash = fixtureDigest(fixtures);
 const now = () => new Date().toISOString();

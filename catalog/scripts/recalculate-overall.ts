@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { openDb } from '../db/index.ts';
+import { openBatchDb } from './batch-db.ts';
 import { recalculatePublishedOffers } from '../sync/evaluation/recalculate.ts';
 
-const db = openDb(process.env.CATALOG_DB);
+const db = await openBatchDb(process.env.CATALOG_DB);
 const removed = db.prepare(`
   DELETE FROM model_identity_scores
   WHERE score IS NULL AND evidence_json='["catalog-operational-facts"]'

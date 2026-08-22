@@ -12,13 +12,15 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '../db/index.ts';
+import { openBatchDb } from '../scripts/batch-db.ts';
 import { createFetchJson } from './http.ts';
 import { ADAPTERS, BILLING } from './providers/index.ts';
 import { loadSpecs } from './sources/models-dev.ts';
 import { loadVendors } from './vendor-registry.ts';
 import { loadQualityBounds } from './quality-bounds.ts';
 import { loadReviewedFacts } from './reviewed-facts.ts';
+import { loadDisplayNames } from './display-names.ts';
+import { loadEvaluationIdentities } from './evaluation/identity.ts';
 import { loadBenchmarks } from './sources/openrouter.ts';
 import { runSyncPipeline } from './pipeline.ts';
 import { writeSnapshot, SNAPSHOT_DIR } from '../server/snapshot.ts';
@@ -39,7 +41,7 @@ function loadIdentityOverlay(): { mappings: Record<string, string>; rejected: Re
 }
 
 export async function main(): Promise<number> {
-  const db = openDb(arg('db'));
+  const db = await openBatchDb(arg('db'));
   const fetchJson = createFetchJson();
   const only = arg('provider');
   const adapters = only ? ADAPTERS.filter((a) => a.id.includes(only)) : ADAPTERS;
@@ -65,7 +67,7 @@ export async function main(): Promise<number> {
   console.log('\nsyncing rosters, enriching, and scoring...');
   const result = await runSyncPipeline({
     db, fetchJson, adapters, specs, benchmarks, billing: BILLING, overlay,
-    rejections: rejected, bounds: loadQualityBounds(), reviewedFacts: loadReviewedFacts(), profile, methodologyVersion, sourceFetchedAt,
+    rejections: rejected, bounds: loadQualityBounds(), reviewedFacts: loadReviewedFacts(), displayNames: loadDisplayNames(), evaluationIdentities: loadEvaluationIdentities(), profile, methodologyVersion, sourceFetchedAt,
     now: () => new Date().toISOString(),
   });
 
