@@ -16,6 +16,7 @@ import { SyncRunner, startScheduler } from './sync-runner.ts';
 import { EvaluationRunner } from './evaluation-runner.ts';
 import { createEvaluationExecutor } from './evaluation-executor.ts';
 import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
+import { evaluationCredentialReport } from '../sync/evaluation/provider-transport.ts';
 import { route } from './app.ts';
 import { writeSnapshot } from './snapshot.ts';
 import type { ScoreProfile } from '../sync/score/venom-score.ts';
@@ -24,6 +25,7 @@ import type { RejectionOverlay } from '../sync/identity-rejections.ts';
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const BIND_HOST = '127.0.0.1';
 export const DEFAULT_PORT = 8791;
+export const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10MB limit to prevent memory exhaustion
 
 export function loadProfiles(): { methodologyVersion: string; profiles: ScoreProfile[] } {
   const raw = JSON.parse(readFileSync(join(HERE, '..', 'overlays', 'score-profiles.json'), 'utf8'));
@@ -64,6 +66,9 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
     methodologyVersion,
     identityOverlay: loadIdentityOverlay(),
     identityRejections: loadIdentityRejections(),
+    // Evaluation identities are deliberately NOT frozen here: like bounds and
+    // reviewed facts, the overlay is re-read from disk on every run, so a
+    // reviewed declaration takes effect on the next sync without a restart.
     onSnapshot: writeSnapshot,
   });
   const scheduler = startScheduler(runner);
@@ -86,7 +91,17 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
       let body: unknown;
       if (req.method === 'POST' || req.method === 'PUT') {
         const chunks: Buffer[] = [];
-        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let totalBytes = 0;
+        for await (const chunk of req) {
+          const buf = chunk as Buffer;
+          totalBytes += buf.length;
+          if (totalBytes > MAX_BODY_BYTES) {
+            res.writeHead(413, { 'content-type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'payload too large' }));
+            return;
+          }
+          chunks.push(buf);
+        }
         const raw = Buffer.concat(chunks).toString('utf8').trim();
         if (raw.length > 0) {
           try {
@@ -100,13 +115,17 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
       }
       result = await route({ db, runner, evaluations, scheduler, startedAt }, url, req.method ?? 'GET', body);
     } catch (err) {
-      result = { status: 500, body: { error: err instanceof Error ? err.message : String(err) } };
+      // The response says nothing: an exception message can carry a path, a
+      // query or an upstream payload, and the caller is not entitled to any of
+      // it. The log says everything, because this service holds no secrets —
+      // the same property that lets its logs go unsanitised. A 500 that leaves
+      // no trace anywhere would be the worse bug.
+      console.error('[http] unhandled request failure:', err);
+      result = { status: 500, body: { error: 'internal server error' } };
     }
     const payload = JSON.stringify(result.body, null, 1);
     res.writeHead(result.status, {
       'content-type': 'application/json; charset=utf-8',
-      // The SPA is served from a different port in development.
-      'access-control-allow-origin': '*',
       ...result.headers,
     });
     res.end(payload);
@@ -123,5 +142,12 @@ if (import.meta.filename === process.argv[1]) {
     console.log(`  GET  /v1/health     GET /v1/providers   GET /v1/models`);
     console.log(`  GET  /v1/changes    POST /v1/sync`);
     console.log(`  scheduler: every ${app.scheduler.intervalMs / 3_600_000}h, next ${app.scheduler.nextRunAt()}`);
+    // Said at startup, not on the first click. What the evaluation path can see
+    // is a property of THIS process's environment, and the only thing that used
+    // to report it was a modal sentence naming no variable.
+    const credentials = evaluationCredentialReport();
+    const readable = credentials.filter((row) => row.state === 'present').length;
+    console.log(`  credentials: ${readable}/${credentials.length} readable`
+      + (readable === credentials.length ? '' : ' — `npm run env:check` names each one'));
   });
 }
