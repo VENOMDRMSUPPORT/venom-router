@@ -16,6 +16,9 @@ playwright-report/
 .env.local
 .env.*.local
 
+# Per-machine agent settings. The shared config next to it is tracked.
+.claude/settings.local.json
+
 # IDE
 .vscode/
 .idea/
