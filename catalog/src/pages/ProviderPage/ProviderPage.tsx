@@ -580,7 +580,7 @@ function ModelTable({ title, models, note, costStatedOnce }: { title: string; mo
             <tr>
               <th className={styles.narrow}>#</th>
               <th>Model</th>
-              <th>Score</th>
+              <th className={styles.centered}>Score</th>
               <th className={styles.num}>Context</th>
               <th className={styles.num}>Max out</th>
               {/* The column states its own semantics, so the cells do not have
@@ -608,7 +608,7 @@ function ModelTable({ title, models, note, costStatedOnce }: { title: string; mo
                 Out{costStatedOnce ? <span className={styles.thNote}> · ref</span> : ''}
               </th>
               <th>Capabilities</th>
-              <th className={styles.narrow}>Evidence</th>
+              <th className={`${styles.narrow} ${styles.centered}`}>Evidence</th>
             </tr>
           </thead>
           <tbody>
@@ -664,7 +664,7 @@ function ModelTable({ title, models, note, costStatedOnce }: { title: string; mo
                     );
                   })()}
                 </td>
-                <td><ModelScoreCell model={m} /></td>
+                <td className={styles.centered}><ModelScoreCell model={m} /></td>
                 <td className={styles.num}>
                   <FactState state={factStateOf(m, 'context', m.contextTokens)}>
                     {formatTokens(m.contextTokens)}
@@ -680,7 +680,7 @@ function ModelTable({ title, models, note, costStatedOnce }: { title: string; mo
                 <td>
                   <CapabilityBadges model={m} showUnknown />
                 </td>
-                <td className={styles.narrow}>
+                <td className={`${styles.narrow} ${styles.centered}`}>
                   <div className={styles.rowActions}>
                     <EvidenceToggle model={m} open={openRows.has(rowKey(m))} onToggle={() => toggleRow(rowKey(m))} />
                     <EvaluateButton model={m} onOpen={() => setEvaluating(m)} />

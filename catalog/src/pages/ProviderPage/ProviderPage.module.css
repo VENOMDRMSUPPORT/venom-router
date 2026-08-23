@@ -882,16 +882,41 @@
   width: 68px;
 }
 
+/*
+   Centred at the owner's request. `tabular-nums` stays: it fixes the digit
+   width, so figures still line up character-for-character inside each cell even
+   though the cells no longer share a right edge. Restoring the column-scanning
+   layout is two words — `center` back to `right`, here and on the header rule.
+*/
 .num {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
-  text-align: right;
+  text-align: center;
   white-space: nowrap;
   color: var(--foreground-secondary);
 }
 
 .table th.num {
-  text-align: right;
+  text-align: center;
+}
+
+/* Columns whose cells hold one thing: a score, a badge. Nothing to align to a
+   decimal point, so they sit under the middle of their own heading. */
+.centered,
+.table th.centered {
+  text-align: center;
+}
+
+/*
+   Both cells wrap their contents in a flex div, and `text-align` does not reach
+   a flex child. The score stacks value over badge in a COLUMN, so its cross axis
+   is horizontal and `align-items` is what moves it; the evidence cell is a ROW of
+   two buttons, whose main axis is horizontal and needs `justify-content`. Setting
+   both is a no-op on the axis that does not apply.
+*/
+.centered > div {
+  align-items: center;
+  justify-content: center;
 }
 
 .modelName {
