@@ -43,11 +43,16 @@ export function ChangesPage() {
   const [view, setView] = useState<'grid' | 'table'>('grid');
 
   useEffect(() => {
-    fetchChanges()
+    const ctrl = new AbortController();
+    fetchChanges(undefined, ctrl.signal)
       .then((r) => {
-        setChanges(r.changes);
+        if (!ctrl.signal.aborted) setChanges(r.changes);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+      // An abort is not a failure. Without this guard, navigating away mid-fetch
+      // wrote "The operation was aborted" into the page's error state, and a
+      // remount then rendered that message over a page that was fine.
+      .catch((e) => { if (!ctrl.signal.aborted) setError(e instanceof Error ? e.message : String(e)); });
+    return () => ctrl.abort();
   }, []);
 
   const filteredChanges = useMemo(() => {

@@ -611,9 +611,9 @@ export async function fetchCatalog(signal?: AbortSignal): Promise<CatalogData> {
   }
 }
 
-export async function fetchChanges(since?: string): Promise<{ changes: Change[]; byClass: Record<string, number>; cursor: string | null }> {
+export async function fetchChanges(since?: string, signal?: AbortSignal): Promise<{ changes: Change[]; byClass: Record<string, number>; cursor: string | null }> {
   const q = since ? `?since=${encodeURIComponent(since)}` : '';
-  return json(`/changes${q}`);
+  return json(`/changes${q}`, signal);
 }
 
 /**

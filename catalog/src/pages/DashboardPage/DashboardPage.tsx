@@ -57,7 +57,11 @@ export function DashboardPage() {
   useEffect(() => {
     const ctrl = new AbortController();
     setChangesLoading(true);
-    fetchChanges()
+    // The signal has to reach the request, not just guard the setState that
+    // follows it: this controller was created and aborted while `fetchChanges`
+    // was the one read in the client that took no signal, so the cleanup could
+    // not actually cancel anything it started.
+    fetchChanges(undefined, ctrl.signal)
       .then((result) => { if (!ctrl.signal.aborted) { setChanges(result.changes); setChangesError(null); } })
       .catch((reason) => { if (!ctrl.signal.aborted) setChangesError(reason instanceof Error ? reason.message : String(reason)); })
       .finally(() => { if (!ctrl.signal.aborted) setChangesLoading(false); });
