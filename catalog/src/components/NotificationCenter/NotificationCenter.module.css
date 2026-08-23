@@ -279,6 +279,14 @@
   color: #c26742;
 }
 
+.refreshError {
+  margin: 0;
+  padding: 8px 14px 12px;
+  color: #c26742;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .actionError {
   margin: 0;
   padding: 8px 14px 12px;

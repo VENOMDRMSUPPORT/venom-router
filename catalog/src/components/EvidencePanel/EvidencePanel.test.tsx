@@ -2,7 +2,7 @@ import { describe, test, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { EvidencePanel } from './EvidencePanel';
 import { factStateOf } from '../FactState/FactState';
-import type { ApiModel, FieldConflict } from '../../api/client';
+import type { ApiModel } from '../../api/client';
 
 /** A complete, resolved, benchmarked row. Each test bends one thing. */
 function model(over: Partial<ApiModel> = {}): ApiModel {
@@ -530,7 +530,7 @@ describe('every evidence state the service can send is explained', () => {
 });
 
 describe('a settled dispute reads as settled', () => {
-  const settled = (over: Partial<FieldConflict> = {}): FieldConflict => ({
+  const settled = (over: Partial<ApiModel['conflicts'][number]> = {}): ApiModel['conflicts'][number] => ({
     field: 'structured',
     sides: [
       { value: false, by: 'qiniu-ai/gpt-oss-20b' },

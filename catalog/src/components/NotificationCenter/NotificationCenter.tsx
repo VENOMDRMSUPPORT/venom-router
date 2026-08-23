@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   LuBell,
@@ -11,6 +11,7 @@ import { fetchAlerts, formatAgo, updateAlertStatus, type AlertRecord } from '../
 import styles from './NotificationCenter.module.css';
 
 const MAX_VISIBLE_NOTIFICATIONS = 5;
+export const ALERT_REFRESH_INTERVAL_MS = 30_000;
 
 interface NotificationCenterProps {
   providerId?: string;
@@ -24,21 +25,38 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
   const [acknowledgingIds, setAcknowledgingIds] = useState<Set<string>>(() => new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const latestAlertRequest = useRef(0);
+
+  const refreshAlerts = useCallback(async (signal?: AbortSignal) => {
+    const requestNumber = ++latestAlertRequest.current;
+    try {
+      const result = await fetchAlerts('open', signal);
+      if (signal?.aborted || requestNumber !== latestAlertRequest.current) return;
+      setAlerts(result.alerts);
+      setError(null);
+    } catch (reason) {
+      if (signal?.aborted || requestNumber !== latestAlertRequest.current) return;
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    fetchAlerts('open', controller.signal)
-      .then((result) => {
-        if (controller.signal.aborted) return;
-        setAlerts(result.alerts);
-        setError(null);
-      })
-      .catch((reason) => {
-        if (controller.signal.aborted) return;
-        setError(reason instanceof Error ? reason.message : String(reason));
-      });
-    return () => controller.abort();
-  }, []);
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') void refreshAlerts(controller.signal);
+    };
+
+    void refreshAlerts(controller.signal);
+    const interval = window.setInterval(refreshIfVisible, ALERT_REFRESH_INTERVAL_MS);
+    document.addEventListener('visibilitychange', refreshIfVisible);
+    window.addEventListener('focus', refreshIfVisible);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', refreshIfVisible);
+      window.removeEventListener('focus', refreshIfVisible);
+    };
+  }, [refreshAlerts]);
 
   useEffect(() => {
     if (!open) return;
@@ -150,7 +168,7 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
               </div>
             )}
 
-            {error && (
+            {error && alerts === null && (
               <div className={`${styles.state} ${styles.errorState}`}>
                 <LuCircleAlert size={16} aria-hidden="true" />
                 Alert ledger unavailable. Open alerts could not be loaded.
@@ -205,6 +223,7 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
             )}
 
             {actionError && <p className={styles.actionError} role="alert">{actionError}</p>}
+            {error && alerts !== null && <p className={styles.refreshError} role="status">Unable to refresh alerts. Showing the latest loaded state.</p>}
           </div>
 
           <Link to="/" className={styles.viewAll} onClick={() => setOpen(false)}>
