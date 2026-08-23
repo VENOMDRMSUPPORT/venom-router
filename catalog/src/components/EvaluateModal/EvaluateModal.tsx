@@ -10,6 +10,19 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  LuSlidersHorizontal,
+  LuPlay,
+  LuSquare,
+  LuRotateCcw,
+  LuInfo,
+  LuCircleAlert,
+  LuCheck,
+  LuClock,
+  LuCoins,
+  LuLayers,
+  LuX,
+} from 'react-icons/lu';
+import {
   fetchEvaluationDetail,
   fetchEvaluationState,
   regradeEvaluation,
@@ -263,131 +276,269 @@ export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: ()
       aria-label={`Evaluate ${model.modelId}`}>
       <div className={styles.dialog} onClick={(event) => event.stopPropagation()}>
         <header className={styles.header}>
-          <div>
-            <h2 className={styles.title}>{model.modelId}</h2>
-            <span className={styles.subtitle}>{model.providerId}</span>
+          <div className={styles.headerLeft}>
+            <div className={styles.iconBox}>
+              <LuSlidersHorizontal size={16} />
+            </div>
+            <div className={styles.headerMeta}>
+              <div className={styles.titleRow}>
+                <h2 className={styles.title}>{model.modelId}</h2>
+                <span className={styles.providerBadge}>{model.providerId}</span>
+              </div>
+              <span className={styles.subtitle}>Model Evaluation & Quality Evidence</span>
+            </div>
           </div>
-          <button type="button" className={styles.close} onClick={onClose} aria-label="Close">ESC</button>
+          <button type="button" className={styles.close} onClick={onClose} aria-label="Close">
+            <kbd className={styles.escKbd}>ESC</kbd>
+            <LuX size={14} />
+          </button>
         </header>
 
-        {error && <p className={styles.error} role="alert">{error}</p>}
+        <div className={styles.body}>
+          {error && (
+            <div className={styles.error} role="alert">
+              <LuCircleAlert size={16} className={styles.errorIcon} />
+              <span>{error}</span>
+            </div>
+          )}
 
-        {!plan && !error && <p className={styles.muted}>Reading what this model still needs…</p>}
+          {!plan && !error && (
+            <div className={styles.loadingState}>
+              <div className={styles.loadingSpinner} />
+              <p className={styles.muted}>Reading what this model still needs…</p>
+            </div>
+          )}
 
-        {plan?.blocked && !mine && (
-          <p className={styles.blocked} data-testid="evaluate-blocked">
-            {BLOCKED_EXPLANATIONS[plan.blocked] ?? plan.blocked}
-            <span className={styles.reasonCode}>{plan.blocked}</span>
-          </p>
-        )}
-
-        {plan && !plan.blocked && !mine && (
-          <div className={styles.preview}>
-            {(plan.dimensions ?? []).length === 0 && plan.speed === 'scored' ? (
-              <p className={styles.muted} data-testid="evaluate-nothing-missing">
-                Every applicable dimension is already scored.
-              </p>
-            ) : (
-              <>
-                <ul className={styles.dimensionList}>
-                  {(plan.dimensions ?? []).map((dimension) => (
-                    <li key={dimension} className={styles.dimensionRow}>
-                      <span>{label(dimension)}</span>
-                      <span className={styles.pending}>missing</span>
-                    </li>
-                  ))}
-                  {plan.speed === 'missing' && (
-                    <li className={styles.dimensionRow}>
-                      <span>{label('speed')}</span>
-                      <span className={styles.pending}>missing</span>
-                    </li>
-                  )}
-                </ul>
-                <p className={styles.cost} data-testid="evaluate-cost">
-                  About <strong>{plan.estimatedRequests ?? 0}</strong> paid requests to {model.providerId}.
-                </p>
-                <button type="button" className={styles.start} onClick={() => void onStart()} disabled={busy}>
-                  {queued ? 'Queued' : 'Start evaluation'}
-                </button>
-              </>
-            )}
-            {(plan.skipped ?? []).length > 0 && (
-              <p className={styles.muted}>
-                Not run: {(plan.skipped ?? []).map((entry) => `${label(entry.dimension)} (${entry.reason.replace('_', ' ')})`).join(', ')}
-              </p>
-            )}
-
-            {/*
-              Shown whatever the plan says, because "already scored" is an answer
-              and this dialog used to treat it as a dead end. The endpoint was
-              already returning every one of these facts; the client kept `.plan`
-              and dropped them.
-            */}
-            {evidence.length > 0 && (
-              <div data-testid="evaluate-evidence">
-                <p className={styles.muted}>What the current scores rest on:</p>
-                <ul className={styles.dimensionList}>
-                  {evidence.map((row) => (
-                    <li key={row.dimension} className={styles.dimensionRow}>
-                      <span>{label(row.dimension)}</span>
-                      <span className={row.score === null ? styles.incomplete : styles.score}>
-                        {row.score === null ? 'unknown' : row.score.toFixed(1)}
-                      </span>
-                      <span className={styles.muted}>{describeEvidence(row)}</span>
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  type="button"
-                  className={styles.start}
-                  onClick={() => void onReread()}
-                  disabled={busy || runnerBusy}
-                  title={runnerBusy ? 'Waits for the running evaluation to finish' : undefined}
-                >
-                  Re-read stored evidence
-                </button>
-                <p className={styles.cost}>
-                  {runnerBusy
-                    // Refusing the click before it is made. The modal already polls
-                    // the runner, so letting it be clicked into a 409 was a dead
-                    // button that looked like a bug rather than a rule.
-                    ? 'Available once the running evaluation finishes — re-reading a dimension mid-measurement '
-                      + 'would publish a number from half a run.'
-                    : 'No paid requests: it re-reads responses this catalog already bought.'}
-                </p>
+          {plan?.blocked && !mine && (
+            <div className={styles.blockedCard} data-testid="evaluate-blocked">
+              <div className={styles.blockedHeader}>
+                <LuCircleAlert size={16} className={styles.blockedIcon} />
+                <span className={styles.blockedTitle}>Evaluation Blocked</span>
+                <span className={styles.reasonCode}>{plan.blocked}</span>
               </div>
-            )}
+              <p className={styles.blockedMessage}>
+                {BLOCKED_EXPLANATIONS[plan.blocked] ?? plan.blocked}
+              </p>
+            </div>
+          )}
 
-            {reread && <p className={styles.done} data-testid="evaluate-reread">{reread}</p>}
-            {finished && <p className={styles.done} data-testid="evaluate-finished">Run finished. The table has been refreshed.</p>}
-          </div>
-        )}
-
-        {mine && (
-          <div className={styles.running} data-testid="evaluate-running">
-            <ul className={styles.dimensionList}>
-              {rows.map((row) => (
-                <li key={row.dimension} className={styles.dimensionRow}>
-                  <span>{label(row.dimension)}</span>
-                  {row.active ? (
-                    <span className={styles.progress} data-testid="evaluate-progress">
-                      {mine.samplesCompleted} / {mine.samplesTotal}
+          {plan && !plan.blocked && !mine && (
+            <div className={styles.preview}>
+              {(plan.dimensions ?? []).length === 0 && plan.speed === 'scored' ? (
+                <div className={styles.allScoredCard} data-testid="evaluate-nothing-missing">
+                  <div className={styles.allScoredIcon}>
+                    <LuCheck size={16} />
+                  </div>
+                  <p className={styles.allScoredText}>
+                    Every applicable dimension is already scored.
+                  </p>
+                </div>
+              ) : (
+                <div className={styles.sectionCard}>
+                  <div className={styles.sectionHeader}>
+                    <div className={styles.sectionTitleRow}>
+                      <LuPlay size={14} className={styles.sectionIcon} />
+                      <h3 className={styles.sectionTitle}>Required Measurements</h3>
+                    </div>
+                    <span className={styles.badgePendingCount}>
+                      {(plan.dimensions ?? []).length + (plan.speed === 'missing' ? 1 : 0)} Missing
                     </span>
-                  ) : row.status === 'pending' ? (
-                    <span className={styles.pending}>waiting</span>
-                  ) : row.score !== null ? (
-                    <span className={styles.score}>{row.score.toFixed(1)}</span>
-                  ) : (
-                    <span className={styles.incomplete}>{row.status.replace('_', ' ')}</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-            <button type="button" className={styles.stop} onClick={() => void onStop()} disabled={busy}>
-              Stop
-            </button>
-          </div>
-        )}
+                  </div>
+
+                  <ul className={styles.dimensionList}>
+                    {(plan.dimensions ?? []).map((dimension) => (
+                      <li key={dimension} className={styles.dimensionRow}>
+                        <span className={styles.dimensionName}>{label(dimension)}</span>
+                        <span className={styles.pendingBadge}>missing</span>
+                      </li>
+                    ))}
+                    {plan.speed === 'missing' && (
+                      <li className={styles.dimensionRow}>
+                        <span className={styles.dimensionName}>{label('speed')}</span>
+                        <span className={styles.pendingBadge}>missing</span>
+                      </li>
+                    )}
+                  </ul>
+
+                  <div className={styles.actionRow}>
+                    <div className={styles.costInfo}>
+                      <LuCoins size={15} className={styles.costIcon} />
+                      <p className={styles.cost} data-testid="evaluate-cost">
+                        About <strong>{plan.estimatedRequests ?? 0}</strong> paid requests to {model.providerId}.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.primaryButton}
+                      onClick={() => void onStart()}
+                      disabled={busy}
+                    >
+                      <LuPlay size={13} />
+                      <span>{queued ? 'Queued' : 'Start evaluation'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {(plan.skipped ?? []).length > 0 && (
+                <div className={styles.skippedContainer}>
+                  <span className={styles.skippedLabel}>Not run:</span>
+                  <div className={styles.tagGroup}>
+                    {(plan.skipped ?? []).map((entry) => (
+                      <span key={entry.dimension} className={styles.skippedTag}>
+                        {`${label(entry.dimension)} (${entry.reason.replace('_', ' ')})`}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/*
+                Shown whatever the plan says, because "already scored" is an answer
+                and this dialog used to treat it as a dead end. The endpoint was
+                already returning every one of these facts; the client kept `.plan`
+                and dropped them.
+              */}
+              {evidence.length > 0 && (
+                <div className={styles.sectionCard} data-testid="evaluate-evidence">
+                  <div className={styles.sectionHeader}>
+                    <div className={styles.sectionTitleRow}>
+                      <LuLayers size={14} className={styles.sectionIcon} />
+                      <h3 className={styles.sectionTitle}>What the current scores rest on:</h3>
+                    </div>
+                    <span className={styles.evidenceCountBadge}>
+                      {evidence.length} Dimensions
+                    </span>
+                  </div>
+
+                  <div className={styles.tableWrapper}>
+                    <table className={styles.evidenceTable}>
+                      <thead>
+                        <tr>
+                          <th className={styles.thDimension}>Dimension</th>
+                          <th className={styles.thScore}>Score</th>
+                          <th className={styles.thSource}>Evidence & Source</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {evidence.map((row) => (
+                          <tr key={row.dimension} className={styles.tableRow}>
+                            <td className={styles.tdDimension}>
+                              <span className={styles.dimensionLabel}>{label(row.dimension)}</span>
+                            </td>
+                            <td className={styles.tdScore}>
+                              <span className={row.score === null ? styles.scoreUnknown : styles.scorePill}>
+                                {row.score === null ? 'unknown' : row.score.toFixed(1)}
+                              </span>
+                            </td>
+                            <td className={styles.tdSource}>
+                              <span className={styles.evidenceDescription}>
+                                {describeEvidence(row)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className={styles.rereadActionWrapper}>
+                    <div className={styles.rereadInfo}>
+                      <LuInfo size={15} className={styles.rereadIcon} />
+                      <p className={styles.cost}>
+                        {runnerBusy
+                          // Refusing the click before it is made. The modal already polls
+                          // the runner, so letting it be clicked into a 409 was a dead
+                          // button that looked like a bug rather than a rule.
+                          ? 'Available once the running evaluation finishes — re-reading a dimension mid-measurement '
+                            + 'would publish a number from half a run.'
+                          : 'No paid requests: it re-reads responses this catalog already bought.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      onClick={() => void onReread()}
+                      disabled={busy || runnerBusy}
+                      title={runnerBusy ? 'Waits for the running evaluation to finish' : undefined}
+                    >
+                      <LuRotateCcw size={13} />
+                      <span>Re-read stored evidence</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {reread && (
+                <div className={styles.statusSuccess} data-testid="evaluate-reread">
+                  <LuCheck size={15} className={styles.statusIcon} />
+                  <span>{reread}</span>
+                </div>
+              )}
+              {finished && (
+                <div className={styles.statusSuccess} data-testid="evaluate-finished">
+                  <LuCheck size={15} className={styles.statusIcon} />
+                  <span>Run finished. The table has been refreshed.</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {mine && (
+            <div className={styles.runningCard} data-testid="evaluate-running">
+              <div className={styles.sectionHeader}>
+                <div className={styles.sectionTitleRow}>
+                  <span className={styles.pulsingDot} />
+                  <h3 className={styles.sectionTitle}>Live Evaluation in Progress</h3>
+                </div>
+                {mine.dimension && (
+                  <span className={styles.activeDimBadge}>Active: {label(mine.dimension)}</span>
+                )}
+              </div>
+
+              <ul className={styles.dimensionList}>
+                {rows.map((row) => (
+                  <li key={row.dimension} className={`${styles.dimensionRow} ${row.active ? styles.rowActive : ''}`}>
+                    <div className={styles.rowLeft}>
+                      {row.active ? (
+                        <span className={styles.liveSpinner} />
+                      ) : row.score !== null ? (
+                        <LuCheck size={14} className={styles.rowDoneIcon} />
+                      ) : (
+                        <LuClock size={14} className={styles.rowWaitIcon} />
+                      )}
+                      <span className={styles.dimensionName}>{label(row.dimension)}</span>
+                    </div>
+
+                    <div className={styles.rowRight}>
+                      {row.active ? (
+                        <span className={styles.progress} data-testid="evaluate-progress">
+                          {mine.samplesCompleted} / {mine.samplesTotal}
+                        </span>
+                      ) : row.status === 'pending' ? (
+                        <span className={styles.pendingBadge}>waiting</span>
+                      ) : row.score !== null ? (
+                        <span className={styles.scorePill}>{row.score.toFixed(1)}</span>
+                      ) : (
+                        <span className={styles.incompleteBadge}>{row.status.replace('_', ' ')}</span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+
+              <div className={styles.stopActionRow}>
+                <span className={styles.runningHint}>
+                  Evaluation runs in background. You can safely stop it.
+                </span>
+                <button type="button" className={styles.stopButton} onClick={() => void onStop()} disabled={busy}>
+                  <LuSquare size={13} />
+                  <span>Stop</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

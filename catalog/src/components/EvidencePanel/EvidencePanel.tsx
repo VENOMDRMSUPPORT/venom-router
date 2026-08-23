@@ -12,16 +12,25 @@
  * server, once, where it is tested.
  */
 
+import React from 'react';
+import {
+  LuShieldCheck,
+  LuLayers,
+  LuActivity,
+  LuCircleAlert,
+  LuExternalLink,
+  LuInfo,
+  LuDatabase,
+  LuTriangleAlert,
+  LuCheck,
+  LuX,
+  LuFingerprint,
+} from 'react-icons/lu';
 import type { ApiModel, FactProvenance, FieldConflict, RejectedCandidate } from '../../api/client';
 import styles from './EvidencePanel.module.css';
 
 /** Plain-English reasons for an unrated VQ. The API sends the machine token. */
 const UNRATED_REASON: Record<string, string> = {
-  // Identity is resolved against the benchmark index itself, so "nothing
-  // matched" and "the index does not carry this model yet" are one event, not
-  // two. The earlier wording said more benchmarks would not help — the opposite
-  // of the truth for a model too new to be indexed, and a reader acting on it
-  // would go looking for a bind that cannot exist.
   identity_unresolved:
     'No upstream index entry matched this id, so there is nothing to attach a score to. Identity is settled against the benchmark index, so a model the index has not listed yet resolves on its own once it appears there.',
   identity_ambiguous:
@@ -35,11 +44,6 @@ const UNRATED_REASON: Record<string, string> = {
 /** What each evidence state means for how much to trust the value. */
 const EVIDENCE_STATE: Record<string, string> = {
   first_party: 'the seller describing its own offer',
-  // The state that most needs its own words, because it answers a different
-  // question from the rest: what the MODEL supports, published by the company
-  // that built it — not what this host serves, which nobody published. Cline's
-  // own extension shows cline-pass/glm-5.3 at 128K, a fallback it applies to any
-  // model missing from OpenRouter; this figure is Z.ai's for the model itself.
   vendor_default:
     'the company that built the model, publishing it from its own storefront — what the model supports, which the host serving it may cap lower',
   pooled_third_party: 'another seller declaring it about the same model',
@@ -56,8 +60,6 @@ const FIELD_LABEL: Record<string, string> = {
   reasoning: 'Reasoning',
   structured: 'Structured output',
   attachment: 'Attachments',
-  // The completeness gate names this one `cost`, the fact table names it
-  // `billingKind`. Both reach this map so neither ever renders as a raw key.
   cost: 'Cost semantics',
   billingKind: 'Billing kind',
   effectivePrice: 'Price here',
@@ -66,15 +68,74 @@ const FIELD_LABEL: Record<string, string> = {
 };
 
 const label = (field: string) => FIELD_LABEL[field] ?? field;
+
+function formatFactValue(field: string, v: unknown): React.ReactNode {
+  if (v === null || v === undefined) {
+    return <span className={styles.valNull}>null</span>;
+  }
+  if (typeof v === 'boolean') {
+    return (
+      <span className={v ? styles.valTrue : styles.valFalse}>
+        {v ? <LuCheck size={11} /> : <LuX size={11} />}
+        <span>{v ? 'true' : 'false'}</span>
+      </span>
+    );
+  }
+  if (Array.isArray(v)) {
+    return (
+      <span className={styles.valArray}>
+        {v.map((item, idx) => (
+          <span key={idx} className={styles.valArrayItem}>{String(item)}</span>
+        ))}
+      </span>
+    );
+  }
+  if (typeof v === 'object') {
+    const obj = v as Record<string, unknown>;
+    if ('inPerM' in obj && 'outPerM' in obj) {
+      const inVal = typeof obj.inPerM === 'number' ? obj.inPerM : Number(obj.inPerM);
+      const outVal = typeof obj.outPerM === 'number' ? obj.outPerM : Number(obj.outPerM);
+      const fmt = (num: number) => {
+        if (num === 0) return '$0.00';
+        if (num < 0.01) return `$${num.toFixed(4)}`;
+        return `$${num.toFixed(2)}`;
+      };
+      return (
+        <span className={styles.valPrice} title={JSON.stringify(obj)}>
+          <span className={styles.valPriceIn}>in: {fmt(inVal)}</span>
+          <span className={styles.valPriceDivider}>/</span>
+          <span className={styles.valPriceOut}>out: {fmt(outVal)}</span>
+        </span>
+      );
+    }
+    return <code className={styles.sideValue}>{JSON.stringify(v)}</code>;
+  }
+  if (typeof v === 'number') {
+    if (field === 'context' || field === 'maxOutput' || field === 'contextTokens' || field === 'maxOutputTokens') {
+      return (
+        <span className={styles.valNumber} title={`${v.toLocaleString()} tokens`}>
+          {v >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : v}{' '}
+          <span className={styles.valSub}>({v.toLocaleString()})</span>
+        </span>
+      );
+    }
+    return <span className={styles.valNumber}>{v.toLocaleString()}</span>;
+  }
+  return <span className={styles.valString}>{String(v)}</span>;
+}
+
 const show = (v: unknown) => (typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v));
 
 export function EvidencePanel({ model }: { model: ApiModel }) {
   const facts = Object.entries(model.provenanceByField);
   return (
     <div className={styles.panel} data-testid="evidence-panel">
-      <ReadinessSection model={model} />
-      <ResolutionSection model={model} />
-      <OverallScoreSection model={model} />
+      <div className={styles.summaryGrid}>
+        <ReadinessSection model={model} />
+        <OverallScoreSection model={model} />
+        <ResolutionSection model={model} />
+      </div>
+
       {model.missingFacts.length > 0 && <MissingSection model={model} />}
       {model.vo.notApplicableDimensions.length > 0 && <NotApplicableSection model={model} />}
       {model.conflicts.length > 0 && <ConflictSection conflicts={model.conflicts} />}
@@ -98,21 +159,36 @@ function ResolutionSection({ model }: { model: ApiModel }) {
     .filter((fact) => fact.sourceUrl)
     .sort((a, b) => b.resolvedAt.localeCompare(a.resolvedAt))[0];
   return (
-    <section className={styles.section} data-testid="resolution-section">
-      <h4 className={styles.heading}>Resolution</h4>
-      <div className={styles.stateRow}>
-        <span className={resolution.state === 'complete' ? styles.ready : styles.notReady}>
-          {RESOLUTION_LABEL[resolution.state]}
-        </span>
-        {resolution.reasons.map((reason) => <span key={reason} className={styles.token}>{reason}</span>)}
+    <section className={styles.summaryCard} data-testid="resolution-section">
+      <div className={styles.cardHeader}>
+        <div className={styles.cardTitleRow}>
+          <LuActivity size={14} className={styles.cardIcon} />
+          <h4 className={styles.cardHeading}>Resolution Pipeline</h4>
+        </div>
+        <div className={styles.stateRow}>
+          <span className={resolution.state === 'complete' ? styles.ready : styles.notReady}>
+            {RESOLUTION_LABEL[resolution.state]}
+          </span>
+          {resolution.reasons.map((reason) => <span key={reason} className={styles.token}>{reason}</span>)}
+        </div>
       </div>
-      <p className={styles.note}>
-        {latestFact?.sourceUrl && <>Last source checked: {latestFact.sourceUrl}. </>}
-        {resolution.firstDetectedAt && <>First detected: {resolution.firstDetectedAt}. </>}
-        {resolution.lastAttemptAt && <>Last attempt: {resolution.lastAttemptAt}. </>}
-        {resolution.nextAttemptAt && <>Next attempt: {resolution.nextAttemptAt}.</>}
-        {resolution.state === 'unknown' && 'This snapshot predates the resolution contract.'}
-      </p>
+      <div className={styles.cardContent}>
+        <p className={styles.note}>
+          {latestFact?.sourceUrl && (
+            <span className={styles.sourceCheck}>
+              Last source checked:{' '}
+              <a href={latestFact.sourceUrl} target="_blank" rel="noreferrer noopener" className={styles.inlineSourceLink}>
+                {latestFact.sourceUrl}
+              </a>
+              .{' '}
+            </span>
+          )}
+          {resolution.firstDetectedAt && <>First detected: {resolution.firstDetectedAt}. </>}
+          {resolution.lastAttemptAt && <>Last attempt: {resolution.lastAttemptAt}. </>}
+          {resolution.nextAttemptAt && <>Next attempt: {resolution.nextAttemptAt}.</>}
+          {resolution.state === 'unknown' && 'This snapshot predates the resolution contract.'}
+        </p>
+      </div>
     </section>
   );
 }
@@ -121,22 +197,38 @@ function ResolutionSection({ model }: { model: ApiModel }) {
 function OverallScoreSection({ model }: { model: ApiModel }) {
   const score = model.overallScore;
   return (
-    <section className={styles.section} data-testid="overall-score-breakdown">
-      <h4 className={styles.heading}>Overall score</h4>
-      <p className={styles.note}>
-        {score.value === null ? (
-          <>No score is published until every applicable dimension has sufficient evidence.</>
-        ) : (
-          <>Quality {score.qualityScore?.toFixed(1)} x 70% + operations {score.operationalScore?.toFixed(1)} x 30% = <strong>{score.display}</strong></>
-        )}
-      </p>
-      <div className={styles.stateRow}>
-        <span className={styles.token}>{score.methodologyVersion}</span>
-        <span className={score.status === 'complete' ? styles.ready : styles.notReady}>{score.status.replace('_', ' ')}</span>
-        <span className={styles.token}>{Math.round(score.overallCoverage.percent)}% coverage</span>
-        {score.reasons.map((reason) => <span key={reason} className={styles.token}>{reason}</span>)}
+    <section className={styles.summaryCard} data-testid="overall-score-breakdown">
+      <div className={styles.cardHeader}>
+        <div className={styles.cardTitleRow}>
+          <LuLayers size={14} className={styles.cardIcon} />
+          <h4 className={styles.cardHeading}>Overall Score</h4>
+        </div>
+        <div className={styles.stateRow}>
+          <span className={score.status === 'complete' ? styles.ready : styles.notReady}>
+            {score.status.replace('_', ' ')}
+          </span>
+          <span className={styles.token}>{Math.round(score.overallCoverage.percent)}% coverage</span>
+        </div>
       </div>
-      {score.computedAt && <p className={styles.note}>Computed: {score.computedAt}.</p>}
+      <div className={styles.cardContent}>
+        <div className={styles.scoreFormulaBox}>
+          <p className={styles.scoreFormula}>
+            {score.value === null ? (
+              <>No score is published until every applicable dimension has sufficient evidence.</>
+            ) : (
+              <>
+                Quality {score.qualityScore?.toFixed(1)} x 70% + operations {score.operationalScore?.toFixed(1)} x 30% ={' '}
+                <strong className={styles.formulaResult}>{score.display}</strong>
+              </>
+            )}
+          </p>
+        </div>
+        <div className={styles.metaPillsRow}>
+          <span className={styles.token}>{score.methodologyVersion}</span>
+          {score.reasons.map((reason) => <span key={reason} className={styles.token}>{reason}</span>)}
+          {score.computedAt && <span className={styles.timestampNote}>Computed: {score.computedAt}.</span>}
+        </div>
+      </div>
     </section>
   );
 }
@@ -150,50 +242,58 @@ function OverallScoreSection({ model }: { model: ApiModel }) {
 function ReadinessSection({ model }: { model: ApiModel }) {
   const unrated = model.vq.value === null;
   return (
-    <section className={styles.section}>
-      <h4 className={styles.heading}>Readiness</h4>
-      <div className={styles.stateRow}>
-        <span className={model.catalogReady ? styles.ready : styles.notReady} data-testid="readiness-state">
-          {model.catalogReady ? 'Operationally complete' : 'Incomplete'}
-        </span>
-        <span className={unrated ? styles.unratedTag : styles.ratedTag} data-testid="quality-state">
-          {unrated ? 'Quality unrated' : `VQ ${model.vq.display}`}
-        </span>
+    <section className={styles.summaryCard}>
+      <div className={styles.cardHeader}>
+        <div className={styles.cardTitleRow}>
+          <LuShieldCheck size={14} className={styles.cardIcon} />
+          <h4 className={styles.cardHeading}>Readiness & Quality</h4>
+        </div>
+        <div className={styles.stateRow}>
+          <span className={model.catalogReady ? styles.ready : styles.notReady} data-testid="readiness-state">
+            {model.catalogReady ? 'Operationally complete' : 'Incomplete'}
+          </span>
+          <span className={unrated ? styles.unratedTag : styles.ratedTag} data-testid="quality-state">
+            {unrated ? 'Quality unrated' : `VQ ${model.vq.display}`}
+          </span>
+        </div>
       </div>
-      {model.catalogReady && unrated && (
-        <p className={styles.note} data-testid="ready-but-unrated">
-          Every operational fact is resolved. The missing quality score is a statement about
-          published benchmarks, not about this model's usability — it stays in the catalog.
-        </p>
-      )}
-      {unrated && model.vq.unratedReason && (
-        <p className={styles.note} data-testid="unrated-reason">
-          <span className={styles.token}>{model.vq.unratedReason}</span>{' '}
-          {UNRATED_REASON[model.vq.unratedReason] ?? ''}
-        </p>
-      )}
-      {/*
-        A bound is the one figure on this page that comes from a person rather
-        than a source, so it is the one that most needs its basis visible. Shown
-        as "VQ ≥ 53" alone it is indistinguishable from a measurement that
-        happens to be written with a sign — which is the whole thing the
-        `bounded` level exists to prevent.
-      */}
-      {model.vq.evidenceLevel === 'bounded' && model.vq.provenance?.source && (
-        <p className={styles.note} data-testid="bound-basis">
-          <span className={styles.token}>bounded</span>{' '}
-          A reviewed relation to a measured model, not a measurement — the true figure may be
-          higher. {model.vq.provenance.source.replace(/^relation:\s*/, '')}
-        </p>
-      )}
+      <div className={styles.cardContent}>
+        {model.catalogReady && unrated && (
+          <p className={styles.note} data-testid="ready-but-unrated">
+            Every operational fact is resolved. The missing quality score is a statement about
+            published benchmarks, not about this model's usability — it stays in the catalog.
+          </p>
+        )}
+        {unrated && model.vq.unratedReason && (
+          <p className={styles.note} data-testid="unrated-reason">
+            <span className={styles.token}>{model.vq.unratedReason}</span>{' '}
+            {UNRATED_REASON[model.vq.unratedReason] ?? ''}
+          </p>
+        )}
+        {model.vq.evidenceLevel === 'bounded' && model.vq.provenance?.source && (
+          <p className={styles.note} data-testid="bound-basis">
+            <span className={styles.token}>bounded</span>{' '}
+            A reviewed relation to a measured model, not a measurement — the true figure may be
+            higher. {model.vq.provenance.source.replace(/^relation:\s*/, '')}
+          </p>
+        )}
+        {!unrated && (
+          <p className={styles.noteMuted}>
+            Benchmark evidence established under methodology {model.vq.provenance?.methodologyVersion ?? 'v1'}.
+          </p>
+        )}
+      </div>
     </section>
   );
 }
 
 function MissingSection({ model }: { model: ApiModel }) {
   return (
-    <section className={styles.section} data-testid="missing-section">
-      <h4 className={styles.heading}>Missing facts</h4>
+    <section className={styles.alertSection} data-testid="missing-section">
+      <div className={styles.sectionTitleRow}>
+        <LuTriangleAlert size={14} className={styles.alertIcon} />
+        <h4 className={styles.heading}>Missing facts</h4>
+      </div>
       <p className={styles.note}>
         No source published these. They are named rather than blank, and the row is served
         rather than hidden — but nothing here is shown as though its value were known.
@@ -219,8 +319,11 @@ function MissingSection({ model }: { model: ApiModel }) {
 
 function NotApplicableSection({ model }: { model: ApiModel }) {
   return (
-    <section className={styles.section} data-testid="notapplicable-section">
-      <h4 className={styles.heading}>Not applicable</h4>
+    <section className={styles.infoSection} data-testid="notapplicable-section">
+      <div className={styles.sectionTitleRow}>
+        <LuInfo size={14} className={styles.infoIcon} />
+        <h4 className={styles.heading}>Not applicable</h4>
+      </div>
       <p className={styles.note}>
         These do not apply to this offering, so they are excluded from the score with the
         remaining weights renormalised. This is an answer, not a gap.
@@ -244,29 +347,34 @@ function NotApplicableSection({ model }: { model: ApiModel }) {
 /** Every side of every disagreement, with who said what. No winner is shown. */
 function ConflictSection({ conflicts }: { conflicts: FieldConflict[] }) {
   return (
-    <section className={styles.section} data-testid="conflict-section">
-      <h4 className={styles.heading}>Source conflicts</h4>
+    <section className={styles.alertSection} data-testid="conflict-section">
+      <div className={styles.sectionTitleRow}>
+        <LuCircleAlert size={14} className={styles.alertIcon} />
+        <h4 className={styles.heading}>Source conflicts</h4>
+      </div>
       <p className={styles.note}>
         Sources contradicted each other, so no value was taken. Both sides are kept: a
         quietly picked winner is indistinguishable from a bug.
       </p>
-      {conflicts.map((c) => (
-        <div key={c.field} className={styles.conflict} data-testid={`conflict-${c.field}`}>
-          <div className={styles.conflictHead}>
-            <span className={styles.fieldName}>{label(c.field)}</span>
-            <span className={styles.statusTag}>{c.status}</span>
-            <span className={styles.reason}>{c.conflictType.replace(/_/g, ' ')}</span>
+      <div className={styles.conflictGrid}>
+        {conflicts.map((c) => (
+          <div key={c.field} className={styles.conflict} data-testid={`conflict-${c.field}`}>
+            <div className={styles.conflictHead}>
+              <span className={styles.fieldName}>{label(c.field)}</span>
+              <span className={styles.statusTag}>{c.status}</span>
+              <span className={styles.reason}>{c.conflictType.replace(/_/g, ' ')}</span>
+            </div>
+            <ul className={styles.sides}>
+              {c.sides.map((s) => (
+                <li key={s.by} className={styles.side}>
+                  <code className={styles.sideValue}>{show(s.value)}</code>
+                  <span className={styles.sideBy}>declared by {s.by}</span>
+                </li>
+              ))}
+            </ul>
           </div>
-          <ul className={styles.sides}>
-            {c.sides.map((s) => (
-              <li key={s.by} className={styles.side}>
-                <code className={styles.sideValue}>{show(s.value)}</code>
-                <span className={styles.sideBy}>declared by {s.by}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
+        ))}
+      </div>
     </section>
   );
 }
@@ -275,7 +383,10 @@ function ConflictSection({ conflicts }: { conflicts: FieldConflict[] }) {
 function IdentitySection({ model }: { model: ApiModel }) {
   return (
     <section className={styles.section} data-testid="identity-section">
-      <h4 className={styles.heading}>Identity</h4>
+      <div className={styles.sectionTitleRow}>
+        <LuFingerprint size={14} className={styles.sectionIcon} />
+        <h4 className={styles.heading}>Identity</h4>
+      </div>
       <div className={styles.stateRow}>
         <span className={styles.identityTag} data-testid="identity-state">
           {model.identityState.replace(/_/g, ' ')}
@@ -286,8 +397,6 @@ function IdentitySection({ model }: { model: ApiModel }) {
           'Candidates were examined and refused. This row is parked pending a human decision — it is not un-investigated.'}
         {model.identityState === 'unresolved' &&
           'No upstream model matched this id, and no candidate has been examined yet.'}
-        {/* Not a finding. The two above are things we established about the
-            model; this one is a thing we do not know about the response. */}
         {model.identityState === 'unknown' &&
           'This catalog service response did not carry an identity state for this row, so there is nothing to report here — unknown, not a finding that nothing matched. Reload once the service is back on the current contract.'}
       </p>
@@ -316,7 +425,8 @@ function RejectedCandidateBlock({ rejection: r }: { rejection: RejectedCandidate
       <div className={styles.meta}>
         {r.sourceUrl && (
           <a className={styles.sourceLink} href={r.sourceUrl} target="_blank" rel="noreferrer noopener">
-            {r.sourceUrl}
+            <span>{r.sourceUrl}</span>
+            <LuExternalLink size={10} />
           </a>
         )}
         <span className={styles.token}>{r.evidenceState}</span>
@@ -332,48 +442,66 @@ function RejectedCandidateBlock({ rejection: r }: { rejection: RejectedCandidate
 function ProvenanceSection({ facts }: { facts: [string, FactProvenance][] }) {
   return (
     <section className={styles.section} data-testid="provenance-section">
-      <h4 className={styles.heading}>Provenance</h4>
+      <div className={styles.provenanceHeader}>
+        <div className={styles.sectionTitleRow}>
+          <LuDatabase size={14} className={styles.sectionIcon} />
+          <h4 className={styles.heading}>Provenance Ledger</h4>
+        </div>
+        <span className={styles.badgeCount}>{facts.length} Resolved Fields</span>
+      </div>
       <p className={styles.note}>
         Every resolved value, and where it was read from. The evidence state is the part the
         source name cannot answer — a seller describing itself and a third party describing
         it both arrive labelled the same.
       </p>
-      <div className={styles.tableScroll}>
+      <div className={styles.tableWrapper}>
         <table className={styles.factTable}>
           <thead>
             <tr>
-              <th>Field</th>
-              <th>Value</th>
-              <th>Source</th>
-              <th>Evidence</th>
-              <th>Resolver</th>
-              <th>Probe</th>
+              <th className={styles.thField}>Field</th>
+              <th className={styles.thValue}>Resolved Value</th>
+              <th className={styles.thSource}>Source</th>
+              <th className={styles.thEvidence}>Evidence State</th>
+              <th className={styles.thResolver}>Resolver</th>
+              <th className={styles.thProbe}>Probe</th>
             </tr>
           </thead>
           <tbody>
             {facts.map(([field, f]) => (
-              <tr key={field} data-testid={`fact-${field}`}>
-                <td className={styles.fieldName}>{label(field)}</td>
-                <td><code className={styles.sideValue}>{show(f.value)}</code></td>
-                <td>
+              <tr key={field} data-testid={`fact-${field}`} className={styles.tableRow}>
+                <td className={styles.tdField}>
+                  <span className={styles.fieldName}>{label(field)}</span>
+                </td>
+                <td className={styles.tdValue}>
+                  {formatFactValue(field, f.value)}
+                </td>
+                <td className={styles.tdSource}>
                   {f.sourceUrl ? (
                     <a className={styles.sourceLink} href={f.sourceUrl} target="_blank" rel="noreferrer noopener">
-                      {f.source}
+                      <span>{f.source}</span>
+                      <LuExternalLink size={10} />
                     </a>
                   ) : (
-                    f.source
+                    <span className={styles.sourcePlain}>{f.source}</span>
                   )}
                   {f.sourceRef && <span className={styles.ref}>{f.sourceRef}</span>}
                 </td>
-                <td>
-                  <span className={styles.token} title={EVIDENCE_STATE[f.evidenceState ?? ''] ?? ''}>
+                <td className={styles.tdEvidence}>
+                  <span
+                    className={`${styles.evidenceBadge} ${styles[`evidence_${f.evidenceState ?? 'default'}`] ?? ''}`}
+                    title={EVIDENCE_STATE[f.evidenceState ?? ''] ?? ''}
+                  >
                     {f.evidenceState ?? '—'}
                   </span>
                 </td>
-                <td className={styles.tokenCell}>{f.resolverVersion ?? '—'}</td>
-                {/* Explicitly "not probed" rather than blank: a probe is an
-                    optional layer, and its absence is a recorded answer. */}
-                <td className={styles.tokenCell}>{f.probeVersion ?? 'not probed'}</td>
+                <td className={styles.tdResolver}>
+                  <span className={styles.tokenCell}>{f.resolverVersion ?? '—'}</span>
+                </td>
+                <td className={styles.tdProbe}>
+                  <span className={f.probeVersion ? styles.tokenCell : styles.tokenCellMuted}>
+                    {f.probeVersion ?? 'not probed'}
+                  </span>
+                </td>
               </tr>
             ))}
           </tbody>
