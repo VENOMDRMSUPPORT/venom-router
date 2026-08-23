@@ -55,7 +55,25 @@ interface SampleRow {
  * dimension needs a real re-run. Naming it separately is the difference between
  * "replay this for free" and "this must be bought again".
  */
-export type UnreplayableReason = 'responses_not_retained' | 'answer_truncated' | 'unreadable_response';
+export type UnreplayableReason =
+  | 'responses_not_retained'
+  | 'answer_truncated'
+  | 'unreadable_response'
+  /**
+   * Nothing supports this number any more: no response was kept, and the most
+   * recent attempt to measure the dimension could not.
+   *
+   * Both halves are required. A score whose responses were simply not retained
+   * is still backed by a run that COMPLETED, and is left alone. This reason is
+   * for the case where the last run failed as well — three identities published
+   * a vision score of 0.3 from an old run, and tonight's re-run answered
+   * `400` on every sample, so the gateway takes no images for them at all.
+   *
+   * Safe against a transient failure by construction: once a re-run completes,
+   * the latest run is `complete` and this stops applying, and the fresh score is
+   * written regardless.
+   */
+  | 'no_evidence_and_run_failed';
 
 export interface RegradeInput {
   db: Db;
@@ -205,5 +223,77 @@ export function regradeFromRetainedResponses(input: RegradeInput): RegradeSummar
     }
   });
 
+  withdrawScoresNothingSupports(input, summary);
   return summary;
+}
+
+/**
+ * Withdraw a published score that no evidence stands behind.
+ *
+ * Separate from the replay above because it is a different question. The replay
+ * asks "would today's grader read the stored responses differently"; this asks
+ * "is there anything stored at all". A dimension with no retained response AND a
+ * failed most-recent run has neither a number that can be corrected nor evidence
+ * to correct it from, so the number goes and the dimension reads unknown.
+ *
+ * Withdrawn rather than deleted, exactly as in the replay: the row keeps its
+ * provenance and says what happened, and `score: null` is what makes
+ * `recalculate` drop the dimension out of coverage instead of aggregating a zero.
+ */
+function withdrawScoresNothingSupports(input: RegradeInput, summary: RegradeSummary): void {
+  const { db, now } = input;
+  const rows = db.prepare(`
+    SELECT s.identity_id, s.dimension, s.score
+    FROM model_identity_scores s
+    WHERE s.status = 'scored'
+      AND s.score IS NOT NULL
+      AND s.methodology_ver = ?
+      ${input.dimension ? 'AND s.dimension = ?' : ''}
+      ${input.identityId ? 'AND s.identity_id = ?' : ''}
+      -- Nothing kept from any run of this dimension.
+      AND NOT EXISTS (
+        SELECT 1 FROM evaluation_runs r
+          JOIN evaluation_samples es ON es.run_id = r.id
+         WHERE r.identity_id = s.identity_id AND r.dimension = s.dimension
+           AND r.run_kind = 'runtime' AND es.response_json IS NOT NULL)
+      -- And the most recent attempt could not measure it.
+      AND (
+        SELECT r.status FROM evaluation_runs r
+         WHERE r.identity_id = s.identity_id AND r.dimension = s.dimension
+           AND r.run_kind = 'runtime'
+         ORDER BY r.id DESC LIMIT 1) = 'insufficient_evidence'
+  `).all(...[OVERALL_SCORE_POLICY.methodologyVersion, input.dimension, input.identityId]
+    .filter((value) => value !== undefined)) as unknown as
+    { identity_id: string; dimension: string; score: number }[];
+
+  const repository = createEvaluationRepository(db);
+  transaction(db, () => {
+    for (const row of rows) {
+      if (!input.dryRun) {
+        repository.saveIdentityDimension({
+          identityId: row.identity_id,
+          dimension: row.dimension,
+          score: null,
+          rawRate: null,
+          uncertainty: null,
+          confidence: null,
+          sampleCount: null,
+          status: 'unknown',
+          rubricVersion: OVERALL_SCORE_POLICY.rubricVersion,
+          testSetHash: fixtureDigest(buildEvaluationFixtures()),
+          evidence: ['withdrawn:no-evidence-and-run-failed'],
+          evaluatedAt: now(),
+          methodologyVersion: OVERALL_SCORE_POLICY.methodologyVersion,
+        });
+      }
+      summary.unreplayable.push({
+        identityId: row.identity_id,
+        dimension: row.dimension,
+        retained: 0,
+        samples: 0,
+        reason: 'no_evidence_and_run_failed',
+        demoted: true,
+      });
+    }
+  });
 }

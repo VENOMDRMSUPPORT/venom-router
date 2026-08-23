@@ -276,6 +276,108 @@ And here is some extra prose that ran` },
   });
 });
 
+describe('withdrawing a score nothing supports', () => {
+  /** A scored dimension with a run of the given status and no retained responses. */
+  function seedUnbacked(db: Db, identityId: string, runStatus: 'complete' | 'insufficient_evidence'): void {
+    db.prepare("INSERT OR IGNORE INTO providers (id,name,roster_url) VALUES ('p','P','https://p.test')").run();
+    db.prepare(`INSERT OR IGNORE INTO models (provider_id,model_id,status,first_seen_at,last_seen_at)
+      VALUES ('p','m','active','2026-08-20','2026-08-20')`).run();
+    const repository = createEvaluationRepository(db);
+    const runId = repository.createRun({
+      providerId: 'p', modelId: 'm', identityId, dimension: 'vision',
+      runKind: 'runtime', status: runStatus, evaluatorVersion: OVERALL_SCORE_POLICY.evaluatorVersion,
+      rubricVersion: OVERALL_SCORE_POLICY.rubricVersion, testSetVersion: OVERALL_SCORE_POLICY.testSetVersion,
+      testSetHash: HASH, methodologyVersion: OVERALL_SCORE_POLICY.methodologyVersion,
+      region: OVERALL_SCORE_POLICY.region, independentRunKey: `k-${identityId}`,
+      errorCode: null, startedAt: now(), finishedAt: now(),
+    });
+    // A sample with no response body: the run happened, nothing was kept.
+    repository.upsertSample({
+      runId, scenarioId: 'vision-01', repetition: 1, outcome: 'failed',
+      weightedSuccesses: 0, weightedCriteria: 5, metrics: null,
+      artifactRef: `fixture:${HASH}#vision-01`, response: undefined,
+      errorCode: 'http_400', recordedAt: now(),
+    });
+    repository.saveIdentityDimension({
+      identityId, dimension: 'vision', score: 0.33, rawRate: 0, uncertainty: 1,
+      confidence: 0.99, sampleCount: 300, status: 'scored',
+      rubricVersion: OVERALL_SCORE_POLICY.rubricVersion, testSetHash: HASH,
+      evidence: [`run:${runId}`], evaluatedAt: now(),
+      methodologyVersion: OVERALL_SCORE_POLICY.methodologyVersion,
+    });
+  }
+
+  const visionScore = (db: Db, identityId: string) => db.prepare(
+    "SELECT score, status, evidence_json FROM model_identity_scores WHERE identity_id=? AND dimension='vision'",
+  ).get(identityId) as unknown as { score: number | null; status: string; evidence_json: string };
+
+  test('a score with no evidence and a failed last run is withdrawn', () => {
+    // Three identities published a vision score of 0.3 from an old run while
+    // tonight's re-run answered 400 on every sample. Nothing stands behind that
+    // number and nothing can correct it.
+    const db = openDb(':memory:');
+    seedUnbacked(db, 'vendor/refused', 'insufficient_evidence');
+
+    const summary = regradeFromRetainedResponses({ db, now });
+
+    const entry = summary.unreplayable.find((r) => r.identityId === 'vendor/refused');
+    assert.equal(entry?.reason, 'no_evidence_and_run_failed');
+    assert.equal(entry?.demoted, true);
+    const after = visionScore(db, 'vendor/refused');
+    assert.equal(after.score, null);
+    assert.equal(after.status, 'unknown');
+    assert.match(after.evidence_json, /withdrawn:no-evidence-and-run-failed/);
+    db.close();
+  });
+
+  test('a score whose run COMPLETED is left alone, retention or not', () => {
+    // The safeguard that keeps this from eating the corpus: not retaining
+    // responses is a gap in what can be re-read, not grounds to withdraw a
+    // measurement that finished.
+    const db = openDb(':memory:');
+    seedUnbacked(db, 'vendor/finished', 'complete');
+
+    regradeFromRetainedResponses({ db, now });
+
+    assert.equal(visionScore(db, 'vendor/finished').score, 0.33);
+    db.close();
+  });
+
+  test('a dry run reports the withdrawal without making it', () => {
+    const db = openDb(':memory:');
+    seedUnbacked(db, 'vendor/refused', 'insufficient_evidence');
+
+    const summary = regradeFromRetainedResponses({ db, now, dryRun: true });
+
+    assert.equal(summary.unreplayable.find((r) => r.identityId === 'vendor/refused')?.demoted, true);
+    assert.equal(visionScore(db, 'vendor/refused').score, 0.33);
+    db.close();
+  });
+
+  test('withdrawing twice reports once, because the second time there is nothing to take', () => {
+    const db = openDb(':memory:');
+    seedUnbacked(db, 'vendor/refused', 'insufficient_evidence');
+
+    regradeFromRetainedResponses({ db, now });
+    const second = regradeFromRetainedResponses({ db, now });
+
+    assert.equal(second.unreplayable.filter((r) => r.reason === 'no_evidence_and_run_failed').length, 0);
+    db.close();
+  });
+
+  test('another identity is untouched when the scope names one', () => {
+    const db = openDb(':memory:');
+    seedUnbacked(db, 'vendor/refused', 'insufficient_evidence');
+    seedUnbacked(db, 'vendor/other', 'insufficient_evidence');
+
+    regradeFromRetainedResponses({ db, now, identityId: 'vendor/refused' });
+
+    assert.equal(visionScore(db, 'vendor/refused').score, null);
+    assert.equal(visionScore(db, 'vendor/other').score, 0.33, 'a scoped re-read must not reach past its scope');
+    db.close();
+  });
+});
+
 describe('previewing a re-score', () => {
   test('a dry run reports the outcome and writes nothing', () => {
     const db = openDb(':memory:');
