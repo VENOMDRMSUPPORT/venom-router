@@ -90,9 +90,13 @@ describe('the monitoring panel interaction experience', () => {
     renderDashboard();
 
     expect(screen.getByText('Catalog API is unreachable')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /hide details/i }));
+    const monitoringHide = screen.getAllByRole('button', { name: /hide details/i }).find((button) => button.getAttribute('aria-controls') === 'monitoring-signals');
+    expect(monitoringHide).toBeDefined();
+    fireEvent.click(monitoringHide!);
     expect(screen.queryByText('Catalog API is unreachable')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /show details/i }));
+    const monitoringShow = screen.getAllByRole('button', { name: /show details/i }).find((button) => button.getAttribute('aria-controls') === 'monitoring-signals');
+    expect(monitoringShow).toBeDefined();
+    fireEvent.click(monitoringShow!);
     expect(screen.getByText('Catalog API is unreachable')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(catalogMock.current.reload).toHaveBeenCalled();

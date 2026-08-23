@@ -623,6 +623,94 @@
 
 .emptyHint { margin-top: 8px; font-size: 0.82rem; color: var(--foreground-tertiary); }
 
+.historyPanel {
+  margin: 0 0 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.historyHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px 10px;
+}
+
+.historyTitleGroup,
+.historyHeaderActions,
+.historyLink {
+  display: inline-flex;
+  align-items: center;
+}
+
+.historyTitleGroup { gap: 10px; min-width: 0; }
+.historyHeaderActions { gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.historyIcon { display: inline-flex; color: var(--foreground-secondary); }
+.historyTitle { margin: 2px 0 0; color: var(--foreground); font-size: 0.95rem; font-weight: 680; }
+.historyLink { gap: 5px; color: var(--foreground-secondary); font-size: 0.74rem; font-weight: 650; text-decoration: none; }
+.historyLink:hover { color: var(--foreground); }
+
+.releaseMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 0 16px 13px;
+}
+
+.releaseBadge {
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--background);
+  color: var(--foreground-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.releaseBadge strong { margin-right: 4px; color: var(--foreground-tertiary); font-family: var(--font-sans); font-weight: 650; }
+.releaseOrigin { margin-left: auto; color: var(--foreground-tertiary); font-size: 0.7rem; }
+
+.historyContent { border-top: 1px solid var(--border-subtle); }
+.historyToolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; }
+.historySummary { color: var(--foreground-tertiary); font-size: 0.73rem; font-variant-numeric: tabular-nums; }
+.historyFilters { display: flex; gap: 5px; flex-wrap: wrap; }
+.historyFilter { min-height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--foreground-tertiary); font-size: 0.7rem; }
+.historyFilter:hover { background: var(--background); color: var(--foreground-secondary); }
+.historyFilterActive { border-color: var(--border); background: var(--background); color: var(--foreground); font-weight: 650; }
+
+.historyList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0 12px 12px; list-style: none; }
+.historyItem { display: flex; gap: 9px; min-width: 0; padding: 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius); background: var(--background); }
+.historyMarker { width: 7px; height: 7px; margin-top: 5px; flex: 0 0 auto; border-radius: 50%; background: var(--foreground-secondary); box-shadow: 0 0 0 3px var(--accent-subtle); }
+.historyItemBody { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.historyItemTopline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.historyTag { color: var(--foreground-secondary); font-size: 0.64rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.historyItemTopline time { color: var(--foreground-tertiary); font-size: 0.67rem; white-space: nowrap; }
+.historyItemBody strong { overflow: hidden; color: var(--foreground); font-family: var(--font-mono); font-size: 0.76rem; text-overflow: ellipsis; white-space: nowrap; }
+.historyProvider { overflow: hidden; color: var(--foreground-tertiary); font-size: 0.7rem; text-overflow: ellipsis; white-space: nowrap; }
+.historyDelta { margin-top: 3px; color: var(--foreground-secondary); font-family: var(--font-mono); font-size: 0.68rem; overflow-wrap: anywhere; }
+.historyNote { margin-top: 3px; color: var(--foreground-tertiary); font-size: 0.68rem; line-height: 1.35; }
+.historyLoading,
+.historyEmpty,
+.historyError { padding: 15px 12px; color: var(--foreground-tertiary); font-size: 0.75rem; }
+.historyError { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--foreground-secondary); }
+
+@media (max-width: 760px) {
+  .historyHeader { align-items: flex-start; flex-direction: column; }
+  .historyHeaderActions { width: 100%; justify-content: space-between; }
+  .releaseOrigin { margin-left: 0; }
+  .historyToolbar { align-items: flex-start; flex-direction: column; }
+  .historyList { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .historyItem { transition: none; }
+}
+
 .monitoringPanel {
   margin: 0 0 18px;
   border: 1px solid var(--border);

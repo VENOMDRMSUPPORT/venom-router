@@ -3,7 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { LuArrowUpRight, LuArrowRight, LuArrowDownUp, LuCircleAlert, LuActivity, LuCircleCheck, LuCpu, LuInfo, LuRefreshCw, LuSearchX, LuTriangleAlert, LuChevronDown, LuChevronUp } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
-import { formatTokens, formatAgo } from '../../api/client';
+import { fetchChanges, formatTokens, formatAgo, type CatalogData, type Change } from '../../api/client';
+import { CATALOG_API_CONTRACT_VERSION } from '../../../config/api-contract';
 import { FreshnessBadge } from '../../components/FreshnessBadge/FreshnessBadge';
 import { Toolbar, PROVIDER_FILTERS } from '../../components/Toolbar/Toolbar';
 import { FactState } from '../../components/FactState/FactState';
@@ -32,8 +33,29 @@ export function DashboardPage() {
   const [sortKey, setSortKey] = useState<ProviderSortKey>('score');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [monitoringOpen, setMonitoringOpen] = useState(true);
+  const [changes, setChanges] = useState<Change[] | null>(null);
+  const [changesError, setChangesError] = useState<string | null>(null);
+  const [changesLoading, setChangesLoading] = useState(true);
+  const [changesOpen, setChangesOpen] = useState(true);
+  const [changeFilter, setChangeFilter] = useState<'all' | 'availability' | 'metadata' | 'score'>('all');
+  const [changesNonce, setChangesNonce] = useState(0);
 
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    setChangesLoading(true);
+    fetchChanges()
+      .then((result) => { if (!ctrl.signal.aborted) { setChanges(result.changes); setChangesError(null); } })
+      .catch((reason) => { if (!ctrl.signal.aborted) setChangesError(reason instanceof Error ? reason.message : String(reason)); })
+      .finally(() => { if (!ctrl.signal.aborted) setChangesLoading(false); });
+    return () => ctrl.abort();
+  }, [changesNonce]);
+
+  const handleMonitoringRetry = () => {
+    reload();
+    setChangesNonce((value) => value + 1);
+  };
 
   // Dynamic responsive view switcher: automatically adapt view based on window size
   useEffect(() => {
@@ -57,6 +79,16 @@ export function DashboardPage() {
   };
 
   const monitoringSignals = useMemo(() => buildMonitoringSignals({ data, health, healthError, healthLoading }), [data, health, healthError, healthLoading]);
+  const recentChanges = useMemo(() => {
+    if (!changes) return [];
+    const matchesFilter = (change: Change) => {
+      if (changeFilter === 'all') return true;
+      if (changeFilter === 'availability') return ['added', 'readded', 'retired', 'became_missing'].includes(change.class);
+      if (changeFilter === 'metadata') return ['price_changed', 'context_changed', 'capability_changed'].includes(change.class);
+      return change.class.startsWith('quality_');
+    };
+    return changes.filter(matchesFilter).slice(0, 6);
+  }, [changes, changeFilter]);
 
   const providers = useMemo(() => {
     if (!data) return [];
@@ -258,7 +290,20 @@ export function DashboardPage() {
         loading={Boolean(healthLoading && !health)}
         open={monitoringOpen}
         onToggle={() => setMonitoringOpen((value) => !value)}
-        onRetry={reload}
+        onRetry={handleMonitoringRetry}
+      />
+
+      <VersionHistoryPanel
+        data={data}
+        changes={recentChanges}
+        totalChanges={changes?.length ?? 0}
+        loading={changesLoading}
+        error={changesError}
+        open={changesOpen}
+        filter={changeFilter}
+        onFilterChange={setChangeFilter}
+        onToggle={() => setChangesOpen((value) => !value)}
+        onRetry={handleMonitoringRetry}
       />
 
       {/* This page lists PROVIDERS, so it takes the provider filters. The model
@@ -554,6 +599,117 @@ export function DashboardPage() {
         <Link to="/changes" className={styles.footerLink}>What's new</Link>
       </footer>
     </div>
+  );
+}
+
+const CHANGE_LABELS: Record<string, string> = {
+  added: 'Added', readded: 'Back', retired: 'Retired', became_missing: 'Missing',
+  price_changed: 'Price', context_changed: 'Context', capability_changed: 'Capability',
+  quality_became_available: 'Now scored', quality_evidence_upgraded: 'Better evidence',
+  quality_changed: 'Score moved', quality_lost: 'Score withdrawn',
+};
+
+function VersionHistoryPanel({
+  data,
+  changes,
+  totalChanges,
+  loading,
+  error,
+  open,
+  filter,
+  onFilterChange,
+  onToggle,
+  onRetry,
+}: {
+  data: CatalogData;
+  changes: Change[];
+  totalChanges: number;
+  loading: boolean;
+  error: string | null;
+  open: boolean;
+  filter: 'all' | 'availability' | 'metadata' | 'score';
+  onFilterChange: (filter: 'all' | 'availability' | 'metadata' | 'score') => void;
+  onToggle: () => void;
+  onRetry: () => void;
+}) {
+  const filterOptions: { value: typeof filter; label: string }[] = [
+    { value: 'all', label: 'All changes' },
+    { value: 'availability', label: 'Availability' },
+    { value: 'metadata', label: 'Metadata' },
+    { value: 'score', label: 'Scoring' },
+  ];
+
+  return (
+    <section className={styles.historyPanel} aria-labelledby="version-history-title">
+      <div className={styles.historyHeader}>
+        <div className={styles.historyTitleGroup}>
+          <span className={styles.historyIcon} aria-hidden="true"><LuRefreshCw size={15} /></span>
+          <div>
+            <span className={styles.monitoringEyebrow}>Version control</span>
+            <h2 id="version-history-title" className={styles.historyTitle}>Catalog release & change history</h2>
+          </div>
+        </div>
+        <div className={styles.historyHeaderActions}>
+          <Link to="/changes" className={styles.historyLink}>Open full history <LuArrowUpRight size={13} aria-hidden="true" /></Link>
+          <button type="button" className={styles.monitoringToggle} onClick={onToggle} aria-expanded={open} aria-controls="version-history-content">
+            {open ? 'Hide details' : 'Show details'}
+            {open ? <LuChevronUp size={14} aria-hidden="true" /> : <LuChevronDown size={14} aria-hidden="true" />}
+          </button>
+        </div>
+      </div>
+
+      <div className={styles.releaseMeta} aria-label="Current Catalog versions">
+        <span className={styles.releaseBadge}><strong>Catalog</strong> {data.meta.methodologyVersion}</span>
+        <span className={styles.releaseBadge}><strong>Scoring</strong> {data.meta.scoringPolicy.methodologyVersion ?? 'not reported'}</span>
+        <span className={styles.releaseBadge}><strong>API</strong> {CATALOG_API_CONTRACT_VERSION}</span>
+        <span className={styles.releaseOrigin}>{data.origin === 'live' ? 'Live source' : 'Offline snapshot'}</span>
+      </div>
+
+      {open && (
+        <div id="version-history-content" className={styles.historyContent}>
+          <div className={styles.historyToolbar}>
+            <span className={styles.historySummary} role="status" aria-live="polite">
+              {loading ? 'Loading change history…' : `${totalChanges} recorded change${totalChanges === 1 ? '' : 's'}`}
+            </span>
+            <div className={styles.historyFilters} role="group" aria-label="Change history filters">
+              {filterOptions.map((option) => (
+                <button key={option.value} type="button" className={`${styles.historyFilter} ${filter === option.value ? styles.historyFilterActive : ''}`} aria-pressed={filter === option.value} onClick={() => onFilterChange(option.value)}>
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {loading && <div className={styles.historyLoading} aria-busy="true">Reading the Catalog change log…</div>}
+          {error && !loading && (
+            <div className={styles.historyError} role="alert">
+              <span>Change history is unavailable right now.</span>
+              <button type="button" className={styles.monitoringAction} onClick={onRetry}>Retry</button>
+            </div>
+          )}
+          {!loading && !error && changes.length === 0 && <div className={styles.historyEmpty}>No changes recorded for this category.</div>}
+          {!loading && !error && changes.length > 0 && (
+            <ol className={styles.historyList}>
+              {changes.map((change, index) => (
+                <li key={`${change.providerId}/${change.modelId}/${change.class}/${change.observedAt}/${index}`} className={styles.historyItem}>
+                  <span className={styles.historyMarker} aria-hidden="true" />
+                  <div className={styles.historyItemBody}>
+                    <div className={styles.historyItemTopline}>
+                      <span className={styles.historyTag}>{CHANGE_LABELS[change.class] ?? change.class}</span>
+                      <time dateTime={change.observedAt}>{formatAgo(change.observedAt)}</time>
+                    </div>
+                    <strong>{change.modelId}</strong>
+                    <span className={styles.historyProvider}>{change.providerId}</span>
+                    {change.from !== null && change.to !== null && <span className={styles.historyDelta}>{change.from} → {change.to}{change.field ? ` · ${change.field}` : ''}</span>}
+                    {change.note && change.from === null && <span className={styles.historyNote}>{change.note}</span>}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
