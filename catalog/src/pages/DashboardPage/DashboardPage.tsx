@@ -15,6 +15,7 @@ import styles from './DashboardPage.module.css';
 
 type ProviderSortKey = 'name' | 'models' | 'context' | 'score' | 'freshness';
 type SortDirection = 'asc' | 'desc';
+type ChangeWindow = '24h' | '7d' | '30d' | 'all';
 
 const SORT_OPTIONS: { value: ProviderSortKey; label: string }[] = [
   { value: 'score', label: 'Overall score coverage' },
@@ -38,6 +39,7 @@ export function DashboardPage() {
   const [changesLoading, setChangesLoading] = useState(true);
   const [changesOpen, setChangesOpen] = useState(true);
   const [changeFilter, setChangeFilter] = useState<'all' | 'availability' | 'metadata' | 'score'>('all');
+  const [changeWindow, setChangeWindow] = useState<ChangeWindow>('7d');
   const [changesNonce, setChangesNonce] = useState(0);
 
   const navigate = useNavigate();
@@ -87,8 +89,13 @@ export function DashboardPage() {
       if (changeFilter === 'metadata') return ['price_changed', 'context_changed', 'capability_changed'].includes(change.class);
       return change.class.startsWith('quality_');
     };
-    return changes.filter(matchesFilter).slice(0, 6);
-  }, [changes, changeFilter]);
+    const windowMs: Record<ChangeWindow, number> = { '24h': 24 * 60 * 60 * 1000, '7d': 7 * 24 * 60 * 60 * 1000, '30d': 30 * 24 * 60 * 60 * 1000, all: Number.POSITIVE_INFINITY };
+    const cutoff = Date.now() - windowMs[changeWindow];
+    return changes
+      .filter((change) => matchesFilter(change) && new Date(change.observedAt).getTime() >= cutoff)
+      .sort((a, b) => new Date(b.observedAt).getTime() - new Date(a.observedAt).getTime())
+      .slice(0, 6);
+  }, [changes, changeFilter, changeWindow]);
 
   const providers = useMemo(() => {
     if (!data) return [];
@@ -302,6 +309,8 @@ export function DashboardPage() {
         open={changesOpen}
         filter={changeFilter}
         onFilterChange={setChangeFilter}
+        changeWindow={changeWindow}
+        onChangeWindow={setChangeWindow}
         onToggle={() => setChangesOpen((value) => !value)}
         onRetry={handleMonitoringRetry}
       />
@@ -618,6 +627,8 @@ function VersionHistoryPanel({
   open,
   filter,
   onFilterChange,
+  changeWindow,
+  onChangeWindow,
   onToggle,
   onRetry,
 }: {
@@ -629,6 +640,8 @@ function VersionHistoryPanel({
   open: boolean;
   filter: 'all' | 'availability' | 'metadata' | 'score';
   onFilterChange: (filter: 'all' | 'availability' | 'metadata' | 'score') => void;
+  changeWindow: ChangeWindow;
+  onChangeWindow: (window: ChangeWindow) => void;
   onToggle: () => void;
   onRetry: () => void;
 }) {
@@ -669,14 +682,23 @@ function VersionHistoryPanel({
         <div id="version-history-content" className={styles.historyContent}>
           <div className={styles.historyToolbar}>
             <span className={styles.historySummary} role="status" aria-live="polite">
-              {loading ? 'Loading change history…' : `${totalChanges} recorded change${totalChanges === 1 ? '' : 's'}`}
+              {loading ? 'Loading change history…' : `${totalChanges} recorded change${totalChanges === 1 ? '' : 's'} · showing ${changeWindow === 'all' ? 'all time' : `last ${changeWindow}`}`}
             </span>
-            <div className={styles.historyFilters} role="group" aria-label="Change history filters">
+            <div className={styles.historyToolbarControls}>
+              <label className={styles.historyWindowLabel} htmlFor="change-window">Window</label>
+              <select id="change-window" className={styles.historyWindow} value={changeWindow} onChange={(event) => onChangeWindow(event.target.value as ChangeWindow)}>
+                <option value="24h">Last 24 hours</option>
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+                <option value="all">All time</option>
+              </select>
+              <div className={styles.historyFilters} role="group" aria-label="Change history filters">
               {filterOptions.map((option) => (
                 <button key={option.value} type="button" className={`${styles.historyFilter} ${filter === option.value ? styles.historyFilterActive : ''}`} aria-pressed={filter === option.value} onClick={() => onFilterChange(option.value)}>
                   {option.label}
                 </button>
               ))}
+              </div>
             </div>
           </div>
 
@@ -698,8 +720,8 @@ function VersionHistoryPanel({
                       <span className={styles.historyTag}>{CHANGE_LABELS[change.class] ?? change.class}</span>
                       <time dateTime={change.observedAt}>{formatAgo(change.observedAt)}</time>
                     </div>
-                    <strong>{change.modelId}</strong>
-                    <span className={styles.historyProvider}>{change.providerId}</span>
+                    <Link to={`/provider/${encodeURIComponent(change.providerId)}`} className={styles.historyProviderLink}>{change.providerId}</Link>
+                    <Link to={`/provider/${encodeURIComponent(change.providerId)}?model=${encodeURIComponent(change.modelId)}`} className={styles.historyModelLink}>{change.modelId}</Link>
                     {change.from !== null && change.to !== null && <span className={styles.historyDelta}>{change.from} → {change.to}{change.field ? ` · ${change.field}` : ''}</span>}
                     {change.note && change.from === null && <span className={styles.historyNote}>{change.note}</span>}
                   </div>

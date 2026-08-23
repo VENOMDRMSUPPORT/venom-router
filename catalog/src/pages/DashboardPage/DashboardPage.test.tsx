@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { DashboardPage } from './DashboardPage';
 import type { CatalogData, HealthResponse } from '../../api/client';
@@ -116,6 +116,33 @@ describe('the monitoring panel interaction experience', () => {
   });
 });
 
+describe('the change-history time window and deep links', () => {
+  test('shows recent events by default and reveals older events in all-time view', async () => {
+    const recent = new Date().toISOString();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ changes: [
+        { class: 'added', providerId: 'openrouter', modelId: 'gpt-5', field: null, from: null, to: null, note: null, observedAt: recent },
+        { class: 'retired', providerId: 'openrouter', modelId: 'old-model', field: null, from: null, to: null, note: null, observedAt: '2020-01-01T00:00:00.000Z' },
+      ] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      catalogMock.current = { data: baseData({ meta: meta({ needsVerification: 0 }) }), error: null, loading: false, health: null, healthError: null, healthLoading: false, reload: vi.fn() };
+      renderDashboard();
+
+      await waitFor(() => expect(screen.getByRole('link', { name: 'gpt-5' })).toBeInTheDocument());
+      expect(screen.queryByRole('link', { name: 'old-model' })).not.toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'gpt-5' })).toHaveAttribute('href', '/provider/openrouter?model=gpt-5');
+
+      fireEvent.change(screen.getByLabelText('Window'), { target: { value: 'all' } });
+      expect(await screen.findByRole('link', { name: 'old-model' })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe('the Dashboard status and empty-state experience', () => {
   test('shows operational catalog status and offers a clear action after a search', () => {
     catalogMock.current = { data: baseData(), error: null, loading: false };
@@ -183,7 +210,7 @@ describe('the dashboard offers the filters it can actually apply', () => {
     renderDashboard();
 
     fireEvent.click(screen.getByRole('button', { name: /all providers/i }));
-    const offered = screen.getAllByRole('option').map((option) => option.textContent);
+    const offered = within(screen.getByRole('listbox')).getAllByRole('option').map((option) => option.textContent);
 
     expect(offered.slice(0, 5)).toEqual(['All Providers', 'Free Models', 'Paid Models', '1M+ Context', 'Multimodal']);
     expect(offered).not.toContain('Not Deprecated');

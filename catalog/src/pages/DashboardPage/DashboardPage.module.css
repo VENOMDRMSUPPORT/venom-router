@@ -677,6 +677,9 @@
 
 .historyContent { border-top: 1px solid var(--border-subtle); }
 .historyToolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; }
+.historyToolbarControls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.historyWindowLabel { color: var(--foreground-tertiary); font-size: 0.7rem; }
+.historyWindow { min-height: 28px; padding: 0 24px 0 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--background); color: var(--foreground-secondary); font: inherit; font-size: 0.7rem; }
 .historySummary { color: var(--foreground-tertiary); font-size: 0.73rem; font-variant-numeric: tabular-nums; }
 .historyFilters { display: flex; gap: 5px; flex-wrap: wrap; }
 .historyFilter { min-height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--foreground-tertiary); font-size: 0.7rem; }
@@ -690,8 +693,10 @@
 .historyItemTopline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .historyTag { color: var(--foreground-secondary); font-size: 0.64rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .historyItemTopline time { color: var(--foreground-tertiary); font-size: 0.67rem; white-space: nowrap; }
-.historyItemBody strong { overflow: hidden; color: var(--foreground); font-family: var(--font-mono); font-size: 0.76rem; text-overflow: ellipsis; white-space: nowrap; }
-.historyProvider { overflow: hidden; color: var(--foreground-tertiary); font-size: 0.7rem; text-overflow: ellipsis; white-space: nowrap; }
+.historyModelLink { overflow: hidden; color: var(--foreground); font-family: var(--font-mono); font-size: 0.76rem; font-weight: 650; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.historyModelLink:hover { text-decoration: underline; }
+.historyProviderLink { overflow: hidden; color: var(--foreground-tertiary); font-size: 0.7rem; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.historyProviderLink:hover { color: var(--foreground-secondary); text-decoration: underline; }
 .historyDelta { margin-top: 3px; color: var(--foreground-secondary); font-family: var(--font-mono); font-size: 0.68rem; overflow-wrap: anywhere; }
 .historyNote { margin-top: 3px; color: var(--foreground-tertiary); font-size: 0.68rem; line-height: 1.35; }
 .historyLoading,
@@ -704,6 +709,8 @@
   .historyHeaderActions { width: 100%; justify-content: space-between; }
   .releaseOrigin { margin-left: 0; }
   .historyToolbar { align-items: flex-start; flex-direction: column; }
+  .historyToolbarControls { width: 100%; justify-content: flex-start; }
+  .historyWindow { flex: 1; }
   .historyList { grid-template-columns: 1fr; }
 }
 
