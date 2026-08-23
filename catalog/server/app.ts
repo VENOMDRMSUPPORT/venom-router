@@ -8,8 +8,10 @@ import { loadModels, loadProviders, loadMeta, loadProvenance, loadEvaluationDiag
 import { clampChangesLimit, loadChanges } from './changes.ts';
 import type { SyncRunner, SchedulerHandle } from './sync-runner.ts';
 import type { EvaluationRunner } from './evaluation-runner.ts';
-import { planEvaluation } from '../sync/evaluation/plan.ts';
+import { planEvaluation, resolveIdentity } from '../sync/evaluation/plan.ts';
 import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
+import { regradeFromRetainedResponses } from '../sync/evaluation/regrade.ts';
+import { recalculatePublishedOffers } from '../sync/evaluation/recalculate.ts';
 
 export interface AppDeps {
   db: Db;
@@ -167,6 +169,54 @@ export function route(deps: AppDeps, url: URL, method: string, body?: unknown): 
           }
         : { status: 200, body: outcome },
     );
+  }
+
+  /**
+   * Re-read one model's stored evidence with today's grader. Zero requests.
+   *
+   * This is deliberately NOT `force`: it buys nothing from a provider, so the
+   * reason `POST /v1/evaluations` has no force flag — a real bill that should
+   * stay deliberate — does not apply. What it does apply to is the other half
+   * of the same problem, which was that the free repair existed only as a
+   * terminal script guarded against running while the service is up. It was
+   * therefore unavailable in exactly the situation where it is wanted.
+   *
+   * Refused while the runner is busy. Re-scoring a dimension a job is in the
+   * middle of measuring would publish a number from half a run.
+   */
+  if (path === '/v1/evaluations/regrade') {
+    if (method !== 'POST') return { status: 405, body: { error: 'method not allowed', path } };
+    const input = (body ?? {}) as { providerId?: unknown; modelId?: unknown; dryRun?: unknown };
+    if (typeof input.providerId !== 'string' || typeof input.modelId !== 'string') {
+      return { status: 400, body: { error: 'providerId and modelId are required' } };
+    }
+    if (deps.evaluations.state.state !== 'idle') {
+      return { status: 409, body: { error: 'an evaluation is running', state: deps.evaluations.state.state } };
+    }
+    const identityId = resolveIdentity(db, input.providerId, input.modelId);
+    if (!identityId) {
+      return {
+        status: 404,
+        body: { error: 'no resolved identity to re-read', providerId: input.providerId, modelId: input.modelId },
+      };
+    }
+    const dryRun = input.dryRun === true;
+    const summary = regradeFromRetainedResponses({
+      db, identityId, dryRun, now: () => now.toISOString(),
+    });
+    // The overall score is derived, so a re-read that changed nothing downstream
+    // would leave the published number disagreeing with its own evidence.
+    if (!dryRun) recalculatePublishedOffers(db, now.toISOString());
+    return {
+      status: 200,
+      body: {
+        identityId,
+        dryRun,
+        rescored: summary.rescored,
+        unreplayable: summary.unreplayable,
+        withdrawn: summary.unreplayable.filter((row) => row.demoted).length,
+      },
+    };
   }
 
   if (path === '/v1/evaluations') {

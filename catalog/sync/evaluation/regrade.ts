@@ -62,6 +62,14 @@ export interface RegradeInput {
   now: () => string;
   /** Limit to one dimension; omit to replay every scored quality dimension. */
   dimension?: QualityDimension;
+  /**
+   * Limit to one model identity; omit for the whole corpus.
+   *
+   * Quality belongs to an identity, so this is the scope a single model's
+   * re-read actually has — asking for one offer re-reads every listing of the
+   * same model, which is the same rule the evaluation itself follows.
+   */
+  identityId?: string;
   /** Compute and report the outcome without writing any score. */
   dryRun?: boolean;
 }
@@ -81,8 +89,9 @@ export function regradeFromRetainedResponses(input: RegradeInput): RegradeSummar
       AND er.test_set_hash = ?
       AND er.identity_id IS NOT NULL
       ${input.dimension ? 'AND er.dimension = ?' : ''}
+      ${input.identityId ? 'AND er.identity_id = ?' : ''}
     ORDER BY es.run_id, es.scenario_id, es.repetition
-  `).all(...(input.dimension ? [testSetHash, input.dimension] : [testSetHash])) as unknown as SampleRow[];
+  `).all(...[testSetHash, input.dimension, input.identityId].filter((value) => value !== undefined)) as unknown as SampleRow[];
 
   const byRun = new Map<number, SampleRow[]>();
   for (const row of rows) {

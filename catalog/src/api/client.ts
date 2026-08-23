@@ -616,10 +616,72 @@ export interface EvaluationStateView {
   queue: Array<{ providerId: string; modelId: string }>;
 }
 
-export async function fetchEvaluationPlan(providerId: string, modelId: string): Promise<EvaluationPlanView> {
+/** One scored dimension as the service holds it, with the trail behind the number. */
+export interface EvaluationEvidenceView {
+  dimension: string;
+  score: number | null;
+  status: string;
+  confidence: number | null;
+  sampleCount: number | null;
+  evidence: string[];
+  evaluatedAt: string | null;
+  rubricVersion?: string;
+  testSetHash?: string | null;
+}
+
+export interface EvaluationDetailView {
+  identityId: string | null;
+  plan: EvaluationPlanView;
+  identityDimensions: EvaluationEvidenceView[];
+  offerDimensions: EvaluationEvidenceView[];
+}
+
+/**
+ * The plan AND the evidence behind what is already scored, in one read.
+ *
+ * This used to keep `.plan` and discard the rest of the same response, which is
+ * why a fully-scored model produced a dialog with one sentence and no way out:
+ * the endpoint was already answering "here is what you have, and when it was
+ * measured" and the client threw that away.
+ */
+export async function fetchEvaluationDetail(providerId: string, modelId: string): Promise<EvaluationDetailView> {
   const res = await fetch(`${BASE}/models/${encodeURIComponent(providerId)}/${encodeURIComponent(modelId)}/evaluation`);
-  if (!res.ok) throw new Error(`evaluation plan unavailable (${res.status})`);
-  return ((await res.json()) as { plan: EvaluationPlanView }).plan;
+  if (!res.ok) throw new Error(`evaluation detail unavailable (${res.status})`);
+  return (await res.json()) as EvaluationDetailView;
+}
+
+export interface RegradeOutcomeView {
+  rescored: Array<{ dimension: string; before: number | null; after: number }>;
+  withdrawn: number;
+  unreplayable: number;
+}
+
+/**
+ * Re-read this model's stored responses with today's grader. No paid requests.
+ *
+ * A refusal is a value here for the same reason `startEvaluation` returns one:
+ * "an evaluation is running" is a state the owner has to be shown, not an
+ * exception.
+ */
+export async function regradeEvaluation(
+  providerId: string,
+  modelId: string,
+): Promise<{ ok: true; outcome: RegradeOutcomeView } | { ok: false; reason: string }> {
+  const res = await fetch(`${BASE}/evaluations/regrade`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ providerId, modelId }),
+  });
+  const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) return { ok: false, reason: String(payload.error ?? `http_${res.status}`) };
+  return {
+    ok: true,
+    outcome: {
+      rescored: (payload.rescored ?? []) as RegradeOutcomeView['rescored'],
+      withdrawn: Number(payload.withdrawn ?? 0),
+      unreplayable: ((payload.unreplayable ?? []) as unknown[]).length,
+    },
+  };
 }
 
 /**

@@ -149,6 +149,9 @@ a corpus-wide decision with a real bill attached, so it stays on the terminal
 script where it is deliberate. `planEvaluation` still accepts `force` because
 the script needs it.
 
+That reasoning is about money, and it does not extend to a repair that costs
+nothing — see `POST /v1/evaluations/regrade` below.
+
 | Status | Meaning | Body |
 |---|---|---|
 | 202 | Accepted onto the queue | `{ position, plan }` |
@@ -158,6 +161,34 @@ the script needs it.
 
 Fail closed: an unknown or unresolvable request is rejected with a typed reason
 and buys nothing from the provider.
+
+### `POST /v1/evaluations/regrade`
+
+Body: `{ providerId, modelId, dryRun? }`. Re-reads that model identity's stored
+responses with today's grader. **Zero provider requests**, so no cost preview and
+no queue — it is not `force` and must not be confused with it.
+
+It exists because the free repair was reachable only from
+`scripts/regrade-retained.ts`, which passes the single-writer guard and therefore
+refuses to start while the service is listening. The one repair that costs
+nothing was unavailable in exactly the situation where it is wanted, and the
+dialog offering it had nothing to offer.
+
+| Status | Meaning | Body |
+|---|---|---|
+| 200 | Re-read | `{ identityId, dryRun, rescored, unreplayable, withdrawn }` |
+| 409 | An evaluation is running | `{ error, state }` |
+| 404 | No such offer, or no resolved identity | `{ error, providerId, modelId }` |
+| 400 | Body does not name an offer | `{ error }` |
+
+Refused while the runner is busy: re-scoring a dimension a job is in the middle
+of measuring would publish a number from half a run. A non-dry run recalculates
+published offers, because the overall score is derived and would otherwise
+disagree with its own evidence.
+
+`withdrawn` counts dimensions whose published score was removed because the
+provider never finished an answer for at least one retained sample. See
+`2026-08-19-catalog-fair-model-evaluation-design.md` §13.1a.
 
 ### `GET /v1/evaluations`
 

@@ -19,7 +19,7 @@
  */
 
 import { describe, test, expect, vi, afterEach } from 'vitest';
-import { fetchCatalog, fetchEvaluationPlan, fetchEvaluationState, startEvaluation, fetchHealth } from './client';
+import { fetchCatalog, fetchEvaluationDetail, fetchEvaluationState, startEvaluation, fetchHealth } from './client';
 
 /**
  * One model exactly as the pre-M5.1 service shape puts it on the wire.
@@ -598,16 +598,25 @@ describe('the evaluation control client', () => {
     );
   });
 
-  test('the plan is read from the diagnostics route, not a second endpoint', async () => {
+  test('the plan and its evidence are read from one route, not two', async () => {
+    // The evidence used to be discarded here, which is what made a fully-scored
+    // model a dead end in the modal. Both halves come from the same response.
     const seen: string[] = [];
     await withFetch(
       (async (input: RequestInfo | URL) => {
         seen.push(String(input));
-        return json({ plan: { dimensions: ['coding'], skipped: [], speed: 'missing', blocked: null, estimatedRequests: 86 } });
+        return json({
+          identityId: 'vendor/model',
+          plan: { dimensions: ['coding'], skipped: [], speed: 'missing', blocked: null, estimatedRequests: 86 },
+          identityDimensions: [{ dimension: 'reasoning', score: 91.4, status: 'scored', evidence: ['run:1'] }],
+          offerDimensions: [],
+        });
       }) as typeof fetch,
       async () => {
-        const plan = await fetchEvaluationPlan('p', 'm');
-        expect(plan.estimatedRequests).toBe(86);
+        const detail = await fetchEvaluationDetail('p', 'm');
+        expect(detail.plan.estimatedRequests).toBe(86);
+        expect(detail.identityDimensions[0].score).toBe(91.4);
+        expect(seen).toHaveLength(1);
         expect(seen[0]).toContain('/v1/models/p/m/evaluation');
       },
     );

@@ -10,12 +10,14 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  fetchEvaluationPlan,
+  fetchEvaluationDetail,
   fetchEvaluationState,
+  regradeEvaluation,
   startEvaluation,
   stopEvaluations,
   type ApiModel,
-  type EvaluationPlanView,
+  type EvaluationDetailView,
+  type EvaluationEvidenceView,
   type EvaluationStateView,
 } from '../../api/client';
 import { useCatalog } from '../../hooks/useCatalog';
@@ -31,7 +33,13 @@ const DIMENSION_LABELS: Record<string, string> = {
   structuredOutput: 'Structured output',
   vision: 'Vision',
   speed: 'Speed',
+  costEfficiency: 'Cost efficiency',
 };
+
+/** Reading order for the evidence panel: quality first, then operational. */
+const DIMENSION_ORDER = [
+  'coding', 'reasoning', 'longContext', 'toolCalling', 'structuredOutput', 'vision', 'speed', 'costEfficiency',
+];
 
 const BLOCKED_EXPLANATIONS: Record<string, string> = {
   model_not_found: 'This model is not in the catalog.',
@@ -46,14 +54,35 @@ const BLOCKED_EXPLANATIONS: Record<string, string> = {
 
 const label = (dimension: string) => DIMENSION_LABELS[dimension] ?? dimension;
 
+/**
+ * How a stored number came to exist, in the words the evidence itself uses.
+ *
+ * The trail is not decoration here. Three of these read identically as a score
+ * and mean completely different things about whether it can be trusted, and a
+ * withdrawn dimension has to say why it is empty or it looks like a gap nobody
+ * has got round to.
+ */
+function describeEvidence(row: EvaluationEvidenceView): string {
+  const trail = row.evidence.join(' ');
+  const when = row.evaluatedAt?.slice(0, 10) ?? 'unknown date';
+  if (trail.includes('withdrawn:answer-truncated')) {
+    return `withdrawn ${when} — the provider never finished an answer`;
+  }
+  if (trail.includes('regraded:retained-responses')) return `re-read from stored responses, ${when}`;
+  if (trail.includes('catalog-operational-facts')) return `from catalog facts, ${when}`;
+  return `measured against the provider, ${when}`;
+}
+
 export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: () => void }) {
   const { reload } = useCatalog();
-  const [plan, setPlan] = useState<EvaluationPlanView | null>(null);
+  const [detail, setDetail] = useState<EvaluationDetailView | null>(null);
   const [state, setState] = useState<EvaluationStateView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [finished, setFinished] = useState(false);
+  const [reread, setReread] = useState<string | null>(null);
   const wasRunning = useRef(false);
+  const plan = detail?.plan ?? null;
 
   const mine = state?.current && state.current.providerId === model.providerId
     && state.current.modelId === model.modelId
@@ -75,12 +104,12 @@ export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: ()
     let cancelled = false;
     void (async () => {
       try {
-        const [nextPlan, nextState] = await Promise.all([
-          fetchEvaluationPlan(model.providerId, model.modelId),
+        const [nextDetail, nextState] = await Promise.all([
+          fetchEvaluationDetail(model.providerId, model.modelId),
           fetchEvaluationState(),
         ]);
         if (cancelled) return;
-        setPlan(nextPlan);
+        setDetail(nextDetail);
         setState(nextState);
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
@@ -106,7 +135,7 @@ export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: ()
       wasRunning.current = false;
       setFinished(true);
       reload();
-      void fetchEvaluationPlan(model.providerId, model.modelId).then(setPlan).catch(() => {});
+      void fetchEvaluationDetail(model.providerId, model.modelId).then(setDetail).catch(() => {});
     }
   }, [mine, reload, model.providerId, model.modelId]);
 
@@ -119,12 +148,55 @@ export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: ()
     setBusy(false);
   };
 
+  /**
+   * Re-read what is already stored. Zero paid requests, so no cost preview.
+   *
+   * The outcome is reported in numbers rather than a bare "done", because the
+   * three things this can do — re-derive a number, change it, or withdraw it —
+   * are not interchangeable, and a withdrawal removes a published score.
+   */
+  const onReread = async () => {
+    setBusy(true);
+    setError(null);
+    setReread(null);
+    const result = await regradeEvaluation(model.providerId, model.modelId);
+    if (!result.ok) {
+      setError(result.reason);
+    } else {
+      const changed = result.outcome.rescored.filter(
+        (row) => row.before === null || Math.abs(row.after - row.before) >= 0.05,
+      ).length;
+      setReread(`Re-read ${result.outcome.rescored.length}; ${changed} changed; ${result.outcome.withdrawn} withdrawn.`);
+      reload();
+      try {
+        setDetail(await fetchEvaluationDetail(model.providerId, model.modelId));
+      } catch { /* the table already reloaded; the panel refreshes on reopen */ }
+    }
+    setBusy(false);
+  };
+
   const onStop = async () => {
     setBusy(true);
     await stopEvaluations();
     await refreshState();
     setBusy(false);
   };
+
+  /**
+   * Every dimension that carries a number, or says why it no longer does.
+   *
+   * Quality lives on the identity and the two operational dimensions on the
+   * offer, so both are read — and a row with neither a score nor a withdrawal is
+   * left out, because "this model supports vision" is not evidence about it.
+   */
+  const evidence = detail
+    ? [
+        ...detail.identityDimensions,
+        ...detail.offerDimensions.filter((row) => row.dimension === 'speed' || row.dimension === 'costEfficiency'),
+      ]
+      .filter((row) => row.score !== null || row.evidence.some((entry) => entry.startsWith('withdrawn:')))
+      .sort((left, right) => DIMENSION_ORDER.indexOf(left.dimension) - DIMENSION_ORDER.indexOf(right.dimension))
+    : [];
 
   const rows = mine
     ? [...mine.dimensionsCompleted.map((entry) => ({ ...entry, active: false })),
@@ -163,7 +235,7 @@ export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: ()
           <div className={styles.preview}>
             {plan.dimensions.length === 0 && plan.speed === 'scored' ? (
               <p className={styles.muted} data-testid="evaluate-nothing-missing">
-                Every applicable dimension is already scored. Nothing to run.
+                Every applicable dimension is already scored.
               </p>
             ) : (
               <>
@@ -194,6 +266,37 @@ export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: ()
                 Not run: {plan.skipped.map((entry) => `${label(entry.dimension)} (${entry.reason.replace('_', ' ')})`).join(', ')}
               </p>
             )}
+
+            {/*
+              Shown whatever the plan says, because "already scored" is an answer
+              and this dialog used to treat it as a dead end. The endpoint was
+              already returning every one of these facts; the client kept `.plan`
+              and dropped them.
+            */}
+            {evidence.length > 0 && (
+              <div data-testid="evaluate-evidence">
+                <p className={styles.muted}>What the current scores rest on:</p>
+                <ul className={styles.dimensionList}>
+                  {evidence.map((row) => (
+                    <li key={row.dimension} className={styles.dimensionRow}>
+                      <span>{label(row.dimension)}</span>
+                      <span className={row.score === null ? styles.incomplete : styles.score}>
+                        {row.score === null ? 'unknown' : row.score.toFixed(1)}
+                      </span>
+                      <span className={styles.muted}>{describeEvidence(row)}</span>
+                    </li>
+                  ))}
+                </ul>
+                <button type="button" className={styles.start} onClick={() => void onReread()} disabled={busy}>
+                  Re-read stored evidence
+                </button>
+                <p className={styles.cost}>
+                  No paid requests: it re-reads responses this catalog already bought.
+                </p>
+              </div>
+            )}
+
+            {reread && <p className={styles.done} data-testid="evaluate-reread">{reread}</p>}
             {finished && <p className={styles.done} data-testid="evaluate-finished">Run finished. The table has been refreshed.</p>}
           </div>
         )}

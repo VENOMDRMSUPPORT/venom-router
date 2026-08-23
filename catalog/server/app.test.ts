@@ -858,6 +858,40 @@ describe('evaluation control routes', () => {
     assert.equal(result.status, 405);
   });
 
+  const regrade = (evaluations: EvaluationRunner, body: unknown) =>
+    route(deps({ evaluations }), new URL('http://127.0.0.1/v1/evaluations/regrade'), 'POST', body) as
+      { status: number; body: any };
+
+  test('re-reads stored evidence for one offer, and reports what it found', () => {
+    // Zero provider requests, so this route needs no cost preview and no queue.
+    // It exists because the free repair was a terminal script guarded against
+    // running while the service is up — unavailable exactly when it is wanted.
+    const result = regrade(queue(), { providerId: 'acme', modelId: 'measured-1' });
+    assert.equal(result.status, 200);
+    assert.ok(Array.isArray(result.body.rescored));
+    assert.ok(Array.isArray(result.body.unreplayable));
+    assert.equal(typeof result.body.withdrawn, 'number');
+    assert.equal(result.body.dryRun, false);
+  });
+
+  test('a re-read is refused while an evaluation is running', () => {
+    const evaluations = queue();
+    post(evaluations, { providerId: 'acme', modelId: 'measured-1' });
+    const result = regrade(evaluations, { providerId: 'acme', modelId: 'measured-1' });
+    // Re-scoring a dimension a job is measuring would publish half a run.
+    assert.equal(result.status, 409);
+  });
+
+  test('a re-read needs an offer, and an offer with an identity', () => {
+    assert.equal(regrade(queue(), {}).status, 400);
+    assert.equal(regrade(queue(), { providerId: 'acme', modelId: 'no-such-model' }).status, 404);
+  });
+
+  test('a re-read refuses a method it does not implement', () => {
+    const result = route(deps(), new URL('http://127.0.0.1/v1/evaluations/regrade'), 'GET') as { status: number };
+    assert.equal(result.status, 405);
+  });
+
   test('the diagnostics route carries the plan, so the modal needs no second endpoint', () => {
     const result = get('/v1/models/acme/measured-1/evaluation');
     assert.equal(result.status, 200);
