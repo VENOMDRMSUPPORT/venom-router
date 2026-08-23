@@ -108,6 +108,7 @@ export interface AutoEvaluationOffer {
 export type AutoEvaluationSkipReason =
   | NonNullable<EvaluationPlan['blocked']>
   | 'already_covered'
+  | 'duplicate_identity'
   | 'already_queued'
   | 'retry_cooldown'
   | 'over_budget';
@@ -196,6 +197,7 @@ export function autoEvaluate(
   }));
 
   const candidates: Array<{ offer: AutoEvaluationOffer; plan: EvaluationPlan }> = [];
+  const queuedIdentities = new Set<string>();
   for (const entry of planned) {
     if (entry.plan.blocked) {
       // Fail closed with the typed reason. Nothing was sent to a provider, and
@@ -209,10 +211,15 @@ export function autoEvaluate(
       report.skipped.push({ ...entry.offer, reason: 'already_covered', estimatedRequests: 0 });
       continue;
     }
+    if (entry.plan.identityId !== null && queuedIdentities.has(entry.plan.identityId)) {
+      report.skipped.push({ ...entry.offer, reason: 'duplicate_identity', estimatedRequests: entry.plan.estimatedRequests });
+      continue;
+    }
     if (cooledDown(entry.plan.identityId)) {
       report.skipped.push({ ...entry.offer, reason: 'retry_cooldown', estimatedRequests: entry.plan.estimatedRequests });
       continue;
     }
+    if (entry.plan.identityId !== null) queuedIdentities.add(entry.plan.identityId);
     candidates.push(entry);
   }
 

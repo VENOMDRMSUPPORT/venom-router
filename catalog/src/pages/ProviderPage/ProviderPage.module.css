@@ -976,16 +976,12 @@ flex-shrink: 0;
 }
 
 .capIcon:hover {
-transform: scale(1.1);
-background: rgba(245, 158, 11, 0.12);
-border-color: rgba(245, 158, 11, 0.3);
-color: #b45309;
+  transform: scale(1.1);
 }
 
-.capsMore {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.capTools {
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #b45309;
   min-width: 25px;
   height: 24px;
   padding: 0 5px;
@@ -997,11 +993,6 @@ color: #b45309;
   font-size: 0.66rem;
   font-weight: 700;
   cursor: help;
-}
-:global([data-theme="dark"]) .capTools {
-  color: #fbbf24;
-  background: rgba(245, 158, 11, 0.14);
-  border-color: rgba(251, 191, 36, 0.3);
 }
 
 .capReasoning {
@@ -1794,7 +1785,6 @@ transform: scale(1.06);
    while this short stage confirms the change without holding stale content. */
 .viewStage {
   position: relative;
-  isolation: isolate;
 }
 
 @media (prefers-reduced-motion: no-preference) {

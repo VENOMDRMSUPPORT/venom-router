@@ -65,6 +65,7 @@ function payloadFor(alert: AlertRecord, eventType: NotificationEvent, now: strin
 }
 
 export function enqueueNotification(db: Db, alert: AlertRecord, eventType: NotificationEvent, now = new Date().toISOString()): void {
+  if (!notificationConfig().enabled) return;
   const payload = payloadFor(alert, eventType, now);
   db.prepare(`INSERT INTO alert_notifications
     (alert_id, event_type, payload_json, status, attempts, next_attempt_at, created_at)

@@ -454,3 +454,27 @@ CREATE INDEX IF NOT EXISTS idx_alert_notifications_due
   ON alert_notifications(status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_alert_notifications_alert
   ON alert_notifications(alert_id, created_at);
+
+-- Immutable user-facing catalog notifications. Unlike operational alerts, these
+-- are facts about one recorded model event or failed sync run. Reading a row is
+-- a user preference, never a reconciliation state, so a later poll cannot
+-- reopen it.
+CREATE TABLE IF NOT EXISTS catalog_notifications (
+  id                TEXT PRIMARY KEY,
+  source_kind       TEXT NOT NULL,          -- model_event | sync_run
+  source_id         INTEGER NOT NULL,
+  category          TEXT NOT NULL,          -- success | error | warning
+  kind              TEXT NOT NULL,          -- model_added | model_retired | fetch_problem
+  title             TEXT NOT NULL,
+  detail            TEXT NOT NULL,
+  provider_id       TEXT,
+  model_id          TEXT,
+  observed_at       TEXT NOT NULL,
+  read_at           TEXT,
+  created_at        TEXT NOT NULL,
+  UNIQUE(source_kind, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_catalog_notifications_read
+  ON catalog_notifications(read_at, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_catalog_notifications_provider
+  ON catalog_notifications(provider_id, observed_at DESC);

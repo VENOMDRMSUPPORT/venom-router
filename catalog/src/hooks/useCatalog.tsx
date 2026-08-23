@@ -53,13 +53,35 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   const [healthError, setHealthError] = useState<string | null>(null);
   const [healthLoading, setHealthLoading] = useState(true);
   const [nonce, setNonce] = useState(0);
+  const dataRef = useRef<CatalogData | null>(null);
+  const renderedCursor = useRef<string | null | undefined>(undefined);
+  const pendingCursor = useRef<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   useEffect(() => {
     const ctrl = new AbortController();
-    setLoading(true);
+    const cursorForAttempt = pendingCursor.current;
+    // Background revalidation must not unmount pages that already have data:
+    // their expanded rows, focus, and scroll position belong to the user.
+    setLoading(dataRef.current === null);
     fetchCatalog(ctrl.signal)
-      .then((d) => { setData(d); setError(null); })
-      .catch((e) => { if (!ctrl.signal.aborted) setError(e instanceof Error ? e.message : String(e)); })
+      .then((d) => {
+        if (ctrl.signal.aborted) return;
+        setData(d);
+        setError(null);
+        if (cursorForAttempt !== undefined) {
+          renderedCursor.current = cursorForAttempt;
+          if (pendingCursor.current === cursorForAttempt) pendingCursor.current = undefined;
+        }
+      })
+      .catch((e) => {
+        if (ctrl.signal.aborted) return;
+        if (pendingCursor.current === cursorForAttempt) pendingCursor.current = undefined;
+        setError(e instanceof Error ? e.message : String(e));
+      })
       .finally(() => { if (!ctrl.signal.aborted) setLoading(false); });
     return () => ctrl.abort();
   }, [nonce]);
@@ -108,7 +130,6 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
    * usually identical. The first reading only arms the comparison — it must not
    * count as a change, or every mount would fetch the catalog twice.
    */
-  const seenCursor = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     const ctrl = new AbortController();
 
@@ -117,9 +138,14 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       fetchChangeCursor(ctrl.signal)
         .then((cursor) => {
           if (ctrl.signal.aborted) return;
-          const previous = seenCursor.current;
-          seenCursor.current = cursor;
-          if (previous !== undefined && previous !== cursor) setNonce((value) => value + 1);
+          const previous = renderedCursor.current;
+          if (previous === undefined) {
+            renderedCursor.current = cursor;
+            return;
+          }
+          if (previous === cursor || pendingCursor.current === cursor) return;
+          pendingCursor.current = cursor;
+          setNonce((value) => value + 1);
         })
         // A failed probe is not worth a visible error: the catalog fetch and the
         // health poll already report an unreachable service, and a third voice

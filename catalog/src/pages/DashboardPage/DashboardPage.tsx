@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { LuArrowUpRight, LuArrowRight, LuArrowDownUp, LuCircleAlert, LuActivity, LuCircleCheck, LuCpu, LuInfo, LuRefreshCw, LuSearchX, LuTriangleAlert, LuChevronDown, LuChevronUp } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
-import { fetchAlerts, fetchChanges, formatTokens, formatAgo, updateAlertStatus, type AlertDeliverySummary, type AlertRecord, type AlertStatus, type CatalogData, type Change, type HealthResponse } from '../../api/client';
+import { fetchCatalogNotifications, fetchChanges, formatTokens, formatAgo, type CatalogNotification, type CatalogData, type Change, type HealthResponse } from '../../api/client';
 import { CATALOG_API_CONTRACT_VERSION } from '../../../config/api-contract';
 import { FreshnessBadge } from '../../components/FreshnessBadge/FreshnessBadge';
 import { Toolbar, PROVIDER_FILTERS } from '../../components/Toolbar/Toolbar';
@@ -42,15 +42,10 @@ export function DashboardPage() {
   const [changeFilter, setChangeFilter] = useState<'all' | 'availability' | 'metadata' | 'score'>('all');
   const [changeWindow, setChangeWindow] = useState<ChangeWindow>('7d');
   const [changesNonce, setChangesNonce] = useState(0);
-  const [alerts, setAlerts] = useState<AlertRecord[]>([]);
-  const [alertDelivery, setAlertDelivery] = useState<AlertDeliverySummary | null>(null);
-  const [alertsLoading, setAlertsLoading] = useState(true);
-  const [alertsError, setAlertsError] = useState<string | null>(null);
-  const [alertsNonce, setAlertsNonce] = useState(0);
-  const [alertStatusFilter, setAlertStatusFilter] = useState<'all' | AlertStatus>('all');
-  const [alertSeverityFilter, setAlertSeverityFilter] = useState<'all' | 'critical' | 'warning' | 'info'>('all');
-  const [alertUpdatingId, setAlertUpdatingId] = useState<string | null>(null);
-  const [interactedAlertIds, setInteractedAlertIds] = useState<Set<string>>(new Set());
+  const [notifications, setNotifications] = useState<CatalogNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
+  const [notificationsNonce, setNotificationsNonce] = useState(0);
 
   const navigate = useNavigate();
 
@@ -74,46 +69,22 @@ export function DashboardPage() {
   const handleMonitoringRetry = () => {
     reload();
     setChangesNonce((value) => value + 1);
-    setAlertsNonce((value) => value + 1);
+    setNotificationsNonce((value) => value + 1);
   };
 
   useEffect(() => {
     let cancelled = false;
-    const readAlerts = () => {
-      setAlertsLoading(true);
-      fetchAlerts(undefined)
-        .then((result) => { if (!cancelled) { setAlerts(Array.isArray(result.alerts) ? result.alerts : []); setAlertDelivery(result.delivery ?? null); setAlertsError(null); } })
-        .catch((reason) => { if (!cancelled) setAlertsError(reason instanceof Error ? reason.message : String(reason)); })
-        .finally(() => { if (!cancelled) setAlertsLoading(false); });
+    const readNotifications = () => {
+      setNotificationsLoading(true);
+      fetchCatalogNotifications()
+        .then((result) => { if (!cancelled) { setNotifications(Array.isArray(result.notifications) ? result.notifications : []); setNotificationsError(null); } })
+        .catch((reason) => { if (!cancelled) setNotificationsError(reason instanceof Error ? reason.message : String(reason)); })
+        .finally(() => { if (!cancelled) setNotificationsLoading(false); });
     };
-    readAlerts();
-    const timer = window.setInterval(readAlerts, 30_000);
+    readNotifications();
+    const timer = window.setInterval(readNotifications, 30_000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [alertsNonce]);
-
-  const handleAlertStatus = async (id: string, status: AlertStatus) => {
-    setAlertUpdatingId(id);
-    try {
-      const updated = await updateAlertStatus(id, status);
-      setAlerts((current) => current.map((alert) => alert.id === id ? updated : alert));
-      setInteractedAlertIds((current) => new Set(current).add(id));
-      setAlertsError(null);
-    } catch (reason) {
-      setAlertsError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setAlertUpdatingId(null);
-    }
-  };
-
-  const handleStatusFilterChange = (filter: 'all' | AlertStatus) => {
-    setAlertStatusFilter(filter);
-    setInteractedAlertIds(new Set());
-  };
-
-  const handleSeverityFilterChange = (filter: 'all' | 'critical' | 'warning' | 'info') => {
-    setAlertSeverityFilter(filter);
-    setInteractedAlertIds(new Set());
-  };
+  }, [notificationsNonce]);
 
   // Dynamic responsive view switcher: automatically adapt view based on window size
   useEffect(() => {
@@ -137,11 +108,6 @@ export function DashboardPage() {
   };
 
   const monitoringSignals = useMemo(() => buildMonitoringSignals({ data, health, healthError, healthLoading }), [data, health, healthError, healthLoading]);
-  const visibleAlerts = useMemo(() => (Array.isArray(alerts) ? alerts : []).filter((alert) =>
-    (alertStatusFilter === 'all' || alert.status === alertStatusFilter || interactedAlertIds.has(alert.id)) &&
-    (alertSeverityFilter === 'all' || alert.severity === alertSeverityFilter)
-  ), [alerts, alertStatusFilter, alertSeverityFilter, interactedAlertIds]);
-
   const recentChanges = useMemo(() => {
     if (!changes) return [];
     const matchesFilter = (change: Change) => {
@@ -381,18 +347,10 @@ export function DashboardPage() {
 
       <PerformancePanel summary={performanceSummary} rows={performanceList} />
 
-      <AlertCenter
-        alerts={visibleAlerts}
-        allAlerts={alerts}
-        delivery={alertDelivery}
-        loading={alertsLoading}
-        error={alertsError}
-        statusFilter={alertStatusFilter}
-        severityFilter={alertSeverityFilter}
-        updatingId={alertUpdatingId}
-        onStatusFilterChange={handleStatusFilterChange}
-        onSeverityFilterChange={handleSeverityFilterChange}
-        onStatusChange={handleAlertStatus}
+      <NotificationHistory
+        notifications={notifications}
+        loading={notificationsLoading}
+        error={notificationsError}
         onRetry={handleMonitoringRetry}
       />
 
@@ -763,97 +721,51 @@ function PerformancePanel({ summary, rows }: { summary: PerformanceSummary; rows
   );
 }
 
-function AlertCenter({
-  alerts,
-  allAlerts,
-  delivery,
+function NotificationHistory({
+  notifications,
   loading,
   error,
-  statusFilter,
-  severityFilter,
-  updatingId,
-  onStatusFilterChange,
-  onSeverityFilterChange,
-  onStatusChange,
   onRetry,
 }: {
-  alerts: AlertRecord[];
-  allAlerts: AlertRecord[];
-  delivery: AlertDeliverySummary | null;
+  notifications: CatalogNotification[];
   loading: boolean;
   error: string | null;
-  statusFilter: 'all' | AlertStatus;
-  severityFilter: 'all' | 'critical' | 'warning' | 'info';
-  updatingId: string | null;
-  onStatusFilterChange: (filter: 'all' | AlertStatus) => void;
-  onSeverityFilterChange: (filter: 'all' | 'critical' | 'warning' | 'info') => void;
-  onStatusChange: (id: string, status: AlertStatus) => void;
   onRetry: () => void;
 }) {
-  const activeCount = (Array.isArray(allAlerts) ? allAlerts : []).filter((alert) => alert.status !== 'resolved').length;
-  const statusLabel = (status: AlertStatus) => status === 'open' ? 'Open' : status === 'acknowledged' ? 'Acknowledged' : 'Resolved';
-  const severityLabel = (severity: AlertRecord['severity']) => severity === 'critical' ? 'Critical' : severity === 'warning' ? 'Warning' : 'Info';
+  const unreadCount = notifications.filter((notification) => notification.readAt === null).length;
+  const categoryLabel = (category: CatalogNotification['category']) => category === 'success' ? 'Added' : category === 'error' ? 'Removed' : 'Needs attention';
 
   return (
     <section className={styles.alertCenter} aria-labelledby="alert-center-title">
       <div className={styles.alertCenterHeader}>
         <div>
-          <span className={styles.monitoringEyebrow}>Operator action center</span>
-          <h2 id="alert-center-title" className={styles.alertCenterTitle}>Alert center <span className={styles.alertCount}>{activeCount} active</span> <span className={styles.alertDeliveryBadge}>{delivery?.enabled ? 'Webhook on' : 'Webhook off'}</span></h2>
+          <span className={styles.monitoringEyebrow}>Recorded catalog events</span>
+          <h2 id="alert-center-title" className={styles.alertCenterTitle}>Notification history <span className={styles.alertCount}>{unreadCount} unread</span></h2>
         </div>
-        <button type="button" className={styles.monitoringAction} onClick={onRetry} disabled={loading}>Refresh alerts</button>
+        <button type="button" className={styles.monitoringAction} onClick={onRetry} disabled={loading}>Refresh notifications</button>
       </div>
 
       {error && <div className={styles.alertCenterError} role="alert"><span>{error}</span><button type="button" className={styles.monitoringAction} onClick={onRetry}>Retry</button></div>}
-      <div className={styles.alertFilters} role="group" aria-label="Alert filters">
-        <label className={styles.alertFilterLabel} htmlFor="alert-status-filter">Status</label>
-        <select id="alert-status-filter" className={styles.alertSelect} value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value as 'all' | AlertStatus)}>
-          <option value="all">All statuses</option>
-          <option value="open">Open</option>
-          <option value="acknowledged">Acknowledged</option>
-          <option value="resolved">Resolved</option>
-        </select>
-        <label className={styles.alertFilterLabel} htmlFor="alert-severity-filter">Severity</label>
-        <select id="alert-severity-filter" className={styles.alertSelect} value={severityFilter} onChange={(event) => onSeverityFilterChange(event.target.value as 'all' | 'critical' | 'warning' | 'info')}>
-          <option value="all">All severities</option>
-          <option value="critical">Critical</option>
-          <option value="warning">Warning</option>
-          <option value="info">Info</option>
-        </select>
-        <span className={styles.alertFilterSummary} role="status" aria-live="polite">Showing {alerts.length} of {allAlerts.length}</span>
-      </div>
-
-      {loading && <div className={styles.alertCenterState} aria-busy="true">Loading alert lifecycle…</div>}
-      {!loading && !error && alerts.length === 0 && <div className={styles.alertCenterState}>{allAlerts.length === 0 ? 'No operational alerts have been recorded.' : 'No alerts match the selected filters.'}</div>}
-      {!loading && alerts.length > 0 && (
+      {loading && <div className={styles.alertCenterState} aria-busy="true">Loading notification history…</div>}
+      {!loading && !error && notifications.length === 0 && <div className={styles.alertCenterState}>No catalog notifications have been recorded.</div>}
+      {!loading && notifications.length > 0 && (
         <ul className={styles.alertList}>
-          {alerts.map((alert) => (
-            <li key={alert.id} className={`${styles.alertItem} ${styles[`alertSeverity${alert.severity}`]}`}>
+          {notifications.map((notification) => (
+            <li key={notification.id} className={styles.alertItem}>
               <div className={styles.alertItemMain}>
                 <div className={styles.alertItemTopline}>
-                  <span className={styles.alertSeverity}>{severityLabel(alert.severity)}</span>
-                  <span className={styles.alertStatus}>{statusLabel(alert.status)}</span>
-                  <time dateTime={alert.lastSeenAt}>{formatAgo(alert.lastSeenAt)}</time>
+                  <span className={styles.alertSeverity}>{categoryLabel(notification.category)}</span>
+                  <span className={styles.alertStatus}>{notification.readAt === null ? 'Unread' : 'Read'}</span>
+                  <time dateTime={notification.observedAt}>{formatAgo(notification.observedAt)}</time>
                 </div>
-                <strong>{alert.title}</strong>
-                <span className={styles.alertDetail}>{alert.detail}</span>
-                <span className={styles.alertOccurrence}>Seen {alert.occurrenceCount} time{alert.occurrenceCount === 1 ? '' : 's'}</span>
-                {(() => {
-                  const latest = alert.notifications?.[0];
-                  const deliveryLabel = latest?.status === 'delivered' ? `Webhook delivered (${latest.responseStatus ?? '2xx'})` : latest?.status === 'retrying' ? `Webhook retrying (${latest.attempts} attempt${latest.attempts === 1 ? '' : 's'})` : latest?.status === 'failed' ? 'Webhook delivery failed' : delivery?.enabled ? 'Webhook queued' : 'Webhook disabled';
-                  return <span className={styles.alertDeliveryStatus}>{deliveryLabel}</span>;
-                })()}
-                {(alert.providerId || alert.modelId) && (
+                <strong>{notification.title}</strong>
+                <span className={styles.alertDetail}>{notification.detail}</span>
+                {(notification.providerId || notification.modelId) && (
                   <span className={styles.alertTargets}>
-                    {alert.providerId && <Link to={`/provider/${encodeURIComponent(alert.providerId)}`} className={styles.alertTargetLink}>{alert.providerId}</Link>}
-                    {alert.modelId && <Link to={`/provider/${encodeURIComponent(alert.providerId ?? '')}?model=${encodeURIComponent(alert.modelId)}`} className={styles.alertTargetLink}>{alert.modelId}</Link>}
+                    {notification.providerId && <Link to={`/provider/${encodeURIComponent(notification.providerId)}`} className={styles.alertTargetLink}>{notification.providerId}</Link>}
+                    {notification.modelId && <Link to={`/provider/${encodeURIComponent(notification.providerId ?? '')}?model=${encodeURIComponent(notification.modelId)}`} className={styles.alertTargetLink}>{notification.modelId}</Link>}
                   </span>
                 )}
-              </div>
-              <div className={styles.alertActions} aria-label={`Actions for ${alert.title}`}>
-                {alert.status === 'open' && <button type="button" className={styles.alertActionButton} disabled={updatingId === alert.id} onClick={() => onStatusChange(alert.id, 'acknowledged')}>Acknowledge</button>}
-                {alert.status !== 'resolved' && <button type="button" className={styles.alertActionButton} disabled={updatingId === alert.id} onClick={() => onStatusChange(alert.id, 'resolved')}>Resolve</button>}
-                {alert.status !== 'open' && <button type="button" className={styles.alertActionButton} disabled={updatingId === alert.id} onClick={() => onStatusChange(alert.id, 'open')}>Reopen</button>}
               </div>
             </li>
           ))}
@@ -1135,5 +1047,3 @@ function Kpi({ value, label, hint }: { value: string | null; label: string; hint
     </div>
   );
 }
-
-

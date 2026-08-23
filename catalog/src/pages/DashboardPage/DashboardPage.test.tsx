@@ -170,24 +170,18 @@ describe('the runtime settings panel', () => {
   });
 });
 
-describe('the alert center lifecycle experience', () => {
-  test('filters alerts and persists acknowledge, resolve, and reopen actions', async () => {
+describe('the notification history', () => {
+  test('renders recorded model and fetch events without operational status filters or lifecycle actions', async () => {
     const now = '2026-08-23T10:00:00.000Z';
-    let serviceStatus: 'open' | 'acknowledged' | 'resolved' = 'open';
-    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes('/alerts/service-degraded')) {
-        const next = JSON.parse(String(init?.body ?? '{}')).status as typeof serviceStatus;
-        serviceStatus = next;
-        return Promise.resolve(new Response(JSON.stringify({ id: 'service-degraded', kind: 'service_degraded', severity: 'critical', title: 'Catalog service is degraded', detail: 'Database is unavailable.', providerId: null, modelId: null, status: serviceStatus, firstSeenAt: now, lastSeenAt: now, acknowledgedAt: serviceStatus === 'acknowledged' ? now : null, resolvedAt: serviceStatus === 'resolved' ? now : null, occurrenceCount: 1 }), { status: 200 }));
-      }
-      if (url.includes('/alerts')) {
+      if (url.includes('/notifications')) {
         return Promise.resolve(new Response(JSON.stringify({
           generatedAt: now,
-          summary: { total: 2, active: serviceStatus === 'resolved' ? 1 : 2, open: serviceStatus === 'open' ? 1 : 0, acknowledged: serviceStatus === 'acknowledged' ? 1 : 0, resolved: serviceStatus === 'resolved' ? 1 : 0, critical: serviceStatus === 'resolved' ? 0 : 1, warning: 1, info: 0 },
-          alerts: [
-            { id: 'service-degraded', kind: 'service_degraded', severity: 'critical', title: 'Catalog service is degraded', detail: 'Database is unavailable.', providerId: null, modelId: null, status: serviceStatus, firstSeenAt: now, lastSeenAt: now, acknowledgedAt: serviceStatus === 'acknowledged' ? now : null, resolvedAt: serviceStatus === 'resolved' ? now : null, occurrenceCount: 1 },
-            { id: 'stale-provider:acme', kind: 'stale_provider', severity: 'warning', title: 'Acme needs a fresh sync', detail: 'Provider data is stale.', providerId: 'acme', modelId: null, status: 'resolved', firstSeenAt: now, lastSeenAt: now, acknowledgedAt: null, resolvedAt: now, occurrenceCount: 2 },
+          summary: { total: 2, unread: 1, read: 1 },
+          notifications: [
+            { id: 'model-event:1', kind: 'model_added', category: 'success', title: 'acme added model acme-code', detail: 'The provider added this model to its published roster.', providerId: 'acme', modelId: 'acme-code', observedAt: now, readAt: null, createdAt: now },
+            { id: 'sync-run:2', kind: 'fetch_problem', category: 'warning', title: 'beta data refresh needs attention', detail: 'The catalog could not refresh this provider’s model data.', providerId: 'beta', modelId: null, observedAt: now, readAt: now, createdAt: now },
           ],
         }), { status: 200 }));
       }
@@ -200,22 +194,13 @@ describe('the alert center lifecycle experience', () => {
       renderDashboard();
       await settleDashboard();
 
-      expect(await screen.findByText('Catalog service is degraded')).toBeInTheDocument();
+      expect(await screen.findByText('acme added model acme-code')).toBeInTheDocument();
+      expect(screen.getByText('beta data refresh needs attention')).toBeInTheDocument();
       expect(screen.getByRole('link', { name: 'acme' })).toHaveAttribute('href', '/provider/acme');
-      fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'resolved' } });
-      expect(screen.getByText('Acme needs a fresh sync')).toBeInTheDocument();
-
-      fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'open' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Acknowledge' }));
-      await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => String(init?.body).includes('acknowledged'))).toBe(true));
-      expect(screen.getByText('Acknowledged', { selector: 'span' })).toBeInTheDocument();
-      fireEvent.click(screen.getByRole('button', { name: 'Resolve' }));
-      await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => String(init?.body).includes('resolved'))).toBe(true));
-      expect(screen.getAllByText('Resolved', { selector: 'span' }).length).toBeGreaterThan(0);
-      fireEvent.click(screen.getByRole('button', { name: 'Reopen' }));
-      await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => String(init?.body).includes('open'))).toBe(true));
-      expect(screen.getByText('Open', { selector: 'span' })).toBeInTheDocument();
-      expect(fetchMock.mock.calls.filter(([, init]) => String(init?.body).includes('acknowledged')).length).toBeGreaterThan(0);
+      expect(screen.queryByLabelText('Alert filters')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Resolve' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Reopen' })).not.toBeInTheDocument();
     } finally {
       vi.unstubAllGlobals();
     }

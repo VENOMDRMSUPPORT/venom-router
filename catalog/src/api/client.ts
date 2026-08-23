@@ -768,6 +768,41 @@ export async function updateAlertStatus(id: string, status: AlertStatus): Promis
   });
 }
 
+export type CatalogNotificationCategory = 'success' | 'error' | 'warning';
+export type CatalogNotificationKind = 'model_added' | 'model_retired' | 'fetch_problem';
+
+export interface CatalogNotification {
+  id: string;
+  category: CatalogNotificationCategory;
+  kind: CatalogNotificationKind;
+  title: string;
+  detail: string;
+  providerId: string | null;
+  modelId: string | null;
+  observedAt: string;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface CatalogNotificationsResponse {
+  notifications: CatalogNotification[];
+  summary: { total: number; unread: number; read: number };
+  generatedAt: string;
+}
+
+export async function fetchCatalogNotifications(providerId?: string, signal?: AbortSignal): Promise<CatalogNotificationsResponse> {
+  const query = providerId ? `?provider=${encodeURIComponent(providerId)}` : '';
+  return readService<CatalogNotificationsResponse>(`/notifications${query}`, { signal });
+}
+
+export async function markCatalogNotificationsRead(ids: string[] | null): Promise<{ updated: number }> {
+  return readService<{ updated: number }>('/notifications/read', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(ids === null ? {} : { ids }),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Formatting shared by every view. Kept here so two components cannot disagree.
 // ---------------------------------------------------------------------------
@@ -938,4 +973,42 @@ export async function fetchEvaluationState(): Promise<EvaluationStateView> {
 
 export async function stopEvaluations(): Promise<void> {
   await fetch(`${BASE}/evaluations`, { method: 'DELETE' });
+}
+
+// Database browser API
+export interface DbTable {
+  name: string;
+  sql: string | null;
+}
+
+export interface DbSchema {
+  table: string;
+  columns: { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }[];
+  indexes: { name: string; unique: number; origin: string; partial: number }[];
+  foreignKeys: { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string; match: string }[];
+}
+
+export interface DbQueryResponse {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  rowCount: number;
+  truncated: boolean;
+  limit: number;
+}
+
+export async function fetchDbTables(signal?: AbortSignal): Promise<{ tables: DbTable[] }> {
+  return readService<{ tables: DbTable[] }>('/db/tables', { signal });
+}
+
+export async function fetchDbSchema(table: string, signal?: AbortSignal): Promise<DbSchema> {
+  return readService<DbSchema>(`/db/schema?table=${encodeURIComponent(table)}`, { signal });
+}
+
+export async function fetchDbQuery(sql: string, limit = 100, signal?: AbortSignal): Promise<DbQueryResponse> {
+  return readService<DbQueryResponse>('/db/query', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sql, limit }),
+    signal,
+  });
 }

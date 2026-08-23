@@ -171,19 +171,17 @@ export class SyncRunner {
       const finishedAt = currentDate().toISOString();
       beginResolutionWindow(db, finishedAt);
       this.config.onSnapshot?.(db);
-      // Every active offer from a provider whose refresh actually succeeded, not
-      // only the ones this run added. A quarantined or failed provider's roster
-      // is not trusted enough to write a catalog row from, so it is certainly
-      // not trusted enough to spend a provider request on — but a provider that
-      // reported fine may still be holding an offer nobody ever measured, and
-      // restricting this to new arrivals left four such dimensions unmeasured
-      // indefinitely. `status = 'active'` only: a missing model is one the
-      // provider is not currently serving, so a request for it would be spent
-      // discovering that again.
+      // Automatic evaluation is a one-time arrival action, never a catalog-wide
+      // maintenance sweep. Existing incomplete offers stay for an owner to review
+      // in the Evaluate modal; re-running full work from a poll or ordinary sync
+      // would turn incomplete evidence into an unbounded spend loop.
       const healthy = new Set(result.providers.filter((provider) => provider.outcome === 'ok').map((provider) => provider.provider));
       const settled: AutoEvaluationOffer[] = healthy.size === 0 ? [] : (
-        db.prepare(`SELECT provider_id, model_id FROM models WHERE status = 'active' ORDER BY provider_id, model_id`)
-          .all() as unknown as { provider_id: string; model_id: string }[]
+        db.prepare(`SELECT DISTINCT e.provider_id, e.model_id
+          FROM model_events e
+          JOIN models m ON m.provider_id = e.provider_id AND m.model_id = e.model_id
+          WHERE e.kind = 'added' AND e.at >= ? AND e.at <= ? AND m.status = 'active'
+          ORDER BY e.provider_id, e.model_id`).all(startedAt, finishedAt) as unknown as { provider_id: string; model_id: string }[]
       )
         .filter((row) => healthy.has(row.provider_id))
         .map((row) => ({ providerId: row.provider_id, modelId: row.model_id }));

@@ -42,7 +42,7 @@ export interface Change {
 
 const LEVEL_RANK: Record<string, number> = { unrated: 0, bounded: 1, calibrated: 2, measured: 3 };
 
-interface EventRow {
+export interface EventRow {
   provider_id: string; model_id: string; kind: string; field: string | null;
   old_value: string | null; new_value: string | null; reason: string | null; at: string;
 }
@@ -63,7 +63,7 @@ export function clampChangesLimit(value: number): number {
   return Math.max(0, Math.min(MAX_CHANGES_LIMIT, Math.trunc(value)));
 }
 
-function classify(e: EventRow): ChangeClass | null {
+export function classifyChangeEvent(e: EventRow): ChangeClass | null {
   switch (e.kind) {
     case 'added':
       return 'added';
@@ -124,7 +124,7 @@ export function loadChanges(db: Db, { since, limit = DEFAULT_CHANGES_LIMIT }: Ch
 
   const changes: Change[] = [];
   for (const e of rows) {
-    const cls = classify(e);
+    const cls = classifyChangeEvent(e);
     if (!cls) continue;
     changes.push({
       class: cls,

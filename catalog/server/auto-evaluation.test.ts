@@ -15,10 +15,11 @@ import {
 const HOUR = 60 * 60 * 1000;
 
 function plan(overrides: Partial<EvaluationPlan> = {}): EvaluationPlan {
+  const modelId = overrides.modelId ?? 'm';
   return {
     providerId: 'p',
-    modelId: 'm',
-    identityId: 'vendor/m',
+    modelId,
+    identityId: overrides.identityId ?? `vendor/${modelId}`,
     dimensions: [],
     skipped: [],
     speed: 'scored',
@@ -135,6 +136,17 @@ describe('autoEvaluate', () => {
 
     assert.deepEqual(enqueued, []);
     assert.deepEqual(report.skipped.map((entry) => entry.reason), ['already_covered']);
+  });
+
+  test('only one newly added offer for the same canonical identity can auto-queue work', () => {
+    const { deps, enqueued } = queue({
+      first: plan({ modelId: 'first', identityId: 'vendor/shared', estimatedRequests: 63 }),
+      sibling: plan({ modelId: 'sibling', identityId: 'vendor/shared', estimatedRequests: 63 }),
+    });
+    const report = autoEvaluate({ evaluations: deps, config: config(), log: () => {} }, offers('first', 'sibling'));
+
+    assert.deepEqual(enqueued, ['first']);
+    assert.deepEqual(report.skipped.map((entry) => [entry.modelId, entry.reason]), [['sibling', 'duplicate_identity']]);
   });
 
   test('the budget buys the cheapest offers first, and names what it could not buy', () => {

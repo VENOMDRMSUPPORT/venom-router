@@ -12,8 +12,7 @@ import { planEvaluation, resolveIdentity } from '../sync/evaluation/plan.ts';
 import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
 import { regradeFromRetainedResponses } from '../sync/evaluation/regrade.ts';
 import { recalculatePublishedOffers } from '../sync/evaluation/recalculate.ts';
-import { alertSummary, reconcileAlerts, transitionAlert, type AlertHealthPayload, type AlertRecord, type AlertStatus } from './alerts.ts';
-import { listNotifications, notificationConfig, notificationDeliverySummary } from './notifications.ts';
+import { catalogNotificationSummary, listCatalogNotifications, markCatalogNotificationsRead, reconcileCatalogNotifications } from './model-notifications.ts';
 
 export interface AppDeps {
   db: Db;
@@ -121,8 +120,9 @@ export function health(deps: HealthDeps): HttpResult {
  * ever raised and no webhook was ever queued. Two copies of this three-line
  * sequence would be two definitions of what the ledger means.
  */
-export function reconcileAlertLedger(deps: HealthDeps, now: Date): AlertRecord[] {
-  return reconcileAlerts(deps.db, health(deps).body as AlertHealthPayload, now.toISOString());
+export function reconcileCatalogNotificationLedger(deps: HealthDeps, now: Date) {
+  reconcileCatalogNotifications(deps.db, now.toISOString());
+  return listCatalogNotifications(deps.db);
 }
 
 export function route(deps: AppDeps, url: URL, method: string, body?: unknown): HttpResult | Promise<HttpResult> {
@@ -175,44 +175,100 @@ export function route(deps: AppDeps, url: URL, method: string, body?: unknown): 
     return { status: 200, body: loadChanges(db, { since, limit }) };
   }
 
-  if (path === '/v1/alerts' && method === 'GET') {
-    const alerts = reconcileAlertLedger(deps, now);
-    const status = url.searchParams.get('status');
-    const filtered = status === 'open' || status === 'acknowledged' || status === 'resolved'
-      ? alerts.filter((alert) => alert.status === status)
-      : alerts;
-    const delivery = notificationConfig();
-    const queue = notificationDeliverySummary(db);
+  if (path === '/v1/notifications' && method === 'GET') {
+    reconcileCatalogNotifications(db, now.toISOString());
+    const providerId = url.searchParams.get('provider') ?? undefined;
+    const rawLimit = Number(url.searchParams.get('limit') ?? 100);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(Math.trunc(rawLimit), 500)) : 100;
+    const notifications = listCatalogNotifications(db, { providerId, limit });
     return {
       status: 200,
       body: {
-        // The alerts alone. Each one used to carry its own slice of the whole
-        // notification queue, which no client has ever read — an unbounded array
-        // per alert, rebuilt from a full table scan, twice a minute. The queue's
-        // state is reported once below, where it is actually consumed.
-        alerts: filtered,
-        summary: alertSummary(alerts),
-        delivery: {
-          enabled: delivery.enabled,
-          webhookConfigured: Boolean(delivery.webhookUrl),
-          pending: queue.pending,
-          failed: queue.failed,
-        },
+        notifications,
+        summary: catalogNotificationSummary(notifications),
         generatedAt: now.toISOString(),
       },
     };
   }
 
-  const alertRoute = /^\/v1\/alerts\/([^/]+)$/ .exec(path);
-  if (alertRoute && method === 'PATCH') {
-    const requested = (body ?? {}) as { status?: unknown };
-    if (requested.status !== 'open' && requested.status !== 'acknowledged' && requested.status !== 'resolved') {
-      return { status: 400, body: { error: 'status must be open, acknowledged, or resolved' } };
+  if (path === '/v1/notifications/read' && method === 'PATCH') {
+    const requested = (body ?? {}) as { ids?: unknown };
+    if (requested.ids !== undefined && (!Array.isArray(requested.ids) || requested.ids.some((id) => typeof id !== 'string'))) {
+      return { status: 400, body: { error: 'ids must be an array of notification ids' } };
     }
-    const alert = transitionAlert(db, decodeURIComponent(alertRoute[1]), requested.status as AlertStatus, now.toISOString());
-    return alert
-      ? { status: 200, body: { ...alert, notifications: listNotifications(db, alert.id) } }
-      : { status: 404, body: { error: 'alert not found' } };
+    const updated = markCatalogNotificationsRead(db, requested.ids === undefined ? null : requested.ids, now.toISOString());
+    return { status: 200, body: { updated } };
+  }
+
+  if (path === '/v1/db/query' && method === 'POST') {
+    const input = (body ?? {}) as { sql?: unknown; limit?: unknown };
+    if (typeof input.sql !== 'string' || !input.sql.trim()) {
+      return { status: 400, body: { error: 'sql is required and must be a non-empty string' } };
+    }
+    const sql = input.sql.trim();
+    const limit = typeof input.limit === 'number' && Number.isFinite(input.limit) && input.limit > 0
+      ? Math.min(Math.trunc(input.limit), 1000)
+      : 100;
+
+    // Read-only guard: only allow SELECT statements (including WITH for CTEs)
+    const normalized = sql.replace(/^\s*--.*$/gm, '').replace(/^\s*/, '').toUpperCase();
+    if (!normalized.startsWith('SELECT') && !normalized.startsWith('WITH')) {
+      return { status: 400, body: { error: 'Only SELECT queries are allowed' } };
+    }
+    // Block any modifying keywords
+    const forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'CREATE', 'ALTER', 'TRUNCATE', 'REPLACE', 'ATTACH', 'DETACH', 'PRAGMA', 'VACUUM', 'ANALYZE'];
+    for (const kw of forbidden) {
+      if (normalized.includes(kw)) {
+        return { status: 400, body: { error: `Query contains forbidden keyword: ${kw}` } };
+      }
+    }
+
+    try {
+      const stmt = db.prepare(sql);
+      const columns = stmt.columns();
+      const rows = stmt.all() as Record<string, unknown>[];
+      const limitedRows = rows.slice(0, limit);
+      return {
+        status: 200,
+        body: {
+          columns,
+          rows: limitedRows,
+          rowCount: rows.length,
+          truncated: rows.length > limit,
+          limit,
+        },
+      };
+    } catch (err) {
+      return { status: 400, body: { error: err instanceof Error ? err.message : 'Query execution failed' } };
+    }
+  }
+
+  if (path === '/v1/db/tables' && method === 'GET') {
+    try {
+      const tables = db.prepare(`
+        SELECT name, sql FROM sqlite_master
+        WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+        ORDER BY name
+      `).all() as { name: string; sql: string | null }[];
+      return { status: 200, body: { tables } };
+    } catch (err) {
+      return { status: 500, body: { error: err instanceof Error ? err.message : 'Failed to list tables' } };
+    }
+  }
+
+  if (path === '/v1/db/schema' && method === 'GET') {
+    const table = url.searchParams.get('table');
+    if (!table) {
+      return { status: 400, body: { error: 'table parameter is required' } };
+    }
+    try {
+      const tableInfo = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }[];
+      const indexes = db.prepare(`PRAGMA index_list(${table})`).all() as { name: string; unique: number; origin: string; partial: number }[];
+      const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string; match: string }[];
+      return { status: 200, body: { table, columns: tableInfo, indexes, foreignKeys } };
+    } catch (err) {
+      return { status: 400, body: { error: err instanceof Error ? err.message : 'Failed to get schema' } };
+    }
   }
 
   if (path === '/v1/sync' && method === 'POST') {

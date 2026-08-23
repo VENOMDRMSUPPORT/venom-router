@@ -32,7 +32,6 @@
 
 .trigger:focus-visible,
 .acknowledgeAll:focus-visible,
-.acknowledgeButton:focus-visible,
 .targetLink:focus-visible,
 .viewAll:focus-visible {
   outline: 2px solid var(--accent);
@@ -122,8 +121,7 @@
   background: var(--accent-subtle);
 }
 
-.acknowledgeAll:disabled,
-.acknowledgeButton:disabled {
+.acknowledgeAll:disabled {
   cursor: wait;
   opacity: 0.56;
 }
@@ -157,25 +155,33 @@
 }
 
 .itemTone {
-  width: 7px;
-  height: 7px;
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
   border-radius: 999px;
-  background: var(--border-strong);
+  color: var(--foreground-tertiary);
+  background: var(--background);
 }
 
-.itemTone[data-severity='critical'] {
-  background: #cf4e4e;
-  box-shadow: 0 0 0 3px color-mix(in srgb, #cf4e4e 14%, transparent);
+.itemTone[data-category='success'] {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.12);
 }
 
-.itemTone[data-severity='warning'] {
-  background: #d8912e;
-  box-shadow: 0 0 0 3px color-mix(in srgb, #d8912e 14%, transparent);
+.itemTone[data-category='error'] {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.12);
 }
 
-.itemTone[data-severity='info'] {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+.itemTone[data-category='warning'] {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.itemRead {
+  opacity: 0.58;
 }
 
 .itemBody {
@@ -227,14 +233,7 @@
   font-size: 10px;
 }
 
-.itemActions {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.targetLink,
-.acknowledgeButton {
+.targetLink {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -251,14 +250,12 @@
   transition: color var(--transition-fast), background var(--transition-fast), transform 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
-.targetLink:hover,
-.acknowledgeButton:hover:not(:disabled) {
+.targetLink:hover {
   color: var(--foreground);
   background: var(--accent-subtle);
 }
 
-.targetLink:active,
-.acknowledgeButton:active:not(:disabled) {
+.targetLink:active {
   transform: scale(0.95);
 }
 
@@ -343,9 +340,7 @@
   .trigger,
   .item,
   .targetLink,
-  .acknowledgeButton {
-    transition: none;
-  }
+  .targetLink { transition: none; }
 }
 
 @media (max-width: 480px) {

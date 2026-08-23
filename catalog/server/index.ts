@@ -17,7 +17,7 @@ import { EvaluationRunner } from './evaluation-runner.ts';
 import { createEvaluationExecutor } from './evaluation-executor.ts';
 import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
 import { evaluationCredentialReport } from '../sync/evaluation/provider-transport.ts';
-import { reconcileAlertLedger, route } from './app.ts';
+import { reconcileCatalogNotificationLedger, route } from './app.ts';
 import { writeSnapshot } from './snapshot.ts';
 import { deliverDueNotifications, notificationConfig } from './notifications.ts';
 import { autoEvaluate, autoEvaluationConfig, lastAttemptReader } from './auto-evaluation.ts';
@@ -39,7 +39,7 @@ export const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10MB limit to prevent memory 
  * reconciliation used to happen only inside `GET /v1/alerts`, so a service
  * nobody was watching raised no alert and queued no webhook.
  */
-export const ALERT_RECONCILE_MS = 30_000;
+export const NOTIFICATION_RECONCILE_MS = 30_000;
 
 export function loadProfiles(): { methodologyVersion: string; profiles: ScoreProfile[] } {
   const raw = JSON.parse(readFileSync(join(HERE, '..', 'overlays', 'score-profiles.json'), 'utf8'));
@@ -113,14 +113,14 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
 
   // Reconciliation belongs to the service, not to whoever happens to be looking
   // at it. `unref` so this timer never keeps the process alive on its own.
-  const alertTimer = setInterval(() => {
+  const notificationTimer = setInterval(() => {
     try {
-      reconcileAlertLedger({ db, runner, scheduler, startedAt }, new Date());
+      reconcileCatalogNotificationLedger({ db, runner, scheduler, startedAt }, new Date());
     } catch (error) {
-      console.error('[alerts] reconcile tick failed:', error);
+      console.error('[notifications] reconcile tick failed:', error);
     }
-  }, ALERT_RECONCILE_MS);
-  alertTimer.unref?.();
+  }, NOTIFICATION_RECONCILE_MS);
+  notificationTimer.unref?.();
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${BIND_HOST}:${port}`);
@@ -172,7 +172,7 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
     res.end(payload);
   });
 
-  server.on('close', () => clearInterval(alertTimer));
+  server.on('close', () => clearInterval(notificationTimer));
 
   return { server, db, runner, evaluations, scheduler, port, autoEvaluation };
 }

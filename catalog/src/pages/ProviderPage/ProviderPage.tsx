@@ -43,7 +43,7 @@ export function ProviderPage() {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const focusModelId = searchParams.get('model');
-  const { loading, error } = useCatalog();
+  const { loading, error, data } = useCatalog();
   const { provider, models, meta } = useProviderModels(id);
 
   const [query, setQuery] = useState('');
@@ -115,8 +115,8 @@ export function ProviderPage() {
     return list;
   }, [models, query, filter]);
 
-  if (loading) return <div className={styles.state}>Loading…</div>;
-  if (error) return <div className={styles.state}>Catalog unavailable: {error}</div>;
+  if (loading && data === null) return <div className={styles.state}>Loading…</div>;
+  if (error && data === null) return <div className={styles.state}>Catalog unavailable: {error}</div>;
   if (!provider) return <NotFoundPage />;
 
   const pres = present(provider.id);

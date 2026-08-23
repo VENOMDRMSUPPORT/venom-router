@@ -41,29 +41,19 @@ The Vite development server proxies `/v1` requests to the Catalog API. Override 
 
 Router integrations should use the Catalog API base URL and record the Catalog response version or generation timestamp used by a routing decision. A future contract version should be introduced when the wire shape or ownership semantics change; consumers must fail closed on unsupported versions rather than inventing defaults.
 
-## Operational alert lifecycle
+## Catalog notification history
 
-Catalog owns the operational alert ledger. The dashboard reads `GET /v1/alerts`, which reconciles the current health response into durable alert records before returning them. Each record has a stable `id`, a server-owned `severity`, optional `providerId` and `modelId` targets, and one of three statuses: `open`, `acknowledged`, or `resolved`.
+The bell and dashboard read `GET /v1/notifications`. A notification is an immutable, idempotent projection of one durable source record: `model_added`, `model_retired`, or `fetch_problem`. Success, error, and warning icons communicate the category without presenting routine catalog events as an operator incident queue.
 
-An operator may transition a known alert with `PATCH /v1/alerts/:id` and a JSON body such as `{ "status": "acknowledged" }`. The service rejects unknown statuses with HTTP 400 and unknown alert IDs with HTTP 404. A problem that disappears from the candidate set is automatically marked `resolved`; if the same stable alert identity returns later, Catalog reopens it as a new active occurrence while preserving its timestamps.
+The reconciler scans durable `model_events` and failed or quarantined `sync_runs` in deterministic batches, using a unique source key for every inserted notification. It does not use the public `GET /v1/changes` limit, so a catalog with more than 500 changes does not lose a notification. Re-running the reconciler never creates a duplicate, and a notification remains in history after the user reads it.
 
-`occurrenceCount` counts how many separate times a condition arose — it advances on a reopen, not on a read. `lastSeenAt` is the field that means "still true as of", and it advances on every reconcile.
-
-The service reconciles its own ledger every 30 seconds, so alerts are raised and notifications queued whether or not a browser is open. `GET /v1/alerts` also reconciles, so a dashboard poll and the service tick cannot report different ledgers.
-
-### Model lifecycle alerts
-
-The ledger covers two independent families. Service health contributes `service_degraded`, `stale_provider`, `sync_failure`, and `sync_in_flight`. Recorded roster changes contribute `model_added`, `model_readded`, `model_retired`, `model_became_missing`, `model_excluded`, and `model_quality_lost`, classified by the same code that serves `GET /v1/changes` so the bell and the change feed cannot describe one event differently.
-
-Roster alerts are **grouped** by change class, provider, observation time and reason, because that is the shape the underlying decision had: one publish-policy sweep that withholds eleven models is one alert naming the count and the reason, not eleven. `modelId` is set only when the alert concerns exactly one model, and is dropped when the referenced model row is absent so a dangling event cannot abort the reconcile.
-
-A roster alert stays a candidate for seven days after the event, matching the dashboard's default change window, then resolves on its own. Acknowledging one removes it from the open list immediately without waiting for the window to close. Metadata changes — price, context, capability, score movement — are deliberately **not** alerts; they are reported on the change feed, because an alert list that reports everything reports nothing.
+Read state is a user-facing preference only. `PATCH /v1/notifications/read` marks supplied notification IDs — or all unread records when no IDs are supplied — as read. There are no acknowledge, resolve, reopen, severity-filter, or delivery-status controls in the catalog UI.
 
 ## Automatic evaluation
 
-After every sync, each **active** offer is re-planned and queued if anything measurable is still missing. The sweep is not restricted to what the run just discovered: that restriction left an already-published offer with an unmeasured dimension unmeasured forever, because nothing asked about it again. The plan is the filter — an offer with nothing left to measure costs nothing and reports `already_covered`, so a sweep over a complete catalog is pure database reads.
+After a sync, automatic evaluation receives only **newly added active offers** from providers whose refresh returned `ok`. Existing models are never automatically re-evaluated by a routine poll or later unchanged sync; their explicit `Evaluate` action remains the manual route for a re-run.
 
-Only providers whose refresh returned `ok` contribute offers, and only rows with `status = 'active'`. A quarantined roster is not trusted enough to write a catalog row from, so it is not trusted enough to spend a provider request on; a `missing` model is one the provider is not currently serving, so a request for it would be spent rediscovering that.
+Planning is keyed by canonical identity. A new provider offer that already maps to an identity with complete evidence is reported as `already_covered`; two new offers of the same identity cannot both queue full work. Retired rows are never submitted to automatic evaluation, while their model row, events, scores, and evidence remain preserved for history.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -71,33 +61,11 @@ Only providers whose refresh returned `ok` contribute offers, and only rows with
 | `CATALOG_AUTO_EVALUATION_MAX_REQUESTS` | *(none)* | Request ceiling per sync. **Absent means no ceiling** — the goal is a complete catalog, and a ceiling that stops short of it only defers the same spend. A value that does not parse is treated as absent for the same reason. `0` spends nothing while leaving the reporting intact. |
 | `CATALOG_AUTO_EVALUATION_RETRY_HOURS` | `24` | How long an identity is left alone after a measurement attempt. `0` disables the guard. |
 
-### Why there is a retry cooldown even with no ceiling
-
-A plan stays incomplete when a dimension was attempted and produced no verdict. `x-ai/grok-4.5`/vision was attempted on 2026-08-23 at 09:45 and returned `insufficient_evidence: incomplete_valid_scenarios`; `xiaomi/mimo-v2.5-pro`/vision did the same at 10:21. With an uncapped sweep on a six-hourly schedule and nothing else in the way, those dimensions would be re-bought four times a day, indefinitely, for a verdict that asking again immediately does not produce.
-
-The cooldown is keyed on the **identity**, because that is what the evidence belongs to: two sellers of one model share both the measurement and the reason it is not yet worth re-buying. It reads `evaluation_runs`, so it is anchored to what the service actually did rather than to a separate counter — and an unfinished run counts by its start time, so a service killed mid-evaluation does not hand the next sync a free re-buy.
-
-### What "complete" means
-
-Full **coverage**, not a particular score: every *applicable* dimension has a verdict. A dimension the offer does not support is excluded from coverage rather than counted as unsatisfied. In the live catalog 22 of 38 identities lack a `vision` or `structuredOutput` score for exactly that reason — the models have no such capability, and testing one would produce a number with no meaning. Those identities are complete.
-
-Offers are queued cheapest-first. With no ceiling that does not change what gets bought, but it decides what reaches the provider first, so a run interrupted halfway has still closed as many dimensions as it could. The ordering is stable, so two runs over the same roster make the same choices.
-
-Every offer not queued is named with a typed reason: a `blocked` plan reports the planner's own reason (`missing_credentials`, `consent_required`, `identity_unresolved`, `model_not_found`), a fully covered offer reports `already_covered`, one inside its window reports `retry_cooldown`, and anything above a configured ceiling reports `over_budget` and is retried next run. `POST /v1/sync` returns the whole report as `autoEvaluation`.
-
-## Active-alert notifications
-
-Outbound notifications are disabled by default. To enable them, set `CATALOG_ALERT_NOTIFICATIONS=true`, `CATALOG_ALERT_WEBHOOK_URL`, and optionally `CATALOG_ALERT_WEBHOOK_SECRET`. Catalog emits signed JSON events for `opened`, `reopened`, `acknowledged`, and `resolved` transitions. The `x-catalog-signature` header is an HMAC-SHA256 digest of the exact request body when a secret is configured.
-
-Delivery is performed by the standalone Catalog process from a durable SQLite queue. Each attempt records its HTTP status or sanitized error, retries with exponential backoff, and becomes `failed` after the configured maximum number of attempts. A delivery failure never changes the underlying alert state or catalog facts. `GET /v1/alerts` includes the notification delivery records for each alert so the Dashboard can distinguish pending, delivered, retrying, and failed notifications.
+The cooldown still protects a just-added identity from duplicate work, and `POST /v1/sync` returns the automatic evaluation report with every skip reason. Outbound alert webhooks remain an optional backend-only feature when explicitly configured. Disabled webhook configuration creates no pending delivery rows, and the UI never makes delivery-state claims.
 
 ## Header notification center
 
-The catalog header reads only the authoritative `GET /v1/alerts?status=open` alert ledger. On a provider route, the visible badge and list are scoped to that provider; elsewhere, they show the catalog-wide open-alert set. The bell never derives alerts from client-side health data or change history.
-
-Acknowledging a notification calls `PATCH /v1/alerts/:id` with `{ "status": "acknowledged" }`. The popover removes only alerts that the service acknowledges successfully, and retains a failed item with a visible error instead of claiming it was handled. The same state transition is used for individual and bulk acknowledgement.
-
-While the catalog page is open, the notification center refreshes its open-alert list every 30 seconds only when the document is visible, and refreshes immediately when focus returns. This is a client-side polling enhancement, not a background worker: closing the page clears the interval and aborts in-flight reads. The catalog currently exposes a durable read-and-transition alert API rather than a browser event stream, so polling keeps the implementation aligned with the existing service contract without creating a second real-time channel.
+The header fetches the authoritative notification history every 30 seconds only while the document is visible and refreshes on focus. A provider route scopes the history to that provider. The badge shows unread count; `Mark all as read` changes read state but never removes history or mutates a catalog fact.
 
 ## Provider table reading conventions
 

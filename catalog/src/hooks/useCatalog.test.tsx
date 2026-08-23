@@ -28,11 +28,12 @@ function catalog(liveModels: string[]) {
 
 /** Renders the model ids the context is currently serving, plus its revision. */
 function Probe() {
-  const { data, revision } = useCatalog();
+  const { data, revision, loading } = useCatalog();
   return (
     <div>
       <span data-testid="models">{(data?.models ?? []).map((model) => model.modelId).join(',')}</span>
       <span data-testid="revision">{revision}</span>
+      <span data-testid="loading">{String(loading)}</span>
     </div>
   );
 }
@@ -138,5 +139,39 @@ describe('CatalogProvider change-cursor polling', () => {
 
     expect(screen.getByTestId('models').textContent).toBe('model-a');
     expect(mockedFetchCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the rendered roster mounted while a cursor-triggered background refresh is pending', async () => {
+    renderProbe();
+    await settle();
+    let resolveRefresh: ((value: Awaited<ReturnType<typeof fetchCatalog>>) => void) | undefined;
+    mockedFetchCatalog.mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
+    mockedFetchChangeCursor.mockResolvedValue('2026-08-23T09:30:00.000Z');
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(CHANGE_CURSOR_POLL_MS); });
+    await settle();
+    expect(screen.getByTestId('models').textContent).toBe('model-a');
+    expect(screen.getByTestId('loading').textContent).toBe('false');
+
+    await act(async () => { resolveRefresh?.(catalog(['model-a', 'model-b'])); await Promise.resolve(); });
+    expect(screen.getByTestId('models').textContent).toBe('model-a,model-b');
+  });
+
+  it('retries the same changed cursor after its first refetch fails instead of committing it early', async () => {
+    renderProbe();
+    await settle();
+    mockedFetchCatalog.mockRejectedValueOnce(new Error('temporary failure'));
+    mockedFetchCatalog.mockResolvedValue(catalog(['model-a', 'model-b']));
+    mockedFetchChangeCursor.mockResolvedValue('2026-08-23T09:30:00.000Z');
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(CHANGE_CURSOR_POLL_MS); });
+    await settle();
+    expect(screen.getByTestId('models').textContent).toBe('model-a');
+    expect(mockedFetchCatalog).toHaveBeenCalledTimes(2);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(CHANGE_CURSOR_POLL_MS); });
+    await settle();
+    expect(mockedFetchCatalog).toHaveBeenCalledTimes(3);
+    expect(screen.getByTestId('models').textContent).toBe('model-a,model-b');
   });
 });

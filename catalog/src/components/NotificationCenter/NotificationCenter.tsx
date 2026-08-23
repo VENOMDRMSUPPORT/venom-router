@@ -5,49 +5,62 @@ import {
   LuCheckCheck,
   LuChevronRight,
   LuCircleAlert,
+  LuCircleCheck,
+  LuCircleX,
   LuLoaderCircle,
+  LuTriangleAlert,
 } from 'react-icons/lu';
-import { fetchAlerts, formatAgo, updateAlertStatus, type AlertRecord } from '../../api/client';
+import {
+  fetchCatalogNotifications,
+  formatAgo,
+  markCatalogNotificationsRead,
+  type CatalogNotification,
+} from '../../api/client';
 import styles from './NotificationCenter.module.css';
 
 const MAX_VISIBLE_NOTIFICATIONS = 5;
-export const ALERT_REFRESH_INTERVAL_MS = 30_000;
+export const NOTIFICATION_REFRESH_INTERVAL_MS = 30_000;
 
 interface NotificationCenterProps {
   providerId?: string;
 }
 
+function NotificationIcon({ category }: { category: CatalogNotification['category'] }) {
+  if (category === 'success') return <LuCircleCheck size={16} aria-hidden="true" />;
+  if (category === 'error') return <LuCircleX size={16} aria-hidden="true" />;
+  return <LuTriangleAlert size={16} aria-hidden="true" />;
+}
+
 export function NotificationCenter({ providerId }: NotificationCenterProps) {
-  const [alerts, setAlerts] = useState<AlertRecord[] | null>(null);
+  const [rows, setRows] = useState<CatalogNotification[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [acknowledgingIds, setAcknowledgingIds] = useState<Set<string>>(() => new Set());
+  const [markingRead, setMarkingRead] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const latestAlertRequest = useRef(0);
+  const latestRequest = useRef(0);
 
-  const refreshAlerts = useCallback(async (signal?: AbortSignal) => {
-    const requestNumber = ++latestAlertRequest.current;
+  const refreshNotifications = useCallback(async (signal?: AbortSignal) => {
+    const requestNumber = ++latestRequest.current;
     try {
-      const result = await fetchAlerts('open', signal);
-      if (signal?.aborted || requestNumber !== latestAlertRequest.current) return;
-      setAlerts(result.alerts);
+      const result = await fetchCatalogNotifications(providerId, signal);
+      if (signal?.aborted || requestNumber !== latestRequest.current) return;
+      setRows(result.notifications);
       setError(null);
     } catch (reason) {
-      if (signal?.aborted || requestNumber !== latestAlertRequest.current) return;
+      if (signal?.aborted || requestNumber !== latestRequest.current) return;
       setError(reason instanceof Error ? reason.message : String(reason));
     }
-  }, []);
+  }, [providerId]);
 
   useEffect(() => {
     const controller = new AbortController();
     const refreshIfVisible = () => {
-      if (document.visibilityState === 'visible') void refreshAlerts(controller.signal);
+      if (document.visibilityState === 'visible') void refreshNotifications(controller.signal);
     };
-
-    void refreshAlerts(controller.signal);
-    const interval = window.setInterval(refreshIfVisible, ALERT_REFRESH_INTERVAL_MS);
+    void refreshNotifications(controller.signal);
+    const interval = window.setInterval(refreshIfVisible, NOTIFICATION_REFRESH_INTERVAL_MS);
     document.addEventListener('visibilitychange', refreshIfVisible);
     window.addEventListener('focus', refreshIfVisible);
     return () => {
@@ -56,15 +69,12 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
       document.removeEventListener('visibilitychange', refreshIfVisible);
       window.removeEventListener('focus', refreshIfVisible);
     };
-  }, [refreshAlerts]);
+  }, [refreshNotifications]);
 
   useEffect(() => {
     if (!open) return;
-
     const closeOnOutsidePress = (event: PointerEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
@@ -72,7 +82,6 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
       setOpen(false);
       triggerRef.current?.focus();
     };
-
     document.addEventListener('pointerdown', closeOnOutsidePress);
     document.addEventListener('keydown', closeOnEscape);
     return () => {
@@ -81,42 +90,30 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
     };
   }, [open]);
 
-  const matchingAlerts = useMemo(() => {
-    const relevantAlerts = providerId
-      ? (alerts ?? []).filter((alert) => alert.providerId === providerId)
-      : (alerts ?? []);
-    return relevantAlerts
-      .slice()
-      .sort((a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime());
-  }, [alerts, providerId]);
+  const notifications = useMemo(
+    () => (rows ?? []).slice().sort((a, b) => new Date(b.observedAt).getTime() - new Date(a.observedAt).getTime()),
+    [rows],
+  );
+  const unread = notifications.filter((notification) => notification.readAt === null);
+  const visibleNotifications = notifications.slice(0, MAX_VISIBLE_NOTIFICATIONS);
+  const triggerLabel = unread.length > 0 ? `Notifications, ${unread.length} unread` : 'Notifications';
 
-  const notifications = matchingAlerts.slice(0, MAX_VISIBLE_NOTIFICATIONS);
-  const notificationCount = matchingAlerts.length;
-  const triggerLabel = notificationCount > 0
-    ? `Notifications, ${notificationCount} open`
-    : 'Notifications';
-
-  const acknowledgeAlerts = async (alertsToAcknowledge: AlertRecord[]) => {
-    if (alertsToAcknowledge.length === 0) return;
-
-    const ids = alertsToAcknowledge.map((alert) => alert.id);
+  const markRead = async (notificationsToMark: CatalogNotification[]) => {
+    const ids = notificationsToMark.filter((notification) => notification.readAt === null).map((notification) => notification.id);
+    if (ids.length === 0) return;
     setActionError(null);
-    setAcknowledgingIds((current) => new Set([...current, ...ids]));
-
-    const results = await Promise.allSettled(
-      alertsToAcknowledge.map((alert) => updateAlertStatus(alert.id, 'acknowledged')),
-    );
-    const acknowledged = new Set(
-      results.flatMap((result, index) => result.status === 'fulfilled' ? [ids[index]] : []),
-    );
-
-    if (acknowledged.size > 0) {
-      setAlerts((current) => current?.filter((alert) => !acknowledged.has(alert.id)) ?? null);
+    setMarkingRead(true);
+    try {
+      await markCatalogNotificationsRead(ids);
+      const readAt = new Date().toISOString();
+      setRows((current) => current?.map((notification) => ids.includes(notification.id)
+        ? { ...notification, readAt }
+        : notification) ?? null);
+    } catch {
+      setActionError('Notifications could not be marked as read. Please try again.');
+    } finally {
+      setMarkingRead(false);
     }
-    if (acknowledged.size !== ids.length) {
-      setActionError('One or more alerts could not be acknowledged. Please try again.');
-    }
-    setAcknowledgingIds((current) => new Set([...current].filter((id) => !ids.includes(id))));
   };
 
   return (
@@ -133,103 +130,61 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
         title={triggerLabel}
       >
         <LuBell size={16} aria-hidden="true" />
-        {notificationCount > 0 && (
-          <span className={styles.badge} aria-hidden="true">
-            {notificationCount > 9 ? '9+' : notificationCount}
-          </span>
-        )}
+        {unread.length > 0 && <span className={styles.badge} aria-hidden="true">{unread.length > 9 ? '9+' : unread.length}</span>}
       </button>
 
       {open && (
         <section id="catalog-notifications" className={styles.popover} role="dialog" aria-label="Catalog notifications">
           <header className={styles.popoverHeader}>
             <div>
-              <p className={styles.eyebrow}>Operational alerts</p>
+              <p className={styles.eyebrow}>Catalog updates</p>
               <h2 className={styles.title}>Notifications</h2>
             </div>
-            {notificationCount > 0 && (
-              <button
-                type="button"
-                className={styles.acknowledgeAll}
-                onClick={() => void acknowledgeAlerts(notifications)}
-                disabled={acknowledgingIds.size > 0}
-              >
+            {unread.length > 0 && (
+              <button type="button" className={styles.acknowledgeAll} onClick={() => void markRead(unread)} disabled={markingRead}>
                 <LuCheckCheck size={14} aria-hidden="true" />
-                Acknowledge all
+                Mark all as read
               </button>
             )}
           </header>
 
           <div className={styles.content} aria-live="polite">
-            {alerts === null && !error && (
-              <div className={styles.state}>
-                <LuLoaderCircle size={16} className={styles.spinner} aria-hidden="true" />
-                Loading open alerts…
-              </div>
-            )}
-
-            {error && alerts === null && (
-              <div className={`${styles.state} ${styles.errorState}`}>
-                <LuCircleAlert size={16} aria-hidden="true" />
-                Alert ledger unavailable. Open alerts could not be loaded.
-              </div>
-            )}
-
-            {alerts !== null && !error && notificationCount === 0 && (
-              <div className={styles.state}>No open alerts for this provider.</div>
-            )}
-
-            {notifications.length > 0 && (
-              <ul className={styles.list} aria-label="Open operational alerts">
-                {notifications.map((alert) => {
-                  const isAcknowledging = acknowledgingIds.has(alert.id);
-                  const target = alert.providerId ? `/provider/${encodeURIComponent(alert.providerId)}` : '/';
-                  const targetLabel = alert.modelId ?? alert.providerId ?? 'Catalog service';
+            {rows === null && !error && <div className={styles.state}><LuLoaderCircle size={16} className={styles.spinner} aria-hidden="true" />Loading notifications…</div>}
+            {error && rows === null && <div className={`${styles.state} ${styles.errorState}`}><LuCircleAlert size={16} aria-hidden="true" />Notifications are unavailable right now.</div>}
+            {rows !== null && !error && notifications.length === 0 && <div className={styles.state}>No catalog notifications yet.</div>}
+            {visibleNotifications.length > 0 && (
+              <ul className={styles.list} aria-label="Catalog notification history">
+                {visibleNotifications.map((notification) => {
+                  const target = notification.providerId ? `/provider/${encodeURIComponent(notification.providerId)}` : '/';
+                  const targetLabel = notification.modelId ?? notification.providerId ?? 'Catalog';
                   return (
-                    <li key={alert.id} className={styles.item}>
-                      <span className={styles.itemTone} data-severity={alert.severity} aria-hidden="true" />
+                    <li key={notification.id} className={`${styles.item} ${notification.readAt !== null ? styles.itemRead : ''}`}>
+                      <span className={styles.itemTone} data-category={notification.category} aria-hidden="true"><NotificationIcon category={notification.category} /></span>
                       <span className={styles.itemBody}>
                         <span className={styles.itemTopline}>
-                          <span className={styles.itemLabel}>{alert.title}</span>
-                          <time className={styles.time} dateTime={alert.lastSeenAt}>{formatAgo(alert.lastSeenAt)}</time>
+                          <span className={styles.itemLabel}>{notification.title}</span>
+                          <time className={styles.time} dateTime={notification.observedAt}>{formatAgo(notification.observedAt)}</time>
                         </span>
                         <span className={styles.itemTarget}>{targetLabel}</span>
-                        <span className={styles.itemDetail}>{alert.detail}</span>
+                        <span className={styles.itemDetail}>{notification.detail}</span>
                       </span>
-                      <span className={styles.itemActions}>
-                        <Link
-                          to={target}
-                          className={styles.targetLink}
-                          onClick={() => setOpen(false)}
-                          aria-label={`Open details for ${targetLabel}`}
-                          title="Open alert target"
-                        >
-                          <LuChevronRight size={15} aria-hidden="true" />
-                        </Link>
-                        <button
-                          type="button"
-                          className={styles.acknowledgeButton}
-                          onClick={() => void acknowledgeAlerts([alert])}
-                          disabled={isAcknowledging || acknowledgingIds.size > 0}
-                          aria-label={`Acknowledge ${alert.title}`}
-                        >
-                          {isAcknowledging ? '…' : 'Ack'}
-                        </button>
-                      </span>
+                      <Link
+                        to={target}
+                        className={styles.targetLink}
+                        onClick={() => { void markRead([notification]); setOpen(false); }}
+                        aria-label={`Open details for ${targetLabel}`}
+                        title="Open notification target"
+                      >
+                        <LuChevronRight size={15} aria-hidden="true" />
+                      </Link>
                     </li>
                   );
                 })}
               </ul>
             )}
-
             {actionError && <p className={styles.actionError} role="alert">{actionError}</p>}
-            {error && alerts !== null && <p className={styles.refreshError} role="status">Unable to refresh alerts. Showing the latest loaded state.</p>}
+            {error && rows !== null && <p className={styles.refreshError} role="status">Unable to refresh notifications. Showing the latest loaded history.</p>}
           </div>
-
-          <Link to="/" className={styles.viewAll} onClick={() => setOpen(false)}>
-            Open alerts dashboard
-            <LuChevronRight size={15} aria-hidden="true" />
-          </Link>
         </section>
       )}
     </div>

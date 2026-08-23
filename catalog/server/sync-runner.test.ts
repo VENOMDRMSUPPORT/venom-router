@@ -178,15 +178,12 @@ describe('targeted resolution follow-up', () => {
 });
 
 describe('what a finished sync hands to the evaluation policy', () => {
-  test('every active offer is offered, not only the ones this run added', async () => {
+  test('only newly added offers are offered; existing rows remain manual re-evaluation candidates', async () => {
     /**
-     * The defect this closes. The hook used to receive `RunResult.added`, so an
-     * already-published offer with an unmeasured dimension was never asked about
-     * again — four such dimensions were sitting in the live catalog, and the only
-     * route to measuring them was a human clicking Evaluate.
-     *
-     * Proven across two runs: the second adds nothing, and must still offer the
-     * row the first one established.
+     * A completed sync is not permission to spend again. The first run hands the
+     * newly recorded offer to the automatic policy; an unchanged second run does
+     * not enqueue the same identity again. Manual Evaluate remains the explicit
+     * path for a later re-run.
      */
     const db = makeDb();
     const handed: Array<Array<{ providerId: string; modelId: string }>> = [];
@@ -208,12 +205,12 @@ describe('what a finished sync hands to the evaluation policy', () => {
     assert.deepEqual(
       second!.providers.find((p) => p.provider === 'ollama-cloud')?.added,
       [],
-      'an unchanged refetch adds nothing — which is exactly when the old hook went silent',
+      'an unchanged refetch adds nothing',
     );
     assert.deepEqual(
       handed[1],
-      [{ providerId: 'ollama-cloud', modelId: 'detail-needed' }],
-      'the offer must still be offered on a run that discovered nothing',
+      [],
+      'the automatic policy must not re-submit existing offers',
     );
   });
 
