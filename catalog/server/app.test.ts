@@ -5,6 +5,7 @@ import { route, health, type AppDeps } from './app.ts';
 import { SyncRunner } from './sync-runner.ts';
 import { EvaluationRunner, type EvaluationJobExecutor } from './evaluation-runner.ts';
 import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
+import { resolveIdentity } from '../sync/evaluation/plan.ts';
 import { syncProvider, type ProviderAdapter, type SpecLookup } from '../sync/engine.ts';
 import { scoreAll } from '../sync/score/pipeline.ts';
 import { enrich, canonicalFromBenchmarks } from '../sync/enrich/enrich.ts';
@@ -890,6 +891,21 @@ describe('evaluation control routes', () => {
   test('a re-read refuses a method it does not implement', () => {
     const result = route(deps(), new URL('http://127.0.0.1/v1/evaluations/regrade'), 'GET') as { status: number };
     assert.equal(result.status, 405);
+  });
+
+  test('the diagnostics answer under the same identity the planner uses', () => {
+    // Two resolutions used to exist: the planner weighs canonical id, vendor
+    // identity AND the reviewed `evaluationIdentity` override, while this route
+    // read only the first two. For the offers carrying an override they
+    // disagreed, so the route reported no dimensions at all and the Evaluate
+    // dialog showed an empty evidence panel for a model with stored scores.
+    const detail = get('/v1/models/acme/measured-1/evaluation');
+    assert.equal(detail.status, 200);
+    assert.equal(
+      detail.body.identityId,
+      resolveIdentity(db, 'acme', 'measured-1'),
+      'one question, one answer',
+    );
   });
 
   test('the diagnostics route carries the plan, so the modal needs no second endpoint', () => {

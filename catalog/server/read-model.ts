@@ -24,6 +24,7 @@ import {
 import { loadResolution, type ModelResolution } from '../sync/resolution-jobs.ts';
 import { createEvaluationRepository, type OverallScoreRow } from '../sync/evaluation/repository.ts';
 import { OVERALL_SCORE_POLICY, rankOverallScores } from '../sync/evaluation/score.ts';
+import { resolveIdentity } from '../sync/evaluation/plan.ts';
 
 /** Compact provenance, carried on every model row. Enough to explain a score. */
 export interface ProvenanceSummary {
@@ -833,10 +834,19 @@ export function loadEvaluationDiagnostics(db: Db, providerId: string, modelId: s
     | undefined;
   if (!exists) return null;
   const repository = createEvaluationRepository(db);
-  const model = loadModels(db, { includeRetired: true }).find(
-    (item) => item.providerId === providerId && item.modelId === modelId,
-  );
-  const identityId = model?.canonicalId ?? model?.vendorModelId ?? null;
+  // The planner's rule, not a second copy of it.
+  //
+  // This read `canonicalId ?? vendorModelId`, which is two of the three inputs
+  // `resolveOfferIdentityId` weighs — it knows nothing of the reviewed
+  // `evaluationIdentity` override. For the two offers that carry one, the two
+  // resolutions disagreed: the planner keyed evidence under
+  // `opencode-zen/x-preview-f-free` while this returned null, so the diagnostics
+  // reported no dimensions at all and the Evaluate dialog showed an empty
+  // evidence panel for a model the service had scores and withdrawals for.
+  //
+  // Quality is keyed by identity everywhere. There can only be one answer to
+  // which identity an offer has.
+  const identityId = resolveIdentity(db, providerId, modelId);
   const runs = db.prepare(`
     SELECT id, identity_id identityId, dimension, run_kind runKind, status,
            evaluator_version evaluatorVersion, rubric_version rubricVersion,
