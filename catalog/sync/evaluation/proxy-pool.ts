@@ -12,7 +12,16 @@ const PROXY_LIST_ENV: Record<string, string> = {
 // bound finite, but search a meaningful slice of the refreshed pool.
 const DEFAULT_PROXY_ATTEMPTS = 32;
 const PROXY_LIST_TIMEOUT_MS = 30_000;
-const SOCKS_CONNECT_TIMEOUT_MS = 2_000;
+/**
+ * Measured against the paid whitelist this rotation serves (2026-08-23): of 14
+ * fresh exits, 7 completed SOCKS+TLS, and every one of those 7 was under 5s —
+ * but only 3 were under 2s. The former 2s bound therefore discarded about half
+ * the healthy pool as "dead", each discard costing a full attempt, until a bad
+ * draw churned past the caller's request timeout and the whole sample failed.
+ * 5s covers every exit observed to work; a truly dead exit still costs at most
+ * one bounded attempt instead of stalling to the outer timeout.
+ */
+const SOCKS_CONNECT_TIMEOUT_MS = 5_000;
 
 export type SocksRequest = (
   proxyUrl: string,
