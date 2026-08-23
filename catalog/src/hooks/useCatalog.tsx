@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { fetchCatalog, type CatalogData } from '../api/client';
+import { fetchCatalog, fetchHealth, type CatalogData, type HealthResponse } from '../api/client';
 
 /**
  * One catalog fetch for the whole app.
@@ -13,15 +13,29 @@ interface CatalogState {
   data: CatalogData | null;
   error: string | null;
   loading: boolean;
+  health?: HealthResponse | null;
+  healthError?: string | null;
+  healthLoading?: boolean;
   reload: () => void;
 }
 
-const Ctx = createContext<CatalogState>({ data: null, error: null, loading: true, reload: () => {} });
+const Ctx = createContext<CatalogState>({
+  data: null,
+  error: null,
+  loading: true,
+  health: null,
+  healthError: null,
+  healthLoading: true,
+  reload: () => {},
+});
 
 export function CatalogProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<CatalogData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [healthLoading, setHealthLoading] = useState(true);
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
@@ -32,6 +46,36 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       .catch((e) => { if (!ctrl.signal.aborted) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!ctrl.signal.aborted) setLoading(false); });
     return () => ctrl.abort();
+  }, [nonce]);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    let active = true;
+
+    const pollHealth = () => {
+      setHealthLoading(true);
+      fetchHealth(ctrl.signal)
+        .then((result) => {
+          if (!active) return;
+          setHealth(result);
+          setHealthError(null);
+        })
+        .catch((reason) => {
+          if (!active || ctrl.signal.aborted) return;
+          setHealthError(reason instanceof Error ? reason.message : String(reason));
+        })
+        .finally(() => {
+          if (active && !ctrl.signal.aborted) setHealthLoading(false);
+        });
+    };
+
+    pollHealth();
+    const interval = window.setInterval(pollHealth, 30_000);
+    return () => {
+      active = false;
+      ctrl.abort();
+      window.clearInterval(interval);
+    };
   }, [nonce]);
 
   useEffect(() => {
@@ -47,7 +91,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   }, [data]);
 
   return (
-    <Ctx.Provider value={{ data, error, loading, reload: () => setNonce((n) => n + 1) }}>
+    <Ctx.Provider value={{ data, error, loading, health, healthError, healthLoading, reload: () => setNonce((n) => n + 1) }}>
       {children}
     </Ctx.Provider>
   );

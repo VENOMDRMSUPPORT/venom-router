@@ -623,6 +623,91 @@
 
 .emptyHint { margin-top: 8px; font-size: 0.82rem; color: var(--foreground-tertiary); }
 
+.monitoringPanel {
+  margin: 0 0 18px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.monitoring-critical { border-left-color: var(--foreground); }
+.monitoring-warning { border-left-color: var(--foreground-secondary); }
+.monitoring-info { border-left-color: var(--border-strong); }
+.monitoring-success { border-left-color: var(--foreground-tertiary); }
+
+.monitoringHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+}
+
+.monitoringTitleGroup,
+.monitoringHeaderActions,
+.monitoringSummary,
+.monitoringToggle {
+  display: inline-flex;
+  align-items: center;
+}
+
+.monitoringTitleGroup { gap: 10px; min-width: 0; }
+.monitoringHeaderActions { gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.monitoringIcon { color: var(--foreground-secondary); display: inline-flex; }
+.monitoringEyebrow { display: block; color: var(--foreground-tertiary); font-size: 0.65rem; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 650; }
+.monitoringTitle { margin: 2px 0 0; color: var(--foreground); font-size: 0.95rem; font-weight: 680; }
+.monitoringSummary { gap: 6px; color: var(--foreground-secondary); font-size: 0.76rem; font-weight: 650; }
+.monitoringToggle { gap: 5px; min-height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--background); color: var(--foreground-secondary); font-size: 0.74rem; }
+.monitoringToggle:hover { background: var(--surface-hover); color: var(--foreground); }
+
+.monitoringSignals {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.monitoringSignal {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--background);
+}
+
+.signal-critical { border-color: var(--border-strong); }
+.signal-warning { border-color: var(--border); }
+.signal-info,
+.signal-success { border-color: var(--border-subtle); }
+.signalIcon { color: var(--foreground-secondary); }
+.monitoringSignalBody { min-width: 0; }
+.monitoringSignalBody strong { display: block; color: var(--foreground); font-size: 0.79rem; font-weight: 650; }
+.monitoringSignalBody p { margin: 3px 0 0; color: var(--foreground-tertiary); font-size: 0.74rem; line-height: 1.45; }
+.monitoringAction { display: inline-flex; align-items: center; justify-content: center; min-height: 28px; padding: 0 9px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--foreground); font-size: 0.72rem; font-weight: 650; text-decoration: none; white-space: nowrap; }
+.monitoringAction:hover { background: var(--surface-hover); }
+.monitoringLoading { display: flex; align-items: center; gap: 8px; padding: 12px 2px 2px; color: var(--foreground-tertiary); font-size: 0.76rem; }
+.monitoringPulse { width: 7px; height: 7px; border-radius: 50%; background: var(--foreground-secondary); animation: monitoringPulse 1.4s ease-in-out infinite; }
+
+@keyframes monitoringPulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+@media (max-width: 640px) {
+  .monitoringHeader { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .monitoringHeaderActions { width: 100%; justify-content: space-between; }
+  .monitoringSignal { grid-template-columns: auto minmax(0, 1fr); }
+  .monitoringAction { grid-column: 2; justify-self: start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monitoringPulse { animation: none; }
+}
+
 .method {
   margin-top: 40px;
   padding: 22px 24px;

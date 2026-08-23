@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { LuArrowUpRight, LuArrowRight, LuArrowDownUp, LuCircleAlert, LuCpu, LuRefreshCw, LuSearchX } from 'react-icons/lu';
+import { LuArrowUpRight, LuArrowRight, LuArrowDownUp, LuCircleAlert, LuActivity, LuCircleCheck, LuCpu, LuInfo, LuRefreshCw, LuSearchX, LuTriangleAlert, LuChevronDown, LuChevronUp } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import { formatTokens, formatAgo } from '../../api/client';
@@ -9,6 +9,7 @@ import { Toolbar, PROVIDER_FILTERS } from '../../components/Toolbar/Toolbar';
 import { FactState } from '../../components/FactState/FactState';
 import { providerMatchesFilter } from '../../api/filters';
 import { matchesProviderSearch } from '../../api/provider-search';
+import { buildMonitoringSignals, type MonitoringSeverity } from '../../api/monitoring';
 import styles from './DashboardPage.module.css';
 
 type ProviderSortKey = 'name' | 'models' | 'context' | 'score' | 'freshness';
@@ -23,13 +24,14 @@ const SORT_OPTIONS: { value: ProviderSortKey; label: string }[] = [
 ];
 
 export function DashboardPage() {
-  const { data, error, loading, reload } = useCatalog();
+  const { data, error, loading, reload, health, healthError, healthLoading } = useCatalog();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [view, setView] = useState<'grid' | 'table'>('table');
   const [preferredView, setPreferredView] = useState<'grid' | 'table'>('table');
   const [sortKey, setSortKey] = useState<ProviderSortKey>('score');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [monitoringOpen, setMonitoringOpen] = useState(true);
 
   const navigate = useNavigate();
 
@@ -53,6 +55,8 @@ export function DashboardPage() {
     setView(newView);
     setPreferredView(newView);
   };
+
+  const monitoringSignals = useMemo(() => buildMonitoringSignals({ data, health, healthError, healthLoading }), [data, health, healthError, healthLoading]);
 
   const providers = useMemo(() => {
     if (!data) return [];
@@ -249,7 +253,15 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* This page lists providers, so it takes the provider filters. The model
+      <MonitoringPanel
+        signals={monitoringSignals}
+        loading={Boolean(healthLoading && !health)}
+        open={monitoringOpen}
+        onToggle={() => setMonitoringOpen((value) => !value)}
+        onRetry={reload}
+      />
+
+      {/* This page lists PROVIDERS, so it takes the provider filters. The model
           filters reached it only as a default, which is how "Not Deprecated"
           arrived with no branch to act on and no effect a reader could see. */}
       <Toolbar
@@ -543,6 +555,77 @@ export function DashboardPage() {
       </footer>
     </div>
   );
+}
+
+function MonitoringPanel({
+  signals,
+  loading,
+  open,
+  onToggle,
+  onRetry,
+}: {
+  signals: ReturnType<typeof buildMonitoringSignals>;
+  loading: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onRetry: () => void;
+}) {
+  const mostUrgent = signals.find((signal) => signal.severity === 'critical')
+    ?? signals.find((signal) => signal.severity === 'warning')
+    ?? signals[0];
+  const panelSeverity: MonitoringSeverity = mostUrgent?.severity ?? (loading ? 'info' : 'success');
+
+  return (
+    <section className={`${styles.monitoringPanel} ${styles[`monitoring-${panelSeverity}`]}`} aria-labelledby="monitoring-title">
+      <div className={styles.monitoringHeader}>
+        <div className={styles.monitoringTitleGroup}>
+          <span className={styles.monitoringIcon} aria-hidden="true"><LuActivity size={16} /></span>
+          <div>
+            <span className={styles.monitoringEyebrow}>Operational monitor</span>
+            <h2 id="monitoring-title" className={styles.monitoringTitle}>Catalog health</h2>
+          </div>
+        </div>
+        <div className={styles.monitoringHeaderActions}>
+          <span className={styles.monitoringSummary} role="status" aria-live="polite">
+            {loading ? 'Checking service…' : mostUrgent?.severity === 'success' ? 'All systems nominal' : `${signals.length} active signal${signals.length === 1 ? '' : 's'}`}
+          </span>
+          <button type="button" className={styles.monitoringToggle} onClick={onToggle} aria-expanded={open} aria-controls="monitoring-signals">
+            {open ? 'Hide details' : 'Show details'}
+            {open ? <LuChevronUp size={14} aria-hidden="true" /> : <LuChevronDown size={14} aria-hidden="true" />}
+          </button>
+        </div>
+      </div>
+
+      {open && (
+        <div id="monitoring-signals" className={styles.monitoringSignals}>
+          {loading ? (
+            <div className={styles.monitoringLoading}><span className={styles.monitoringPulse} /> Waiting for the Catalog health endpoint…</div>
+          ) : signals.map((signal) => (
+            <article key={signal.id} className={`${styles.monitoringSignal} ${styles[`signal-${signal.severity}`]}`} role={signal.severity === 'critical' || signal.severity === 'warning' ? 'alert' : 'status'} data-testid={`monitoring-signal-${signal.id}`}>
+              <SignalIcon severity={signal.severity} />
+              <div className={styles.monitoringSignalBody}>
+                <strong>{signal.title}</strong>
+                <p>{signal.detail}</p>
+              </div>
+              {signal.action === 'retry' && (
+                <button type="button" className={styles.monitoringAction} onClick={onRetry}>Retry</button>
+              )}
+              {signal.action === 'changes' && (
+                <Link to="/changes" className={styles.monitoringAction}>View changes</Link>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SignalIcon({ severity }: { severity: MonitoringSeverity }) {
+  if (severity === 'critical') return <LuCircleAlert size={17} className={styles.signalIcon} aria-hidden="true" />;
+  if (severity === 'warning') return <LuTriangleAlert size={17} className={styles.signalIcon} aria-hidden="true" />;
+  if (severity === 'success') return <LuCircleCheck size={17} className={styles.signalIcon} aria-hidden="true" />;
+  return <LuInfo size={17} className={styles.signalIcon} aria-hidden="true" />;
 }
 
 function DashboardSkeleton() {

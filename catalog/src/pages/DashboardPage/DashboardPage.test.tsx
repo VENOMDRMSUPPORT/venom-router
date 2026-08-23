@@ -2,7 +2,7 @@ import { describe, test, expect, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { DashboardPage } from './DashboardPage';
-import type { CatalogData } from '../../api/client';
+import type { CatalogData, HealthResponse } from '../../api/client';
 
 /**
  * `DashboardPage` reads `data`/`error`/`loading` from `useCatalog()`. Mocking the
@@ -11,7 +11,25 @@ import type { CatalogData } from '../../api/client';
  * the `CatalogMeta` type contract at runtime, which is exactly the case this
  * file exists to pin.
  */
-const catalogMock = vi.hoisted(() => ({ current: { data: null as CatalogData | null, error: null as string | null, loading: false } }));
+type CatalogMockState = {
+  data: CatalogData | null;
+  error: string | null;
+  loading: boolean;
+  health?: HealthResponse | null;
+  healthError?: string | null;
+  healthLoading?: boolean;
+  reload?: () => void;
+};
+
+const catalogMock = vi.hoisted(() => ({ current: {
+  data: null as CatalogData | null,
+  error: null as string | null,
+  loading: false,
+  health: null as HealthResponse | null,
+  healthError: null as string | null,
+  healthLoading: false,
+  reload: vi.fn(),
+} as CatalogMockState }));
 vi.mock('../../hooks/useCatalog', () => ({
   useCatalog: () => catalogMock.current,
 }));
@@ -62,6 +80,37 @@ function renderDashboard() {
     </MemoryRouter>,
   );
 }
+
+describe('the monitoring panel interaction experience', () => {
+  test('collapses details and exposes retry for an unreachable health endpoint', () => {
+    catalogMock.current = {
+      data: baseData(), error: null, loading: false, health: null,
+      healthError: 'health endpoint unavailable', healthLoading: false, reload: vi.fn(),
+    };
+    renderDashboard();
+
+    expect(screen.getByText('Catalog API is unreachable')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /hide details/i }));
+    expect(screen.queryByText('Catalog API is unreachable')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /show details/i }));
+    expect(screen.getByText('Catalog API is unreachable')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(catalogMock.current.reload).toHaveBeenCalled();
+  });
+
+  test('shows a nominal status after the health endpoint answers cleanly', () => {
+    const cleanHealth: HealthResponse = {
+      service: { status: 'up', databaseReadable: true, startedAt: null, syncInFlight: false, currentRunStartedAt: null, schedulerEnabled: true, nextScheduledRunAt: null },
+      catalog: { status: 'current', liveModels: 116, methodologyVersion: 'v1', staleAfterHours: 24, staleProviders: [], providers: [] },
+      lastSync: null,
+    };
+    catalogMock.current = { data: baseData({ meta: meta({ needsVerification: 0 }) }), error: null, loading: false, health: cleanHealth, healthError: null, healthLoading: false, reload: vi.fn() };
+    renderDashboard();
+
+    expect(screen.getByText('Catalog monitoring is clear')).toBeInTheDocument();
+    expect(screen.getByText('All systems nominal')).toBeInTheDocument();
+  });
+});
 
 describe('the Dashboard status and empty-state experience', () => {
   test('shows operational catalog status and offers a clear action after a search', () => {
