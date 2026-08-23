@@ -977,6 +977,7 @@ function CapabilitiesLegend() {
     { icon: LuBrain, name: 'Reasoning', desc: 'Deep thinking & chain-of-thought processing', cls: 'capReasoning' },
     { icon: LuBraces, name: 'Structured', desc: 'Strict JSON schema & grammar-constrained output', cls: 'capStructured' },
     { icon: LuImage, name: 'Vision', desc: 'Image & visual comprehension', cls: 'capImage' },
+    { icon: LuSparkles, name: 'Image Gen', desc: 'Native image creation & editing', cls: 'capImageGen' },
     { icon: LuMic, name: 'Audio', desc: 'Voice input & speech understanding', cls: 'capAudio' },
     { icon: LuVideo, name: 'Video', desc: 'Video sequence processing', cls: 'capVideo' },
     { icon: LuPaperclip, name: 'Files', desc: 'File & document upload support', cls: 'capAttachment' },
@@ -995,21 +996,27 @@ function CapabilitiesLegend() {
             <LuWrench size={12} className={styles.capTools} />
             <LuBrain size={12} className={styles.capReasoning} />
             <LuImage size={12} className={styles.capImage} />
+            <LuSparkles size={12} className={styles.capImageGen} />
           </span>
           <span className={styles.capLegendTitle}>Model Capabilities Legend</span>
         </div>
         <div className={styles.capLegendToggleRight}>
-          <span className={styles.capLegendAction}>{open ? 'Hide legend' : 'Explore capabilities (7)'}</span>
+          <span className={styles.capLegendAction}>{open ? 'Hide legend' : `Explore capabilities (${items.length})`}</span>
           {open ? <LuChevronUp size={14} /> : <LuChevronDown size={14} />}
         </div>
       </button>
 
       {open && (
-        <div className={styles.capLegendGrid}>
+        <div
+          className={styles.capLegendGrid}
+          role="list"
+          aria-label={`${items.length} model capability types`}
+          data-testid="capability-legend-grid"
+        >
           {items.map((item) => {
             const Icon = item.icon;
             return (
-              <div key={item.name} className={styles.capLegendItem}>
+              <div key={item.name} className={styles.capLegendItem} role="listitem">
                 <span className={`${styles.capIcon} ${styles[item.cls]}`}>
                   <Icon size={14} />
                 </span>

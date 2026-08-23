@@ -398,6 +398,22 @@ describe('capability states stay inside the icon language', () => {
   });
 });
 
+describe('the capability legend is a complete and responsive map', () => {
+  test('adds Image Gen as the eighth capability and exposes each item semantically', async () => {
+    stubStaleService([staleWireModel()]);
+    renderProviderPage();
+
+    const toggle = await screen.findByRole('button', { name: /Explore capabilities \(8\)/ });
+    fireEvent.click(toggle);
+
+    const legend = screen.getByTestId('capability-legend-grid');
+    expect(legend).toHaveAccessibleName('8 model capability types');
+    expect(screen.getAllByRole('listitem')).toHaveLength(8);
+    expect(legend).toHaveTextContent('Image Gen');
+    expect(legend).toHaveTextContent('Native image creation & editing');
+  });
+});
+
 describe('the overall-score tile reports reproducible evaluation coverage', () => {
   /** The tile's status icon, by its accessible label. */
   const tileStatus = () => screen.getByTestId('quality-tile-status').getAttribute('data-status');
