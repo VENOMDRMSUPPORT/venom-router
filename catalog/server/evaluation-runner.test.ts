@@ -104,6 +104,39 @@ describe('EvaluationRunner', () => {
     db.close();
   });
 
+  test('a job that throws does not take the service down with it', async () => {
+    // On 2026-08-23 an evaluation sample threw, `drain` rejected with nobody
+    // holding the promise, and Node ended the process — so `/v1/models` and
+    // `/v1/health` went down because one sample failed. The worker must contain
+    // its own failures the way `sync-runner.ts` does.
+    const db = seed(['m1', 'm2']);
+    const log: string[] = [];
+    const executor: EvaluationJobExecutor = {
+      async runDimension({ modelId, dimension }) {
+        if (modelId === 'm1') throw new Error('SQLITE_BUSY: database is locked');
+        log.push(`dimension:${modelId}:${dimension}`);
+        return { status: 'complete', score: 90 };
+      },
+      async runSpeed({ modelId }) { log.push(`speed:${modelId}`); return { status: 'complete' }; },
+      recalculate() { log.push('recalculate'); },
+    };
+    const runner = new EvaluationRunner({ db, executor, testSetHash: HASH, hasCredential: () => true });
+
+    runner.enqueue('p', 'm1');
+    runner.enqueue('p', 'm2');
+    // The assertion that matters: awaiting the worker resolves rather than
+    // rejecting. A rejection here is the process dying in production.
+    await runner.idle;
+
+    const state = runner.state;
+    assert.equal(state.state, 'idle');
+    assert.ok(state.recent.some((entry) => entry.modelId === 'm1' && entry.outcome.startsWith('error:')),
+      'the failure is recorded under the offer that caused it');
+    assert.ok(log.some((entry) => entry.startsWith('dimension:m2')),
+      'and the twenty jobs behind it still run');
+    db.close();
+  });
+
   test('refuses a blocked plan without ever calling the executor', async () => {
     const db = seed(['m1'], false);
     const log: string[] = [];

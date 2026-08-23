@@ -320,7 +320,7 @@ describe('an answer cut off before the model produced one', () => {
     const outcome = await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
     assert.equal(seen.length, 2);
     assert.equal(seen[0].max_tokens, 512, 'the first attempt pays the fixture budget, not the ceiling');
-    assert.equal(seen[1].max_tokens, 8192);
+    assert.equal(seen[1].max_tokens, 16384);
     assert.equal(outcome.kind, 'success');
     if (outcome.kind !== 'success') throw new Error('expected success');
     assert.equal((outcome.response.body as { choices: [{ message: { content: string } }] }).choices[0].message.content, 'done');
@@ -355,7 +355,7 @@ describe('an answer cut off before the model produced one', () => {
     }) as typeof fetch);
 
     const outcome = await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
-    assert.deepEqual(seen.map((body) => body.max_tokens), [512, 8192]);
+    assert.deepEqual(seen.map((body) => body.max_tokens), [512, 16384]);
     if (outcome.kind !== 'success') throw new Error('expected success');
     assert.equal((outcome.response.body as { choices: [{ finish_reason: string }] }).choices[0].finish_reason, 'stop');
   });
@@ -388,7 +388,7 @@ describe('an answer cut off before the model produced one', () => {
       seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       // Cut off at anything under the ceiling, answers when given room.
       const asked = Number(seen[seen.length - 1].max_tokens);
-      return new Response(JSON.stringify(asked >= 8192
+      return new Response(JSON.stringify(asked >= 16384
         ? { choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'done' } }] }
         : truncated), { status: 200 });
     }) as typeof fetch);
@@ -399,7 +399,7 @@ describe('an answer cut off before the model produced one', () => {
 
     assert.equal(first.kind, 'success');
     assert.equal(second.kind, 'success');
-    assert.deepEqual(seen.map((body) => body.max_tokens), [512, 8192, 8192],
+    assert.deepEqual(seen.map((body) => body.max_tokens), [512, 16384, 16384],
       'the second sample opens at the ceiling instead of paying for the same discovery again');
   });
 

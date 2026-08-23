@@ -127,9 +127,16 @@ export class EvaluationRunner {
     // would report every caller as first.
     const position = this.queue.length + (this.current ? 1 : 0);
     if (!this.working) {
-      this.working = this.drain().finally(() => {
-        this.working = null;
-      });
+      // The catch is the point, not decoration. Without it a throw anywhere
+      // below leaves this promise rejected with nobody holding it, and Node ends
+      // the process — so one evaluation sample takes down `/v1/models` and
+      // `/v1/health` with it. That is exactly what happened on 2026-08-23, and
+      // it is why `sync-runner.ts` puts a `.catch` on every background promise.
+      this.working = this.drain()
+        .catch((error: unknown) => { console.error('[evaluations] worker stopped unexpectedly:', error); })
+        .finally(() => {
+          this.working = null;
+        });
     }
     return { accepted: true, position, plan };
   }
@@ -145,7 +152,17 @@ export class EvaluationRunner {
   private async drain(): Promise<void> {
     while (this.queue.length > 0) {
       const job = this.queue.shift()!;
-      await this.runJob(job.providerId, job.modelId);
+      // One job that throws must not cancel the twenty behind it, the same way
+      // `sync-runner.ts` catches per provider rather than per pass. The failure
+      // is recorded under this offer so it is visible in `recent`, and the
+      // worker moves on — a queue that dies on its first surprise is a queue
+      // that has to be refilled by hand.
+      try {
+        await this.runJob(job.providerId, job.modelId);
+      } catch (error) {
+        console.error(`[evaluations] ${job.providerId}/${job.modelId} threw:`, error);
+        this.remember(job.providerId, job.modelId, `error: ${error instanceof Error ? error.message : String(error)}`);
+      }
       if (this.stopping) {
         // A stop cancels the pipeline, including anything enqueued during the
         // window between the request and the worker noticing it. Breaking

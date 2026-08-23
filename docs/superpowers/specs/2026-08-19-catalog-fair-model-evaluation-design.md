@@ -408,7 +408,7 @@ two, because the two halves need different knowledge:
   four paid requests per sample for the same answer. A transient failure on that
   retry stays transient rather than being renamed `answer_truncated`, which would
   stop a whole dimension over one blip.
-- 8192 is measured. `scripts/probe-output-budget.ts` sends the real fixture for
+- The ceiling is measured, never guessed. `scripts/probe-output-budget.ts` sends the real fixture for
   the scenario an offer actually truncated on and reports the finish reason and
   token count, at two requests per offer against sixty-three per dimension.
   Probing all eighteen affected offers put sixteen between 178 and 1,760 output

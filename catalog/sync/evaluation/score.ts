@@ -39,19 +39,28 @@ export const OVERALL_SCORE_POLICY = {
    * empty answer, which the grader read as five failed criteria. Outside the
    * digest by design: this is how an answer is obtained, not what was asked.
    *
-   * 8192 is measured, not chosen. Probing eighteen offers on the scenario each
-   * had actually truncated (`scripts/probe-output-budget.ts`) put sixteen of them
-   * between 178 and 1,760 output tokens, and `gpt-oss:120b` at 4,822 — so the
-   * first guess of 4096 would have failed that family on every sample.
+   * Raised twice, both times from measurement rather than intuition. Probing the
+   * scenario each offer had actually truncated on (`scripts/probe-output-budget.ts`)
+   * put most between 178 and 1,760 output tokens and `gpt-oss:120b` at 4,822, so
+   * an unmeasured 4096 would have failed that family on every sample. A full
+   * corpus run at 8192 then produced real scores everywhere except long context,
+   * where NINETEEN samples out of 2,205 requests ran past the cap — one or two
+   * scenarios per offer, a different scenario each time — and each one denied its
+   * whole dimension a score.
+   *
+   * 16384 is not about flattering those models. A dimension with no score leaves
+   * the offer with no published score at all, so the choice is between "unknown"
+   * and a real measurement, however poor: at 32x the requested output a model that
+   * answers can be scored, and one that still does not has been shown to run away
+   * rather than merely to have been interrupted. That is where this stops.
+   * `gpt-oss:20b` was already mid-trace at this cap on a question answered by one
+   * equation, and reports insufficient evidence, which is a finding about it.
    *
    * ONE ceiling for every model, deliberately. `outputTokens` above sits inside
    * the test-set digest so that every model is measured under identical
-   * conditions; raising this per model would quietly undo that. A model that
-   * cannot answer within it reports insufficient evidence, which is a finding —
-   * `gpt-oss:20b` was still mid-trace at 16,384 tokens on a question whose answer
-   * is one equation, and that is worth knowing rather than papering over.
+   * conditions; raising this per model would quietly undo that.
    */
-  truncationRetryOutputTokens: 8192,
+  truncationRetryOutputTokens: 16384,
   qualityProviderConcurrency: 3,
   // Speed is measured alone under this fixed load. Do not couple it to quality
   // throughput: changing it would make provider speed scores non-comparable.
