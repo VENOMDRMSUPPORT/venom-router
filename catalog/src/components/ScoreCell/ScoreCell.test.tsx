@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { CostCell, ModelScoreCell } from './ScoreCell';
+import { CostCell, ModelRankCell, ModelScoreCell, pageLocalRanks } from './ScoreCell';
 import type { ApiModel } from '../../api/client';
 
 /** A complete, resolved row. Each test bends one thing. */
@@ -228,6 +228,54 @@ describe('what the score cell says, and what it stops repeating', () => {
  * score already carries. These tests hold the FACT rather than its placement:
  * whatever the presentation, the scope must remain recoverable from the score.
  */
+describe('the rank column numbers the list on screen', () => {
+  const at = (modelId: string, overallRank: number | null, tied = false) =>
+    model({ modelId, overallRank, tiedAtOverallRank: tied });
+
+  test('gaps inherited from offers not on this page are closed', () => {
+    // clinepass held catalog ranks 1, 2, 3, 5 — the 4 belongs to another
+    // provider's offer, and a reader of this page has no way to know that.
+    const rows = [at('a', 1), at('b', 2), at('c', 3), at('d', 5)];
+    const localRanks = pageLocalRanks(rows);
+
+    render(<>{rows.map((m) => <ModelRankCell key={m.modelId} model={m} localRanks={localRanks} />)}</>);
+
+    expect(screen.getByTestId('model-rank-d')).toHaveTextContent('#4');
+    expect(screen.getByTestId('model-rank-d').getAttribute('title')).toContain('Catalog-wide rank: 5');
+  });
+
+  test('rows the server calls tied keep one number and the tie mark', () => {
+    // `ranking.ts` rule 3: overlapping uncertainty intervals are a tie. The
+    // numbering is local; the GROUPING stays the server's, because splitting it
+    // here would invent precision the evidence does not carry.
+    const rows = [at('a', 1, true), at('b', 1, true), at('c', 2)];
+    const localRanks = pageLocalRanks(rows);
+
+    render(<>{rows.map((m) => <ModelRankCell key={m.modelId} model={m} localRanks={localRanks} />)}</>);
+
+    expect(screen.getByTestId('model-rank-a')).toHaveTextContent('#1');
+    expect(screen.getByTestId('model-rank-b')).toHaveTextContent('#1');
+    expect(screen.getByTestId('model-rank-b')).toHaveTextContent('=');
+    expect(screen.getByTestId('model-rank-c')).toHaveTextContent('#2');
+  });
+
+  test('an unplaced row is not numbered, and does not consume a number', () => {
+    const rows = [at('a', 1), at('b', null), at('c', 2)];
+    const localRanks = pageLocalRanks(rows);
+
+    render(<>{rows.map((m) => <ModelRankCell key={m.modelId} model={m} localRanks={localRanks} />)}</>);
+
+    expect(screen.getByTestId('model-rank-b')).toHaveTextContent('—');
+    expect(screen.getByTestId('model-rank-c')).toHaveTextContent('#2');
+  });
+
+  test('with no list context it reports the catalog rank rather than inventing one', () => {
+    render(<ModelRankCell model={at('solo', 7)} />);
+
+    expect(screen.getByTestId('model-rank-solo')).toHaveTextContent('#7');
+  });
+});
+
 describe('a score says how much of the test set produced it', () => {
   /** The score's own tooltip, found by the methodology it always names. */
   const scopeNote = () => screen.getByTitle(/overall-score-v1/).getAttribute('title') ?? '';

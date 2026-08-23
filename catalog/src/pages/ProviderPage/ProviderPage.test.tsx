@@ -190,19 +190,24 @@ describe('the provider table presents one server-derived model score', () => {
     expect(screen.queryByText(/coverage/i)).not.toBeInTheDocument();
   });
 
-  test('states the global scope and renders a dense-rank tie marker', async () => {
+  test('numbers the row by its position here, and keeps the tie marker', async () => {
     stubStaleService([scoredModel()]);
     renderProviderPage();
 
     await screen.findByText('65.8%');
-    // Asserts the FACTS the note has to carry, not one phrasing of them: the
-    // ranking is catalog-wide, only complete results are placed, and "=" is a
-    // tie. Pinning the sentence made an editorial trim look like a regression.
+    // Asserts the FACTS the note has to carry, not one phrasing of them: where
+    // the catalog-wide rank lives, that only complete results are placed, and
+    // that "=" is a tie. Pinning the sentence made an editorial trim look like a
+    // regression.
     const scopeNote = screen.getByTestId('rank-scope-note');
     expect(scopeNote).toHaveTextContent(/catalog/i);
     expect(scopeNote).toHaveTextContent(/overall-score-v1/i);
     expect(scopeNote).toHaveTextContent(/tie/i);
-    expect(screen.getByTestId('model-rank-cline-pass/deepseek-v4-flash')).toHaveTextContent('#9=');
+    // One row on screen is position 1 whatever the catalog says, and the
+    // catalog's own number stays reachable rather than being dropped.
+    const cell = screen.getByTestId('model-rank-cline-pass/deepseek-v4-flash');
+    expect(cell).toHaveTextContent('#1=');
+    expect(cell.getAttribute('title')).toContain('Catalog-wide rank: 9');
   });
 
   test('keeps incomplete overall coverage visible beside the score', async () => {
@@ -604,13 +609,13 @@ describe('the identity label does not overstate what is unknown', () => {
 });
 
 describe('the ranking says what it ranks against', () => {
-  test('a filtered table explains why its numbers skip and why rows show a tie', async () => {
+  test('a filtered table explains its numbering and why rows show a tie', async () => {
     // Thirteen rows numbered #1, #2, #5, #5, #8, #9 ... with an "=" on almost
-    // every one reads as a broken table. Both are honest: the rank is
-    // catalog-wide, so other providers' models occupy the gaps, and the ties are
-    // usually the SAME model sold by another provider — filtered out of this
-    // view, so the reader sees a tie with nobody. Unstated scope is why a
-    // correct number looks like an error.
+    // every one read as a broken table. The gaps are gone now that the column
+    // numbers the rows on screen, but the ties remain and are still honest: they
+    // are usually the SAME model sold by another provider, filtered out of this
+    // view, so the reader sees a tie with nobody. Unexplained, a correct number
+    // still looks like an error.
     providerOver = { liveModels: 1, qualityScored: 1, unrated: 0 };
     stubStaleService([staleWireModel({
       modelScore: {
@@ -642,7 +647,8 @@ describe('the ranking says what it ranks against', () => {
     const note = screen.getByTestId('rank-scope-note').textContent ?? '';
     expect(note).toMatch(/catalog/i);
     expect(note).toMatch(/another provider/i);
-    expect(note).toMatch(/skip/i);
+    expect(note).toMatch(/position in this list/i);
+    expect(note).toMatch(/uncertainty intervals overlap/i);
   });
 });
 

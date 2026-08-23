@@ -29,7 +29,7 @@ import { useCatalog, useProviderModels } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import { formatTokens, type ApiModel } from '../../api/client';
 import { FreshnessBadge } from '../../components/FreshnessBadge/FreshnessBadge';
-import { ModelScoreCell, ModelRankCell, CostCell } from '../../components/ScoreCell/ScoreCell';
+import { ModelScoreCell, ModelRankCell, CostCell, pageLocalRanks } from '../../components/ScoreCell/ScoreCell';
 import { Toolbar } from '../../components/Toolbar/Toolbar';
 import { NotFoundPage } from '../NotFoundPage/NotFoundPage';
 import { EvidencePanel } from '../../components/EvidencePanel/EvidencePanel';
@@ -296,7 +296,7 @@ export function ProviderPage() {
                   <LuLayers size={14} />
                   <span>Catalog Ranking</span>
                 </div>
-                <span className={styles.contextMeta}>Global Scope</span>
+                <span className={styles.contextMeta}>This Page</span>
               </div>
               <p className={styles.contextCardText} data-testid="rank-scope-note">
                 {RANK_SCOPE_NOTE}
@@ -438,10 +438,19 @@ function displayIdentity(m: ApiModel): { id: string; title: string; fromVendor: 
  * provider's model sits in each gap, and a tie is usually the SAME model sold by
  * another provider — filtered out of this view, leaving a tie with nobody
  * visible. The number was never wrong; its scope was never stated.
+ *
+ * The gaps are gone: the column now numbers the rows on screen, and the
+ * catalog-wide rank moved to the tooltip. The ties stayed, because they are not
+ * a scope problem — `ranking.ts` rule 3 refuses to order two estimates whose
+ * intervals overlap, and this note is where a reader learns that a shared
+ * position is a statement about the evidence rather than a rendering fault.
  */
 const RANK_SCOPE_NOTE =
-  'Ranked against every scored offer in the catalog, so numbers skip where another provider’s offer sits between two rows. '
-  + 'Only models with a complete overall-score-v1 result are placed; an = marks a tie the evidence cannot separate.';
+  'Numbered by position in this list. The catalog-wide rank is on each number’s tooltip, and it can differ: '
+  + 'another provider’s offer may sit between two rows here. '
+  + 'Only models with a complete overall-score-v1 result are placed; an = marks a tie the evidence cannot separate — '
+  + 'two scores whose uncertainty intervals overlap share one position, because a 3-point gap between two ±5.7 '
+  + 'estimates is not an ordering.';
 
 /**
  * What the row says when the service did not report an identity state.
@@ -545,6 +554,9 @@ function VendorQualifierBadge({ qualifier }: { qualifier: string }) {
 }
 
 function ModelTable({ title, models, note, costStatedOnce }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean }) {
+  // Numbered against the rows actually on screen, so the column reads 1..N with
+  // no gap inherited from offers this page does not show.
+  const localRanks = pageLocalRanks(models);
   const [openRows, setOpenRows] = useState<Set<string>>(() => new Set());
   const [evaluating, setEvaluating] = useState<ApiModel | null>(null);
   const toggleRow = (k: string) =>
@@ -607,7 +619,7 @@ function ModelTable({ title, models, note, costStatedOnce }: { title: string; mo
                   ? styles.firstUnplaced
                   : undefined
               }>
-                <td className={styles.narrow}><ModelRankCell model={m} /></td>
+                <td className={styles.narrow}><ModelRankCell model={m} localRanks={localRanks} /></td>
                 <td>
                   <span className={styles.modelName}>{m.displayName || m.modelId}</span>
                   {/* The raw id is the API call — keep it one glance away, but
@@ -693,6 +705,8 @@ function ModelTable({ title, models, note, costStatedOnce }: { title: string; mo
 }
 
 function ModelGrid({ title, models, note, costStatedOnce }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean }) {
+  // Same numbering as the table: the two views of one list must agree.
+  const localRanks = pageLocalRanks(models);
   const [openCards, setOpenCards] = useState<Set<string>>(() => new Set());
   const [evaluating, setEvaluating] = useState<ApiModel | null>(null);
   const toggleCard = (key: string) => setOpenCards((previous) => {
@@ -735,7 +749,7 @@ function ModelGrid({ title, models, note, costStatedOnce }: { title: string; mod
                   );
                 })()}
               </div>
-              <ModelRankCell model={m} />
+              <ModelRankCell model={m} localRanks={localRanks} />
             </div>
 
             <div className={styles.modelCardScores}>

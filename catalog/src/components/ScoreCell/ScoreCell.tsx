@@ -65,21 +65,53 @@ export function ModelScoreCell({ model }: { model: ApiModel }) {
   );
 }
 
-export function ModelRankCell({ model }: { model: ApiModel }) {
+/**
+ * Position within the list on screen, numbered from one.
+ *
+ * The server ranks against the whole catalog, so a provider page inherits gaps
+ * from offers that are not on it — clinepass showed 1, 2, 3, 5. Renumbering the
+ * groups PRESENT here removes the gap and stops a number moving because some
+ * other provider's model was rescored.
+ *
+ * What it does not do is separate the rows the server calls tied, and that is
+ * deliberate: the grouping is the server's, and only its numbering is local.
+ * `ranking.ts` rule 3 — two values whose uncertainty intervals overlap are tied,
+ * and rendering a 3-point gap between two ±5.7 estimates as an ordering invents
+ * precision the evidence does not carry. Seven rows reading #1 is that rule
+ * speaking, not a gap this function should paper over.
+ */
+export function pageLocalRanks(models: ApiModel[]): Map<number, number> {
+  const groups = [...new Set(models
+    .map((model) => model.overallRank)
+    .filter((rank): rank is number => rank !== null))]
+    .sort((left, right) => left - right);
+  return new Map(groups.map((globalRank, index) => [globalRank, index + 1]));
+}
+
+export function ModelRankCell({ model, localRanks }: { model: ApiModel; localRanks?: Map<number, number> }) {
   if (model.overallRank === null) {
     return (
       <span
         className={styles.unplaced}
-        title="No complete overall score, so this model is not placed in the global ranking."
+        title="No complete overall score, so this model is not placed in the ranking."
         data-testid={`model-rank-${model.modelId}`}
       >
         —
       </span>
     );
   }
+  // Falls back to the server's number when no list context was given, so a
+  // single-row use never silently reports a position of one.
+  const shown = localRanks?.get(model.overallRank) ?? model.overallRank;
   return (
-    <span className={`${styles.rank} ${model.overallRank <= 3 ? styles.topRank : ''}`} data-testid={`model-rank-${model.modelId}`}>
-      #{model.overallRank}
+    <span
+      className={`${styles.rank} ${shown <= 3 ? styles.topRank : ''}`}
+      data-testid={`model-rank-${model.modelId}`}
+      title={localRanks
+        ? `Position ${shown} of ${localRanks.size} scored on this page. Catalog-wide rank: ${model.overallRank}.`
+        : undefined}
+    >
+      #{shown}
       {model.tiedAtOverallRank ? (
         <span className={styles.tie} title="Tied: the overall-score uncertainty intervals overlap.">
           =
