@@ -187,6 +187,22 @@ export function DashboardPage() {
     });
   }, [data, query, filter, sortKey, sortDirection]);
 
+  /*
+   * Above the guards, because a hook may not be conditional.
+   *
+   * These two sat after `if (loading && !data)` and `if (!data)`, so the loading
+   * render called 42 hooks and the render that followed called 44. React answers
+   * that with "Rendered more hooks than during the previous render" and tears the
+   * tree down — a blank dashboard on every cold load, since the first render
+   * never has data. Every test in the suite handed the component a finished
+   * payload, so the empty path never ran and none of them saw it.
+   *
+   * Derived from `data` rather than the destructured `models`, which only exists
+   * once the guards have passed. Both helpers accept an empty list.
+   */
+  const performanceSummary = useMemo(() => summarizePerformance(data?.models ?? []), [data]);
+  const performanceList = useMemo(() => performanceRows(data?.models ?? []).slice(0, 5), [data]);
+
   if (loading && !data) return <DashboardSkeleton />;
   if (!data) {
     return (
@@ -216,8 +232,6 @@ export function DashboardPage() {
     .filter((x): x is string => Boolean(x))
     .sort()[0] ?? null;
   const stale = data.providers.filter((p) => p.freshness !== 'fresh');
-  const performanceSummary = useMemo(() => summarizePerformance(models), [models]);
-  const performanceList = useMemo(() => performanceRows(models).slice(0, 5), [models]);
 
   return (
     <div>

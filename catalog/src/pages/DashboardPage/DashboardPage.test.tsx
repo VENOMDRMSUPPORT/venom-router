@@ -338,3 +338,44 @@ describe('the dashboard offers the filters it can actually apply', () => {
     expect(screen.getByRole('button', { name: /sort ascending/i })).toBeInTheDocument();
   });
 });
+
+describe('the dashboard survives its own loading state', () => {
+  /**
+   * Every other test in this file hands `useCatalog` a finished payload, so the
+   * first render already has data and the empty path never runs. That is exactly
+   * why 227 green SPA tests sat alongside a dashboard that white-screened in the
+   * browser: `performanceSummary` and `performanceList` were declared AFTER the
+   * `if (loading && !data)` and `if (!data)` guards, so the loading render called
+   * 42 hooks and the render that followed called 44.
+   *
+   *   Rendered more hooks than during the previous render.
+   *
+   * React tears the tree down on that, which is the blank page. The transition
+   * has to be driven here or the violation cannot appear.
+   */
+  test('the hook order does not change when data arrives', async () => {
+    catalogMock.current = { data: null, error: null, loading: true, health: null, healthError: null, healthLoading: false, reload: vi.fn() };
+    const { rerender } = renderDashboard();
+    expect(screen.queryByRole('heading', { name: /catalog service unavailable/i })).not.toBeInTheDocument();
+
+    catalogMock.current = { ...catalogMock.current, data: baseData(), loading: false };
+    rerender(<MemoryRouter><DashboardPage /></MemoryRouter>);
+
+    // A crashed tree renders nothing, so real content is the check a thrown
+    // render cannot fake.
+    await settleDashboard();
+    expect(await screen.findByText(/Enterprise Matrix 2026/i)).toBeInTheDocument();
+  });
+
+  test('an empty catalog still renders instead of tearing down', async () => {
+    // The other order: data present but carrying no models, which is what the
+    // performance helpers are handed before anything is measured.
+    catalogMock.current = {
+      data: baseData({ models: [], providers: [] }), error: null, loading: false,
+      health: null, healthError: null, healthLoading: false, reload: vi.fn(),
+    };
+    renderDashboard();
+
+    expect(await screen.findByText(/Enterprise Matrix 2026/i)).toBeInTheDocument();
+  });
+});
