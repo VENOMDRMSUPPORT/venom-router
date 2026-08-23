@@ -223,17 +223,35 @@ describe('what the score cell says, and what it stops repeating', () => {
  * APPLICABLE dimensions, so a narrower test set certifies itself as 100% — and
  * 24 rows graded on 7 dimensions sat in one ranking beside 25 graded on 8, with
  * nothing on screen saying so.
+ *
+ * The owner asked for that line off the screen, so it moved into the tooltip the
+ * score already carries. These tests hold the FACT rather than its placement:
+ * whatever the presentation, the scope must remain recoverable from the score.
  */
 describe('a score says how much of the test set produced it', () => {
-  test('an excluded dimension is named, with the count out of the full set', () => {
+  /** The score's own tooltip, found by the methodology it always names. */
+  const scopeNote = () => screen.getByTitle(/overall-score-v1/).getAttribute('title') ?? '';
+
+  test('nothing is printed under the score', () => {
     render(<ModelScoreCell model={model()} />);
 
-    const badge = screen.getByTestId('overall-graded-on');
-    expect(badge).toHaveTextContent('7 of 8');
-    expect(badge.getAttribute('title')).toContain('vision');
+    // The badge is gone, and nothing replaced it.
+    expect(screen.queryByTestId('overall-graded-on')).toBeNull();
+    expect(screen.queryByText(/graded on 7 of 8/)).toBeNull();
   });
 
-  test('a model graded on everything carries no such badge', () => {
+  test('the excluded dimension is still named, in the score tooltip', () => {
+    render(<ModelScoreCell model={model()} />);
+
+    const note = scopeNote();
+    expect(note).toContain('graded on 7 of 8 dimensions');
+    expect(note).toContain('vision');
+    expect(note).toContain('renormalised');
+    // The methodology breakdown it was folded into is still there.
+    expect(note).toContain('overall-score-v1');
+  });
+
+  test('a model graded on everything says nothing about scope', () => {
     render(<ModelScoreCell model={model({
       overallScore: {
         ...model().overallScore,
@@ -243,7 +261,7 @@ describe('a score says how much of the test set produced it', () => {
       },
     })} />);
 
-    expect(screen.queryByTestId('overall-graded-on')).toBeNull();
+    expect(scopeNote()).not.toContain('graded on');
   });
 
   test('an unscored model shows its state, not a dimension count', () => {
@@ -251,7 +269,7 @@ describe('a score says how much of the test set produced it', () => {
       overallScore: { ...model().overallScore, value: null, display: '—', status: 'insufficient_evidence' },
     })} />);
 
-    expect(screen.queryByTestId('overall-graded-on')).toBeNull();
+    expect(screen.queryByText(/graded on/)).toBeNull();
     expect(screen.getByText('Insufficient evidence')).toBeInTheDocument();
   });
 });

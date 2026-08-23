@@ -104,17 +104,6 @@
   letter-spacing: 0;
 }
 
-/* The test-set scope note. Reads as information rather than a verdict:
-   `.unrated` is the token for "nobody scored this", and this badge only ever
-   sits on a row that HAS a score. */
-.scope {
-  background: var(--background);
-  border-color: var(--border-subtle);
-  color: var(--text-muted);
-  font-size: 0.64rem;
-  text-transform: none;
-  letter-spacing: 0;
-}
 
 .processing {
   background: rgba(59, 130, 246, 0.1);
