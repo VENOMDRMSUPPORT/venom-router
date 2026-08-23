@@ -795,11 +795,14 @@ export async function fetchCatalogNotifications(providerId?: string, signal?: Ab
   return readService<CatalogNotificationsResponse>(`/notifications${query}`, { signal });
 }
 
-export async function markCatalogNotificationsRead(ids: string[] | null): Promise<{ updated: number }> {
+export async function markCatalogNotificationsRead(ids: string[] | null, providerId?: string): Promise<{ updated: number }> {
+  const body = ids === null
+    ? (providerId ? { provider: providerId } : {})
+    : { ids, ...(providerId ? { provider: providerId } : {}) };
   return readService<{ updated: number }>('/notifications/read', {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(ids === null ? {} : { ids }),
+    body: JSON.stringify(body),
   });
 }
 

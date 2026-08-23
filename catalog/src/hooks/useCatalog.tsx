@@ -56,6 +56,9 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   const dataRef = useRef<CatalogData | null>(null);
   const renderedCursor = useRef<string | null | undefined>(undefined);
   const pendingCursor = useRef<string | null | undefined>(undefined);
+  const observedCursor = useRef<string | null | undefined>(undefined);
+  const cursorFetchInFlight = useRef(false);
+  const lastCatalogFetchWasLive = useRef(false);
 
   useEffect(() => {
     dataRef.current = data;
@@ -64,17 +67,36 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const ctrl = new AbortController();
     const cursorForAttempt = pendingCursor.current;
+    if (cursorForAttempt !== undefined) cursorFetchInFlight.current = true;
     // Background revalidation must not unmount pages that already have data:
     // their expanded rows, focus, and scroll position belong to the user.
     setLoading(dataRef.current === null);
     fetchCatalog(ctrl.signal)
       .then((d) => {
         if (ctrl.signal.aborted) return;
-        setData(d);
-        setError(null);
-        if (cursorForAttempt !== undefined) {
-          renderedCursor.current = cursorForAttempt;
-          if (pendingCursor.current === cursorForAttempt) pendingCursor.current = undefined;
+        if (d.origin === 'live') {
+          lastCatalogFetchWasLive.current = true;
+          setData(d);
+          setError(null);
+          const cursorToCommit = cursorForAttempt ?? observedCursor.current;
+          if (cursorToCommit !== undefined) {
+            renderedCursor.current = cursorToCommit;
+            if (pendingCursor.current === cursorToCommit) pendingCursor.current = undefined;
+          }
+          return;
+        }
+
+        // A snapshot is useful for a cold start, but it is never evidence that
+        // the currently observed live cursor has been rendered. Keep existing
+        // live data in place during background fallback and let the same cursor
+        // drive the next live retry.
+        lastCatalogFetchWasLive.current = false;
+        if (dataRef.current === null) setData(d);
+        setError('Live catalog unavailable; showing cached snapshot.');
+        const cursorToRetry = cursorForAttempt ?? observedCursor.current;
+        if (cursorToRetry !== undefined && pendingCursor.current !== cursorToRetry) {
+          pendingCursor.current = cursorToRetry;
+          setNonce((value) => value + 1);
         }
       })
       .catch((e) => {
@@ -82,7 +104,10 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
         if (pendingCursor.current === cursorForAttempt) pendingCursor.current = undefined;
         setError(e instanceof Error ? e.message : String(e));
       })
-      .finally(() => { if (!ctrl.signal.aborted) setLoading(false); });
+      .finally(() => {
+        if (cursorForAttempt !== undefined) cursorFetchInFlight.current = false;
+        if (!ctrl.signal.aborted) setLoading(false);
+      });
     return () => ctrl.abort();
   }, [nonce]);
 
@@ -138,12 +163,17 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       fetchChangeCursor(ctrl.signal)
         .then((cursor) => {
           if (ctrl.signal.aborted) return;
+          observedCursor.current = cursor;
           const previous = renderedCursor.current;
           if (previous === undefined) {
-            renderedCursor.current = cursor;
+            if (lastCatalogFetchWasLive.current) renderedCursor.current = cursor;
+            else if (!cursorFetchInFlight.current && pendingCursor.current !== cursor) {
+              pendingCursor.current = cursor;
+              setNonce((value) => value + 1);
+            }
             return;
           }
-          if (previous === cursor || pendingCursor.current === cursor) return;
+          if (previous === cursor || (pendingCursor.current === cursor && cursorFetchInFlight.current)) return;
           pendingCursor.current = cursor;
           setNonce((value) => value + 1);
         })

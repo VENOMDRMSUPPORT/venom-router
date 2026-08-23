@@ -26,6 +26,10 @@ function catalog(liveModels: string[]) {
   } as unknown as Awaited<ReturnType<typeof fetchCatalog>>;
 }
 
+function snapshot(models: string[]) {
+  return { ...catalog(models), origin: 'snapshot' as const };
+}
+
 /** Renders the model ids the context is currently serving, plus its revision. */
 function Probe() {
   const { data, revision, loading } = useCatalog();
@@ -169,6 +173,26 @@ describe('CatalogProvider change-cursor polling', () => {
     expect(screen.getByTestId('models').textContent).toBe('model-a');
     expect(mockedFetchCatalog).toHaveBeenCalledTimes(2);
 
+    await act(async () => { await vi.advanceTimersByTimeAsync(CHANGE_CURSOR_POLL_MS); });
+    await settle();
+    expect(mockedFetchCatalog).toHaveBeenCalledTimes(3);
+    expect(screen.getByTestId('models').textContent).toBe('model-a,model-b');
+  });
+
+  it('keeps a changed cursor pending when its refetch falls back to a stale snapshot', async () => {
+    renderProbe();
+    await settle();
+    mockedFetchCatalog.mockResolvedValueOnce(snapshot(['snapshot-only']));
+    mockedFetchCatalog.mockResolvedValueOnce(catalog(['model-a', 'model-b']));
+    mockedFetchChangeCursor.mockResolvedValue('2026-08-23T09:30:00.000Z');
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(CHANGE_CURSOR_POLL_MS); });
+    await settle();
+    expect(mockedFetchCatalog).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('models').textContent).toBe('model-a');
+
+    // The service still reports T2. Because the snapshot did not commit it, the
+    // provider retries the same cursor and only marks it rendered after live data.
     await act(async () => { await vi.advanceTimersByTimeAsync(CHANGE_CURSOR_POLL_MS); });
     await settle();
     expect(mockedFetchCatalog).toHaveBeenCalledTimes(3);

@@ -78,6 +78,7 @@ export function health(deps: HealthDeps): HttpResult {
     // code must not be told everything is fine while serving week-old data.
     status: serviceOk && catalogOk ? 200 : serviceOk ? 503 : 500,
     body: {
+      api: { contractVersion: 'catalog-api-v2' },
       service: {
         status: serviceOk ? 'up' : 'degraded',
         databaseReadable: dbReadable,
@@ -132,6 +133,17 @@ export function route(deps: AppDeps, url: URL, method: string, body?: unknown): 
 
   if (path === '/v1/health') return health(deps);
 
+  if (path === '/v1/alerts' && method === 'GET') {
+    return {
+      status: 410,
+      body: {
+        error: 'The alerts contract was replaced by notification history.',
+        replacement: '/v1/notifications',
+        contractVersion: 'catalog-api-v2',
+      },
+    };
+  }
+
   if (path === '/v1/providers' && method === 'GET') {
     const models = loadModels(db);
     return { status: 200, body: { providers: loadProviders(db, models, now), meta: loadMeta(db, models) } };
@@ -185,18 +197,23 @@ export function route(deps: AppDeps, url: URL, method: string, body?: unknown): 
       status: 200,
       body: {
         notifications,
-        summary: catalogNotificationSummary(notifications),
+        summary: catalogNotificationSummary(db, providerId),
         generatedAt: now.toISOString(),
       },
     };
   }
 
   if (path === '/v1/notifications/read' && method === 'PATCH') {
-    const requested = (body ?? {}) as { ids?: unknown };
+    const requested = (body ?? {}) as { ids?: unknown; provider?: unknown };
     if (requested.ids !== undefined && (!Array.isArray(requested.ids) || requested.ids.some((id) => typeof id !== 'string'))) {
       return { status: 400, body: { error: 'ids must be an array of notification ids' } };
     }
-    const updated = markCatalogNotificationsRead(db, requested.ids === undefined ? null : requested.ids, now.toISOString());
+    if (requested.provider !== undefined && (typeof requested.provider !== 'string' || requested.provider.length === 0)) {
+      return { status: 400, body: { error: 'provider must be a non-empty string when supplied' } };
+    }
+    const updated = markCatalogNotificationsRead(db,
+      requested.ids === undefined ? null : requested.ids,
+      { providerId: requested.provider, now: now.toISOString() });
     return { status: 200, body: { updated } };
   }
 

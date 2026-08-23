@@ -13,10 +13,13 @@ vi.mock('../../api/client', () => ({
 const mockedFetchNotifications = vi.mocked(fetchCatalogNotifications);
 const mockedMarkRead = vi.mocked(markCatalogNotificationsRead);
 
-function notificationResponse(notifications: Awaited<ReturnType<typeof fetchCatalogNotifications>>['notifications']) {
+function notificationResponse(
+  notifications: Awaited<ReturnType<typeof fetchCatalogNotifications>>['notifications'],
+  summaryOverride?: { total: number; unread: number; read: number },
+) {
   return {
     notifications,
-    summary: { total: notifications.length, unread: notifications.filter((notification) => notification.readAt === null).length, read: notifications.filter((notification) => notification.readAt !== null).length },
+    summary: summaryOverride ?? { total: notifications.length, unread: notifications.filter((notification) => notification.readAt === null).length, read: notifications.filter((notification) => notification.readAt !== null).length },
     generatedAt: '2026-08-23T09:00:00.000Z',
   };
 }
@@ -59,7 +62,21 @@ describe('NotificationCenter', () => {
     expect(screen.queryByText(/Operational alerts/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Mark all as read' }));
 
-    await waitFor(() => expect(mockedMarkRead).toHaveBeenCalledWith(['model-event:101']));
+    await waitFor(() => expect(mockedMarkRead).toHaveBeenCalledWith(null, 'clinepass'));
+    expect(trigger).toHaveAccessibleName('Notifications');
+  });
+
+  it('uses the server unread total and global scope even when only a limited list is rendered', async () => {
+    mockedFetchNotifications.mockResolvedValue(notificationResponse([notification()], { total: 105, unread: 105, read: 0 }));
+    mockedMarkRead.mockResolvedValue({ updated: 105 });
+    render(<MemoryRouter><NotificationCenter /></MemoryRouter>);
+
+    const trigger = screen.getByRole('button', { name: 'Notifications' });
+    await waitFor(() => expect(trigger).toHaveAccessibleName('Notifications, 105 unread'));
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole('button', { name: 'Mark all as read' }));
+
+    await waitFor(() => expect(mockedMarkRead).toHaveBeenCalledWith(null, undefined));
     expect(trigger).toHaveAccessibleName('Notifications');
   });
 

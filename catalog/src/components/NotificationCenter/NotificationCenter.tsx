@@ -15,6 +15,7 @@ import {
   formatAgo,
   markCatalogNotificationsRead,
   type CatalogNotification,
+  type CatalogNotificationsResponse,
 } from '../../api/client';
 import styles from './NotificationCenter.module.css';
 
@@ -33,6 +34,7 @@ function NotificationIcon({ category }: { category: CatalogNotification['categor
 
 export function NotificationCenter({ providerId }: NotificationCenterProps) {
   const [rows, setRows] = useState<CatalogNotification[] | null>(null);
+  const [summary, setSummary] = useState<CatalogNotificationsResponse['summary'] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -47,6 +49,7 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
       const result = await fetchCatalogNotifications(providerId, signal);
       if (signal?.aborted || requestNumber !== latestRequest.current) return;
       setRows(result.notifications);
+      setSummary(result.summary);
       setError(null);
     } catch (reason) {
       if (signal?.aborted || requestNumber !== latestRequest.current) return;
@@ -95,20 +98,24 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
     [rows],
   );
   const unread = notifications.filter((notification) => notification.readAt === null);
+  const unreadCount = summary?.unread ?? unread.length;
   const visibleNotifications = notifications.slice(0, MAX_VISIBLE_NOTIFICATIONS);
-  const triggerLabel = unread.length > 0 ? `Notifications, ${unread.length} unread` : 'Notifications';
+  const triggerLabel = unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications';
 
-  const markRead = async (notificationsToMark: CatalogNotification[]) => {
+  const markRead = async (notificationsToMark: CatalogNotification[], markAllInScope = false) => {
     const ids = notificationsToMark.filter((notification) => notification.readAt === null).map((notification) => notification.id);
-    if (ids.length === 0) return;
+    if ((!markAllInScope && ids.length === 0) || (markAllInScope && unreadCount === 0)) return;
     setActionError(null);
     setMarkingRead(true);
     try {
-      await markCatalogNotificationsRead(ids);
+      await markCatalogNotificationsRead(markAllInScope ? null : ids, providerId);
       const readAt = new Date().toISOString();
-      setRows((current) => current?.map((notification) => ids.includes(notification.id)
+      setRows((current) => current?.map((notification) => (markAllInScope || ids.includes(notification.id))
         ? { ...notification, readAt }
         : notification) ?? null);
+      setSummary((current) => current
+        ? { total: current.total, unread: markAllInScope ? 0 : Math.max(0, current.unread - ids.length), read: markAllInScope ? current.total : Math.min(current.total, current.read + ids.length) }
+        : current);
     } catch {
       setActionError('Notifications could not be marked as read. Please try again.');
     } finally {
@@ -130,7 +137,7 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
         title={triggerLabel}
       >
         <LuBell size={16} aria-hidden="true" />
-        {unread.length > 0 && <span className={styles.badge} aria-hidden="true">{unread.length > 9 ? '9+' : unread.length}</span>}
+        {unreadCount > 0 && <span className={styles.badge} aria-hidden="true">{unreadCount > 9 ? '9+' : unreadCount}</span>}
       </button>
 
       {open && (
@@ -140,8 +147,8 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
               <p className={styles.eyebrow}>Catalog updates</p>
               <h2 className={styles.title}>Notifications</h2>
             </div>
-            {unread.length > 0 && (
-              <button type="button" className={styles.acknowledgeAll} onClick={() => void markRead(unread)} disabled={markingRead}>
+            {unreadCount > 0 && (
+              <button type="button" className={styles.acknowledgeAll} onClick={() => void markRead(unread, true)} disabled={markingRead}>
                 <LuCheckCheck size={14} aria-hidden="true" />
                 Mark all as read
               </button>

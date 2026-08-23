@@ -39,7 +39,7 @@ The Vite development server proxies `/v1` requests to the Catalog API. Override 
 
 ## Integration expectations
 
-Router integrations should use the Catalog API base URL and record the Catalog response version or generation timestamp used by a routing decision. A future contract version should be introduced when the wire shape or ownership semantics change; consumers must fail closed on unsupported versions rather than inventing defaults.
+Router integrations should use the Catalog API base URL and record the Catalog response version or generation timestamp used by a routing decision. The current advertised contract is **`catalog-api-v2`**. Version 2 replaces the old `/v1/alerts` lifecycle wire shape with `/v1/notifications` read history; `GET /v1/alerts` returns HTTP 410 with the explicit replacement endpoint. Consumers must fail closed on unsupported versions rather than inventing defaults.
 
 ## Catalog notification history
 

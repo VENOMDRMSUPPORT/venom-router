@@ -63,3 +63,64 @@ test('notification read endpoint rejects malformed identifiers and fetch failure
     db.close();
   }
 });
+
+function insertUnreadNotifications(db: ReturnType<typeof openDb>, providerId: string, start: number, count: number) {
+  const insert = db.prepare(`INSERT INTO catalog_notifications
+    (id, source_kind, source_id, category, kind, title, detail, provider_id, model_id, observed_at, created_at)
+    VALUES (?, 'test', ?, 'success', 'model_added', ?, 'Recorded for test coverage.', ?, NULL, '2026-08-23T10:00:00.000Z', '2026-08-23T10:00:00.000Z')`);
+  for (let index = 0; index < count; index += 1) {
+    const value = start + index;
+    insert.run(`test:${value}`, value, `Model ${value} added`, providerId);
+  }
+}
+
+test('global mark all reads every unread notification even when the list response is limited', async () => {
+  const { db, value } = deps();
+  try {
+    insertUnreadNotifications(db, 'acme', 1, 105);
+    insertUnreadNotifications(db, 'beta', 106, 105);
+    const before = await route(value, new URL('http://catalog.test/v1/notifications?limit=10'), 'GET');
+    const beforeBody = before.body as { notifications: unknown[]; summary: { total: number; unread: number } };
+    assert.equal(beforeBody.notifications.length, 10);
+    assert.deepEqual(beforeBody.summary, { total: 210, unread: 210, read: 0 });
+
+    const read = await route(value, new URL('http://catalog.test/v1/notifications/read'), 'PATCH', {});
+    assert.equal((read.body as { updated: number }).updated, 210);
+    const after = await route(value, new URL('http://catalog.test/v1/notifications?limit=10'), 'GET');
+    assert.deepEqual((after.body as { summary: unknown }).summary, { total: 210, unread: 0, read: 210 });
+  } finally {
+    db.close();
+  }
+});
+
+test('provider mark all reads every unread notification only for the requested provider', async () => {
+  const { db, value } = deps();
+  try {
+    insertUnreadNotifications(db, 'acme', 1, 105);
+    insertUnreadNotifications(db, 'beta', 106, 105);
+    const read = await route(value, new URL('http://catalog.test/v1/notifications/read'), 'PATCH', { provider: 'acme' });
+    assert.equal((read.body as { updated: number }).updated, 105);
+
+    const acme = await route(value, new URL('http://catalog.test/v1/notifications?provider=acme&limit=5'), 'GET');
+    assert.deepEqual((acme.body as { summary: unknown }).summary, { total: 105, unread: 0, read: 105 });
+    const all = await route(value, new URL('http://catalog.test/v1/notifications?limit=5'), 'GET');
+    assert.deepEqual((all.body as { summary: unknown }).summary, { total: 210, unread: 105, read: 105 });
+  } finally {
+    db.close();
+  }
+});
+
+test('legacy alerts consumers receive an explicit Catalog API v2 migration response', async () => {
+  const { db, value } = deps();
+  try {
+    const response = await route(value, new URL('http://catalog.test/v1/alerts'), 'GET');
+    assert.equal(response.status, 410);
+    assert.deepEqual(response.body, {
+      error: 'The alerts contract was replaced by notification history.',
+      replacement: '/v1/notifications',
+      contractVersion: 'catalog-api-v2',
+    });
+  } finally {
+    db.close();
+  }
+});

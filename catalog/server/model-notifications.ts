@@ -159,19 +159,27 @@ export function listCatalogNotifications(db: Db, options: { providerId?: string;
   return (rows as unknown as StoredNotificationRow[]).map(fromRow);
 }
 
-export function markCatalogNotificationsRead(db: Db, ids: string[] | null, now = new Date().toISOString()): number {
+export function markCatalogNotificationsRead(db: Db, ids: string[] | null, options: { providerId?: string; now?: string } = {}): number {
+  const now = options.now ?? new Date().toISOString();
+  const providerClause = options.providerId ? ' AND provider_id = ?' : '';
   if (ids === null) {
-    const result = db.prepare('UPDATE catalog_notifications SET read_at = COALESCE(read_at, ?) WHERE read_at IS NULL').run(now);
+    const result = db.prepare(`UPDATE catalog_notifications SET read_at = COALESCE(read_at, ?) WHERE read_at IS NULL${providerClause}`)
+      .run(now, ...(options.providerId ? [options.providerId] : []));
     return Number(result.changes);
   }
   const uniqueIds = [...new Set(ids)].slice(0, 100);
   if (uniqueIds.length === 0) return 0;
   const placeholders = uniqueIds.map(() => '?').join(',');
-  const result = db.prepare(`UPDATE catalog_notifications SET read_at = COALESCE(read_at, ?) WHERE id IN (${placeholders})`).run(now, ...uniqueIds);
+  const result = db.prepare(`UPDATE catalog_notifications SET read_at = COALESCE(read_at, ?) WHERE id IN (${placeholders})${providerClause}`)
+    .run(now, ...uniqueIds, ...(options.providerId ? [options.providerId] : []));
   return Number(result.changes);
 }
 
-export function catalogNotificationSummary(rows: CatalogNotification[]) {
-  const unread = rows.filter((row) => row.readAt === null).length;
-  return { total: rows.length, unread, read: rows.length - unread };
+export function catalogNotificationSummary(db: Db, providerId?: string) {
+  const row = providerId
+    ? db.prepare(`SELECT COUNT(*) total, SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END) unread FROM catalog_notifications WHERE provider_id = ?`).get(providerId)
+    : db.prepare(`SELECT COUNT(*) total, SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END) unread FROM catalog_notifications`).get();
+  const total = Number((row as { total: number }).total ?? 0);
+  const unread = Number((row as { unread: number | null }).unread ?? 0);
+  return { total, unread, read: total - unread };
 }

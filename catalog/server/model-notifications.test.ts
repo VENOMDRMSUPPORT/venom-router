@@ -20,7 +20,7 @@ test('notification reconciliation classifies every recorded source event beyond 
     const secondCount = Number((db.prepare('SELECT COUNT(*) count FROM catalog_notifications').get() as { count: number }).count);
     assert.equal(secondCount, 501);
 
-    const updated = markCatalogNotificationsRead(db, ['model-event:1'], '2026-08-24T00:02:00.000Z');
+    const updated = markCatalogNotificationsRead(db, ['model-event:1'], { now: '2026-08-24T00:02:00.000Z' });
     assert.equal(updated, 1);
     const readAt = (db.prepare('SELECT read_at readAt FROM catalog_notifications WHERE id = ?').get('model-event:1') as { readAt: string | null }).readAt;
     assert.equal(readAt, '2026-08-24T00:02:00.000Z');
