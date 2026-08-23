@@ -152,12 +152,32 @@ function digitSvgToPngDataUrl(value: string): string {
   return `data:image/png;base64,${png.toString('base64')}`;
 }
 
-function normalizeClinePayload(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalizeClinePayload);
+/**
+ * Every image in a payload, as a format a vision model can actually open.
+ *
+ * The vision fixture ships its digit as an SVG data URL, and most vision
+ * endpoints cannot read SVG at all. This was scoped to ClinePass, and the cost
+ * of that scope was invisible: every other provider received the raw SVG, was
+ * answered `400 "The image format is illegal and cannot be opened"`, and
+ * `runtime.ts` records a 4xx as a model failure worth zero of five criteria. So
+ * twelve identities across unrelated vendors published a vision score of 0.3 —
+ * zero successes out of three hundred — while `kimi-k2.6`, measured on ClinePass,
+ * scored 95.7 on the same fixture.
+ *
+ * The conversion belongs to the payload rather than to one provider: nothing
+ * about needing a raster image is ClinePass-specific. Rasterising for a provider
+ * that would have accepted SVG costs nothing, since PNG is universally read.
+ *
+ * The fixture itself is not changed, deliberately — its payload is inside the
+ * test-set digest, so emitting PNG there would invalidate all 195 stored scores
+ * and re-buy the entire corpus to fix twelve dimensions.
+ */
+function withReadableImages(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withReadableImages);
   if (typeof value !== 'object' || value === null) return value;
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [
     key,
-    key === 'url' && typeof item === 'string' ? digitSvgToPngDataUrl(item) : normalizeClinePayload(item),
+    key === 'url' && typeof item === 'string' ? digitSvgToPngDataUrl(item) : withReadableImages(item),
   ]));
 }
 
@@ -372,9 +392,7 @@ export function createEvaluationTransport(input: CreateEvaluationTransportInput)
 
   const attempt = (body: Record<string, unknown>, credential: string) =>
     callWithPolicy(async (): Promise<TransportResponse> => {
-      const normalizedBody = input.providerId === 'clinepass'
-        ? normalizeClinePayload(body) as Record<string, unknown>
-        : body;
+      const normalizedBody = withReadableImages(body) as Record<string, unknown>;
       const path = protocol === 'responses' ? '/responses' : '/chat/completions';
       const requestBody = protocol === 'responses'
         ? toResponsesRequest(normalizedBody, input.modelId)

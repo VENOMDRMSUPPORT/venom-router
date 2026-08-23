@@ -3,6 +3,30 @@ import { describe, test } from 'node:test';
 import { createEvaluationTransport, evaluationCredentialReport, evaluationHeaders, resolveEvaluationCredential, protocolFor } from './provider-transport.ts';
 
 describe('provider evaluation transport', () => {
+  test('rasterises the vision fixture for every provider, not just ClinePass', async () => {
+    // Scoping this to ClinePass cost twelve identities their vision score: every
+    // other provider was sent the raw SVG and answered `400 "The image format is
+    // illegal and cannot be opened"`, which `runtime.ts` records as a model
+    // failure worth zero of five. `kimi-k2.6` scored 95.7 on the same fixture
+    // purely because its run happened to be on ClinePass.
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" fill="white"/><text x="64" y="94" font-size="96" text-anchor="middle" fill="black">7</text></svg>';
+    const image = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+    for (const [providerId, modelId] of [['ollama-cloud', 'kimi-k3'], ['opencode-go', 'qwen3.6-plus'], ['opencode-zen', 'big-pickle']] as const) {
+      const requests: Request[] = [];
+      const transport = createEvaluationTransport({
+        providerId, modelId, credential: 'secret',
+        fetchImpl: async (input, init) => {
+          requests.push(new Request(input, init));
+          return new Response(JSON.stringify({ choices: [{ message: { content: '{}' } }] }), { status: 200 });
+        },
+      });
+
+      await transport({ messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: image } }] }] }, 'secret');
+      const body = await requests[0].json() as { messages: Array<{ content: Array<{ image_url: { url: string } }> }> };
+      assert.match(body.messages[0].content[0].image_url.url, /^data:image\/png;base64,/, providerId);
+    }
+  });
+
   test('normalizes the Cline vision fixture to a supported PNG without changing other providers', async () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" fill="white"/><text x="64" y="94" font-size="96" text-anchor="middle" fill="black">7</text></svg>';
     const image = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
