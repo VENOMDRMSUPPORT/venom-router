@@ -935,3 +935,81 @@ describe('a model the reference index never listed still knows what it is', () =
     assert.equal(count?.n ?? 0, 0);
   });
 });
+
+describe('enrichment reaches the measurement, not just the resolver', () => {
+  /**
+   * The resolver test proves `resolveCapability` prefers a measurement. It says
+   * nothing about whether enrich ever FINDS one — the identity lookup, the
+   * dimension mapping and the run-ref extraction all live here, and a resolver
+   * test stays green while every one of them is broken.
+   */
+  const measured = (identityId: string, dimension: string, score: number, runId: number) =>
+    db.prepare(
+      `INSERT INTO model_identity_scores
+         (identity_id, dimension, score, sample_count, status, rubric_version, evidence_json, methodology_ver, evaluated_at)
+       VALUES (?,?,?,?, 'scored', 'catalog-rubrics-v1', ?, 'overall-score-v1', ?)`,
+    ).run(identityId, dimension, score, 300, JSON.stringify([`runtime:${identityId}`, `run:${runId}`]), now());
+
+  test('a graded dimension settles the capability and cites its run', () => {
+    seed({ modelId: 'graded', structured: null });
+    measured('z-ai/glm-5.3', 'structuredOutput', 99.7, 249);
+
+    enrich(deps({
+      lookupSpec: () => null,
+      intrinsic: () => ({
+        declaredBy: '',
+        conflicts: [{ field: 'structured', sides: [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }] }],
+      }),
+      vendorIdentity: () => ({ vendor: 'z-ai', canonicalId: 'z-ai/glm-5.3', declaredBy: 'nano-gpt/zai-org/glm-5.3' }),
+    }));
+
+    const f = factFor('graded', 'structured')!;
+    assert.equal(f.source, 'catalog_measurement');
+    assert.match(f.source_ref, /run:249/);
+    assert.equal(JSON.parse(f.value), true);
+    // And the dispute it answered is recorded as answered, from outside itself.
+    const row = conflictsFor('graded').find((c) => c.field === 'structured')!;
+    assert.equal(row.status, 'resolved');
+    assert.equal(row.resolved_to, 'true');
+  });
+
+  test('a row with no identity reaches no measurement', () => {
+    // `opencode-go/qwen3.5-plus` has two REFUSED identity candidates on record,
+    // so nothing may be attributed to it. The dispute has to stay open.
+    seed({ modelId: 'unbound', structured: null });
+    measured('z-ai/glm-5.3', 'structuredOutput', 99.7, 249);
+
+    enrich(deps({
+      lookupSpec: () => null,
+      intrinsic: () => ({
+        declaredBy: '',
+        conflicts: [{ field: 'structured', sides: [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }] }],
+      }),
+      vendorIdentity: () => null,
+    }));
+
+    assert.equal(factFor('unbound', 'structured'), undefined);
+    assert.equal(conflictsFor('unbound').find((c) => c.field === 'structured')!.status, 'open');
+  });
+
+  test('a dimension with no passing score is not consulted', () => {
+    seed({ modelId: 'unscored', structured: null });
+    db.prepare(
+      `INSERT INTO model_identity_scores
+         (identity_id, dimension, score, sample_count, status, rubric_version, evidence_json, methodology_ver, evaluated_at)
+       VALUES ('z-ai/glm-5.3','structuredOutput', NULL, 0, 'unknown', 'catalog-rubrics-v1', ?, 'overall-score-v1', ?)`,
+    ).run(JSON.stringify(['withdrawn:answer-truncated']), now());
+
+    enrich(deps({
+      lookupSpec: () => null,
+      intrinsic: () => ({
+        declaredBy: '',
+        conflicts: [{ field: 'structured', sides: [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }] }],
+      }),
+      vendorIdentity: () => ({ vendor: 'z-ai', canonicalId: 'z-ai/glm-5.3', declaredBy: 'nano-gpt/zai-org/glm-5.3' }),
+    }));
+
+    assert.equal(factFor('unscored', 'structured'), undefined, 'a withdrawn score is not evidence');
+    assert.equal(conflictsFor('unscored').find((c) => c.field === 'structured')!.status, 'open');
+  });
+});
