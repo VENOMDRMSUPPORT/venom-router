@@ -96,12 +96,25 @@ function outcomeSample(scenario: RuntimeScenario, repetition: number, outcome: T
       response: outcome.response.body,
     };
   }
+  // A 4xx is not a wrong answer. A model answers wrongly by returning 200 with
+  // the wrong content; every 4xx means the request did not happen.
+  //
+  // This used to record `model_failure` as zero of five criteria, on the reading
+  // that a model refusing a well-formed request has failed a capability. The
+  // reading does not survive contact with the codes: twelve identities published
+  // a vision score of 0.3 — zero successes out of three hundred — because the
+  // fixture's SVG was sent unconverted and every provider answered `400 "The
+  // image format is illegal and cannot be opened"`. Nothing in that exchange is
+  // a fact about the model, and the number it produced ranked models by it.
+  //
+  // So a 4xx joins the transient failures as a non-final sample. `stopsDimension`
+  // treats `http_4xx` as permanent, which is right: it ends the dimension after a
+  // few samples with insufficient evidence rather than buying sixty refusals.
   return {
     scenarioId: scenario.id, repetition,
-    outcome: outcome.kind === 'evaluator_failure' ? 'evaluator_failure'
-      : outcome.kind === 'provider_failure' ? 'provider_failure' : 'failed',
-    weightedSuccesses: outcome.kind === 'model_failure' ? 0 : null,
-    weightedCriteria: outcome.kind === 'model_failure' ? 5 : null,
+    outcome: outcome.kind === 'evaluator_failure' ? 'evaluator_failure' : 'provider_failure',
+    weightedSuccesses: null,
+    weightedCriteria: null,
     errorCode: outcome.errorCode,
   };
 }

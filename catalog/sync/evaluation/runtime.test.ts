@@ -37,6 +37,30 @@ describe('runtime evaluation scheduling', () => {
     assert.ok(maxActive <= OVERALL_SCORE_POLICY.qualityProviderConcurrency);
   });
 
+  test('a 4xx is not a wrong answer, so the dimension reports insufficient evidence', async () => {
+    // Twelve identities published a vision score of 0.3 — zero of three hundred
+    // criteria — because a 400 "the image format is illegal" was recorded as the
+    // model failing five criteria sixty times over. A rejected request is not an
+    // answer, and it is certainly not a wrong one.
+    let calls = 0;
+    const result = await runDimensionEvaluation({
+      providerId: 'p1', modelId: 'm1', dimension: 'vision', scenarios,
+      transport: async () => {
+        calls++;
+        return { kind: 'model_failure', status: 400, attempts: 1, errorCode: 'http_400' };
+      },
+      credential: 'secret', now: () => '2026-08-19T00:00:00.000Z',
+    });
+
+    assert.equal(result.status, 'insufficient_evidence');
+    const refused = result.samples.filter((sample) => sample.errorCode === 'http_400');
+    assert.ok(refused.length > 0);
+    assert.equal(refused[0].outcome, 'provider_failure', 'not "failed": nothing was graded');
+    assert.equal(refused[0].weightedSuccesses, null, 'and no zero is carried into the aggregate');
+    // Permanent, so it stops rather than buying sixty refusals.
+    assert.ok(calls < 63, `expected an early stop, made ${calls} requests`);
+  });
+
   test('a partly-written answer cut off at the cap is not a wrong answer', async () => {
     // What `gpt-oss:120b` actually returned: the JSON started, the cap hit, and
     // the fragment scored 1 of 5 as though the model had answered wrongly.

@@ -371,9 +371,19 @@ scenario. Criteria inside a dimension have equal weight.
 | `structuredOutput` | schema validity; types; required fields; constraints; semantic correctness |
 | `vision` | recognition; localization; OCR; chart/table understanding; visual reasoning |
 
-A final dimension result requires 20 valid scenarios. A model failure is a
-failed criterion. Evaluator and network failures are retried and do not become
-model answers. Three repetitions are retained individually in
+A final dimension result requires 20 valid scenarios. Evaluator, network and
+**4xx** failures are retried and do not become model answers: a model answers
+wrongly by returning 200 with the wrong content, and every 4xx means the request
+did not happen. A dimension whose samples were refused reports insufficient
+evidence.
+
+That last part was learned expensively. A 4xx used to count as five failed
+criteria, and twelve identities across unrelated vendors published a vision score
+of 0.3 — zero successes out of three hundred — because the fixture's SVG reached
+them unconverted and each provider answered `400 "The image format is illegal and
+cannot be opened"`. Nothing in that exchange is a fact about the model, and the
+catalog ranked models by it. `stopsDimension` treats `http_4xx` as permanent, so
+a refused dimension ends after a few samples rather than buying sixty refusals. Three repetitions are retained individually in
 `evaluation_samples`; they are not collapsed before the raw success totals are
 computed.
 
