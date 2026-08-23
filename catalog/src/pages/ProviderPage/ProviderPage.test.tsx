@@ -826,3 +826,77 @@ describe('a vendor qualifier is printed once, not in the name and again in a pil
     expect(await screen.findByText('MiMo-V2.5 (free)')).toBeInTheDocument();
   });
 });
+
+describe('the bare api id is not printed when the row already shows it', () => {
+  const scored = (over: Record<string, unknown> = {}) => staleWireModel({
+    modelScore: {
+      value: 65.79, display: '65.8%', methodologyVersion: 'model-score-v1',
+      qualityWeight: 0.7, operationalWeight: 0.3, operationalPrecision: 0,
+      uncertainty: 0.035, bound: null, reason: null,
+      qualityEvidenceLevel: 'measured', operationalCoverage: 'complete',
+    },
+    modelRank: 9,
+    overallScore: {
+      value: 65.79, display: '65.8%', status: 'complete', qualityScore: 67.5, operationalScore: 61.8,
+      qualityCoverage: { scored: 5, applicable: 5, percent: 100 },
+      overallCoverage: { scored: 7, applicable: 7, percent: 100 },
+      includedDimensions: ['coding'], excludedDimensions: [], uncertainty: 1, reasons: [],
+      methodologyVersion: 'overall-score-v1', computedAt: '2026-08-19T10:00:00.000Z',
+    },
+    overallRank: 9,
+    resolution: { state: 'complete', reasons: [], firstDetectedAt: null, lastAttemptAt: null, nextAttemptAt: null },
+    ...over,
+  });
+
+  test('drops the bare id when the name restates it and a namespaced id ends in it', async () => {
+    // The row used to read "DeepSeek V4 Pro" / "deepseek-v4-pro" /
+    // "deepseek/deepseek-v4-pro" — the id twice, once bare and once prefixed.
+    // The prefixed one stays, because it is the only one that also says whose
+    // model this is.
+    stubStaleService([scored({
+      modelId: 'deepseek-v4-pro',
+      displayName: 'DeepSeek V4 Pro',
+      canonicalId: null,
+      vendorModelId: 'deepseek/deepseek-v4-pro',
+    })]);
+    renderProviderPage();
+
+    expect(await screen.findByText('DeepSeek V4 Pro')).toBeInTheDocument();
+    expect(screen.getByText('deepseek/deepseek-v4-pro')).toBeInTheDocument();
+    expect(screen.queryByText('deepseek-v4-pro')).not.toBeInTheDocument();
+  });
+
+  test('keeps the bare id when no other id line carries it', async () => {
+    // `gpt-5.6-luna` resolves to nothing upstream. Trimming here on the
+    // strength of the name alone would leave the row with no callable id at
+    // all, and a pretty name is not an api argument.
+    stubStaleService([scored({
+      modelId: 'gpt-5.6-luna',
+      displayName: 'GPT-5.6 Luna',
+      canonicalId: null,
+      vendorModelId: null,
+    })]);
+    renderProviderPage();
+
+    expect(await screen.findByText('GPT-5.6 Luna')).toBeInTheDocument();
+    expect(screen.getByText('gpt-5.6-luna')).toBeInTheDocument();
+  });
+
+  test('keeps the bare id when the other id line names a different offer', async () => {
+    // This is the case the rule exists to survive. `hy3-free` resolves to
+    // `tencent/hy3` — the upstream model, without the free tier. Hiding the id
+    // would leave the page telling a reader to call `hy3`, which is a different
+    // offer with different billing.
+    stubStaleService([scored({
+      modelId: 'hy3-free',
+      displayName: 'Hy3 Free',
+      canonicalId: null,
+      vendorModelId: 'tencent/hy3',
+    })]);
+    renderProviderPage();
+
+    expect(await screen.findByText('Hy3 Free')).toBeInTheDocument();
+    expect(screen.getByText('hy3-free')).toBeInTheDocument();
+    expect(screen.getByText('tencent/hy3')).toBeInTheDocument();
+  });
+});

@@ -44,21 +44,27 @@ describe('the label a vendor puts on a model beyond its id', () => {
   });
 });
 
+/** The two halves under test here; `restatesId` has its own block below. */
+const nameParts = (modelId: string, displayName: string | null) => {
+  const { base, qualifier } = splitVendorName(modelId, displayName);
+  return { base, qualifier };
+};
+
 describe('splitting a vendor name into what the row prints and what the badge lifts', () => {
   test('the name no longer carries the qualifier the badge shows', () => {
     // The bug this replaced: the row printed "DeepSeek V4 Pro (New)" and then a
     // "New" pill beside it. The parenthetical is lifted, not copied — one fact,
     // one place. Every case here is a real row in the live catalog.
-    assert.deepEqual(splitVendorName('deepseek-v4-pro', 'DeepSeek V4 Pro (New)'), {
+    assert.deepEqual(nameParts('deepseek-v4-pro', 'DeepSeek V4 Pro (New)'), {
       base: 'DeepSeek V4 Pro',
       qualifier: 'New',
     });
-    assert.deepEqual(splitVendorName('hy3', 'Hy3 (8x usage)'), { base: 'Hy3', qualifier: '8x usage' });
-    assert.deepEqual(splitVendorName('gpt-5.6-sol', 'GPT-5.6 Sol (50% Off)'), {
+    assert.deepEqual(nameParts('hy3', 'Hy3 (8x usage)'), { base: 'Hy3', qualifier: '8x usage' });
+    assert.deepEqual(nameParts('gpt-5.6-sol', 'GPT-5.6 Sol (50% Off)'), {
       base: 'GPT-5.6 Sol',
       qualifier: '50% Off',
     });
-    assert.deepEqual(splitVendorName('x-preview-f-free', 'Ox Alpha Free (Unlimited)'), {
+    assert.deepEqual(nameParts('x-preview-f-free', 'Ox Alpha Free (Unlimited)'), {
       base: 'Ox Alpha Free',
       qualifier: 'Unlimited',
     });
@@ -67,15 +73,15 @@ describe('splitting a vendor name into what the row prints and what the badge li
   test('a name with nothing to lift is printed whole', () => {
     // No badge will render, so stripping anything here would delete the only
     // copy of the fact.
-    assert.deepEqual(splitVendorName('glm-5.3', 'GLM-5.3'), { base: 'GLM-5.3', qualifier: null });
-    assert.deepEqual(splitVendorName('grok-4.5', 'Grok 4.5'), { base: 'Grok 4.5', qualifier: null });
+    assert.deepEqual(nameParts('glm-5.3', 'GLM-5.3'), { base: 'GLM-5.3', qualifier: null });
+    assert.deepEqual(nameParts('grok-4.5', 'Grok 4.5'), { base: 'Grok 4.5', qualifier: null });
   });
 
   test('a parenthetical that only repeats the id stays in the name', () => {
     // vendorQualifier refuses to badge it, so the name must keep it: lifting
     // into a badge that never renders would silently drop text the provider
     // published.
-    assert.deepEqual(splitVendorName('mimo-v2.5-free', 'MiMo-V2.5 (free)'), {
+    assert.deepEqual(nameParts('mimo-v2.5-free', 'MiMo-V2.5 (free)'), {
       base: 'MiMo-V2.5 (free)',
       qualifier: null,
     });
@@ -83,14 +89,43 @@ describe('splitting a vendor name into what the row prints and what the badge li
 
   test('falls back to the id when the provider published no name', () => {
     // The row still has to print something, and the id is the API call.
-    assert.deepEqual(splitVendorName('hy3', null), { base: 'hy3', qualifier: null });
-    assert.deepEqual(splitVendorName('hy3', ''), { base: 'hy3', qualifier: null });
-    assert.deepEqual(splitVendorName('hy3', '   '), { base: 'hy3', qualifier: null });
+    assert.deepEqual(nameParts('hy3', null), { base: 'hy3', qualifier: null });
+    assert.deepEqual(nameParts('hy3', ''), { base: 'hy3', qualifier: null });
+    assert.deepEqual(nameParts('hy3', '   '), { base: 'hy3', qualifier: null });
   });
 
   test('a name that is nothing but a qualifier keeps it rather than emptying the cell', () => {
     // Stripping would leave the name column blank, which is worse than the
     // duplication this function exists to remove.
-    assert.deepEqual(splitVendorName('some-promo', '(New)'), { base: 'some-promo', qualifier: 'New' });
+    assert.deepEqual(nameParts('some-promo', '(New)'), { base: 'some-promo', qualifier: 'New' });
+  });
+});
+
+describe('whether the name already says what the model id says', () => {
+  // `restatesId` is what lets the row stop printing the bare id twice. It is
+  // measured against the STRIPPED base, not the raw display name: "DeepSeek V4
+  // Pro (New)" does not look like `deepseek-v4-pro` until the qualifier is
+  // lifted off it, which is the whole reason the two live in one function.
+  test('true when the name is the id made pretty', () => {
+    assert.equal(splitVendorName('deepseek-v4-pro', 'DeepSeek V4 Pro (New)').restatesId, true);
+    assert.equal(splitVendorName('hy3', 'Hy3 (8x usage)').restatesId, true);
+    assert.equal(splitVendorName('glm-5.3', 'GLM-5.3').restatesId, true);
+    assert.equal(splitVendorName('minimax-m3', 'MiniMax-M3').restatesId, true);
+    assert.equal(splitVendorName('mimo-v2.5-free', 'MiMo-V2.5 Free').restatesId, true);
+  });
+
+  test('false when the name carries something the id does not', () => {
+    // `x-preview-f-free` is served as "Ox Alpha Free": nothing about the name
+    // tells you the id, so the row has to keep printing it.
+    assert.equal(splitVendorName('x-preview-f-free', 'Ox Alpha Free (Unlimited)').restatesId, false);
+    // A reseller prefix is part of the id and absent from the name.
+    assert.equal(splitVendorName('cline-pass/glm-5.3', 'GLM-5.3').restatesId, false);
+    // The id says `-free` and the name does not — a different offer.
+    assert.equal(splitVendorName('hy3-free', 'Hy3').restatesId, false);
+  });
+
+  test('true when there is no published name, because the id is the name', () => {
+    assert.equal(splitVendorName('hy3', null).restatesId, true);
+    assert.equal(splitVendorName('gemma4:31b', 'gemma4:31b').restatesId, true);
   });
 });

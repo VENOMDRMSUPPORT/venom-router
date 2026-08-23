@@ -51,6 +51,16 @@ export const present = (id: string): ProviderPresentation =>
   PRESENTATION[id] ?? { logo: '', blurb: '', docsUrl: '' };
 
 /**
+ * Comparable form of a name or an id: case, spaces, and punctuation removed.
+ *
+ * "MiniMax-M3" and `minimax-m3` are the same fact spelled two ways, and the page
+ * has to be able to say so. Kept at module scope because two different questions
+ * need the same normalization and answering them with two copies is how they
+ * start to disagree.
+ */
+const flatten = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/**
  * The vendor's name split into the part the row prints and the part a badge lifts.
  *
  * models.dev serves each provider's own display name, and OpenCode uses it to
@@ -77,21 +87,39 @@ export interface VendorName {
   base: string;
   /** What the badge shows, or null when there is nothing the id does not say. */
   qualifier: string | null;
+  /**
+   * True when `base` is the model id made pretty, so a row printing both says
+   * one thing twice.
+   *
+   * It does NOT mean the id is redundant: "GLM-5.3" does not tell you whether to
+   * call `glm-5.3` or `glm5.3`, and a pretty name is not an api argument. It
+   * means only that the row should look for the id somewhere else before
+   * printing it a second time. Measured against `base`, not the raw display
+   * name — "DeepSeek V4 Pro (New)" does not look like `deepseek-v4-pro` until
+   * the qualifier is lifted off it.
+   */
+  restatesId: boolean;
 }
 
 export function splitVendorName(modelId: string, displayName: string | null | undefined): VendorName {
+  const restatesId = (base: string) => flatten(base) === flatten(modelId);
+  /** Nothing was lifted, so the name is printed exactly as the provider serves it. */
+  const whole = (base: string): VendorName => ({ base, qualifier: null, restatesId: restatesId(base) });
+
   const name = (displayName ?? '').trim();
-  if (!name) return { base: modelId, qualifier: null };
+  if (!name) return whole(modelId);
 
   const match = /\s*\(([^)]+)\)\s*$/.exec(name);
   const qualifier = match?.[1].trim();
-  if (!match || !qualifier) return { base: name, qualifier: null };
+  if (!match || !qualifier) return whole(name);
 
   // A parenthetical that only repeats part of the id is not extra information.
-  const flatten = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (flatten(modelId).includes(flatten(qualifier))) return { base: name, qualifier: null };
+  // `includes` and not equality: a qualifier is a PART of the id — "free" inside
+  // `mimo-v2.5-free`. The name is compared with equality instead, because a
+  // substring match there would call `hy3-free` a restatement of "Hy3".
+  if (flatten(modelId).includes(flatten(qualifier))) return whole(name);
 
   // A name that was nothing but its qualifier would leave the column blank.
-  const base = name.slice(0, match.index).trim();
-  return { base: base || modelId, qualifier };
+  const base = name.slice(0, match.index).trim() || modelId;
+  return { base, qualifier, restatesId: restatesId(base) };
 }

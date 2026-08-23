@@ -430,6 +430,35 @@ function displayIdentity(m: ApiModel): { id: string; title: string; fromVendor: 
 }
 
 /**
+ * The bare model id, printed only when the row does not already show it.
+ *
+ * Three lines used to say almost the same thing: "DeepSeek V4 Pro",
+ * `deepseek-v4-pro`, and `deepseek/deepseek-v4-pro`. The middle one is dropped
+ * when BOTH conditions hold — the name restates the id, and another line on the
+ * row still ends in it. Either condition alone is not enough, and the second one
+ * is not merely tidiness:
+ *
+ *  - `gpt-5.6-luna` resolves to nothing upstream, so its bare id is the only
+ *    callable string on the row. A pretty name is not an api argument.
+ *  - `hy3-free` resolves to `tencent/hy3` — the upstream model WITHOUT the free
+ *    tier. Trimming there would leave the page telling a reader to call `hy3`,
+ *    a different offer with different billing.
+ */
+function ModelApiId({ model }: { model: ApiModel }) {
+  const { base, restatesId } = splitVendorName(model.modelId, model.displayName);
+  const identity = displayIdentity(model);
+  const alreadyShown =
+    base === model.modelId || identity?.id.split('/').pop() === model.modelId;
+  if (restatesId && alreadyShown) return null;
+
+  return (
+    <span className={styles.canonical} title="The provider's model id, as called in the API">
+      {model.modelId}
+    </span>
+  );
+}
+
+/**
  * What the rank is measured against.
  *
  * Without it a thirteen-row table numbered #1, #2, #5, #5, #8 … with an `=` on
@@ -637,14 +666,10 @@ function ModelTable({ title, models, note, costStatedOnce }: { title: string; mo
                       Pro" + a New pill, not "DeepSeek V4 Pro (New)" + a New
                       pill. One fact, one place. */}
                   <span className={styles.modelName}>{splitVendorName(m.modelId, m.displayName).base}</span>
-                  {/* The raw id is the API call — keep it one glance away, but
-                      the official name leads because it is what the provider's
-                      own app calls this model. */}
-                  {m.displayName && m.displayName !== m.modelId && (
-                    <span className={styles.canonical} title="The provider's model id, as called in the API">
-                      {m.modelId}
-                    </span>
-                  )}
+                  {/* The official name leads, because it is what the
+                      provider's own app calls this model. The API id follows it
+                      unless the row already shows that id somewhere else. */}
+                  <ModelApiId model={m} />
                   {m.lifecycle === 'deprecated' && (
                     <span
                       className={styles.lifecycleBadge}
