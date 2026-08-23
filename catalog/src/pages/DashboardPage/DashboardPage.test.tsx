@@ -63,6 +63,22 @@ function renderDashboard() {
   );
 }
 
+describe('the Dashboard status and empty-state experience', () => {
+  test('shows operational catalog status and offers a clear action after a search', () => {
+    catalogMock.current = { data: baseData(), error: null, loading: false };
+    renderDashboard();
+
+    expect(screen.getByText('Live catalog')).toBeInTheDocument();
+    const searchInput = screen.getByPlaceholderText('Search providers, models, or IDs...');
+    fireEvent.change(searchInput, { target: { value: 'missing-provider' } });
+
+    expect(screen.getByText('No providers match this view')).toBeInTheDocument();
+    const clear = screen.getByRole('button', { name: 'Clear search and filters' });
+    fireEvent.click(clear);
+    expect(searchInput).toHaveValue('');
+  });
+});
+
 describe('the "Identity candidates refused" tile survives a partial meta payload', () => {
   test('a full meta renders the real counts', () => {
     catalogMock.current = { data: baseData(), error: null, loading: false };

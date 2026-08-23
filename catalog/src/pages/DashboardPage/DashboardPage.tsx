@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { LuArrowUpRight, LuArrowRight, LuArrowDownUp, LuCircleAlert, LuCpu, LuRefreshCw } from 'react-icons/lu';
+import { LuArrowUpRight, LuArrowRight, LuArrowDownUp, LuCircleAlert, LuCpu, LuRefreshCw, LuSearchX } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import { formatTokens, formatAgo } from '../../api/client';
@@ -130,6 +130,15 @@ export function DashboardPage() {
           API and scored against published benchmarks. Every figure below states
           where it came from and how certain it is.
         </p>
+        <div className={styles.heroMeta} aria-label="Catalog operational status">
+          <span className={`${styles.heroStatus} ${data.origin === 'live' && stale.length === 0 ? styles.heroStatusLive : styles.heroStatusWarn}`}>
+            <span className={styles.statusDot} aria-hidden="true" />
+            {data.origin === 'live' ? stale.length === 0 ? 'Live catalog' : 'Live · attention needed' : 'Offline snapshot'}
+          </span>
+          <span className={styles.heroUpdated}>
+            {data.origin === 'live' ? `Last provider sync ${formatAgo(oldestSuccess)}` : `Snapshot ${formatAgo(data.snapshotGeneratedAt ?? null)}`}
+          </span>
+        </div>
       </header>
 
       {/* Operational status, not a marketing claim. Each number is a fact the
@@ -386,6 +395,7 @@ export function DashboardPage() {
         <div className={styles.tableWrap}>
           <div className={styles.tableScroll}>
             <table className={styles.table}>
+              <caption className={styles.srOnly}>Catalog providers and operational coverage</caption>
               <thead>
                 <tr>
                   <th>Provider</th>
@@ -468,7 +478,20 @@ export function DashboardPage() {
         </div>
       )}
 
-      {providers.length === 0 && <div className={styles.empty}>No providers match your search.</div>}
+      {providers.length === 0 && (
+        <div className={styles.empty} role="status">
+          <LuSearchX size={24} className={styles.emptyIcon} aria-hidden="true" />
+          <strong className={styles.emptyTitle}>No providers match this view</strong>
+          <p className={styles.emptyMessage}>
+            Try a broader term or remove the active filter. Search also checks model names and supports qualified queries.
+          </p>
+          {(query || filter !== 'all') && (
+            <button type="button" className={styles.emptyAction} onClick={() => { setQuery(''); setFilter('all'); }}>
+              Clear search and filters
+            </button>
+          )}
+        </div>
+      )}
 
       <section className={styles.method}>
         <h2 className={styles.methodTitle}>How these numbers are produced</h2>
