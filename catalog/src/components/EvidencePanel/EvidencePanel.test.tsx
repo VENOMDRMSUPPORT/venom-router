@@ -2,7 +2,7 @@ import { describe, test, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { EvidencePanel } from './EvidencePanel';
 import { factStateOf } from '../FactState/FactState';
-import type { ApiModel } from '../../api/client';
+import type { ApiModel, FieldConflict } from '../../api/client';
 
 /** A complete, resolved, benchmarked row. Each test bends one thing. */
 function model(over: Partial<ApiModel> = {}): ApiModel {
@@ -526,5 +526,52 @@ describe('every evidence state the service can send is explained', () => {
       expect(screen.getByText(state).getAttribute('title') ?? '').not.toBe('');
       unmount();
     }
+  });
+});
+
+describe('a settled dispute reads as settled', () => {
+  const settled = (over: Partial<FieldConflict> = {}): FieldConflict => ({
+    field: 'structured',
+    sides: [
+      { value: false, by: 'qiniu-ai/gpt-oss-20b' },
+      { value: true, by: 'nvidia/openai/gpt-oss-20b' },
+    ],
+    conflictType: 'source_disagreement',
+    status: 'resolved',
+    resolvedTo: 'true',
+    detectedAt: '2026-08-23T16:28:53.315Z',
+    ...over,
+  });
+
+  test('the section does not claim no value was taken when one was', () => {
+    // Fifteen disputes were answered — `gpt-oss:20b` publishes
+    // `structured: true`, cited to OpenRouter's supported_parameters listing
+    // `structured_outputs` — and the panel still told the reader "sources
+    // contradicted each other, so no value was taken". A value WAS taken.
+    render(<EvidencePanel model={model({ conflicts: [settled()] })} />);
+
+    const section = screen.getByTestId('conflict-section');
+    expect(section.textContent).not.toMatch(/no value was taken/i);
+    expect(section.textContent).toMatch(/resolved/i);
+    // The verdict is shown, and both sides are still kept for audit.
+    expect(screen.getByTestId('conflict-structured')).toHaveTextContent('true');
+    expect(screen.getByTestId('conflict-structured')).toHaveTextContent('qiniu-ai/gpt-oss-20b');
+  });
+
+  test('an open dispute keeps the withholding wording', () => {
+    // The other half: where nothing has answered, the original sentence is
+    // exactly right and must survive.
+    render(<EvidencePanel model={model({ conflicts: [settled({ status: 'open', resolvedTo: null })] })} />);
+
+    expect(screen.getByTestId('conflict-section').textContent).toMatch(/no value was taken/i);
+  });
+
+  test('a missing fact is not blamed on a dispute that was settled', () => {
+    // `withheld: sources disagreed` was shown for any conflict on the field,
+    // resolved or not. A field can only be missing BECAUSE of a dispute that is
+    // still open.
+    render(<EvidencePanel model={model({ missingFacts: ['structured'], conflicts: [settled()] })} />);
+
+    expect(screen.getByTestId('missing-structured').textContent).not.toMatch(/sources disagreed/i);
   });
 });

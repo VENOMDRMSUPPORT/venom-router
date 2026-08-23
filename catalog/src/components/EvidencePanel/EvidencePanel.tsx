@@ -300,7 +300,10 @@ function MissingSection({ model }: { model: ApiModel }) {
       </p>
       <ul className={styles.list}>
         {model.missingFacts.map((f) => {
-          const conflicted = model.conflicts.some((c) => c.field === f);
+          // Only an OPEN dispute can be the reason a field has no value. A
+          // settled one has an answer, so blaming the gap on it sends the
+          // reader to a conflict that already concluded.
+          const conflicted = model.conflicts.some((c) => c.field === f && c.status !== 'resolved');
           return (
             <li key={f} className={styles.item} data-testid={`missing-${f}`}>
               <span className={styles.fieldName}>{label(f)}</span>
@@ -345,6 +348,28 @@ function NotApplicableSection({ model }: { model: ApiModel }) {
 }
 
 /** Every side of every disagreement, with who said what. No winner is shown. */
+/**
+ * What this section is actually reporting.
+ *
+ * It said "sources contradicted each other, so no value was taken" for every
+ * conflict it was given, and after fifteen disputes were answered that sentence
+ * was false on all fifteen: `gpt-oss:20b` publishes `structured: true`, cited to
+ * OpenRouter's supported_parameters listing `structured_outputs`. Both sides are
+ * still kept either way — the audit trail is the point — but a reader must be
+ * able to tell a withheld field from a settled one.
+ */
+function describeConflicts(conflicts: FieldConflict[]): string {
+  const open = conflicts.filter((c) => c.status !== 'resolved').length;
+  const kept = 'Both sides are kept: a quietly picked winner is indistinguishable from a bug.';
+  if (open === 0) {
+    return `Sources contradicted each other and something with standing answered, so a value was taken and the dispute is resolved. ${kept}`;
+  }
+  if (open === conflicts.length) {
+    return `Sources contradicted each other, so no value was taken. ${kept}`;
+  }
+  return `Sources contradicted each other. ${open} of ${conflicts.length} is still open and withholds its value; the rest were answered. ${kept}`;
+}
+
 function ConflictSection({ conflicts }: { conflicts: FieldConflict[] }) {
   return (
     <section className={styles.alertSection} data-testid="conflict-section">
@@ -352,10 +377,7 @@ function ConflictSection({ conflicts }: { conflicts: FieldConflict[] }) {
         <LuCircleAlert size={14} className={styles.alertIcon} />
         <h4 className={styles.heading}>Source conflicts</h4>
       </div>
-      <p className={styles.note}>
-        Sources contradicted each other, so no value was taken. Both sides are kept: a
-        quietly picked winner is indistinguishable from a bug.
-      </p>
+      <p className={styles.note}>{describeConflicts(conflicts)}</p>
       <div className={styles.conflictGrid}>
         {conflicts.map((c) => (
           <div key={c.field} className={styles.conflict} data-testid={`conflict-${c.field}`}>
