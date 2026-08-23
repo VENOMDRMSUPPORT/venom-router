@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { LuArrowUpRight, LuArrowRight, LuCircleAlert, LuCpu, LuRefreshCw } from 'react-icons/lu';
+import { LuArrowUpRight, LuArrowRight, LuArrowDownUp, LuCircleAlert, LuCpu, LuRefreshCw } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import { formatTokens, formatAgo } from '../../api/client';
@@ -8,7 +8,19 @@ import { FreshnessBadge } from '../../components/FreshnessBadge/FreshnessBadge';
 import { Toolbar, PROVIDER_FILTERS } from '../../components/Toolbar/Toolbar';
 import { FactState } from '../../components/FactState/FactState';
 import { providerMatchesFilter } from '../../api/filters';
+import { matchesProviderSearch } from '../../api/provider-search';
 import styles from './DashboardPage.module.css';
+
+type ProviderSortKey = 'name' | 'models' | 'context' | 'score' | 'freshness';
+type SortDirection = 'asc' | 'desc';
+
+const SORT_OPTIONS: { value: ProviderSortKey; label: string }[] = [
+  { value: 'score', label: 'Overall score coverage' },
+  { value: 'models', label: 'Live model count' },
+  { value: 'context', label: 'Maximum context' },
+  { value: 'freshness', label: 'Freshness' },
+  { value: 'name', label: 'Provider name' },
+];
 
 export function DashboardPage() {
   const { data, error, loading, reload } = useCatalog();
@@ -16,6 +28,8 @@ export function DashboardPage() {
   const [filter, setFilter] = useState('all');
   const [view, setView] = useState<'grid' | 'table'>('table');
   const [preferredView, setPreferredView] = useState<'grid' | 'table'>('table');
+  const [sortKey, setSortKey] = useState<ProviderSortKey>('score');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   const navigate = useNavigate();
 
@@ -42,13 +56,39 @@ export function DashboardPage() {
 
   const providers = useMemo(() => {
     if (!data) return [];
-    const q = query.toLowerCase().trim();
-    return data.providers.filter((p) => {
-      const blurb = present(p.id).blurb.toLowerCase();
-      if (q && !p.name.toLowerCase().includes(q) && !blurb.includes(q) && !p.id.includes(q)) return false;
-      return providerMatchesFilter(p.id, data.models, filter);
+
+    const modelsByProvider = new Map<string, typeof data.models>();
+    for (const model of data.models) {
+      const existing = modelsByProvider.get(model.providerId) ?? [];
+      existing.push(model);
+      modelsByProvider.set(model.providerId, existing);
+    }
+
+    const filtered = data.providers.filter((provider) => {
+      const blurb = present(provider.id).blurb;
+      return matchesProviderSearch(provider, data.models, blurb, query)
+        && providerMatchesFilter(provider.id, data.models, filter);
     });
-  }, [data, query, filter]);
+
+    const metric = (provider: typeof data.providers[number]): number | string => {
+      const providerModels = modelsByProvider.get(provider.id) ?? [];
+      if (sortKey === 'name') return provider.name.toLowerCase();
+      if (sortKey === 'models') return provider.liveModels;
+      if (sortKey === 'context') return Math.max(0, ...providerModels.map((model) => model.contextTokens ?? 0));
+      if (sortKey === 'freshness') return provider.hoursSinceSuccess ?? Number.POSITIVE_INFINITY;
+      return provider.liveModels > 0 ? provider.overallScoreScored / provider.liveModels : 0;
+    };
+
+    return filtered.sort((a, b) => {
+      const left = metric(a);
+      const right = metric(b);
+      const comparison = typeof left === 'string' && typeof right === 'string'
+        ? left.localeCompare(right)
+        : Number(left) - Number(right);
+      if (comparison !== 0) return sortDirection === 'asc' ? comparison : -comparison;
+      return a.name.localeCompare(b.name);
+    });
+  }, [data, query, filter, sortKey, sortDirection]);
 
   if (loading && !data) return <DashboardSkeleton />;
   if (!data) {
@@ -209,10 +249,45 @@ export function DashboardPage() {
         filter={filter}
         onFilterChange={setFilter}
         options={PROVIDER_FILTERS}
-        placeholder="Search providers by name or ID..."
+        placeholder="Search providers, models, or IDs..."
+        searchHintId="dashboard-search-hint"
         view={view}
         onViewChange={handleViewChange}
       />
+
+      <div className={styles.resultBar}>
+        <div className={styles.resultSummary} role="status" aria-live="polite">
+          Showing <strong>{providers.length}</strong> of <strong>{data.providers.length}</strong> providers
+          {query.trim() && <span> matching “{query.trim()}”</span>}
+        </div>
+        <div className={styles.sortControls}>
+          <label htmlFor="provider-sort">Sort by</label>
+          <select
+            id="provider-sort"
+            value={sortKey}
+            onChange={(event) => {
+              const nextKey = event.target.value as ProviderSortKey;
+              setSortKey(nextKey);
+              setSortDirection(nextKey === 'name' || nextKey === 'freshness' ? 'asc' : 'desc');
+            }}
+          >
+            {SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+          <button
+            type="button"
+            className={styles.sortDirectionBtn}
+            onClick={() => setSortDirection((current) => current === 'asc' ? 'desc' : 'asc')}
+            aria-label={`Sort ${sortDirection === 'asc' ? 'descending' : 'ascending'}`}
+            title={`Currently ${sortDirection === 'asc' ? 'ascending' : 'descending'}`}
+          >
+            <LuArrowDownUp size={14} aria-hidden="true" />
+            <span>{sortDirection === 'asc' ? 'Ascending' : 'Descending'}</span>
+          </button>
+        </div>
+        <span id="dashboard-search-hint" className={styles.searchHint}>
+          Advanced search: <code>model:</code> <code>capability:</code> <code>status:</code> <code>score:</code>
+        </span>
+      </div>
 
       {view === 'grid' ? (
         <div className={styles.grid}>

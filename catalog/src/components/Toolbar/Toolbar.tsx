@@ -25,6 +25,7 @@ interface ToolbarProps {
    * hide everything.
    */
   options?: FilterOption[];
+  searchHintId?: string;
 }
 
 /** The filters that apply to a list of models. */
@@ -66,6 +67,7 @@ export function Toolbar({
   onViewChange,
   placeholder = 'Search models by name or ID...',
   options = MODEL_FILTERS,
+  searchHintId,
 }: ToolbarProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -96,7 +98,8 @@ export function Toolbar({
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
           placeholder={placeholder}
-          aria-label="Search providers"
+          aria-label={placeholder}
+          aria-describedby={searchHintId}
           className={styles.input}
         />
         {query && (

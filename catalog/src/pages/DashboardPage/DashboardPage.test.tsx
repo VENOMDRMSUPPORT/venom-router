@@ -116,14 +116,31 @@ describe('the dashboard offers the filters it can actually apply', () => {
     fireEvent.click(screen.getByRole('button', { name: /all providers/i }));
     const offered = screen.getAllByRole('option').map((option) => option.textContent);
 
-    expect(offered).toEqual(['All Providers', 'Free Models', 'Paid Models', '1M+ Context', 'Multimodal']);
+    expect(offered.slice(0, 5)).toEqual(['All Providers', 'Free Models', 'Paid Models', '1M+ Context', 'Multimodal']);
     expect(offered).not.toContain('Not Deprecated');
+    expect(screen.getByLabelText('Sort by')).toHaveValue('score');
   });
 
   test('the search box says what it actually searches', () => {
     catalogMock.current = { data: baseData(), error: null, loading: false };
     renderDashboard();
 
-    expect(screen.getByPlaceholderText('Search providers by name or ID...')).toBeInTheDocument();
+    const searchInput = screen.getByPlaceholderText('Search providers, models, or IDs...');
+    expect(searchInput).toBeInTheDocument();
+    expect(searchInput).toHaveAttribute('aria-describedby', 'dashboard-search-hint');
+    expect(screen.getByText(/Advanced search:/i)).toBeInTheDocument();
+  });
+
+  test('sort direction toggles and freshness chooses the newest-first default', () => {
+    catalogMock.current = { data: baseData(), error: null, loading: false };
+    renderDashboard();
+
+    const sort = screen.getByLabelText('Sort by');
+    fireEvent.change(sort, { target: { value: 'freshness' } });
+    expect(sort).toHaveValue('freshness');
+    expect(screen.getByRole('button', { name: /sort descending/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /sort descending/i }));
+    expect(screen.getByRole('button', { name: /sort ascending/i })).toBeInTheDocument();
   });
 });
