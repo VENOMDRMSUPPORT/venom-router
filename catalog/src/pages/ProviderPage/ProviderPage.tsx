@@ -34,7 +34,7 @@ import { Toolbar } from '../../components/Toolbar/Toolbar';
 import { NotFoundPage } from '../NotFoundPage/NotFoundPage';
 import { EvidencePanel } from '../../components/EvidencePanel/EvidencePanel';
 import { EvaluateModal } from '../../components/EvaluateModal/EvaluateModal';
-import { vendorQualifier } from '../../api/presentation';
+import { splitVendorName } from '../../api/presentation';
 import { FactState, factStateOf } from '../../components/FactState/FactState';
 import { modelMatchesFilter } from '../../api/filters';
 import styles from './ProviderPage.module.css';
@@ -530,7 +530,18 @@ function EvaluateButton({ model, onOpen }: { model: ApiModel; onOpen: () => void
   );
 }
 
-function VendorQualifierBadge({ qualifier }: { qualifier: string }) {
+/**
+ * The part of the vendor's name the name column deliberately does not print.
+ *
+ * It takes the model rather than a string so that one call answers both "is
+ * there a qualifier" and "what does it look like". Asking the caller to test
+ * first and then hand the answer back through a non-null assertion ran the same
+ * split three times per row and let the two sites drift.
+ */
+function VendorQualifierBadge({ model }: { model: ApiModel }) {
+  const { qualifier } = splitVendorName(model.modelId, model.displayName);
+  if (!qualifier) return null;
+
   const lower = qualifier.toLowerCase();
   const isNew = lower.includes('new');
   const isMultiplier = lower.includes('usage') || /\d+x/i.test(lower);
@@ -621,7 +632,11 @@ function ModelTable({ title, models, note, costStatedOnce }: { title: string; mo
               }>
                 <td className={styles.narrow}><ModelRankCell model={m} localRanks={localRanks} /></td>
                 <td>
-                  <span className={styles.modelName}>{m.displayName || m.modelId}</span>
+                  {/* The name is printed without the qualifier the badge below
+                      lifts out of it, so a promoted model reads "DeepSeek V4
+                      Pro" + a New pill, not "DeepSeek V4 Pro (New)" + a New
+                      pill. One fact, one place. */}
+                  <span className={styles.modelName}>{splitVendorName(m.modelId, m.displayName).base}</span>
                   {/* The raw id is the API call — keep it one glance away, but
                       the official name leads because it is what the provider's
                       own app calls this model. */}
@@ -638,9 +653,7 @@ function ModelTable({ title, models, note, costStatedOnce }: { title: string; mo
                       deprecated
                     </span>
                   )}
-                  {vendorQualifier(m.modelId, m.displayName) && (
-                    <VendorQualifierBadge qualifier={vendorQualifier(m.modelId, m.displayName)!} />
-                  )}
+                  <VendorQualifierBadge model={m} />
                   {/* Identity findings (identity_review, unresolved) print
                       nothing inline — owner decision 2026-08-21. Their state
                       and refused candidates stay one click away on the evidence
@@ -737,9 +750,7 @@ function ModelGrid({ title, models, note, costStatedOnce }: { title: string; mod
                     deprecated
                   </span>
                 )}
-                {vendorQualifier(m.modelId, m.displayName) && (
-                  <VendorQualifierBadge qualifier={vendorQualifier(m.modelId, m.displayName)!} />
-                )}
+                <VendorQualifierBadge model={m} />
                 {(() => {
                   const shown = displayIdentity(m);
                   return shown && (

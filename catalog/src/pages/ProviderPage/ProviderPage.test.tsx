@@ -782,3 +782,47 @@ describe('a deprecated model can be filtered out of the roster', () => {
     expect(screen.queryByText('Sunsetting')).toBeNull();
   });
 });
+
+describe('a vendor qualifier is printed once, not in the name and again in a pill', () => {
+  const scored = (over: Record<string, unknown> = {}) => staleWireModel({
+    modelScore: {
+      value: 65.79, display: '65.8%', methodologyVersion: 'model-score-v1',
+      qualityWeight: 0.7, operationalWeight: 0.3, operationalPrecision: 0,
+      uncertainty: 0.035, bound: null, reason: null,
+      qualityEvidenceLevel: 'measured', operationalCoverage: 'complete',
+    },
+    modelRank: 9,
+    overallScore: {
+      value: 65.79, display: '65.8%', status: 'complete', qualityScore: 67.5, operationalScore: 61.8,
+      qualityCoverage: { scored: 5, applicable: 5, percent: 100 },
+      overallCoverage: { scored: 7, applicable: 7, percent: 100 },
+      includedDimensions: ['coding'], excludedDimensions: [], uncertainty: 1, reasons: [],
+      methodologyVersion: 'overall-score-v1', computedAt: '2026-08-19T10:00:00.000Z',
+    },
+    overallRank: 9,
+    resolution: { state: 'complete', reasons: [], firstDetectedAt: null, lastAttemptAt: null, nextAttemptAt: null },
+    ...over,
+  });
+
+  test('the name drops the parenthetical the badge lifts', async () => {
+    // The reported defect: the row read "DeepSeek V4 Pro (New)" with a "New"
+    // pill beside it. Both halves are asserted, because deleting the pill and
+    // deleting the parenthetical are different fixes and only one is right —
+    // the qualifier has to survive, once, as the badge.
+    stubStaleService([scored({ modelId: 'deepseek-v4-pro', displayName: 'DeepSeek V4 Pro (New)' })]);
+    renderProviderPage();
+
+    expect(await screen.findByText('DeepSeek V4 Pro')).toBeInTheDocument();
+    expect(screen.queryByText(/DeepSeek V4 Pro \(New\)/)).not.toBeInTheDocument();
+    expect(screen.getByText('New')).toBeInTheDocument();
+  });
+
+  test('a name with nothing liftable is left alone', async () => {
+    // No badge renders here, so stripping anything would delete the only copy
+    // of a name the provider published.
+    stubStaleService([scored({ modelId: 'mimo-v2.5-free', displayName: 'MiMo-V2.5 (free)' })]);
+    renderProviderPage();
+
+    expect(await screen.findByText('MiMo-V2.5 (free)')).toBeInTheDocument();
+  });
+});
