@@ -113,8 +113,19 @@ export function planEvaluation(db: Db, input: PlanEvaluationInput): EvaluationPl
   if (!hasCredential(input.providerId)) return blockedPlan(input, 'missing_credentials', identityId);
 
   const repository = createEvaluationRepository(db);
+  // Three things must agree before a dimension counts as answered: it is scored,
+  // it was measured against THIS corpus, and it was read by THIS grader.
+  //
+  // The rubric version used to be missing from that list, which made a repaired
+  // grader invisible here: `regrade.ts` exists precisely because a repair leaves
+  // every already-scored dimension carrying a verdict the current grader would
+  // not give, and the planner could not tell those apart from current ones. So
+  // the only route back was remembering to run a terminal script — and a
+  // guarantee that depends on remembering is not a guarantee.
   const scored = new Set(repository.identityDimensions(identityId)
-    .filter((row) => row.status === 'scored' && row.testSetHash === input.testSetHash)
+    .filter((row) => row.status === 'scored'
+      && row.testSetHash === input.testSetHash
+      && row.rubricVersion === OVERALL_SCORE_POLICY.rubricVersion)
     .map((row) => row.dimension));
   const applicability = new Map(repository.offerDimensions(input.providerId, input.modelId)
     .map((row) => [row.dimension, row.status]));

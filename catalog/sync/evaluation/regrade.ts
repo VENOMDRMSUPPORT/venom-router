@@ -21,13 +21,21 @@ import { OVERALL_SCORE_POLICY, smoothCriterionScore, type QualityDimension } fro
 export interface RegradeSummary {
   /** Dimensions replayed and re-scored. */
   rescored: Array<{ identityId: string; dimension: string; before: number | null; after: number }>;
-  /** Scored dimensions left exactly as they were, and the reason each was. */
+  /** Scored dimensions that could not be re-derived, and the reason each could not. */
   unreplayable: Array<{
     identityId: string;
     dimension: string;
     retained: number;
     samples: number;
     reason: UnreplayableReason;
+    /**
+     * Whether the published score was withdrawn as a result.
+     *
+     * Only ever true for `answer_truncated`. The other two reasons mean the
+     * evidence cannot be RE-READ, which is not the same as it never having
+     * existed — those scores were produced from real answers and stay put.
+     */
+    demoted: boolean;
   }>;
 }
 
@@ -96,7 +104,7 @@ export function regradeFromRetainedResponses(input: RegradeInput): RegradeSummar
       if (retained.length !== samples.length || samples.length !== expected) {
         summary.unreplayable.push({
           identityId, dimension, retained: retained.length, samples: samples.length,
-          reason: 'responses_not_retained',
+          reason: 'responses_not_retained', demoted: false,
         });
         continue;
       }
@@ -118,17 +126,47 @@ export function regradeFromRetainedResponses(input: RegradeInput): RegradeSummar
         successes += graded.weightedSuccesses;
         criteria += graded.weightedCriteria;
       }
+      const storedScore = (): number | null => (db.prepare(
+        `SELECT score FROM model_identity_scores WHERE identity_id=? AND dimension=? AND methodology_ver=?`,
+      ).get(identityId, dimension, OVERALL_SCORE_POLICY.methodologyVersion) as unknown as { score: number | null } | undefined)?.score ?? null;
+
       if (refusal || criteria === 0) {
+        const reason = refusal ?? 'unreadable_response';
+        // A published number derived from a response the provider never finished
+        // is not a measurement, and leaving it in place would keep it inside
+        // every overall score and ranking that reads it. It is withdrawn rather
+        // than corrected: there is nothing here to correct it FROM.
+        //
+        // Withdrawn, not deleted. The row keeps its provenance and says what
+        // happened; `score: null` is what makes `recalculate` drop the dimension
+        // out of coverage instead of aggregating a zero. Unknown is an honest
+        // result and must remain unknown.
+        const demote = reason === 'answer_truncated' && storedScore() !== null;
+        if (demote && !input.dryRun) {
+          repository.saveIdentityDimension({
+            identityId,
+            dimension,
+            score: null,
+            rawRate: null,
+            uncertainty: null,
+            confidence: null,
+            sampleCount: null,
+            status: 'unknown',
+            rubricVersion: OVERALL_SCORE_POLICY.rubricVersion,
+            testSetHash,
+            evidence: ['withdrawn:answer-truncated', `run:${samples[0].run_id}`, `fixture:${testSetHash}`],
+            evaluatedAt: now(),
+            methodologyVersion: OVERALL_SCORE_POLICY.methodologyVersion,
+          });
+        }
         summary.unreplayable.push({
           identityId, dimension, retained: retained.length, samples: samples.length,
-          reason: refusal ?? 'unreadable_response',
+          reason, demoted: demote,
         });
         continue;
       }
 
-      const before = (db.prepare(
-        `SELECT score FROM model_identity_scores WHERE identity_id=? AND dimension=? AND methodology_ver=?`,
-      ).get(identityId, dimension, OVERALL_SCORE_POLICY.methodologyVersion) as unknown as { score: number | null } | undefined)?.score ?? null;
+      const before = storedScore();
 
       const score = smoothCriterionScore(successes, criteria);
       summary.rescored.push({ identityId, dimension, before, after: score.score });

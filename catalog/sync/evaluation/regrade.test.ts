@@ -80,10 +80,10 @@ function seedRun(db: Db, options: {
   });
 }
 
-function scoreOf(db: Db, identityId: string): { score: number; evidence: string } {
+function scoreOf(db: Db, identityId: string): { score: number | null; evidence: string } {
   const row = db.prepare(`SELECT score, evidence_json FROM model_identity_scores
     WHERE identity_id=? AND dimension='reasoning'`).get(identityId) as unknown as
-    { score: number; evidence_json: string };
+    { score: number | null; evidence_json: string };
   return { score: row.score, evidence: row.evidence_json };
 }
 
@@ -99,7 +99,7 @@ describe('re-scoring from evidence already bought', () => {
     assert.equal(summary.rescored.length, 1);
     assert.equal(summary.unreplayable.length, 0);
     const after = scoreOf(db, 'vendor/latex');
-    assert.ok(after.score > 20, `expected the repaired grader to raise 20, got ${after.score}`);
+    assert.ok((after.score ?? 0) > 20, `expected the repaired grader to raise 20, got ${after.score}`);
     assert.match(after.evidence, /regraded:retained-responses/,
       'the trail must say this was re-derived, not re-measured');
     db.close();
@@ -120,7 +120,7 @@ describe('re-scoring from evidence already bought', () => {
     assert.deepEqual(summary.unreplayable, [
       {
         identityId: 'vendor/partial', dimension: 'reasoning', retained: 59, samples: 60,
-        reason: 'responses_not_retained',
+        reason: 'responses_not_retained', demoted: false,
       },
     ]);
     assert.equal(scoreOf(db, 'vendor/partial').score, 20, 'the stored score is left exactly as it was');
@@ -133,7 +133,7 @@ describe('re-scoring from evidence already bought', () => {
 
     regradeFromRetainedResponses({ db, now, dimension: 'reasoning' });
 
-    assert.ok(scoreOf(db, 'vendor/wrong').score < 10,
+    assert.ok((scoreOf(db, 'vendor/wrong').score ?? 100) < 10,
       'replaying evidence must not flatter a model that did not answer');
     db.close();
   });
@@ -157,11 +157,48 @@ describe('re-scoring from evidence already bought', () => {
     assert.deepEqual(summary.unreplayable, [
       {
         identityId: 'vendor/truncated', dimension: 'reasoning', retained: 60, samples: 60,
-        reason: 'answer_truncated',
+        reason: 'answer_truncated', demoted: true,
       },
     ]);
-    assert.equal(scoreOf(db, 'vendor/truncated').score, 1.99,
-      'the wrong score stays until a real re-run replaces it, rather than being re-derived from nothing');
+    assert.equal(scoreOf(db, 'vendor/truncated').score, null,
+      'a number derived from a response nobody finished is withdrawn, not corrected');
+    assert.match(scoreOf(db, 'vendor/truncated').evidence, /withdrawn:answer-truncated/,
+      'and the row says so, rather than disappearing');
+    db.close();
+  });
+
+  test('a withdrawal is not repeated, and does not report a second time', () => {
+    const db = openDb(':memory:');
+    seedRun(db, {
+      identityId: 'vendor/truncated', answer: latexAnswer, storedScore: 1.99,
+      choice: () => ({
+        finish_reason: 'length',
+        message: { role: 'assistant', content: '', reasoning_content: 'The user wants me to' },
+      }),
+    });
+
+    regradeFromRetainedResponses({ db, now, dimension: 'reasoning' });
+    const second = regradeFromRetainedResponses({ db, now, dimension: 'reasoning' });
+
+    assert.equal(second.unreplayable.length, 1, 'it is still reported as unreplayable');
+    assert.equal(second.unreplayable[0].demoted, false, 'but nothing was withdrawn the second time');
+    db.close();
+  });
+
+  test('a dry run reports the withdrawal it would make without making it', () => {
+    const db = openDb(':memory:');
+    seedRun(db, {
+      identityId: 'vendor/truncated', answer: latexAnswer, storedScore: 1.99,
+      choice: () => ({
+        finish_reason: 'length',
+        message: { role: 'assistant', content: '', reasoning_content: 'The user wants me to' },
+      }),
+    });
+
+    const summary = regradeFromRetainedResponses({ db, now, dimension: 'reasoning', dryRun: true });
+
+    assert.equal(summary.unreplayable[0].demoted, true, 'it reports what it would do');
+    assert.equal(scoreOf(db, 'vendor/truncated').score, 1.99, 'and the stored score is untouched');
     db.close();
   });
 
@@ -180,7 +217,7 @@ describe('re-scoring from evidence already bought', () => {
     const summary = regradeFromRetainedResponses({ db, now, dimension: 'reasoning' });
 
     assert.equal(summary.unreplayable.length, 0, 'a worked answer in the trace is still an answer');
-    assert.ok(scoreOf(db, 'vendor/trace').score > 20);
+    assert.ok((scoreOf(db, 'vendor/trace').score ?? 0) > 20);
     db.close();
   });
 

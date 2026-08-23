@@ -28,7 +28,7 @@ function seedModel(withIdentity = true): Db {
   return db;
 }
 
-function markScored(db: Db, dimension: string, testSetHash: string): void {
+function markScored(db: Db, dimension: string, testSetHash: string, rubricVersion?: string): void {
   createEvaluationRepository(db).saveIdentityDimension({
     identityId: 'vendor/model',
     dimension,
@@ -38,7 +38,7 @@ function markScored(db: Db, dimension: string, testSetHash: string): void {
     confidence: 0.99,
     sampleCount: 300,
     status: 'scored',
-    rubricVersion: OVERALL_SCORE_POLICY.rubricVersion,
+    rubricVersion: rubricVersion ?? OVERALL_SCORE_POLICY.rubricVersion,
     testSetHash,
     evidence: [],
     evaluatedAt: '2026-08-20T00:00:00.000Z',
@@ -55,6 +55,18 @@ describe('planEvaluation', () => {
     assert.equal(plan.dimensions.length, 6);
     assert.equal(plan.speed, 'missing');
     assert.equal(plan.estimatedRequests, 6 * REQUESTS_PER_DIMENSION + REQUESTS_PER_SPEED_RUN);
+    db.close();
+  });
+
+  test('a score the current grader did not produce is not already-scored', () => {
+    // What a grader repair leaves behind: a stored verdict the code that reads
+    // responses today would not give. Without this, the only way back was
+    // remembering to run a terminal script.
+    const db = seedModel();
+    markScored(db, 'coding', HASH, 'catalog-rubrics-v0');
+    const plan = planEvaluation(db, { providerId: 'p', modelId: 'm', testSetHash: HASH, hasCredential: yes });
+    assert.ok(plan.dimensions.includes('coding'), 'a stale reading has to be re-derived');
+    assert.equal(plan.skipped.find((entry) => entry.dimension === 'coding'), undefined);
     db.close();
   });
 
