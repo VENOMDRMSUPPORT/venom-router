@@ -668,6 +668,31 @@ describe('derived state is rebuilt by every run, never accumulated', () => {
     assert.equal(rows[0].resolved_to, 'true');
   });
 
+  test("a source outside the dispute closes it, and the reader is told what answered", () => {
+    // The reported rows: `ollama-cloud/gpt-oss:20b`, `gpt-oss:120b` and
+    // `minimax-m3` showed "sources contradicted each other, so no value was
+    // taken" while publishing the value anyway — gpt-oss:20b had
+    // `structured: true` cited to OpenRouter's `supported_parameters` listing
+    // `structured_outputs`. A value HAD been taken. The dispute is recorded
+    // before any field resolves, deliberately, but nothing came back to close it
+    // once something outside it answered.
+    seed({ modelId: 'answered' });
+    const disputed: IntrinsicFacts = {
+      declaredBy: '',
+      conflicts: [{ field: 'tools', sides: [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }] }],
+    };
+    const detailSaysTools = new Map([
+      ['p/answered', { tools: true, ref: 'ollama.com/api/show(answered)', url: 'https://ollama.com/api/show' }],
+    ]);
+
+    enrich(deps({ intrinsic: () => disputed, lookupSpec: () => null, details: detailSaysTools }));
+
+    assert.equal(factFor('answered', 'tools')!.source, 'provider_api', 'precondition: answered from outside');
+    const row = conflictsFor('answered').find((c) => c.field === 'tools')!;
+    assert.equal(row.status, 'resolved');
+    assert.equal(row.resolved_to, 'true');
+  });
+
   test('withdrawing the review reopens the dispute', () => {
     // The reason the row is derived rather than latched. A verdict that outlives
     // its own evidence is the provenance failure this catalog exists to avoid:

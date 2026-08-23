@@ -41,7 +41,7 @@ export interface EnrichDeps {
    */
   lookupSpec: SpecLookup;
   /** Intrinsic model properties pooled across every provider in the spec feed. */
-  intrinsic: (modelId: string) => import('./resolvers.ts').IntrinsicFacts | null;
+  intrinsic: (modelId: string, servingStorefront?: string) => import('./resolvers.ts').IntrinsicFacts | null;
   /**
    * What the model's own vendor publishes about it, from its own storefront.
    *
@@ -234,6 +234,17 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
      * is a separate statement from the upsert above precisely because that one
      * must never overwrite a verdict with a default while re-detecting.
      */
+    /**
+     * A dimension this catalog graded, for the identity a row resolved to.
+     *
+     * Read here rather than passed in because it is derived state like every
+     * other fact this pass resolves, and because the identity it is keyed by is
+     * only known once `resolveIdentity` has run for the row.
+     */
+    const measuredDimension = db.prepare(
+      `SELECT score, sample_count, evidence_json FROM model_identity_scores
+       WHERE identity_id = ? AND dimension = ? AND status = 'scored' AND score IS NOT NULL`,
+    );
     const settleConflict = db.prepare(
       `UPDATE model_conflicts SET status = 'resolved', resolved_to = ?
        WHERE provider_id = ? AND model_id = ? AND field = ?`,
@@ -268,9 +279,34 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
       const res = resolveIdentity(r.model_id, canonical.index, overlay);
       const canon = res.status === 'resolved' ? canonical.byId.get(res.target) ?? null : null;
       const spec = deps.lookupSpec(feedKeys.get(r.provider_id), r.model_id);
+      /*
+       * The identity the measurement is filed under.
+       *
+       * A row whose identity is still under review reaches nothing here, which
+       * is correct: `opencode-go/qwen3.5-plus` has two REFUSED candidates on
+       * record, so no measurement may be attributed to it and its disputed
+       * `structured` stays honestly unknown.
+       */
+      const measuredFor = (identityId: string | null) => {
+        if (!identityId) return null;
+        const DIMENSION = { tools: 'toolCalling', reasoning: 'reasoning', structured: 'structuredOutput' } as const;
+        const out: Record<string, { score: number; runRef: string; sampleCount: number } | null> = {};
+        for (const [field, dimension] of Object.entries(DIMENSION)) {
+          const row = measuredDimension.get(identityId, dimension) as unknown as
+            { score: number; sample_count: number | null; evidence_json: string | null } | undefined;
+          if (!row) { out[field] = null; continue; }
+          const run = /run:\d+/.exec(row.evidence_json ?? '')?.[0] ?? 'run:unknown';
+          out[field] = { score: row.score, runRef: run, sampleCount: row.sample_count ?? 0 };
+        }
+        return out;
+      };
+
       const input = {
+        measured: measuredFor(canon?.id ?? deps.vendorIdentity?.(r.model_id)?.canonicalId ?? null),
         detail: deps.details?.get(`${r.provider_id}/${r.model_id}`) ?? null,
-        spec, intrinsic: deps.intrinsic(r.model_id), canonical: canon,
+        // The serving provider's feed key gives its own listing standing to
+        // answer a dispute about its own offering.
+        spec, intrinsic: deps.intrinsic(r.model_id, feedKeys.get(r.provider_id)), canonical: canon,
         firstParty: deps.firstPartyLimits?.(r.model_id) ?? null,
       };
 
@@ -369,6 +405,15 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
       const attachment = mergeOfficial('attachment', resolveCapability('attachment', input), reviewedValue(reviewed?.attachment));
       const cost = resolveCost(input, billing[r.provider_id] ?? DEFAULT_BILLING);
 
+      /**
+       * The conflict a fact name belongs to.
+       *
+       * The pooling reports its dispute under `inputModalities` and the fact is
+       * written as `modalities`. Without this the modality disputes could never
+       * be closed, whatever settled them.
+       */
+      const conflictField = (field: string): string => (field === 'modalities' ? 'inputModalities' : field);
+
       const record = (
         field: string,
         v: { value: unknown; source: string; ref: string; url: string | null; state: string; raw: unknown } | null,
@@ -380,6 +425,35 @@ export function enrich(deps: EnrichDeps): EnrichSummary {
         }
         if (wasNull && v.source !== 'models.dev') filled[field] = (filled[field] ?? 0) + 1;
         writeFact(r, field, v);
+        /*
+         * A dispute that something else went on to answer is recorded as
+         * answered, for the same reason a reviewed verdict is.
+         *
+         * The panel told the reader "sources contradicted each other, so no
+         * value was taken" on rows where a value HAD been taken:
+         * `ollama-cloud/gpt-oss:20b` published `structured: true`, cited to
+         * OpenRouter's `supported_parameters` listing `structured_outputs`, and
+         * still showed its resellers' disagreement as open with `resolvedTo`
+         * null. The dispute is recorded before any field resolves — deliberately,
+         * so it cannot be hidden — but nothing ever came back to close it.
+         *
+         * Safe by construction: a field disputed in the pooling resolves to null
+         * there, so any value it holds came from OUTSIDE that dispute, and the
+         * fact's own provenance names the source. `official_source_disagreement`
+         * is untouched — that path returns null, so nothing is recorded here.
+         */
+        const disputed = conflictField(field);
+        // Only a source from OUTSIDE the dispute may close it. The disagreement
+        // is between models.dev sellers, so another models.dev value has no
+        // standing over it — and, because a spec is re-derived from the row each
+        // run, allowing it would let a WITHDRAWN reviewed verdict keep the
+        // dispute shut through the value it had already written. A verdict that
+        // outlives its evidence is the provenance failure this catalog exists to
+        // avoid. `provider_api` and an `openrouter` index confirmation are
+        // outside it; a reviewed fact is handled by the verdict path above.
+        if (provenConflicts.has(disputed) && v.source !== 'models.dev') {
+          settleConflict.run(JSON.stringify(v.value), r.provider_id, r.model_id, disputed);
+        }
       };
 
       record('context', context, r.context_tokens === null);

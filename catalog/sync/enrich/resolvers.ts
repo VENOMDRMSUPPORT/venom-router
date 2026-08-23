@@ -30,7 +30,9 @@ import type { IntrinsicFacts } from '../sources/models-dev.ts';
 
 export type { IntrinsicFacts };
 
-export type FactSource = 'provider_api' | 'models.dev' | 'openrouter' | 'provider_billing' | 'probe';
+export type FactSource = 'provider_api' | 'models.dev' | 'openrouter' | 'provider_billing' | 'probe'
+  /** This catalog graded the capability against the provider itself. */
+  | 'catalog_measurement';
 
 /**
  * How strong a fact's evidence is — a question `source` cannot answer.
@@ -173,6 +175,24 @@ export interface ResolverInput {
    * is why it carries its own evidence state instead of passing as first party.
    */
   firstParty?: FirstPartyLimits | null;
+  /**
+   * What this catalog measured against the provider itself.
+   *
+   * Ranked above every third-party declaration and below the seller's own detail
+   * record, because it answers a different question from either: not what
+   * somebody says the model supports, but what it did when asked. Keyed by
+   * capability, and only the three that have a graded dimension appear —
+   * `attachment` has none, so nothing here can speak for it.
+   */
+  measured?: Partial<Record<'tools' | 'reasoning' | 'structured', MeasuredCapability | null>> | null;
+}
+
+/** One graded dimension, reduced to what a capability question needs. */
+export interface MeasuredCapability {
+  score: number;
+  /** `run:<id>`, so the row cites the evaluation it came from. */
+  runRef: string;
+  sampleCount: number;
 }
 
 /**
@@ -278,7 +298,7 @@ export function resolveModalities({ detail, spec, intrinsic, canonical }: Resolv
  */
 export function resolveCapability(
   field: 'tools' | 'structured' | 'reasoning' | 'attachment',
-  { detail, spec, intrinsic, canonical }: ResolverInput,
+  { detail, spec, intrinsic, canonical, measured }: ResolverInput,
 ): ResolvedFact<boolean> | null {
   // A provider-declared capability outranks every index — but only for the two
   // fields a detail vocabulary actually expresses. Structured output and file
@@ -287,6 +307,31 @@ export function resolveCapability(
   const fromDetail = field === 'tools' || field === 'reasoning' ? detail?.[field] : undefined;
   if (typeof fromDetail === 'boolean')
     return { value: fromDetail, source: 'provider_api', ref: detail!.ref, url: detail!.url, state: 'first_party', raw: fromDetail };
+  /*
+   * A dimension this catalog graded against the provider.
+   *
+   * One-directional on purpose: a PASSING score proves the capability exists —
+   * nothing scores 99.7 on structured output without supporting it. A zero or a
+   * missing score proves nothing, because a failure need not be about the model
+   * at all. Both failure modes are on record here: an evaluation whose every
+   * sample returned 429, and one refused for an unsupported `temperature`
+   * parameter before the model ever saw the request.
+   *
+   * Placed above the declarations because it is evidence rather than assertion,
+   * and below `detail` because the seller describes what THIS deployment
+   * exposes, which is a different question from what the model can do.
+   */
+  const proven = field === 'attachment' ? null : measured?.[field];
+  if (proven && proven.score > 0) {
+    return {
+      value: true,
+      source: 'catalog_measurement',
+      ref: `${field}.${proven.runRef}`,
+      url: null,
+      state: 'measured',
+      raw: { score: proven.score, sampleCount: proven.sampleCount, runRef: proven.runRef },
+    };
+  }
   const fromSpec = spec?.[field];
   if (typeof fromSpec === 'boolean')
     return { value: fromSpec, source: 'models.dev', ref: field, url: SOURCE_URL['models.dev'], state: 'first_party', raw: fromSpec };

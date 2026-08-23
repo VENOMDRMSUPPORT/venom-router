@@ -335,3 +335,74 @@ describe('the provider decides how it bills, not whichever rows the feed priced'
     assert.equal(c.outPerM, 50);
   });
 });
+
+describe('a capability this catalog measured itself', () => {
+  /**
+   * Why a measurement is allowed to answer at all.
+   *
+   * The pool asks ~190 gateways their opinion of someone else's model and then
+   * demands unanimity, so disagreement is the normal case rather than the
+   * exception — 133 fields were withheld that way. Meanwhile this catalog had
+   * ALREADY measured three of the disputed capabilities against the provider,
+   * 300 samples each, with a run id and a fixture hash, and never consulted its
+   * own evidence. `qwen/qwen3.5-plus` scored 99.7 on structuredOutput while the
+   * catalog published "sources disagreed, so we do not know".
+   *
+   * Checked before wiring it in: across the live catalog the measurement agreed
+   * with the declaration 146 times out of 146, contradicting none. It is
+   * consistent with what the sellers say — it just also answers where they
+   * cannot agree.
+   */
+  test('a passing score proves the capability, outranking a seller disagreement', () => {
+    const r = resolveCapability('structured', {
+      spec: null,
+      // A dispute: the pool withheld a value.
+      intrinsic: { declaredBy: '', conflicts: [{ field: 'structured', sides: [] }] },
+      canonical: null,
+      measured: { structured: { score: 99.7, runRef: 'run:249', sampleCount: 300 } },
+    })!;
+    assert.equal(r.value, true);
+    assert.equal(r.source, 'catalog_measurement');
+    assert.equal(r.state, 'measured');
+    assert.match(r.ref, /run:249/);
+  });
+
+  test('the seller describing its own offer still outranks it', () => {
+    // A measurement proves the model CAN. The seller's own detail record says
+    // what this deployment exposes, and that is a different question.
+    const r = resolveCapability('tools', {
+      detail: { tools: false, ref: 'ollama.com/api/show(m)', url: 'https://ollama.com/api/show' } as never,
+      spec: null,
+      intrinsic: null,
+      canonical: null,
+      measured: { tools: { score: 98.3, runRef: 'run:248', sampleCount: 300 } },
+    })!;
+    assert.equal(r.value, false);
+    assert.equal(r.source, 'provider_api');
+  });
+
+  test('a failed or absent measurement proves nothing', () => {
+    // One-directional on purpose. This session watched capable models fail for
+    // reasons that were never about the model: a 429 on every sample, and an
+    // unsupported `temperature` parameter rejected before the model saw the
+    // request. A zero is not evidence of absence.
+    for (const measured of [
+      { structured: { score: 0, runRef: 'run:1', sampleCount: 300 } },
+      { structured: null },
+      undefined,
+    ]) {
+      const r = resolveCapability('structured', {
+        spec: null, intrinsic: null, canonical: null, measured: measured as never,
+      });
+      assert.equal(r, null, `must not answer from ${JSON.stringify(measured)}`);
+    }
+  });
+
+  test('attachment has no dimension, so nothing can measure it', () => {
+    const r = resolveCapability('attachment', {
+      spec: null, intrinsic: null, canonical: null,
+      measured: { structured: { score: 99.7, runRef: 'run:249', sampleCount: 300 } },
+    });
+    assert.equal(r, null);
+  });
+});
