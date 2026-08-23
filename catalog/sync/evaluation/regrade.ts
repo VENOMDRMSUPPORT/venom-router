@@ -250,12 +250,18 @@ function withdrawScoresNothingSupports(input: RegradeInput, summary: RegradeSumm
       AND s.methodology_ver = ?
       ${input.dimension ? 'AND s.dimension = ?' : ''}
       ${input.identityId ? 'AND s.identity_id = ?' : ''}
-      -- Nothing kept from any run of this dimension.
+      -- No COMPLETED run kept anything. The qualifier matters: an offer whose
+      -- re-run failed part-way retains responses from the samples that did
+      -- answer, and those support the failed attempt rather than the published
+      -- number. Asking only "was anything ever retained" left such a score
+      -- neither withdrawable nor replayable nor plannable — stuck at a figure
+      -- nothing could correct.
       AND NOT EXISTS (
         SELECT 1 FROM evaluation_runs r
           JOIN evaluation_samples es ON es.run_id = r.id
          WHERE r.identity_id = s.identity_id AND r.dimension = s.dimension
-           AND r.run_kind = 'runtime' AND es.response_json IS NOT NULL)
+           AND r.run_kind = 'runtime' AND r.status = 'complete'
+           AND es.response_json IS NOT NULL)
       -- And the most recent attempt could not measure it.
       AND (
         SELECT r.status FROM evaluation_runs r

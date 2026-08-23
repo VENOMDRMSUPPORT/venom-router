@@ -343,6 +343,32 @@ describe('withdrawing a score nothing supports', () => {
     db.close();
   });
 
+  test('responses kept by a run that FAILED do not rescue the old number', () => {
+    // `x-preview-f-free` answered 25 samples before failing, so its dimension has
+    // retained responses — but they belong to the failed attempt, not to the 0.3
+    // published from an earlier run that kept nothing. Reading "was anything ever
+    // retained" left it stuck: not withdrawable, not replayable because the run
+    // is not complete, and not plannable because a score is present.
+    const db = openDb(':memory:');
+    seedUnbacked(db, 'vendor/partly-answered', 'insufficient_evidence');
+    const repository = createEvaluationRepository(db);
+    const failed = db.prepare(
+      "SELECT id FROM evaluation_runs WHERE identity_id='vendor/partly-answered' ORDER BY id DESC LIMIT 1",
+    ).get() as unknown as { id: number };
+    repository.upsertSample({
+      runId: failed.id, scenarioId: 'vision-02', repetition: 1, outcome: 'passed',
+      weightedSuccesses: 5, weightedCriteria: 5, metrics: null,
+      artifactRef: `fixture:${HASH}#vision-02`,
+      response: { choices: [{ message: { content: '{}' } }] },
+      errorCode: null, recordedAt: now(),
+    });
+
+    regradeFromRetainedResponses({ db, now });
+
+    assert.equal(visionScore(db, 'vendor/partly-answered').score, null);
+    db.close();
+  });
+
   test('a dry run reports the withdrawal without making it', () => {
     const db = openDb(':memory:');
     seedUnbacked(db, 'vendor/refused', 'insufficient_evidence');
