@@ -91,6 +91,28 @@ export function listNotifications(db: Db, alertId?: string): NotificationRecord[
   }));
 }
 
+export interface NotificationDeliverySummary {
+  pending: number;
+  failed: number;
+}
+
+/**
+ * Delivery counts, counted in SQL.
+ *
+ * `/v1/alerts` used to answer this by loading the whole queue with
+ * `listNotifications(db)` and filtering in JavaScript — a full table scan on a
+ * route two pollers hit every 30 seconds, over an append-only table that only
+ * grows. Two aggregates replace it. `listNotifications` remains for the
+ * single-alert read, where the row count is bounded by one alert's history.
+ */
+export function notificationDeliverySummary(db: Db): NotificationDeliverySummary {
+  const row = db.prepare(`SELECT
+      COUNT(CASE WHEN status IN ('pending','retrying') THEN 1 END) pending,
+      COUNT(CASE WHEN status = 'failed' THEN 1 END) failed
+    FROM alert_notifications`).get() as unknown as { pending: number; failed: number };
+  return { pending: Number(row.pending), failed: Number(row.failed) };
+}
+
 export function notificationHeaders(payload: string, secret: string | null): Record<string, string> {
   const headers: Record<string, string> = {
     'content-type': 'application/json',

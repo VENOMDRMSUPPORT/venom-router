@@ -86,7 +86,17 @@ export class EvaluationRunner {
     this.hasCredential = config.hasCredential;
   }
 
-  private plan(providerId: string, modelId: string): EvaluationPlan {
+  /**
+   * What evaluating this offer would cost and whether it can be evaluated.
+   *
+   * Public because a caller that needs to decide BEFORE committing — the
+   * post-sync budget in `auto-evaluation.ts` — must plan through this runner
+   * rather than calling `planEvaluation` itself. Its own call would not carry
+   * this instance's `hasCredential`, so the two could disagree about whether a
+   * provider is reachable: one refusing an offer the other would have accepted.
+   * One queue, one planner, one credential view.
+   */
+  plan(providerId: string, modelId: string): EvaluationPlan {
     return planEvaluation(this.db, {
       providerId,
       modelId,

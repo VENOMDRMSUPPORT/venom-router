@@ -4,14 +4,46 @@
     {
       "name": "catalog",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "catalog"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "catalog"
+      ],
       "port": 5173
     },
     {
       "name": "catalog-api",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "serve", "--prefix", "catalog"],
+      "runtimeArgs": [
+        "run",
+        "serve",
+        "--prefix",
+        "catalog"
+      ],
       "port": 8791
+    },
+    {
+      "name": "catalog-api-verify",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "serve:verify",
+        "--prefix",
+        "catalog"
+      ],
+      "port": 8792
+    },
+    {
+      "name": "catalog-verify",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:verify",
+        "--prefix",
+        "catalog"
+      ],
+      "port": 5174
     }
   ]
 }

@@ -12,8 +12,8 @@ import { planEvaluation, resolveIdentity } from '../sync/evaluation/plan.ts';
 import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
 import { regradeFromRetainedResponses } from '../sync/evaluation/regrade.ts';
 import { recalculatePublishedOffers } from '../sync/evaluation/recalculate.ts';
-import { alertSummary, reconcileAlerts, transitionAlert, type AlertStatus } from './alerts.ts';
-import { listNotifications, notificationConfig } from './notifications.ts';
+import { alertSummary, reconcileAlerts, transitionAlert, type AlertHealthPayload, type AlertRecord, type AlertStatus } from './alerts.ts';
+import { listNotifications, notificationConfig, notificationDeliverySummary } from './notifications.ts';
 
 export interface AppDeps {
   db: Db;
@@ -112,6 +112,19 @@ export function health(deps: HealthDeps): HttpResult {
   };
 }
 
+/**
+ * Bring the alert ledger in line with current health, from the one code path.
+ *
+ * Exported because two callers need it and must not drift: the `/v1/alerts`
+ * route, and the service's own reconcile tick. Before the tick existed the
+ * ledger only advanced when a browser polled — so with no tab open, no alert was
+ * ever raised and no webhook was ever queued. Two copies of this three-line
+ * sequence would be two definitions of what the ledger means.
+ */
+export function reconcileAlertLedger(deps: HealthDeps, now: Date): AlertRecord[] {
+  return reconcileAlerts(deps.db, health(deps).body as AlertHealthPayload, now.toISOString());
+}
+
 export function route(deps: AppDeps, url: URL, method: string, body?: unknown): HttpResult | Promise<HttpResult> {
   const { db } = deps;
   const now = deps.now?.() ?? new Date();
@@ -163,24 +176,27 @@ export function route(deps: AppDeps, url: URL, method: string, body?: unknown): 
   }
 
   if (path === '/v1/alerts' && method === 'GET') {
-    const currentHealth = health(deps).body as Parameters<typeof reconcileAlerts>[1];
-    const alerts = reconcileAlerts(db, currentHealth, now.toISOString());
+    const alerts = reconcileAlertLedger(deps, now);
     const status = url.searchParams.get('status');
     const filtered = status === 'open' || status === 'acknowledged' || status === 'resolved'
       ? alerts.filter((alert) => alert.status === status)
       : alerts;
-    const notifications = listNotifications(db);
     const delivery = notificationConfig();
+    const queue = notificationDeliverySummary(db);
     return {
       status: 200,
       body: {
-        alerts: filtered.map((alert) => ({ ...alert, notifications: notifications.filter((notification) => notification.alertId === alert.id) })),
+        // The alerts alone. Each one used to carry its own slice of the whole
+        // notification queue, which no client has ever read — an unbounded array
+        // per alert, rebuilt from a full table scan, twice a minute. The queue's
+        // state is reported once below, where it is actually consumed.
+        alerts: filtered,
         summary: alertSummary(alerts),
         delivery: {
           enabled: delivery.enabled,
           webhookConfigured: Boolean(delivery.webhookUrl),
-          pending: notifications.filter((notification) => notification.status === 'pending' || notification.status === 'retrying').length,
-          failed: notifications.filter((notification) => notification.status === 'failed').length,
+          pending: queue.pending,
+          failed: queue.failed,
         },
         generatedAt: now.toISOString(),
       },

@@ -616,6 +616,19 @@ export async function fetchChanges(since?: string): Promise<{ changes: Change[];
   return json(`/changes${q}`);
 }
 
+/**
+ * The newest recorded event timestamp, and nothing else.
+ *
+ * `limit=0` is already a pure cursor probe on the existing endpoint: the row
+ * query becomes `LIMIT 0` while the cursor is still `MAX(at)` over the whole
+ * event table. So "has anything changed" costs one aggregate and needs no second
+ * endpoint to answer — which is why there isn't one.
+ */
+export async function fetchChangeCursor(signal?: AbortSignal): Promise<string | null> {
+  const result = await json<{ cursor: string | null }>('/changes?limit=0', signal);
+  return result.cursor ?? null;
+}
+
 export interface HealthServiceState {
   status: 'up' | 'degraded';
   databaseReadable: boolean;
@@ -705,6 +718,11 @@ export interface AlertRecord {
   acknowledgedAt: string | null;
   resolvedAt: string | null;
   occurrenceCount: number;
+  /**
+   * Removed from the polled list response: nothing rendered it, and it was an
+   * unbounded per-alert array rebuilt from a full table scan on every poll. The
+   * single-alert PATCH reply still carries it, where the history is bounded.
+   */
   notifications?: NotificationRecord[];
 }
 

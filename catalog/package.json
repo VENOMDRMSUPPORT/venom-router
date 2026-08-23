@@ -18,6 +18,7 @@
     "test": "npm run test:backend && npm run test:spa",
     "serve": "node --env-file-if-exists=.env server/index.ts",
     "serve:verify": "node scripts/serve-verify.mjs",
+    "dev:verify": "node scripts/dev-verify.mjs",
     "proxy:check": "node --env-file-if-exists=.env scripts/check-proxy-rotation.ts",
     "env:check": "node --env-file-if-exists=.env scripts/env-check.ts",
     "test:backend": "node --test \"sync/**/*.test.ts\" \"server/**/*.test.ts\" \"scripts/**/*.test.ts\"",

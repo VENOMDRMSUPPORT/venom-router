@@ -19,6 +19,7 @@ export type ChangeClass =
   | 'retired'
   | 'readded'
   | 'became_missing'
+  | 'excluded'
   | 'price_changed'
   | 'context_changed'
   | 'capability_changed'
@@ -70,6 +71,12 @@ function classify(e: EventRow): ChangeClass | null {
       return 'readded';
     case 'removed':
       return 'retired';
+    // A publish-policy refusal. The engine records it with the reason, and a row
+    // vanishing from the catalog because it could not be proven free is exactly
+    // the kind of change a reader has to be told about — it was surfaced
+    // nowhere before, so 73 recorded exclusions had no reader.
+    case 'excluded':
+      return 'excluded';
     case 'changed':
       if (e.field === 'status') return e.new_value === 'missing' ? 'became_missing' : null;
       // `reason` carries the tracked field's class, set by the engine.

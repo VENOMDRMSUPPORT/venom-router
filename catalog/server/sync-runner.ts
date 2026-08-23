@@ -27,6 +27,7 @@ import {
 import type { RejectionOverlay } from '../sync/identity-rejections.ts';
 import type { ScoreProfile } from '../sync/score/venom-score.ts';
 import { beginResolutionWindow, bootstrapResolutionJobs, listDueResolutionJobs } from '../sync/resolution-jobs.ts';
+import type { AutoEvaluationOffer, AutoEvaluationReport } from './auto-evaluation.ts';
 
 export interface SyncOutcome {
   startedAt: string;
@@ -35,6 +36,14 @@ export interface SyncOutcome {
   scoring: ScoringSummary | null;
   /** Set when the shared sources could not be fetched; nothing was written. */
   aborted?: string;
+  /**
+   * What the run decided to measure about the offers it just discovered.
+   *
+   * Part of the outcome rather than a log line, so `POST /v1/sync` answers "and
+   * what will that cost" in the same response, and a deferred offer is visible
+   * to a caller who never reads stdout.
+   */
+  autoEvaluation?: AutoEvaluationReport;
 }
 
 export interface ResolutionOutcome {
@@ -69,6 +78,16 @@ export interface RunnerConfig {
   now?: () => Date;
   /** Targeted passes wait for a full sync for at most this long. */
   resolutionLockWaitMs?: number;
+  /**
+   * What to do about the offers a run discovered.
+   *
+   * A callback rather than an EvaluationRunner reference, so this class stays
+   * ignorant of evaluation policy and budgets — it reports what appeared, and
+   * the composition root decides what that costs. Both entry points into a sync
+   * (`POST /v1/sync` and the scheduler) go through `run`, so the decision is
+   * made in exactly one place instead of at each caller.
+   */
+  onRosterAdded?: (offers: AutoEvaluationOffer[]) => AutoEvaluationReport | undefined;
 }
 
 export class SyncRunner {
@@ -152,8 +171,16 @@ export class SyncRunner {
       const finishedAt = currentDate().toISOString();
       beginResolutionWindow(db, finishedAt);
       this.config.onSnapshot?.(db);
+      // Only what a provider whose refresh actually succeeded reported. A
+      // quarantined or failed provider's roster is not trusted enough to write
+      // a catalog row from, so it is certainly not trusted enough to spend a
+      // provider request on.
+      const discovered: AutoEvaluationOffer[] = result.providers
+        .filter((provider) => provider.outcome === 'ok')
+        .flatMap((provider) => provider.added.map((modelId) => ({ providerId: provider.provider, modelId })));
       const outcome: SyncOutcome = {
         startedAt, finishedAt, providers: result.providers, scoring: result.scoring,
+        autoEvaluation: this.config.onRosterAdded?.(discovered),
       };
       this.last = outcome;
       return outcome;

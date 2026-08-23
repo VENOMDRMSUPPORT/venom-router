@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb } from '../db/index.ts';
 import { reconcileAlerts, type AlertHealthPayload } from './alerts.ts';
-import { deliverDueNotifications, listNotifications, notificationConfig, notificationForTransition, notificationHeaders } from './notifications.ts';
+import { notificationDeliverySummary, deliverDueNotifications, listNotifications, notificationConfig, notificationForTransition, notificationHeaders } from './notifications.ts';
 
 const degraded: AlertHealthPayload = {
   service: { status: 'degraded', databaseReadable: false, syncInFlight: false },
@@ -70,4 +70,42 @@ test('only meaningful lifecycle transitions emit notification events', () => {
   assert.equal(notificationForTransition('acknowledged', 'resolved'), 'resolved');
   assert.equal(notificationForTransition('resolved', 'open'), 'reopened');
   assert.equal(notificationForTransition('open', 'open'), null);
+});
+
+test('the delivery summary is counted in SQL, not by loading the queue', () => {
+  /**
+   * `/v1/alerts` answered this by loading every row with `listNotifications(db)`
+   * and filtering in JavaScript — a full scan of an append-only table, on a
+   * route two pollers hit every 30 seconds.
+   */
+  const db = openDb(':memory:');
+  try {
+    reconcileAlerts(db, degraded, '2026-08-23T10:00:00.000Z');
+    assert.deepEqual(notificationDeliverySummary(db), { pending: 1, failed: 0 });
+
+    // Take it terminal through the real delivery path rather than by writing the
+    // status directly, so the summary is asserted against a state the service
+    // can actually produce.
+    const failing = {
+      webhookUrl: 'https://hooks.test/catalog', webhookSecret: null, enabled: true,
+      timeoutMs: 1000, maxAttempts: 1, baseDelayMs: 100,
+    };
+    return deliverDueNotifications(db, failing, new Date('2026-08-23T10:00:01.000Z'), async () => new Response(null, { status: 500 }))
+      .then(() => {
+        assert.deepEqual(notificationDeliverySummary(db), { pending: 0, failed: 1 });
+        db.close();
+      });
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+});
+
+test('an empty queue reports zeroes rather than nothing', () => {
+  const db = openDb(':memory:');
+  try {
+    assert.deepEqual(notificationDeliverySummary(db), { pending: 0, failed: 0 });
+  } finally {
+    db.close();
+  }
 });

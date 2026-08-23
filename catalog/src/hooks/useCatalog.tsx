@@ -1,5 +1,13 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { fetchCatalog, fetchHealth, type CatalogData, type HealthResponse } from '../api/client';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { fetchCatalog, fetchChangeCursor, fetchHealth, type CatalogData, type HealthResponse } from '../api/client';
+
+/**
+ * How often the app asks whether anything has changed.
+ *
+ * Matches the health poll and the alert poll, so the three surfaces of one page
+ * cannot show state from three different moments.
+ */
+export const CHANGE_CURSOR_POLL_MS = 30_000;
 
 /**
  * One catalog fetch for the whole app.
@@ -16,6 +24,13 @@ interface CatalogState {
   health?: HealthResponse | null;
   healthError?: string | null;
   healthLoading?: boolean;
+  /**
+   * Bumped every time this provider refetched — manually or because the change
+   * cursor moved. A consumer holding its own derived fetch (the dashboard's
+   * change list) puts this in its dependencies so it cannot go on showing a
+   * change feed from before the roster it sits next to.
+   */
+  revision: number;
   reload: () => void;
 }
 
@@ -26,6 +41,7 @@ const Ctx = createContext<CatalogState>({
   health: null,
   healthError: null,
   healthLoading: true,
+  revision: 0,
   reload: () => {},
 });
 
@@ -78,6 +94,51 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     };
   }, [nonce]);
 
+  /**
+   * Reload when the catalog actually changed, not on a timer.
+   *
+   * The models and providers used to be fetched exactly once per mount. Health
+   * polled, alerts polled, and the table did not — so a sync that added or
+   * retired a model left the roster on screen stale until someone reloaded by
+   * hand, and nothing on the page admitted it.
+   *
+   * Polling the cursor rather than the catalog is the point: every recorded
+   * change moves `MAX(at)` in `model_events`, so one aggregate query answers
+   * "is what I am showing still current" without refetching a payload that is
+   * usually identical. The first reading only arms the comparison — it must not
+   * count as a change, or every mount would fetch the catalog twice.
+   */
+  const seenCursor = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const ctrl = new AbortController();
+
+    const checkForChanges = () => {
+      if (document.visibilityState !== 'visible') return;
+      fetchChangeCursor(ctrl.signal)
+        .then((cursor) => {
+          if (ctrl.signal.aborted) return;
+          const previous = seenCursor.current;
+          seenCursor.current = cursor;
+          if (previous !== undefined && previous !== cursor) setNonce((value) => value + 1);
+        })
+        // A failed probe is not worth a visible error: the catalog fetch and the
+        // health poll already report an unreachable service, and a third voice
+        // saying the same thing would only crowd the page.
+        .catch(() => {});
+    };
+
+    checkForChanges();
+    const interval = window.setInterval(checkForChanges, CHANGE_CURSOR_POLL_MS);
+    document.addEventListener('visibilitychange', checkForChanges);
+    window.addEventListener('focus', checkForChanges);
+    return () => {
+      ctrl.abort();
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', checkForChanges);
+      window.removeEventListener('focus', checkForChanges);
+    };
+  }, []);
+
   useEffect(() => {
     const pending = data?.models.filter((model) => model.resolution.state === 'processing') ?? [];
     if (pending.length === 0 || data?.origin !== 'live') return;
@@ -91,7 +152,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   }, [data]);
 
   return (
-    <Ctx.Provider value={{ data, error, loading, health, healthError, healthLoading, reload: () => setNonce((n) => n + 1) }}>
+    <Ctx.Provider value={{ data, error, loading, health, healthError, healthLoading, revision: nonce, reload: () => setNonce((n) => n + 1) }}>
       {children}
     </Ctx.Provider>
   );

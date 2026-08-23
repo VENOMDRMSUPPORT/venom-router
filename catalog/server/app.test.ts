@@ -548,6 +548,31 @@ describe('AC10 — /v1/changes produces deterministic, meaningful diffs', () => 
     assert.deepEqual(get('/v1/changes').body, get('/v1/changes').body);
   });
 
+  test('a publish-policy exclusion is surfaced, with the reason that caused it', () => {
+    // 73 exclusions were recorded and none reached a reader: `classify` had no
+    // case for the kind, so every one of them fell through to null. A row
+    // vanishing from the catalog because it could not be proven free is exactly
+    // what this endpoint exists to report.
+    db.prepare(`INSERT INTO model_events (provider_id, model_id, kind, field, old_value, new_value, reason, at)
+      VALUES ('acme','measured-1','excluded','status','active','excluded','not_proven_free','2126-01-01T00:00:00.000Z')`).run();
+
+    const excluded = get('/v1/changes').body.changes.find((c: any) => c.class === 'excluded');
+    assert.ok(excluded, 'expected an excluded entry');
+    assert.equal(excluded.modelId, 'measured-1');
+    assert.equal(excluded.note, 'not_proven_free');
+  });
+
+  test('limit=0 answers with the cursor alone', () => {
+    // What the SPA polls to decide whether to refetch: the row query becomes
+    // LIMIT 0 while the cursor is still MAX(at) over the whole event table, so
+    // "has anything changed" needs no second endpoint.
+    const probe = (route(deps(), new URL('http://127.0.0.1/v1/changes?limit=0'), 'GET') as any).body;
+    assert.equal(probe.total, 0);
+    assert.deepEqual(probe.changes, []);
+    assert.equal(probe.cursor, get('/v1/changes').body.cursor);
+    assert.ok(probe.cursor, 'a catalog with recorded events must report a cursor');
+  });
+
   test('a huge limit is clamped to the public maximum', () => {
     const insert = db.prepare(`
       INSERT INTO model_events (provider_id, model_id, kind, field, old_value, new_value, reason, at)

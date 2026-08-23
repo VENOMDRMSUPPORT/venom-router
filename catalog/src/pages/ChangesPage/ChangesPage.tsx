@@ -12,6 +12,7 @@ const LABEL: Record<string, { text: string; tone: 'add' | 'remove' | 'change' | 
   readded: { text: 'Back', tone: 'add' },
   retired: { text: 'Retired', tone: 'remove' },
   became_missing: { text: 'Missing', tone: 'remove' },
+  excluded: { text: 'Excluded', tone: 'remove' },
   price_changed: { text: 'Price', tone: 'change' },
   context_changed: { text: 'Context', tone: 'change' },
   capability_changed: { text: 'Capability', tone: 'change' },

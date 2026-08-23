@@ -27,7 +27,7 @@ const SORT_OPTIONS: { value: ProviderSortKey; label: string }[] = [
 ];
 
 export function DashboardPage() {
-  const { data, error, loading, reload, health, healthError, healthLoading } = useCatalog();
+  const { data, error, loading, reload, health, healthError, healthLoading, revision } = useCatalog();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [view, setView] = useState<'grid' | 'table'>('table');
@@ -62,7 +62,10 @@ export function DashboardPage() {
       .catch((reason) => { if (!ctrl.signal.aborted) setChangesError(reason instanceof Error ? reason.message : String(reason)); })
       .finally(() => { if (!ctrl.signal.aborted) setChangesLoading(false); });
     return () => ctrl.abort();
-  }, [changesNonce]);
+    // `revision` is a dependency, not decoration: the catalog reloads itself
+    // when the change cursor moves, and a change feed that did not follow would
+    // sit beside a refreshed roster describing the state before it.
+  }, [changesNonce, revision]);
 
   const handleMonitoringRetry = () => {
     reload();
@@ -139,7 +142,7 @@ export function DashboardPage() {
     if (!changes) return [];
     const matchesFilter = (change: Change) => {
       if (changeFilter === 'all') return true;
-      if (changeFilter === 'availability') return ['added', 'readded', 'retired', 'became_missing'].includes(change.class);
+      if (changeFilter === 'availability') return ['added', 'readded', 'retired', 'became_missing', 'excluded'].includes(change.class);
       if (changeFilter === 'metadata') return ['price_changed', 'context_changed', 'capability_changed'].includes(change.class);
       return change.class.startsWith('quality_');
     };
@@ -898,7 +901,7 @@ function RuntimeSettingsPanel({ health, error, loading }: { health: HealthRespon
 }
 
 const CHANGE_LABELS: Record<string, string> = {
-  added: 'Added', readded: 'Back', retired: 'Retired', became_missing: 'Missing',
+  added: 'Added', readded: 'Back', retired: 'Retired', became_missing: 'Missing', excluded: 'Excluded',
   price_changed: 'Price', context_changed: 'Context', capability_changed: 'Capability',
   quality_became_available: 'Now scored', quality_evidence_upgraded: 'Better evidence',
   quality_changed: 'Score moved', quality_lost: 'Score withdrawn',

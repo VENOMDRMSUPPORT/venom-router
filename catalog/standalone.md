@@ -45,7 +45,34 @@ Router integrations should use the Catalog API base URL and record the Catalog r
 
 Catalog owns the operational alert ledger. The dashboard reads `GET /v1/alerts`, which reconciles the current health response into durable alert records before returning them. Each record has a stable `id`, a server-owned `severity`, optional `providerId` and `modelId` targets, and one of three statuses: `open`, `acknowledged`, or `resolved`.
 
-An operator may transition a known alert with `PATCH /v1/alerts/:id` and a JSON body such as `{ "status": "acknowledged" }`. The service rejects unknown statuses with HTTP 400 and unknown alert IDs with HTTP 404. A problem that disappears from the health response is automatically marked `resolved`; if the same stable alert identity returns later, Catalog reopens it as a new active occurrence while preserving its occurrence count and timestamps.
+An operator may transition a known alert with `PATCH /v1/alerts/:id` and a JSON body such as `{ "status": "acknowledged" }`. The service rejects unknown statuses with HTTP 400 and unknown alert IDs with HTTP 404. A problem that disappears from the candidate set is automatically marked `resolved`; if the same stable alert identity returns later, Catalog reopens it as a new active occurrence while preserving its timestamps.
+
+`occurrenceCount` counts how many separate times a condition arose — it advances on a reopen, not on a read. `lastSeenAt` is the field that means "still true as of", and it advances on every reconcile.
+
+The service reconciles its own ledger every 30 seconds, so alerts are raised and notifications queued whether or not a browser is open. `GET /v1/alerts` also reconciles, so a dashboard poll and the service tick cannot report different ledgers.
+
+### Model lifecycle alerts
+
+The ledger covers two independent families. Service health contributes `service_degraded`, `stale_provider`, `sync_failure`, and `sync_in_flight`. Recorded roster changes contribute `model_added`, `model_readded`, `model_retired`, `model_became_missing`, `model_excluded`, and `model_quality_lost`, classified by the same code that serves `GET /v1/changes` so the bell and the change feed cannot describe one event differently.
+
+Roster alerts are **grouped** by change class, provider, observation time and reason, because that is the shape the underlying decision had: one publish-policy sweep that withholds eleven models is one alert naming the count and the reason, not eleven. `modelId` is set only when the alert concerns exactly one model, and is dropped when the referenced model row is absent so a dangling event cannot abort the reconcile.
+
+A roster alert stays a candidate for seven days after the event, matching the dashboard's default change window, then resolves on its own. Acknowledging one removes it from the open list immediately without waiting for the window to close. Metadata changes — price, context, capability, score movement — are deliberately **not** alerts; they are reported on the change feed, because an alert list that reports everything reports nothing.
+
+## Automatic evaluation of newly discovered models
+
+A sync that discovers a new offer plans and queues its measurement in the same run, under a request budget. Only providers whose refresh returned `ok` contribute offers: a quarantined roster is not trusted enough to write a catalog row from, so it is not trusted enough to spend a provider request on.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CATALOG_AUTO_EVALUATION` | on | Set to `false` to stop queueing automatically. Any other value leaves it on, so a typo cannot silently stop measurement. |
+| `CATALOG_AUTO_EVALUATION_MAX_REQUESTS` | `1200` | Provider requests one sync run may commit to. Clamped to `0`–`20000`. |
+
+The budget is denominated in requests because that is the unit `planEvaluation` computes and the Evaluate modal already shows before a click. A brand-new identity with every dimension unmeasured plans six dimensions at 63 requests plus a 23-request speed run — 401 — so the default buys roughly three per run.
+
+Offers are bought cheapest-first, so a budget buys the most coverage it can rather than being consumed by the single most expensive candidate. The ordering is stable, so two runs over the same roster make the same choices. Every offer not queued is named in the run outcome with a typed reason: a `blocked` plan reports the planner's own reason (`missing_credentials`, `consent_required`, `identity_unresolved`, `model_not_found`), an offer of an already-measured identity reports `already_covered` and costs nothing, and anything the budget could not cover reports `over_budget` and is retried by the next run. `POST /v1/sync` returns this report in its response body as `autoEvaluation`.
+
+Automatic queueing produces full dimension **coverage**, not a particular score. A measured value is whatever the evidence supports; a dimension the offer does not support is excluded from coverage rather than counted as satisfied.
 
 The Dashboard is intentionally read-only with respect to catalog facts. Acknowledge, resolve, and reopen actions change only the operational alert ledger; they never change provider data, model facts, scores, freshness, or the Catalog release metadata.
 
