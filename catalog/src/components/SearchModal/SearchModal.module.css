@@ -61,6 +61,14 @@
   font-weight: 500;
   color: var(--foreground);
   font-family: inherit;
+  box-shadow: none;
+}
+
+.input:focus,
+.input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
 }
 
 .input::placeholder {

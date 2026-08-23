@@ -50,8 +50,8 @@ export function DashboardPage() {
     });
   }, [data, query, filter]);
 
-  if (loading) return <DashboardSkeleton />;
-  if (error || !data) {
+  if (loading && !data) return <DashboardSkeleton />;
+  if (!data) {
     return (
       <div className={styles.errorState} role="alert">
         <div className={styles.errorContent}>
@@ -173,6 +173,19 @@ export function DashboardPage() {
           hint="Every model without a quality score carries a machine-readable reason: identity unresolved, identity ambiguous, no published benchmark, or a vendor the calibration was measured to have no predictive power for. None of these prevents a model from being operationally complete."
         />
       </div>
+
+      {error && (
+        <div className={styles.warnBar} role="alert" aria-live="assertive">
+          <span>
+            Refresh failed. Showing the last known catalog until the service responds again.
+            <code className={styles.warnDetail}>{error}</code>
+          </span>
+          <button type="button" className={styles.warnAction} onClick={reload}>
+            <LuRefreshCw size={13} aria-hidden="true" />
+            Retry
+          </button>
+        </div>
+      )}
 
       {data.origin === 'snapshot' && (
         <div className={styles.warnBar} role="status" aria-live="polite">

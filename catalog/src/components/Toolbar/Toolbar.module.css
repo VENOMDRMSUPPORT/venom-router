@@ -49,6 +49,13 @@
   width: 100%;
 }
 
+.input:focus,
+.input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
 .clearBtn {
   background: none;
   border: none;

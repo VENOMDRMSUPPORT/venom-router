@@ -132,6 +132,10 @@
 }
 
 .warnBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 18px;
   padding: 10px 14px;
   border: 1px solid var(--border);
@@ -140,6 +144,50 @@
   font-size: 0.82rem;
   color: var(--foreground-secondary);
   background: var(--surface);
+}
+
+.warnDetail {
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--foreground-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.warnAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--foreground);
+  background: var(--background);
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.warnAction:hover {
+  background: var(--background-hover);
+}
+
+@media (max-width: 640px) {
+  .warnBar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .warnAction {
+    width: 100%;
+  }
+
+  .warnDetail {
+    display: block;
+    margin: 6px 0 0;
+  }
 }
 
 .card {
