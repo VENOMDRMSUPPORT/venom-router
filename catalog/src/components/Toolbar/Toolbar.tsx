@@ -153,6 +153,7 @@ export function Toolbar({
       {/* View Switcher */}
       <div className={styles.viewSwitcher}>
         <button
+          type="button"
           className={`${styles.viewBtn} ${view === 'grid' ? styles.viewActive : ''}`}
           onClick={() => onViewChange('grid')}
           aria-label="Grid view"
@@ -162,6 +163,7 @@ export function Toolbar({
           <span className={styles.viewLabel}>Grid</span>
         </button>
         <button
+          type="button"
           className={`${styles.viewBtn} ${view === 'table' ? styles.viewActive : ''}`}
           onClick={() => onViewChange('table')}
           aria-label="Table view"

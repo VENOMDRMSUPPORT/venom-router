@@ -21,10 +21,12 @@ import { route } from './app.ts';
 import { writeSnapshot } from './snapshot.ts';
 import type { ScoreProfile } from '../sync/score/venom-score.ts';
 import type { RejectionOverlay } from '../sync/identity-rejections.ts';
+import { CATALOG_API_PORT, CATALOG_BIND_HOST } from '../config/ports.ts';
+import { CATALOG_API_CONTRACT_HEADER, CATALOG_API_CONTRACT_VERSION } from '../config/api-contract.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const BIND_HOST = '127.0.0.1';
-export const DEFAULT_PORT = 8791;
+export const BIND_HOST = CATALOG_BIND_HOST;
+export const DEFAULT_PORT = CATALOG_API_PORT;
 export const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10MB limit to prevent memory exhaustion
 
 export function loadProfiles(): { methodologyVersion: string; profiles: ScoreProfile[] } {
@@ -126,6 +128,7 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
     const payload = JSON.stringify(result.body, null, 1);
     res.writeHead(result.status, {
       'content-type': 'application/json; charset=utf-8',
+      [CATALOG_API_CONTRACT_HEADER]: CATALOG_API_CONTRACT_VERSION,
       ...result.headers,
     });
     res.end(payload);

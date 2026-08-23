@@ -1,5 +1,5 @@
-import { Fragment, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 import {
   LuWrench,
   LuBrain,
@@ -41,6 +41,8 @@ import styles from './ProviderPage.module.css';
 
 export function ProviderPage() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  const focusModelId = searchParams.get('model');
   const { loading, error } = useCatalog();
   const { provider, models, meta } = useProviderModels(id);
 
@@ -58,6 +60,17 @@ export function ProviderPage() {
     }
     return window.innerWidth < 768 ? 'grid' : 'table';
   });
+
+  useEffect(() => {
+    if (!focusModelId || loading || !provider) return;
+    setQuery(focusModelId);
+  }, [focusModelId, loading, provider]);
+
+  useEffect(() => {
+    if (!focusModelId || loading) return;
+    const target = document.getElementById(`model-${encodeURIComponent(focusModelId)}`);
+    target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focusModelId, loading, view]);
 
   const filteredModels = useMemo(() => {
     let list = models;
@@ -272,9 +285,19 @@ export function ProviderPage() {
       />
 
       {view === 'table' ? (
-        <ModelTable costStatedOnce={uniformCostKind !== null} title={`Models (${visibleModels.length})`} models={visibleModels} />
+        <ModelTable
+          costStatedOnce={uniformCostKind !== null}
+          title={`Models (${visibleModels.length})`}
+          models={visibleModels}
+          focusModelId={focusModelId}
+        />
       ) : (
-        <ModelGrid costStatedOnce={uniformCostKind !== null} title={`Models (${visibleModels.length})`} models={visibleModels} />
+        <ModelGrid
+          costStatedOnce={uniformCostKind !== null}
+          title={`Models (${visibleModels.length})`}
+          models={visibleModels}
+          focusModelId={focusModelId}
+        />
       )}
 
       {/* Unified Enterprise Context Hub */}
@@ -593,7 +616,7 @@ function VendorQualifierBadge({ model }: { model: ApiModel }) {
   );
 }
 
-function ModelTable({ title, models, note, costStatedOnce }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean }) {
+function ModelTable({ title, models, note, costStatedOnce, focusModelId }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean; focusModelId?: string | null }) {
   // Numbered against the rows actually on screen, so the column reads 1..N with
   // no gap inherited from offers this page does not show.
   const localRanks = pageLocalRanks(models);
@@ -654,11 +677,16 @@ function ModelTable({ title, models, note, costStatedOnce }: { title: string; mo
           <tbody>
             {models.map((m, index) => (
               <Fragment key={`${m.providerId}/${m.modelId}`}>
-              <tr className={
-                m.overallRank === null && models[index - 1]?.overallRank !== null && index > 0
-                  ? styles.firstUnplaced
-                  : undefined
-              }>
+              <tr
+                id={`model-${encodeURIComponent(m.modelId)}`}
+                className={
+                  m.modelId === focusModelId
+                    ? styles.focusedRow
+                    : m.overallRank === null && models[index - 1]?.overallRank !== null && index > 0
+                      ? styles.firstUnplaced
+                      : undefined
+                }
+              >
                 <td className={styles.narrow}><ModelRankCell model={m} localRanks={localRanks} /></td>
                 <td>
                   {/* The name is printed without the qualifier the badge below
@@ -742,7 +770,7 @@ function ModelTable({ title, models, note, costStatedOnce }: { title: string; mo
   );
 }
 
-function ModelGrid({ title, models, note, costStatedOnce }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean }) {
+function ModelGrid({ title, models, note, costStatedOnce, focusModelId }: { title: string; models: ApiModel[]; note?: string; costStatedOnce?: boolean; focusModelId?: string | null }) {
   // Same numbering as the table: the two views of one list must agree.
   const localRanks = pageLocalRanks(models);
   const [openCards, setOpenCards] = useState<Set<string>>(() => new Set());
@@ -763,7 +791,11 @@ function ModelGrid({ title, models, note, costStatedOnce }: { title: string; mod
 
       <div className={styles.modelGrid}>
         {models.map((m) => (
-          <div key={`${m.providerId}/${m.modelId}`} className={styles.modelCard}>
+          <div
+            key={`${m.providerId}/${m.modelId}`}
+            id={`model-${encodeURIComponent(m.modelId)}`}
+            className={m.modelId === focusModelId ? styles.focusedCard : styles.modelCard}
+          >
             <div className={styles.modelCardTop}>
               <div>
                 <span className={styles.modelName}>{m.modelId}</span>

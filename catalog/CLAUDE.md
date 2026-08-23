@@ -2,6 +2,24 @@
 
 ## Scope and source of truth
 
+This directory is the Venom Catalog product. Catalog is a standalone application and
+is the sole source of truth for model inventory, model facts, provenance, freshness,
+and catalog scoring consumed by Venom Router. Router may read the Catalog API but
+must not open the Catalog SQLite database, duplicate Catalog derivation logic, or
+be required to run for Catalog development, testing, syncing, or serving.
+
+The default local endpoints are:
+
+| Product surface | Endpoint |
+|---|---|
+| Catalog UI | `http://127.0.0.1:5173/` |
+| Catalog API | `http://127.0.0.1:8791/v1` |
+| Venom Router control plane | `http://127.0.0.1:8081` |
+
+The UI and API ports are intentionally separate from the Router control-plane port.
+A deployment may expose the UI under a reverse-proxy prefix such as `/catalog`, but
+that is a publishing choice and does not make Catalog part of Router.
+
 This directory is the Venom Catalog product. Do not apply Go control-plane,
 `task gate`, PE-subsystem, or unrelated Design_System rules to catalog work.
 The repository root `CLAUDE.md` still applies where it does not conflict with

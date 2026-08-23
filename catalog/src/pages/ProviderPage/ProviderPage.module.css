@@ -1530,3 +1530,15 @@
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
+
+.focusedRow {
+  background: var(--accent-subtle);
+  box-shadow: inset 3px 0 0 var(--foreground);
+}
+
+.focusedCard {
+  composes: modelCard;
+  border-color: var(--border-strong);
+  box-shadow: inset 3px 0 0 var(--foreground), var(--shadow);
+  background: var(--accent-subtle);
+}

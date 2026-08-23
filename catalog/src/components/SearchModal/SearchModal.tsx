@@ -182,7 +182,7 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
           id: `model-${m.providerId}-${m.modelId}`,
           title: m.displayName || m.modelId,
           subtitle: m.canonicalId && m.canonicalId !== m.modelId ? `Proven as ${m.canonicalId}` : '',
-          path: `/provider/${m.providerId}`,
+          path: `/provider/${m.providerId}?model=${encodeURIComponent(m.modelId)}`,
           providerName: prov?.name ?? m.providerId,
           providerId: m.providerId,
           contextTokens: m.contextTokens,

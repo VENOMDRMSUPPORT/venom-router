@@ -1,6 +1,7 @@
 .toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   min-height: 48px;
   padding: 6px 12px;
@@ -22,7 +23,7 @@
   background: var(--background);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  flex: 1;
+  flex: 1 1 280px;
   min-width: 140px;
   max-width: 340px;
   box-sizing: border-box;
@@ -222,13 +223,27 @@
 
 @media (max-width: 640px) {
   .toolbar {
-    padding: 0 8px;
-    gap: 6px;
+    padding: 8px;
+    gap: 8px;
   }
 
   .search {
+    flex: 1 1 100%;
     max-width: none;
     min-width: 0;
+  }
+
+  .dropdownContainer {
+    flex: 1;
+  }
+
+  .filterDropdownBtn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .viewSwitcher {
+    margin-left: 0;
   }
 
   .viewLabel {
@@ -236,6 +251,6 @@
   }
 
   .viewBtn {
-    padding: 0 6px;
+    padding: 0 8px;
   }
 }

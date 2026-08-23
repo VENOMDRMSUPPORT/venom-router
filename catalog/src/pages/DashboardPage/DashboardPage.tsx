@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { LuArrowUpRight, LuArrowRight, LuCpu } from 'react-icons/lu';
+import { LuArrowUpRight, LuArrowRight, LuCircleAlert, LuCpu, LuRefreshCw } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import { formatTokens, formatAgo } from '../../api/client';
@@ -11,7 +11,7 @@ import { providerMatchesFilter } from '../../api/filters';
 import styles from './DashboardPage.module.css';
 
 export function DashboardPage() {
-  const { data, error, loading } = useCatalog();
+  const { data, error, loading, reload } = useCatalog();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [view, setView] = useState<'grid' | 'table'>('table');
@@ -50,15 +50,24 @@ export function DashboardPage() {
     });
   }, [data, query, filter]);
 
-  if (loading) return <div className={styles.empty}>Loading catalog…</div>;
+  if (loading) return <DashboardSkeleton />;
   if (error || !data) {
     return (
-      <div className={styles.empty}>
-        Could not reach the catalog service or its snapshot.
-        <div className={styles.emptyHint}>
-          Start it with <code>npm run serve</code> in <code>catalog/</code>.
-          {error && <> ({error})</>}
+      <div className={styles.errorState} role="alert">
+        <div className={styles.errorContent}>
+          <LuCircleAlert size={20} className={styles.errorIcon} aria-hidden="true" />
+          <div>
+            <h2 className={styles.errorTitle}>Catalog service unavailable</h2>
+            <p className={styles.errorMessage}>
+              We could not load the live catalog or its offline snapshot. Your data has not been changed.
+            </p>
+            {error && <code className={styles.errorDetail}>{error}</code>}
+          </div>
         </div>
+        <button type="button" className={styles.retryBtn} onClick={reload}>
+          <LuRefreshCw size={14} aria-hidden="true" />
+          Retry connection
+        </button>
       </div>
     );
   }
@@ -166,13 +175,13 @@ export function DashboardPage() {
       </div>
 
       {data.origin === 'snapshot' && (
-        <div className={styles.warnBar}>
+        <div className={styles.warnBar} role="status" aria-live="polite">
           Showing a build-time snapshot — the catalog service is not reachable, so
           these figures may be out of date.
         </div>
       )}
       {stale.length > 0 && data.origin === 'live' && (
-        <div className={styles.warnBar}>
+                <div className={styles.warnBar} role="status" aria-live="polite">
           {stale.length} provider{stale.length > 1 ? 's have' : ' has'} not synced
           successfully in a while: {stale.map((p) => p.name).join(', ')}.
         </div>
@@ -310,7 +319,20 @@ export function DashboardPage() {
                   const operationalReady = mine.filter((m) => m.vo.value !== null).length;
                   const scoredRatio = p.liveModels > 0 ? Math.round((p.overallScoreScored / p.liveModels) * 100) : 0;
                   return (
-                    <tr key={p.id} className={styles.tableRow} onClick={() => navigate(`/provider/${p.id}`)}>
+                    <tr
+                      key={p.id}
+                      className={styles.tableRow}
+                      onClick={() => navigate(`/provider/${p.id}`)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          navigate(`/provider/${p.id}`);
+                        }
+                      }}
+                      tabIndex={0}
+                      role="link"
+                      aria-label={`View ${p.name} provider roster`}
+                    >
                       <td>
                         <div className={styles.providerCell}>
                           {pres.logo && (
@@ -344,7 +366,7 @@ export function DashboardPage() {
                       <td className={styles.num}>{free > 0 ? free : '—'}</td>
                       <td className={styles.num}>
                         <div className={styles.actionCell} title="View provider roster">
-                          <button className={styles.actionBtn} aria-label="View provider roster">
+                          <button type="button" className={styles.actionBtn} aria-label={`View ${p.name} provider roster`}>
                             <LuArrowUpRight size={15} />
                           </button>
                         </div>
@@ -408,6 +430,26 @@ export function DashboardPage() {
         <span className={styles.footerDot}>·</span>
         <Link to="/changes" className={styles.footerLink}>What's new</Link>
       </footer>
+    </div>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className={styles.loadingState} aria-busy="true" aria-label="Loading catalog">
+      <div className={styles.loadingHeader}>
+        <span className={styles.skeletonBadge} />
+        <span className={styles.skeletonTitle} />
+        <span className={styles.skeletonText} />
+      </div>
+      <div className={styles.grid4} aria-hidden="true">
+        {Array.from({ length: 4 }, (_, index) => <div key={index} className={styles.skeletonKpi} />)}
+      </div>
+      <div className={styles.skeletonTable} aria-hidden="true">
+        <span className={styles.skeletonTableHeader} />
+        {Array.from({ length: 5 }, (_, index) => <span key={index} className={styles.skeletonTableRow} />)}
+      </div>
+      <p className={styles.loadingLabel}>Loading catalog…</p>
     </div>
   );
 }
