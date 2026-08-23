@@ -23,6 +23,8 @@ import {
   regradeEvaluation,
   startEvaluation,
   stopEvaluations,
+  ServiceError,
+  SERVICE_UNREACHABLE,
 } from '../../api/client';
 import type { EvaluationEvidenceView, EvaluationPlanView } from '../../api/client';
 
@@ -278,5 +280,38 @@ describe('EvaluateModal', () => {
     render(<EvaluateModal model={model} onClose={() => {}} />);
     fireEvent.click(await screen.findByRole('button', { name: /start/i }));
     expect(await screen.findByRole('alert')).toHaveTextContent('No proven model identity');
+  });
+});
+
+describe('a stopped service is not reported as a problem with the model', () => {
+  const unreachable = () => new ServiceError('the catalog service is not answering on /v1', {
+    unreachable: true,
+    status: 500,
+  });
+
+  test('the panel says the service is down, not that the model failed', async () => {
+    vi.mocked(fetchEvaluationDetail).mockRejectedValue(unreachable());
+    vi.mocked(fetchEvaluationState).mockRejectedValue(unreachable());
+    render(<EvaluateModal model={model} onClose={() => {}} />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/Nothing is wrong with this model/i);
+    expect(alert.textContent).toMatch(/not running/i);
+  });
+
+  test('a refusal reason of service_unreachable reads the same way', async () => {
+    // Four routes reach this panel and two of them report a reason rather than
+    // throwing. The owner should not get two different wordings for one fact
+    // depending on which button they pressed first.
+    vi.mocked(fetchEvaluationDetail).mockResolvedValue(detail({
+      dimensions: ['coding'], skipped: [], speed: 'missing', blocked: null, estimatedRequests: 63,
+    }));
+    vi.mocked(startEvaluation).mockResolvedValue({ ok: false, status: 500, reason: SERVICE_UNREACHABLE });
+    render(<EvaluateModal model={model} onClose={() => {}} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /start/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toMatch(/Nothing is wrong with this model/i);
+    });
   });
 });

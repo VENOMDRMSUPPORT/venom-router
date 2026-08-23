@@ -15,6 +15,8 @@ import {
   regradeEvaluation,
   startEvaluation,
   stopEvaluations,
+  isUnreachable,
+  SERVICE_UNREACHABLE,
   type ApiModel,
   type EvaluationDetailView,
   type EvaluationEvidenceView,
@@ -41,7 +43,19 @@ const DIMENSION_ORDER = [
   'coding', 'reasoning', 'longContext', 'toolCalling', 'structuredOutput', 'vision', 'speed', 'costEfficiency',
 ];
 
+/**
+ * A stopped service, in the one sentence that ends the search.
+ *
+ * Shared by both refusal maps because it is the same fact either way, and it is
+ * the only entry here that is not about this model at all — every other reason
+ * describes something the catalog knows and this one describes the catalog not
+ * being reachable to ask.
+ */
+const SERVICE_DOWN = 'The catalog service is not answering. Nothing is wrong with this model — the API '
+  + 'process is not running, so no request reached it. Start it and reopen this panel.';
+
 const BLOCKED_EXPLANATIONS: Record<string, string> = {
+  [SERVICE_UNREACHABLE]: SERVICE_DOWN,
   model_not_found: 'This model is not in the catalog.',
   identity_unresolved: 'No proven model identity, so evidence cannot be attributed to anything.',
   // Names the fix, not just the symptom. This one sentence covered two unrelated
@@ -61,10 +75,23 @@ const BLOCKED_EXPLANATIONS: Record<string, string> = {
  * message that names the symptom and not the remedy gets read as a dead button.
  */
 const REREAD_REFUSALS: Record<string, string> = {
+  [SERVICE_UNREACHABLE]: SERVICE_DOWN,
   'an evaluation is running': 'A paid evaluation is running right now. Re-reading a dimension while it is '
     + 'being measured would publish a number from half a run, so this waits until the queue is empty.',
   'no resolved identity to re-read': 'This offer has no proven model identity, so there is no body of '
     + 'evidence to re-read.',
+};
+
+/**
+ * What to put on screen when a read failed.
+ *
+ * A stopped service reaches this panel through four different routes — two that
+ * throw and two that return a reason — and without this it said the same thing
+ * in two different wordings depending on which one the owner tripped first.
+ */
+const explainFailure = (cause: unknown): string => {
+  if (isUnreachable(cause)) return SERVICE_DOWN;
+  return cause instanceof Error ? cause.message : String(cause);
 };
 
 const label = (dimension: string) => DIMENSION_LABELS[dimension] ?? dimension;
@@ -113,7 +140,7 @@ export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: ()
     try {
       setState(await fetchEvaluationState());
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(explainFailure(cause));
     }
   }, []);
 
@@ -129,7 +156,7 @@ export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: ()
         setDetail(nextDetail);
         setState(nextState);
       } catch (cause) {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+        if (!cancelled) setError(explainFailure(cause));
       }
     })();
     return () => { cancelled = true; };
@@ -256,14 +283,14 @@ export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: ()
 
         {plan && !plan.blocked && !mine && (
           <div className={styles.preview}>
-            {plan.dimensions.length === 0 && plan.speed === 'scored' ? (
+            {(plan.dimensions ?? []).length === 0 && plan.speed === 'scored' ? (
               <p className={styles.muted} data-testid="evaluate-nothing-missing">
                 Every applicable dimension is already scored.
               </p>
             ) : (
               <>
                 <ul className={styles.dimensionList}>
-                  {plan.dimensions.map((dimension) => (
+                  {(plan.dimensions ?? []).map((dimension) => (
                     <li key={dimension} className={styles.dimensionRow}>
                       <span>{label(dimension)}</span>
                       <span className={styles.pending}>missing</span>
@@ -277,16 +304,16 @@ export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: ()
                   )}
                 </ul>
                 <p className={styles.cost} data-testid="evaluate-cost">
-                  About <strong>{plan.estimatedRequests}</strong> paid requests to {model.providerId}.
+                  About <strong>{plan.estimatedRequests ?? 0}</strong> paid requests to {model.providerId}.
                 </p>
                 <button type="button" className={styles.start} onClick={() => void onStart()} disabled={busy}>
                   {queued ? 'Queued' : 'Start evaluation'}
                 </button>
               </>
             )}
-            {plan.skipped.length > 0 && (
+            {(plan.skipped ?? []).length > 0 && (
               <p className={styles.muted}>
-                Not run: {plan.skipped.map((entry) => `${label(entry.dimension)} (${entry.reason.replace('_', ' ')})`).join(', ')}
+                Not run: {(plan.skipped ?? []).map((entry) => `${label(entry.dimension)} (${entry.reason.replace('_', ' ')})`).join(', ')}
               </p>
             )}
 

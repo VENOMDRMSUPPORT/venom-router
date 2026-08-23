@@ -443,10 +443,114 @@ function normalizeProvider(raw: Partial<ApiProvider>): ApiProvider {
   };
 }
 
+/**
+ * Why a `/v1` read failed: nothing answered, or the service answered badly.
+ *
+ * These are different problems with different fixes, and the page used to show
+ * them identically. With the service stopped, vite turns ECONNREFUSED into a
+ * bare `500 text/plain`, so every read surfaced as "(500)" — indistinguishable
+ * from a service bug, and it cost a whole debugging session before anyone
+ * checked whether the process was up.
+ */
+export class ServiceError extends Error {
+  /** True when nothing that speaks `/v1` answered at all. */
+  readonly unreachable: boolean;
+  /** The HTTP status, or null when the request never produced a response. */
+  readonly status: number | null;
+
+  constructor(message: string, opts: { unreachable: boolean; status: number | null; cause?: unknown }) {
+    super(message, { cause: opts.cause });
+    this.name = 'ServiceError';
+    this.unreachable = opts.unreachable;
+    this.status = opts.status;
+  }
+}
+
+/**
+ * What the owner reads when the api port is dead.
+ *
+ * It names the cause rather than the remedy on purpose: `npm run serve` is the
+ * fix on this machine and would be wrong advice anywhere the catalog is served
+ * by something else.
+ */
+const UNREACHABLE = 'the catalog service is not answering on /v1 — the process is not running, or nothing is listening on its port';
+
+/** Machine reason for the routes that report a refusal as a value. */
+export const SERVICE_UNREACHABLE = 'service_unreachable';
+
+/**
+ * The parsed body, or null when the answer did not come from the service.
+ *
+ * Every response the service writes goes through `JSON.stringify` with a JSON
+ * content-type — there is no path that emits an empty body. So a body that will
+ * not parse did not come from the service.
+ */
+async function serviceBody(res: Response): Promise<Record<string, unknown> | null> {
+  return (await res.json().catch(() => null)) as Record<string, unknown> | null;
+}
+
+/**
+ * Did this failure come from in front of the service rather than from it?
+ *
+ * Two conditions, and the status half is not redundant. Only a 5xx can be the
+ * hop in front: a proxy with a dead upstream answers 500, 502 or 504, never a
+ * 409. A 4xx means SOMETHING understood the request well enough to reject it, so
+ * it is reported as an answer even when its body will not parse — guessing "dead
+ * service" from a 409 would send the reader looking for a stopped process that
+ * is running fine.
+ *
+ * Note the body half is what keeps a genuine degraded-health 503 out of here: a
+ * bare status rule would read the service's own honest answer as a dead socket.
+ */
+function unreachableResponse(status: number, body: Record<string, unknown> | null): boolean {
+  return body === null && status >= 500;
+}
+
+/** True when the failure means the request never reached the service. */
+export function isUnreachable(err: unknown): boolean {
+  return err instanceof ServiceError && err.unreachable;
+}
+
+/**
+ * One read of the service, and one place that decides why a read failed.
+ *
+ * Every caller went through its own `if (!res.ok) throw new Error(...)`, six
+ * copies with six wordings and no way to tell a dead socket from a real answer.
+ * Adding the distinction to each of them would have been the same defect with
+ * more branches.
+ */
+async function readService<T>(path: string, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, init);
+  } catch (cause) {
+    // An abort is the caller's own doing — useCatalog cancels in-flight reads on
+    // unmount and keys off the signal. Dressing it up as a service failure would
+    // put a banner on a page the owner just left.
+    if (cause instanceof DOMException && cause.name === 'AbortError') throw cause;
+    throw new ServiceError(UNREACHABLE, { unreachable: true, status: null, cause });
+  }
+
+  if (res.ok) return (await res.json()) as T;
+
+  const body = await serviceBody(res);
+  if (unreachableResponse(res.status, body)) {
+    throw new ServiceError(UNREACHABLE, { unreachable: true, status: res.status });
+  }
+
+  // 503 is the service saying "up, but degraded". That is an answer, and the
+  // health caller reads its body rather than treating it as a failure.
+  if (res.status === 503 && body !== null) return body as T;
+
+  const detail = body && typeof body.error === 'string' ? body.error : null;
+  throw new ServiceError(
+    detail ? `${path} -> HTTP ${res.status}: ${detail}` : `${path} -> HTTP ${res.status}`,
+    { unreachable: false, status: res.status },
+  );
+}
+
 async function json<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { signal });
-  if (!res.ok && res.status !== 503) throw new Error(`${path} -> HTTP ${res.status}`);
-  return (await res.json()) as T;
+  return readService<T>(path, { signal });
 }
 
 export async function fetchCatalog(signal?: AbortSignal): Promise<CatalogData> {
@@ -645,9 +749,9 @@ export interface EvaluationDetailView {
  * measured" and the client threw that away.
  */
 export async function fetchEvaluationDetail(providerId: string, modelId: string): Promise<EvaluationDetailView> {
-  const res = await fetch(`${BASE}/models/${encodeURIComponent(providerId)}/${encodeURIComponent(modelId)}/evaluation`);
-  if (!res.ok) throw new Error(`evaluation detail unavailable (${res.status})`);
-  return (await res.json()) as EvaluationDetailView;
+  return readService<EvaluationDetailView>(
+    `/models/${encodeURIComponent(providerId)}/${encodeURIComponent(modelId)}/evaluation`,
+  );
 }
 
 export interface RegradeOutcomeView {
@@ -672,8 +776,13 @@ export async function regradeEvaluation(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ providerId, modelId }),
   });
-  const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) return { ok: false, reason: String(payload.error ?? `http_${res.status}`) };
+  const payload = await serviceBody(res);
+  // Nothing that speaks /v1 answered, so `http_500` would be reporting a service
+  // error that never happened.
+  if (unreachableResponse(res.status, payload)) return { ok: false, reason: SERVICE_UNREACHABLE };
+  if (!res.ok) return { ok: false, reason: String(payload?.error ?? `http_${res.status}`) };
+  // A 2xx whose body will not parse is not a success anyone can read.
+  if (payload === null) return { ok: false, reason: SERVICE_UNREACHABLE };
   return {
     ok: true,
     outcome: {
@@ -701,14 +810,16 @@ export async function startEvaluation(
     body: JSON.stringify({ providerId, modelId }),
   });
   if (res.ok) return { ok: true };
-  const body = (await res.json().catch(() => ({}))) as { reason?: string; error?: string };
-  return { ok: false, status: res.status, reason: body.reason ?? body.error ?? `http_${res.status}` };
+  const body = await serviceBody(res);
+  if (unreachableResponse(res.status, body)) {
+    return { ok: false, status: res.status, reason: SERVICE_UNREACHABLE };
+  }
+  const { reason, error } = (body ?? {}) as { reason?: string; error?: string };
+  return { ok: false, status: res.status, reason: reason ?? error ?? `http_${res.status}` };
 }
 
 export async function fetchEvaluationState(): Promise<EvaluationStateView> {
-  const res = await fetch(`${BASE}/evaluations`);
-  if (!res.ok) throw new Error(`evaluation state unavailable (${res.status})`);
-  return (await res.json()) as EvaluationStateView;
+  return readService<EvaluationStateView>('/evaluations');
 }
 
 export async function stopEvaluations(): Promise<void> {

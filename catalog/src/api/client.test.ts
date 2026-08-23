@@ -19,7 +19,7 @@
  */
 
 import { describe, test, expect, vi, afterEach } from 'vitest';
-import { fetchCatalog, fetchEvaluationDetail, fetchEvaluationState, startEvaluation, fetchHealth } from './client';
+import { fetchCatalog, fetchEvaluationDetail, fetchEvaluationState, startEvaluation, regradeEvaluation, ServiceError, fetchHealth } from './client';
 
 /**
  * One model exactly as the pre-M5.1 service shape puts it on the wire.
@@ -667,3 +667,98 @@ describe('fetchHealth', () => {
   });
 });
 
+describe('a dead service is told apart from a service that answered badly', () => {
+  /**
+   * The dev proxy's answer when nothing holds the api port.
+   *
+   * Verified against the real thing: vite turns ECONNREFUSED into a bare
+   * `500 text/plain` with an empty body. Every /v1 read became "(500)", which
+   * reads as a service bug and sent a whole debugging session down the wrong
+   * path when the service simply was not running.
+   */
+  const deadUpstream = () => vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: false,
+    status: 500,
+    json: async () => { throw new SyntaxError('Unexpected end of JSON input'); },
+  } as unknown as Response)));
+
+  /** The real service always answers JSON, even on 404. */
+  const serviceSays = (status: number, body: unknown) =>
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: status < 400, status, json: async () => body } as unknown as Response)));
+
+  test('a non-JSON failure is unreachable, not a service error', async () => {
+    deadUpstream();
+    const err = await fetchEvaluationState().then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(ServiceError);
+    expect(err.unreachable).toBe(true);
+    // The message has to name the cause, because "(500)" named the wrong one.
+    expect(err.message).toMatch(/not answering/i);
+    expect(err.message).not.toMatch(/^evaluation state unavailable/);
+  });
+
+  test('a JSON failure is the service answering, and its reason is kept', async () => {
+    serviceSays(404, { error: 'no such model' });
+    const err = await fetchEvaluationDetail('p', 'm').then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(ServiceError);
+    expect(err.unreachable).toBe(false);
+    expect(err.status).toBe(404);
+    expect(err.message).toMatch(/no such model/);
+  });
+
+  test('the service own 503 is an answer, not an unreachable service', async () => {
+    // This is why the test is on body shape and not on status: a status rule
+    // like ">= 500 means dead" would call a real degraded-health answer a dead
+    // socket, and the caller reads that 503 body on purpose.
+    serviceSays(503, { status: 'degraded', databaseReadable: false });
+    const state = await fetchEvaluationState();
+    expect(state).toMatchObject({ status: 'degraded' });
+  });
+
+  test('a thrown fetch is unreachable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    const err = await fetchEvaluationState().then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(ServiceError);
+    expect(err.unreachable).toBe(true);
+    expect(err.status).toBe(null);
+  });
+
+  test('an abort stays an abort and is not reported as a dead service', async () => {
+    // useCatalog cancels in-flight reads on unmount and keys off the signal.
+    // Dressing an abort up as a service failure would put a red banner on a
+    // page the owner just navigated away from.
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    }));
+    const err = await fetchEvaluationState().then(() => null, (e) => e);
+    expect(err).not.toBeInstanceOf(ServiceError);
+    expect((err as DOMException).name).toBe('AbortError');
+  });
+
+  test('a bodyless 4xx is still the service answering', async () => {
+    // The status half of the rule earns its place here. A proxy with a dead
+    // upstream answers 500, 502 or 504 — never a 409. Calling this unreachable
+    // would send the reader hunting for a stopped process that is running fine.
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 409,
+      json: async () => { throw new SyntaxError('Unexpected end of JSON input'); },
+    } as unknown as Response)));
+    const err = await fetchEvaluationState().then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(ServiceError);
+    expect(err.unreachable).toBe(false);
+    expect(err.status).toBe(409);
+  });
+
+  test('the refusal-as-a-value routes say unreachable instead of http_500', async () => {
+    // startEvaluation and regradeEvaluation return a reason rather than throwing,
+    // so they need the same distinction in their own vocabulary.
+    deadUpstream();
+    expect(await startEvaluation('p', 'm')).toMatchObject({ ok: false, reason: 'service_unreachable' });
+    expect(await regradeEvaluation('p', 'm')).toMatchObject({ ok: false, reason: 'service_unreachable' });
+  });
+
+  test('a real refusal keeps the service own reason', async () => {
+    serviceSays(409, { error: 'an evaluation is running' });
+    expect(await startEvaluation('p', 'm')).toMatchObject({ ok: false, reason: 'an evaluation is running' });
+  });
+});
