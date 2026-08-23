@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { LuLayoutGrid, LuHistory, LuSearch, LuCpu, LuInfo } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import { ThemeToggle } from '../ThemeToggle/ThemeToggle';
 import { SearchModal } from '../SearchModal/SearchModal';
+import { NotificationCenter } from '../NotificationCenter/NotificationCenter';
 import type { Theme } from '../../hooks/useTheme';
 import styles from './Header.module.css';
 
@@ -19,20 +20,20 @@ export function Header({ theme, onToggleTheme }: HeaderProps) {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   const path = location.pathname;
+  const activeProviderId = path.startsWith('/provider/') ? path.split('/provider/')[1] : undefined;
   let title = 'AI Model Catalogs';
   let subtitle = 'Live model inventories & benchmark matrix';
-  let iconNode: React.ReactNode = <LuLayoutGrid size={16} className={styles.pageIcon} />;
+  let iconNode: ReactNode = <LuLayoutGrid size={16} className={styles.pageIcon} />;
   let breadcrumbs: Array<{ label: string; to?: string }> | null = null;
 
   if (path === '/') {
     title = 'AI Model Catalogs';
     subtitle = 'Live model inventories & benchmark matrix';
     iconNode = <LuLayoutGrid size={16} className={styles.pageIcon} />;
-  } else if (path.startsWith('/provider/')) {
-    const providerId = path.split('/provider/')[1];
-    const provider = data?.providers.find((p) => p.id === providerId);
-    const pres = present(providerId);
-    title = provider?.name ?? providerId;
+  } else if (activeProviderId) {
+    const provider = data?.providers.find((p) => p.id === activeProviderId);
+    const pres = present(activeProviderId);
+    title = provider?.name ?? activeProviderId;
     subtitle = pres.blurb || 'Provider model roster & quality evidence';
     breadcrumbs = [
       { label: 'Overview', to: '/' },
@@ -117,6 +118,7 @@ export function Header({ theme, onToggleTheme }: HeaderProps) {
           </button>
 
           <div className={styles.toggleWrapper}>
+            <NotificationCenter providerId={activeProviderId} />
             <ThemeToggle theme={theme} onToggle={onToggleTheme} />
           </div>
 

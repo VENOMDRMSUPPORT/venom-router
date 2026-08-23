@@ -1,3 +1,4 @@
+/* Catalog header maintains compact data-tool geometry and tactile controls. */
 .header {
   position: fixed;
   top: 0;
@@ -141,6 +142,7 @@
 .toggleWrapper {
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
 .profile {
