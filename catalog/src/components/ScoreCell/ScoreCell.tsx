@@ -9,7 +9,7 @@ const OVERALL_PRESENTATION: Record<ApiModel['overallScore']['status'], { label: 
   unknown: { label: 'Unrated', className: 'unrated' },
 };
 
-/** Overall-score-v1 presentation. The server owns value, coverage, and state. */
+/** Overall-score-v1 presentation with semi-circular speedometer gauge. */
 export function ModelScoreCell({ model }: { model: ApiModel }) {
   const score = model.overallScore;
 
@@ -29,15 +29,6 @@ export function ModelScoreCell({ model }: { model: ApiModel }) {
   /**
    * How much of the test set produced this number, folded into the one tooltip
    * the score already carries rather than printed under it.
-   *
-   * The owner asked for the line gone, and the line is gone. What must not go is
-   * the fact: `overallCoverage.percent` is measured against the APPLICABLE
-   * dimensions, so a narrower test set certifies itself as 100%. Two records of
-   * the same canonical model once came out 11 points apart, both reading
-   * "complete", because a disputed capability made vision applicable to one of
-   * them — and 24 rows graded on seven dimensions sat in one ranking beside 25
-   * graded on eight. The score is right either way; comparing them without
-   * knowing the scope is not.
    */
   const scope = excluded.length === 0
     ? ''
@@ -46,12 +37,45 @@ export function ModelScoreCell({ model }: { model: ApiModel }) {
       + `weights are renormalised. A model graded on all ${totalDimensions} took a wider test.`;
   const breakdown = `${score.methodologyVersion ?? 'overall-score-v1'}: quality ${score.qualityScore?.toFixed(1) ?? 'unknown'} × 70% + operations ${score.operationalScore?.toFixed(1) ?? 'unknown'} × 30% = ${score.display}${scope}`;
   const numVal = score.value ?? 0;
-  const scoreStyle = numVal >= 90 ? styles.scoreHigh : numVal >= 80 ? styles.scoreMid : styles.scoreStandard;
+  const clampedVal = Math.min(100, Math.max(0, numVal));
+  const needleAngle = (clampedVal / 100) * 180 - 90;
+  const strokeColor =
+    clampedVal >= 90
+      ? '#10b981'
+      : clampedVal >= 80
+        ? '#3b82f6'
+        : clampedVal >= 70
+          ? '#8b5cf6'
+          : '#f59e0b';
+  const scoreStyle = clampedVal >= 90 ? styles.scoreHigh : clampedVal >= 80 ? styles.scoreMid : styles.scoreStandard;
 
   return (
     <div className={styles.cell}>
-      <div className={styles.scoreValueWrap}>
-        <span className={`${styles.value} ${scoreStyle}`} title={breakdown}>{score.display}</span>
+      <div className={styles.gaugeBox}>
+        <svg className={styles.gaugeSvg} viewBox="0 0 52 28" width="52" height="28" aria-hidden="true">
+          <path d="M 6 25 A 20 20 0 0 1 46 25" className={styles.gaugeTrack} />
+          <path
+            d="M 6 25 A 20 20 0 0 1 46 25"
+            className={styles.gaugeProgress}
+            style={{
+              stroke: strokeColor,
+              strokeDasharray: 62.83,
+              strokeDashoffset: 62.83 * (1 - clampedVal / 100),
+            }}
+          />
+          <line
+            x1="26"
+            y1="25"
+            x2="26"
+            y2="8"
+            className={styles.gaugeNeedle}
+            style={{ stroke: strokeColor }}
+            transform={`rotate(${needleAngle}, 26, 25)`}
+          />
+          <circle cx="26" cy="25" r="2.8" className={styles.gaugeHub} />
+          <circle cx="26" cy="25" r="1.2" className={styles.gaugeHubInner} />
+        </svg>
+        <span className={`${styles.gaugeValue} ${scoreStyle}`} title={breakdown}>{score.display}</span>
       </div>
       {!complete && (
         <span
@@ -107,16 +131,12 @@ export function ModelRankCell({ model, localRanks }: { model: ApiModel; localRan
     <span
       className={`${styles.rank} ${shown <= 3 ? styles.topRank : ''}`}
       data-testid={`model-rank-${model.modelId}`}
+      aria-label={model.tiedAtOverallRank ? `Tied position ${shown}` : `Position ${shown}`}
       title={localRanks
         ? `Position ${shown} of ${localRanks.size} scored on this page. Catalog-wide rank: ${model.overallRank}.`
         : undefined}
     >
-      #{shown}
-      {model.tiedAtOverallRank ? (
-        <span className={styles.tie} title="Tied: the overall-score uncertainty intervals overlap.">
-          =
-        </span>
-      ) : null}
+      {model.tiedAtOverallRank ? `T-${shown}` : `#${shown}`}
     </span>
   );
 }
@@ -248,7 +268,7 @@ export function RankCell({ model }: { model: ApiModel }) {
  * labelled `ref`, so the model can be compared without that figure being
  * mistaken for a bill.
  */
-export function CostCell({ model, side, statedOnce }: { model: ApiModel; side: 'in' | 'out'; statedOnce?: boolean }) {
+export function CostCell({ model, side, statedOnce: _statedOnce }: { model: ApiModel; side: 'in' | 'out'; statedOnce?: boolean }) {
   const p = model.pricing;
   const own = side === 'in' ? p.inputPerMTokens : p.outputPerMTokens;
   const ref = side === 'in' ? p.referenceInPerMTokens : p.referenceOutPerMTokens;
@@ -256,7 +276,8 @@ export function CostCell({ model, side, statedOnce }: { model: ApiModel; side: '
 
   const refNote = ref !== null && ref > 0 && (
     <span className={styles.refPrice} title="List price for this model elsewhere. Shown for comparison — it is not what this provider charges you.">
-      ref {money(ref)}
+      <span className={styles.refLabel}>Market ref</span>
+      {money(ref)}<span className={styles.refUnit}>/M</span>
     </span>
   );
 
@@ -267,32 +288,15 @@ export function CostCell({ model, side, statedOnce }: { model: ApiModel; side: '
     return <div className={styles.costCell}><span className={styles.free}>Free</span>{refNote}</div>;
   }
   if (p.kind === 'included') {
-    // `statedOnce` means the caller has already said, once for the whole
-    // provider, that the plan covers every model. Repeating it per cell printed
-    // one provider-level sentence three times per row — twice in the price
-    // columns and again on the VO badge — in the same `n/a` vocabulary the
-    // catalog uses for ABSENT facts. An answer rendered as a page full of holes
-    // is a worse failure than a missing label: it reads as broken data.
-    if (statedOnce) {
-      // No per-cell `ref` prefix: the column header carries it, once, for the
-      // same reason the plan itself is stated once above the table. The marker
-      // cannot simply be dropped — a bare `$3` under a subscription reads as
-      // what you pay, which is the one claim the provider's documentation
-      // denies — so it moves rather than disappearing.
+    if (ref !== null && ref > 0) {
       return (
         <div className={styles.costCell}>
-          {ref !== null && ref > 0 ? (
-            <span
-              className={styles.refPrice}
-              title="The published per-million-token rate this plan meters usage against. Not a charge — the subscription covers this model."
-            >
-              {money(ref)}
-            </span>
-          ) : (
-            <span className={styles.refPrice} title="No rate is published for this model, so there is no figure to compare against. The plan still covers it.">
-              —
-            </span>
-          )}
+          <span className={styles.value} title="Published reference rate for this model. Covered by subscription plan.">
+            {money(ref)}
+          </span>
+          <span className={styles.refPrice} title="Covered by subscription plan">
+            Included plan
+          </span>
         </div>
       );
     }

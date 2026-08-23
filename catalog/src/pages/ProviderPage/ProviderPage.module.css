@@ -836,16 +836,16 @@
 }
 
 .table th {
-  text-align: left;
-  padding: 10px 14px;
-  font-size: 0.68rem;
-  font-weight: 650;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--foreground-tertiary);
-  background: var(--background-secondary);
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
+text-align: left;
+padding: 10px 14px;
+font-size: 0.68rem;
+font-weight: 650;
+text-transform: uppercase;
+letter-spacing: 0.05em;
+  color: var(--foreground-secondary);
+background: var(--background-secondary);
+border-bottom: 1px solid var(--border);
+white-space: nowrap;
 }
 
 .table th:not(:last-child) {
@@ -867,11 +867,12 @@
 }
 
 .table tbody tr {
-  transition: background var(--transition-fast);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .table tbody tr:hover {
   background: var(--surface-hover);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 58%, transparent);
 }
 
 .table tbody tr:last-child td {
@@ -879,7 +880,7 @@
 }
 
 .narrow {
-  width: 68px;
+  width: 76px;
 }
 
 /*
@@ -935,16 +936,16 @@
 }
 
 .caps {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 204px;
-  min-height: 38px;
-  padding: 6px 12px;
-  background: var(--background);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+display: inline-flex;
+align-items: center;
+justify-content: center;
+  gap: 5px;
+  width: 166px;
+  min-height: 34px;
+  padding: 5px 7px;
+background: var(--background);
+border: 1px solid var(--border-subtle);
+border-radius: 8px;
   box-sizing: border-box;
   margin: 0 auto;
   transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
@@ -967,23 +968,40 @@
 }
 
 .capIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 25px;
-  height: 25px;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  flex-shrink: 0;
+display: inline-flex;
+align-items: center;
+justify-content: center;
+  width: 24px;
+  height: 24px;
+border-radius: 6px;
+border: 1px solid transparent;
+flex-shrink: 0;
   transition: transform var(--transition-fast), border-color var(--transition-fast);
   cursor: help;
 }
 
 .capIcon:hover {
-  transform: scale(1.1);
-  background: rgba(245, 158, 11, 0.12);
-  border-color: rgba(245, 158, 11, 0.3);
-  color: #b45309;
+transform: scale(1.1);
+background: rgba(245, 158, 11, 0.12);
+border-color: rgba(245, 158, 11, 0.3);
+color: #b45309;
+}
+
+.capsMore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 25px;
+  height: 24px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--foreground-secondary);
+  background: var(--background-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  cursor: help;
 }
 :global([data-theme="dark"]) .capTools {
   color: #fbbf24;
@@ -1292,22 +1310,23 @@
 }
 
 .rowActions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+display: flex;
+align-items: center;
+  justify-content: center;
+  gap: 5px;
 }
 
 .evidenceBtn,
 .evidenceBtnFlagged {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-width: 28px;
-  height: 26px;
-  padding: 0 7px;
-  border-radius: var(--radius-sm);
-  font-size: 0.68rem;
+display: inline-flex;
+align-items: center;
+justify-content: center;
+gap: 5px;
+  min-width: 64px;
+  height: 27px;
+  padding: 0 8px;
+border-radius: var(--radius-sm);
+font-size: 0.68rem;
   font-weight: 650;
   cursor: pointer;
   font-family: var(--font-mono);
@@ -1362,7 +1381,30 @@
   padding: 0 4px;
   border-radius: var(--radius-full);
   background: rgba(245, 158, 11, 0.2);
-  color: #92400e;
+color: #92400e;
+}
+
+.evidenceLabel {
+  font-family: var(--font-sans);
+  font-size: 0.64rem;
+  letter-spacing: 0.01em;
+}
+
+.priceHeader {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  line-height: 1.1;
+}
+
+.priceHeader small {
+  color: var(--foreground-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.56rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
 
 :global([data-theme="dark"]) .evidenceCount {

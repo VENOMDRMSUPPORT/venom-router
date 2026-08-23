@@ -173,14 +173,13 @@ describe('the provider table presents one server-derived model score', () => {
     ...over,
   });
 
-  test('replaces Rank, VQ, and VO columns with # and Score', async () => {
+  test('replaces separate score columns with a clear Rank and Score pair', async () => {
     stubStaleService([scoredModel()]);
     renderProviderPage();
 
     expect(await screen.findByText('Models (1)')).toBeInTheDocument();
     const headers = screen.getAllByRole('columnheader').map((header) => header.textContent?.trim());
-    expect(headers.slice(0, 3)).toEqual(['#', 'Model', 'Score']);
-    expect(headers).not.toContain('Rank');
+    expect(headers.slice(0, 3)).toEqual(['Rank', 'Model', 'Score']);
     expect(headers).not.toContain('VQ');
     expect(headers).not.toContain('VO');
     expect(screen.getByText('65.8%')).toBeInTheDocument();
@@ -190,14 +189,14 @@ describe('the provider table presents one server-derived model score', () => {
     expect(screen.queryByText(/coverage/i)).not.toBeInTheDocument();
   });
 
-  test('numbers the row by its position here, and keeps the tie marker', async () => {
+  test('numbers the row by its position here, and names a tie compactly', async () => {
     stubStaleService([scoredModel()]);
     renderProviderPage();
 
     await screen.findByText('65.8%');
     // Asserts the FACTS the note has to carry, not one phrasing of them: where
     // the catalog-wide rank lives, that only complete results are placed, and
-    // that "=" is a tie. Pinning the sentence made an editorial trim look like a
+    // that ties are evidence-aware. Pinning the sentence made an editorial trim look like a
     // regression.
     const scopeNote = screen.getByTestId('rank-scope-note');
     expect(scopeNote).toHaveTextContent(/catalog/i);
@@ -206,7 +205,8 @@ describe('the provider table presents one server-derived model score', () => {
     // One row on screen is position 1 whatever the catalog says, and the
     // catalog's own number stays reachable rather than being dropped.
     const cell = screen.getByTestId('model-rank-cline-pass/deepseek-v4-flash');
-    expect(cell).toHaveTextContent('#1=');
+    expect(cell).toHaveTextContent('T-1');
+    expect(cell).toHaveAccessibleName('Tied position 1');
     expect(cell.getAttribute('title')).toContain('Catalog-wide rank: 9');
   });
 
@@ -325,7 +325,7 @@ describe('/provider/:id survives a pre-M5.1 service response', () => {
     renderProviderPage();
 
     const toggle = await screen.findByTestId('evidence-toggle-cline-pass/deepseek-v4-flash');
-    expect(toggle).toHaveTextContent('why');
+    expect(toggle).toHaveTextContent('Evidence');
   });
 
   test('an identity the response never stated is not reported as unresolved', async () => {
@@ -380,6 +380,21 @@ describe('capability states stay inside the icon language', () => {
     expect(screen.getByLabelText('Attachments — sources disagree')).toHaveAttribute('data-state', 'conflicted');
     expect(screen.queryByText('attachment')).not.toBeInTheDocument();
     expect(screen.queryByText('missing')).not.toBeInTheDocument();
+  });
+
+  test('keeps the table compact and exposes additional capabilities through a count', async () => {
+    stubStaleService([
+      staleWireModel({
+        modelId: 'cline-pass/multimodal',
+        capabilities: { tools: true, reasoning: true, structured: true, attachment: true },
+        inputModalities: ['text', 'image', 'audio', 'video'],
+      }),
+    ]);
+    renderProviderPage();
+
+    const group = await screen.findByRole('group', { name: 'Capabilities for cline-pass/multimodal: 7 reported' });
+    expect(group).toHaveTextContent('+3');
+    expect(screen.getByLabelText('3 additional capabilities')).toBeInTheDocument();
   });
 });
 
@@ -713,23 +728,17 @@ describe('the reference marker sits on the column, not on every price', () => {
       ...over,
     });
 
-  test('prices read as plain figures once the column says what they are', async () => {
-    // Twenty-six `ref` prefixes for one column-level fact, the same shape as the
-    // `Included · n/a` repetition. The marker has to survive somewhere though: a
-    // bare $3 under a plan reads as what you pay, which is the one thing
-    // ClinePass's documentation says it is not.
+  test('prices read as plain figures under unified In/Out column headers', async () => {
     providerOver = { liveModels: 1, qualityScored: 1, unrated: 0 };
     stubStaleService([included()]);
     renderProviderPage();
 
     expect(await screen.findByText('cline-pass/deepseek-v4-flash')).toBeInTheDocument();
     expect(screen.getAllByText('$3').length).toBeGreaterThan(0);
-    expect(screen.queryByText(/^ref \$3$/)).not.toBeInTheDocument();
-    // and the column still declares it
-    expect(screen.getByTestId('cost-column-in').textContent ?? '').toMatch(/ref/i);
+    expect(screen.getByTestId('cost-column-in').textContent?.trim()).toBe('InputUSD / 1M');
   });
 
-  test('a row with no published rate shows a plain dash', async () => {
+  test('a row with no published rate shows a plain dash or included state', async () => {
     providerOver = { liveModels: 1, qualityScored: 1, unrated: 0 };
     stubStaleService([included({ pricing: { kind: 'included', inputPerMTokens: null, outputPerMTokens: null, referenceInPerMTokens: null, referenceOutPerMTokens: null, isFree: false } })]);
     renderProviderPage();
@@ -738,13 +747,25 @@ describe('the reference marker sits on the column, not on every price', () => {
     expect(screen.queryByText('ref —')).not.toBeInTheDocument();
   });
 
-  test('a per-token provider keeps a plain price column with no ref marker', async () => {
+  test('a per-token provider keeps a unified price column', async () => {
     providerOver = { liveModels: 1, qualityScored: 1, unrated: 0 };
     stubStaleService([staleWireModel()]);
     renderProviderPage();
 
     expect(await screen.findByText('cline-pass/deepseek-v4-flash')).toBeInTheDocument();
-    expect(screen.getByTestId('cost-column-in').textContent ?? '').not.toMatch(/ref/i);
+    expect(screen.getByTestId('cost-column-in').textContent?.trim()).toBe('InputUSD / 1M');
+  });
+
+  test('labels a comparison rate as a market reference, never as the provider price', async () => {
+    providerOver = { liveModels: 1, qualityScored: 1, unrated: 0 };
+    stubStaleService([staleWireModel({
+      pricing: { kind: 'free', inputPerMTokens: null, outputPerMTokens: null, referenceInPerMTokens: 0.13, referenceOutPerMTokens: 0.53, isFree: true },
+    })]);
+    renderProviderPage();
+
+    expect(await screen.findByText('cline-pass/deepseek-v4-flash')).toBeInTheDocument();
+    expect(screen.getAllByText('Market ref').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('/M').length).toBeGreaterThan(0);
   });
 });
 

@@ -158,7 +158,8 @@ describe('CostCell — the billingKind FactState branch', () => {
       />,
     );
     expect(screen.getByText('missing')).toBeInTheDocument();
-    expect(screen.getByText(/ref \$3/)).toBeInTheDocument();
+    expect(screen.getByText('Market ref')).toBeInTheDocument();
+    expect(screen.getByText('$3')).toBeInTheDocument();
   });
 
   test('free and included still take their own, earlier branches — the gap branch does not shadow them', () => {
@@ -244,7 +245,7 @@ describe('the rank column numbers the list on screen', () => {
     expect(screen.getByTestId('model-rank-d').getAttribute('title')).toContain('Catalog-wide rank: 5');
   });
 
-  test('rows the server calls tied keep one number and the tie mark', () => {
+  test('rows the server calls tied keep one number and a compact tie prefix', () => {
     // `ranking.ts` rule 3: overlapping uncertainty intervals are a tie. The
     // numbering is local; the GROUPING stays the server's, because splitting it
     // here would invent precision the evidence does not carry.
@@ -253,9 +254,9 @@ describe('the rank column numbers the list on screen', () => {
 
     render(<>{rows.map((m) => <ModelRankCell key={m.modelId} model={m} localRanks={localRanks} />)}</>);
 
-    expect(screen.getByTestId('model-rank-a')).toHaveTextContent('#1');
-    expect(screen.getByTestId('model-rank-b')).toHaveTextContent('#1');
-    expect(screen.getByTestId('model-rank-b')).toHaveTextContent('=');
+    expect(screen.getByTestId('model-rank-a')).toHaveTextContent('T-1');
+    expect(screen.getByTestId('model-rank-b')).toHaveTextContent('T-1');
+    expect(screen.getByTestId('model-rank-b')).toHaveAccessibleName('Tied position 1');
     expect(screen.getByTestId('model-rank-c')).toHaveTextContent('#2');
   });
 

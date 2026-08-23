@@ -62,3 +62,9 @@ The catalog header reads only the authoritative `GET /v1/alerts?status=open` ale
 Acknowledging a notification calls `PATCH /v1/alerts/:id` with `{ "status": "acknowledged" }`. The popover removes only alerts that the service acknowledges successfully, and retains a failed item with a visible error instead of claiming it was handled. The same state transition is used for individual and bulk acknowledgement.
 
 While the catalog page is open, the notification center refreshes its open-alert list every 30 seconds only when the document is visible, and refreshes immediately when focus returns. This is a client-side polling enhancement, not a background worker: closing the page clears the interval and aborts in-flight reads. The catalog currently exposes a durable read-and-transition alert API rather than a browser event stream, so polling keeps the implementation aligned with the existing service contract without creating a second real-time channel.
+
+## Provider table reading conventions
+
+Provider tables present the server-owned overall score as the primary comparison value. A normal page-local position renders as `#N`; `T-N` denotes a tied position, meaning the service found overlapping uncertainty intervals and does not claim a strict order. Input and output columns are normalized to USD per one million tokens. `Market ref` identifies a comparison rate from elsewhere and is never the provider charge.
+
+Capability cells display up to four reported capabilities, then a `+N` indicator with an accessible explanation of additional items. The `Evidence` control opens the provenance trail, while an amber count identifies only outstanding work rather than settled findings. These display rules change no catalog facts, scores, or lifecycle state.

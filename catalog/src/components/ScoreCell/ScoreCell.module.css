@@ -2,12 +2,81 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.gaugeBox {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: help;
+  min-width: 68px;
+  padding: 3px 7px 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  transition: transform var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.gaugeBox:hover {
+  transform: scale(1.05);
+  background: var(--background);
+  border-color: var(--border-subtle);
+}
+
+.gaugeSvg {
+  overflow: visible;
+  display: block;
+}
+
+.gaugeTrack {
+  fill: none;
+  stroke: var(--border-subtle);
+  stroke-width: 3.2;
+  stroke-linecap: round;
+}
+:global([data-theme="dark"]) .gaugeTrack {
+  stroke: rgba(255, 255, 255, 0.1);
+}
+
+.gaugeProgress {
+  fill: none;
+  stroke-width: 3.2;
+  stroke-linecap: round;
+  transition: stroke-dashoffset var(--transition-normal);
+}
+
+.gaugeNeedle {
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  transition: transform var(--transition-normal);
+}
+
+.gaugeHub {
+  fill: var(--foreground);
+}
+
+.gaugeHubInner {
+  fill: var(--surface);
+}
+
+.gaugeValue {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  font-weight: 750;
+  font-size: 0.94rem;
+  letter-spacing: -0.03em;
+  margin-top: -3px;
+  line-height: 1.1;
 }
 
 .scoreValueWrap {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
 }
 
@@ -132,7 +201,7 @@
 .rank {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
-  font-weight: 600;
+  font-weight: 700;
   font-size: 0.86rem;
   color: var(--text-secondary);
   white-space: nowrap;
@@ -161,8 +230,11 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  align-items: flex-end;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   font-variant-numeric: tabular-nums;
+  width: 100%;
 }
 
 .free {

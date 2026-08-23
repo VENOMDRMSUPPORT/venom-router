@@ -589,7 +589,7 @@ function EvidenceToggle({ model, open, onToggle }: { model: ApiModel; open: bool
       data-testid={`evidence-toggle-${model.modelId}`}
     >
       <LuFileSearch size={13} className={styles.btnIcon} />
-      <span className={styles.srOnly}>{open ? 'hide' : 'why'}</span>
+      <span className={styles.evidenceLabel}>{open ? 'Hide' : 'Evidence'}</span>
       {outstanding > 0 && <span className={styles.evidenceCount}>{outstanding}</span>}
     </button>
   );
@@ -677,9 +677,9 @@ function ModelTable({ title, models, note, costStatedOnce, focusModelId }: { tit
         <table className={styles.table}>
           <thead>
             <tr>
-              <th className={styles.narrow}>#</th>
+              <th className={styles.narrow} title={RANK_SCOPE_NOTE}>Rank</th>
               <th>Model</th>
-              <th className={styles.centered}>Score</th>
+              <th className={styles.centered} title="Overall score from the catalog’s server-owned scoring methodology.">Score</th>
               <th className={styles.num}>Context</th>
               <th className={styles.num}>Max out</th>
               {/* The column states its own semantics, so the cells do not have
@@ -689,14 +689,14 @@ function ModelTable({ title, models, note, costStatedOnce, focusModelId }: { tit
                 data-testid="cost-column-in"
                 title="Input token pricing per 1M tokens"
               >
-                In
+                <span className={styles.priceHeader}>Input<small>USD / 1M</small></span>
               </th>
               <th
                 className={styles.num}
                 data-testid="cost-column-out"
                 title="Output token pricing per 1M tokens"
               >
-                Out
+                <span className={styles.priceHeader}>Output<small>USD / 1M</small></span>
               </th>
               <th className={styles.centered}>Capabilities</th>
               <th className={`${styles.narrow} ${styles.centered}`}>Evidence</th>
@@ -1111,14 +1111,30 @@ function CapabilityBadges({ model, showUnknown = false }: { model: ApiModel; sho
     }
   });
 
+  const visibleCaps = caps.slice(0, 4);
+  const hiddenCaps = caps.slice(4);
+
   return (
-    <div className={styles.caps}>
-      {caps}
+    <div
+      className={styles.caps}
+      role="group"
+      aria-label={`Capabilities for ${model.modelId}: ${caps.length} reported`}
+    >
+      {visibleCaps}
+      {hiddenCaps.length > 0 && (
+        <span
+          className={styles.capsMore}
+          title={`${hiddenCaps.length} additional capabilities are available. Open the legend for icon meanings.`}
+          aria-label={`${hiddenCaps.length} additional capabilities`}
+        >
+          +{hiddenCaps.length}
+        </span>
+      )}
       {showUnknown &&
         (['tools', 'reasoning', 'structured', 'attachment'] as const)
-          .filter((f) => model.capabilities[f] === null)
-          .map((f) => (
-            <CapabilityUnknownIcon key={f} field={f} model={model} />
+          .filter((field) => model.capabilities[field] === null)
+          .map((field) => (
+            <CapabilityUnknownIcon key={field} field={field} model={model} />
           ))}
     </div>
   );
