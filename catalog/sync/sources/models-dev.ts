@@ -13,7 +13,7 @@
 
 import type { FetchJson } from '../http.ts';
 import type { ModelSpec, SpecLookup } from '../engine.ts';
-import { normalizeId } from '../identity.ts';
+import { normalizeId, PLAN_VARIANT } from '../identity.ts';
 
 export const MODELS_DEV_URL = 'https://models.dev/api.json';
 
@@ -96,7 +96,7 @@ export interface SpecSource {
    * another provider's ceiling in would be one seller's number wearing another
    * seller's label, the same error the pricing split exists to prevent.
    */
-  intrinsic: (modelId: string) => IntrinsicFacts | null;
+  intrinsic: (modelId: string, servingStorefront?: string) => IntrinsicFacts | null;
   intrinsicCount: number;
   /**
    * What the company that BUILT the model publishes about it, from its own
@@ -190,11 +190,33 @@ export interface FirstPartyLimits {
  * was disputed is enough to withhold a value, but not enough to show anyone why,
  * to audit the sources against each other, or to let a human resolve it later.
  */
+/** One seller's declaration of one field, with enough context to judge standing. */
+export interface Declaration {
+  value: unknown;
+  /** `feedKey/rawId`, the citation shown to a reader. */
+  by: string;
+  /** The feed provider key that published it. */
+  storefront: string;
+  /** The id as published, `:thinking` and all. */
+  rawId: string;
+}
+
 export interface FieldConflict {
   field: string;
   /** Each distinct declared value and the `provider/model` that declared it. */
   sides: { value: unknown; by: string }[];
 }
+
+/**
+ * On whose authority a disputed field was answered.
+ *
+ * Recorded per field so a settled dispute is auditable. `unanimous` needs no
+ * authority — nobody disagreed. The other two are standings, not guesses, and
+ * that distinction is the whole point: the rule this replaced refused to answer
+ * at all rather than pick an ARBITRARY winner, and a named standing is not
+ * arbitrary.
+ */
+export type FactStanding = 'unanimous' | 'serving-seller' | 'vendor-storefront';
 
 /** Model-level properties, safe to source from any provider that declares them. */
 export interface IntrinsicFacts {
@@ -205,8 +227,10 @@ export interface IntrinsicFacts {
   inputModalities?: string[];
   /** The `provider/model` key the value came from, for provenance. */
   declaredBy: string;
-  /** Fields whose sellers disagreed; deliberately left unresolved. */
+  /** Fields whose sellers disagreed and nobody with standing could answer. */
   conflicts: FieldConflict[];
+  /** Per field, on whose authority it was answered. Absent means not recorded. */
+  standing?: Record<string, FactStanding>;
 }
 
 /**
@@ -224,7 +248,7 @@ export async function loadSpecs(fetchJson: FetchJson, vendors: VendorRegistry = 
   // Every declaration of every intrinsic property, kept per field rather than
   // collapsed on sight — because sellers disagree, and which one we happened to
   // read first must never be the tie-breaker.
-  const pooled = new Map<string, { declarations: Record<string, { value: unknown; by: string }[]> }>();
+  const pooled = new Map<string, { declarations: Record<string, Declaration[]> }>();
 
   // Two reverse indexes over the vendor registry, built once so the feed loop
   // stays a single pass over ~190 providers.
@@ -249,10 +273,12 @@ export async function loadSpecs(fetchJson: FetchJson, vendors: VendorRegistry = 
       index.set(normalizeId(id), spec);
 
       const norm = normalizeId(id);
-      const acc = pooled.get(norm) ?? { declarations: {} as Record<string, { value: unknown; by: string }[]> };
+      const acc = pooled.get(norm) ?? { declarations: {} as Record<string, Declaration[]> };
       const declare = (field: string, value: unknown) => {
         if (value === undefined) return;
-        (acc.declarations[field] ??= []).push({ value, by: `${key}/${id}` });
+        // `storefront` and `rawId` are kept so standing can be judged later:
+        // who published this, and was it the base model or one of its modes.
+        (acc.declarations[field] ??= []).push({ value, by: `${key}/${id}`, storefront: key, rawId: id });
       };
       declare('tools', typeof model.tool_call === 'boolean' ? model.tool_call : undefined);
       declare('reasoning', typeof model.reasoning === 'boolean' ? model.reasoning : undefined);
@@ -317,20 +343,51 @@ export async function loadSpecs(fetchJson: FetchJson, vendors: VendorRegistry = 
    * chance. `docs/catalog-data-sources.md` already names this failure: a quietly
    * picked winner is indistinguishable from a bug.
    */
-  function settle(list: { value: unknown; by: string }[] | undefined): { value: unknown; by: string } | null {
-    if (!list?.length) return null;
-    const distinct = new Set(list.map((d) => JSON.stringify(d.value)));
-    if (distinct.size > 1) return null;
-    return list[0];
+  function unanimous(list: Declaration[]): Declaration | null {
+    if (!list.length) return null;
+    return new Set(list.map((d) => JSON.stringify(d.value))).size === 1 ? list[0] : null;
   }
 
-  const intrinsic = (modelId: string): IntrinsicFacts | null => {
+  /** Did this vendor publish this listing itself, rather than resell it? */
+  function isFirstParty(d: Declaration): boolean {
+    const owner = storefrontOwner.get(d.storefront);
+    if (!owner) return false;
+    const ns = d.rawId.includes('/') ? d.rawId.slice(0, d.rawId.indexOf('/')).toLowerCase() : null;
+    // The namespace guard is what stops `alibaba/glm-5.2` — Alibaba reselling a
+    // Z-AI model — from answering as a first-party GLM declaration.
+    return ns === null || namespaceOwner.get(ns) === owner;
+  }
+
+  function settle(
+    list: Declaration[] | undefined,
+    servingStorefront: string | undefined,
+  ): { decl: Declaration; standing: FactStanding } | null {
+    if (!list?.length) return null;
+    const agreed = unanimous(list);
+    if (agreed) return { decl: agreed, standing: 'unanimous' };
+
+    // The seller whose offering this is. `reasoning` on `ollama-cloud/gemma4:31b`
+    // is a fact about what ollama-cloud serves, and ollama-cloud publishes it.
+    // Its own `:thinking` listing is excluded: that is a different product, and
+    // pooling the two is what turned a mode difference into a disagreement.
+    if (servingStorefront) {
+      const own = unanimous(list.filter((d) => d.storefront === servingStorefront && !PLAN_VARIANT.test(d.rawId)));
+      if (own) return { decl: own, standing: 'serving-seller' };
+    }
+
+    const firstParty = unanimous(list.filter(isFirstParty));
+    if (firstParty) return { decl: firstParty, standing: 'vendor-storefront' };
+
+    return null;
+  }
+
+  const intrinsic = (modelId: string, servingStorefront?: string): IntrinsicFacts | null => {
     const acc = sourceKeys(modelId).map((key) => pooled.get(normalizeId(key))).find(Boolean);
     if (!acc) return null;
-    const out: IntrinsicFacts = { declaredBy: '', conflicts: [] };
+    const out: IntrinsicFacts = { declaredBy: '', conflicts: [], standing: {} };
     for (const field of ['tools', 'reasoning', 'structured', 'attachment', 'inputModalities'] as const) {
       const list = acc.declarations[field];
-      const settled = settle(list);
+      const settled = settle(list, servingStorefront);
       if (!settled) {
         // Keep one entry per DISTINCT value. Fifty sellers agreeing with each
         // other on two figures is a two-sided disagreement, and repeating each
@@ -339,14 +396,18 @@ export async function loadSpecs(fetchJson: FetchJson, vendors: VendorRegistry = 
           const seen = new Map<string, { value: unknown; by: string }>();
           for (const d of list) {
             const key = JSON.stringify(d.value);
-            if (!seen.has(key)) seen.set(key, d);
+            // Projected to the published two-field shape on purpose: `storefront`
+            // and `rawId` exist to judge standing, not to widen the wire format
+            // every reader of a conflict already parses.
+            if (!seen.has(key)) seen.set(key, { value: d.value, by: d.by });
           }
           out.conflicts.push({ field, sides: [...seen.values()] });
         }
         continue;
       }
-      (out as unknown as Record<string, unknown>)[field] = settled.value;
-      if (!out.declaredBy) out.declaredBy = settled.by;
+      (out as unknown as Record<string, unknown>)[field] = settled.decl.value;
+      (out.standing ??= {})[field] = settled.standing;
+      if (!out.declaredBy) out.declaredBy = settled.decl.by;
     }
     return out.declaredBy || out.conflicts.length ? out : null;
   };

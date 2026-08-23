@@ -232,3 +232,89 @@ describe('a vendor identity is built from the row, not from whichever seller was
     assert.equal(specs.vendorIdentity('cline-pass/glm-5.3')!.declaredBy, 'nano-gpt/zai-org/glm-5.3:thinking');
   });
 });
+
+describe('a disagreement is answered by whoever has standing, or not at all', () => {
+  test('the seller of the offering answers a dispute about its own offering', async () => {
+    // The reported case: `ollama-cloud/gemma4:31b` showed "reasoning: true vs
+    // false" with no value taken, while ollama-cloud — the seller actually
+    // serving it — publishes `true` in the same feed. Five sellers said true and
+    // one TEE deployment said false, and the panel showed it as an even split
+    // because conflicts keep one entry per distinct value.
+    const specs = await feedOf({
+      'ollama-cloud': { models: { 'gemma4:31b': { id: 'gemma4:31b', reasoning: true } } },
+      'nano-gpt': { models: { 'TEE/gemma4-31b': { id: 'TEE/gemma4-31b', reasoning: false } } },
+    });
+
+    const facts = specs.intrinsic('gemma4:31b', 'ollama-cloud')!;
+    assert.equal(facts.reasoning, true);
+    assert.equal(facts.standing?.reasoning, 'serving-seller');
+    assert.equal(facts.conflicts.length, 0, 'answered, so nothing is left open');
+  });
+
+  test('the same feed still withholds it from a seller with no standing', async () => {
+    // Standing is per offer. clinepass selling the same model gets no answer
+    // from ollama-cloud's listing, so the dispute stays open for clinepass.
+    const specs = await feedOf({
+      'ollama-cloud': { models: { 'gemma4:31b': { id: 'gemma4:31b', reasoning: true } } },
+      'nano-gpt': { models: { 'TEE/gemma4-31b': { id: 'TEE/gemma4-31b', reasoning: false } } },
+    });
+
+    const facts = specs.intrinsic('gemma4:31b', 'clinepass')!;
+    assert.equal(facts.reasoning, undefined);
+    assert.equal(facts.conflicts.length, 1);
+  });
+
+  test("a seller's own variant listing does not answer for its base offering", async () => {
+    // `nano-gpt/qwen3.8-max:thinking` says reasoning true and
+    // `nano-gpt/qwen3.8-max` says false. Same seller, same feed — but those are
+    // two products, not a disagreement, and the thinking listing must not answer
+    // for the base one.
+    const specs = await feedOf({
+      'nano-gpt': { models: {
+        'qwen3.8-max': { id: 'qwen3.8-max', reasoning: false },
+        'qwen3.8-max:thinking': { id: 'qwen3.8-max:thinking', reasoning: true },
+      } },
+    });
+
+    const facts = specs.intrinsic('qwen3.8-max', 'nano-gpt')!;
+    assert.equal(facts.reasoning, false, 'the base listing answers, not the mode');
+    assert.equal(facts.standing?.reasoning, 'serving-seller');
+  });
+
+  test('the vendor answers when the seller did not publish the field', async () => {
+    const specs = await feedOf({
+      reseller: { models: { 'zai-org/glm-5.3': { id: 'zai-org/glm-5.3', structured_output: false } } },
+      zai: { models: { 'zai-org/glm-5.3': { id: 'zai-org/glm-5.3', structured_output: true } } },
+    }, { 'z-ai': { label: 'Z.ai', storefronts: ['zai'], namespaces: ['zai-org'] } });
+
+    const facts = specs.intrinsic('glm-5.3', 'clinepass')!;
+    assert.equal(facts.structured, true);
+    assert.equal(facts.standing?.structured, 'vendor-storefront');
+  });
+
+  test('a reseller inside the vendor namespace does not become the vendor', async () => {
+    // The guard the vendors overlay exists for: Alibaba reselling a Z-AI model
+    // must not answer as a first-party GLM declaration.
+    const specs = await feedOf({
+      alibaba: { models: { 'zai-org/glm-5.2': { id: 'zai-org/glm-5.2', structured_output: false } } },
+      hyper: { models: { 'zai-org/glm-5.2': { id: 'zai-org/glm-5.2', structured_output: true } } },
+    }, {
+      'z-ai': { label: 'Z.ai', storefronts: ['zai'], namespaces: ['zai-org'] },
+      alibaba: { label: 'Alibaba', storefronts: ['alibaba'], namespaces: ['qwen'] },
+    });
+
+    const facts = specs.intrinsic('glm-5.2', 'clinepass')!;
+    assert.equal(facts.structured, undefined, 'neither side has standing');
+    assert.equal(facts.conflicts.length, 1);
+  });
+
+  test('unanimity still needs no authority and is recorded as such', async () => {
+    const specs = await feedOf({
+      a: { models: { m: { id: 'm', reasoning: true } } },
+      b: { models: { m: { id: 'm', reasoning: true } } },
+    });
+    const facts = specs.intrinsic('m', 'zzz')!;
+    assert.equal(facts.reasoning, true);
+    assert.equal(facts.standing?.reasoning, 'unanimous');
+  });
+});

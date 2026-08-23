@@ -36,7 +36,7 @@ export type Resolution =
  * model and its `:free` twin — gpt-oss-20b 15.2/15.2, gemma-4-31b-it 29.7/29.7,
  * nemotron-3-ultra-550b-a55b 38.3/38.3. So these carry no identity.
  */
-const PLAN_VARIANT = /:(free|beta|extended|batch|thinking|online|nitro|floor)$/;
+export const PLAN_VARIANT = /:(free|beta|extended|batch|thinking|online|nitro|floor)$/;
 
 /** Ollama marks its hosted models with a cloud suffix; the weights are unchanged. */
 const CLOUD_SUFFIX = /(:cloud|-cloud)$/;
