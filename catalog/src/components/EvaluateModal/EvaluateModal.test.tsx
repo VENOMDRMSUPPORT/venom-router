@@ -148,9 +148,52 @@ describe('EvaluateModal', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /re-read stored evidence/i }));
 
-    expect(await screen.findByTestId('evaluate-reread')).toHaveTextContent('1 changed; 2 withdrawn');
+    expect(await screen.findByTestId('evaluate-reread')).toHaveTextContent('1 changed, 2 withdrawn');
     expect(startEvaluation).not.toHaveBeenCalled();
     await waitFor(() => expect(reload).toHaveBeenCalled());
+  });
+
+  test('the re-read button is not offered while an evaluation is running', async () => {
+    // The route refuses with 409 whether or not the running job is this offer's,
+    // so offering the click at all produced a dead button that read as a bug.
+    vi.mocked(fetchEvaluationDetail).mockResolvedValue(detail(
+      { dimensions: [], skipped: [], speed: 'scored', blocked: null, estimatedRequests: 0 },
+      [scoredRow()],
+    ));
+    vi.mocked(fetchEvaluationState).mockResolvedValue({
+      state: 'running',
+      current: {
+        providerId: 'someone', modelId: 'else', dimension: 'coding',
+        samplesCompleted: 4, samplesTotal: 63, dimensionsCompleted: [], dimensionsRemaining: ['coding'],
+      },
+      queue: [],
+    });
+    render(<EvaluateModal model={model} onClose={() => {}} />);
+
+    const button = await screen.findByRole('button', { name: /re-read stored evidence/i });
+    expect(button).toBeDisabled();
+    expect(await screen.findByTestId('evaluate-evidence'))
+      .toHaveTextContent('Available once the running evaluation finishes');
+    fireEvent.click(button);
+    expect(regradeEvaluation).not.toHaveBeenCalled();
+  });
+
+  test('a re-read that changed nothing says so in words', async () => {
+    // Three zeroes is the commonest outcome and the easiest to read as a broken
+    // button, so the empty result is stated rather than counted.
+    vi.mocked(fetchEvaluationDetail).mockResolvedValue(detail(
+      { dimensions: [], skipped: [], speed: 'scored', blocked: null, estimatedRequests: 0 },
+      [scoredRow()],
+    ));
+    vi.mocked(regradeEvaluation).mockResolvedValue({
+      ok: true,
+      outcome: { rescored: [{ dimension: 'coding', before: 91.4, after: 91.4 }], withdrawn: 0, unreplayable: 0 },
+    });
+    render(<EvaluateModal model={model} onClose={() => {}} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /re-read stored evidence/i }));
+
+    expect(await screen.findByTestId('evaluate-reread')).toHaveTextContent('Nothing changed');
   });
 
   test('a refused re-read is shown rather than reported as done', async () => {
@@ -163,7 +206,10 @@ describe('EvaluateModal', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /re-read stored evidence/i }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('an evaluation is running');
+    // The raw machine reason was indistinguishable from nothing happening.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('A paid evaluation is running right now');
+    expect(alert).toHaveTextContent('half a run');
     expect(screen.queryByTestId('evaluate-reread')).not.toBeInTheDocument();
   });
 

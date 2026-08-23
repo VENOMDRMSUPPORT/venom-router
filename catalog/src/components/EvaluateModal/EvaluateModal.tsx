@@ -52,6 +52,21 @@ const BLOCKED_EXPLANATIONS: Record<string, string> = {
     + 'loaded at all.',
 };
 
+/**
+ * Why a re-read was refused, in words that name the fix.
+ *
+ * The route answers with a short machine reason, and showing that raw put "an
+ * evaluation is running" on screen — lower case, no punctuation, indistinguishable
+ * from nothing having happened. The same lesson as `missing_credentials` above: a
+ * message that names the symptom and not the remedy gets read as a dead button.
+ */
+const REREAD_REFUSALS: Record<string, string> = {
+  'an evaluation is running': 'A paid evaluation is running right now. Re-reading a dimension while it is '
+    + 'being measured would publish a number from half a run, so this waits until the queue is empty.',
+  'no resolved identity to re-read': 'This offer has no proven model identity, so there is no body of '
+    + 'evidence to re-read.',
+};
+
 const label = (dimension: string) => DIMENSION_LABELS[dimension] ?? dimension;
 
 /**
@@ -91,6 +106,8 @@ export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: ()
   const queued = (state?.queue ?? []).some(
     (job) => job.providerId === model.providerId && job.modelId === model.modelId,
   );
+  /** Any job at all, not just this offer's: the re-read route refuses on either. */
+  const runnerBusy = state !== null && state.state !== 'idle';
 
   const refreshState = useCallback(async () => {
     try {
@@ -161,12 +178,18 @@ export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: ()
     setReread(null);
     const result = await regradeEvaluation(model.providerId, model.modelId);
     if (!result.ok) {
-      setError(result.reason);
+      setError(REREAD_REFUSALS[result.reason] ?? result.reason);
     } else {
       const changed = result.outcome.rescored.filter(
         (row) => row.before === null || Math.abs(row.after - row.before) >= 0.05,
       ).length;
-      setReread(`Re-read ${result.outcome.rescored.length}; ${changed} changed; ${result.outcome.withdrawn} withdrawn.`);
+      // "0 changed" is the commonest outcome and the easiest to mistake for a
+      // broken button, so it says so in words rather than in three zeroes.
+      setReread(changed === 0 && result.outcome.withdrawn === 0
+        ? `Re-read ${result.outcome.rescored.length} dimension(s). Nothing changed — every stored response `
+          + 'already reads the same under the current grader.'
+        : `Re-read ${result.outcome.rescored.length} dimension(s): ${changed} changed`
+          + `${result.outcome.withdrawn > 0 ? `, ${result.outcome.withdrawn} withdrawn` : ''}.`);
       reload();
       try {
         setDetail(await fetchEvaluationDetail(model.providerId, model.modelId));
@@ -287,11 +310,23 @@ export function EvaluateModal({ model, onClose }: { model: ApiModel; onClose: ()
                     </li>
                   ))}
                 </ul>
-                <button type="button" className={styles.start} onClick={() => void onReread()} disabled={busy}>
+                <button
+                  type="button"
+                  className={styles.start}
+                  onClick={() => void onReread()}
+                  disabled={busy || runnerBusy}
+                  title={runnerBusy ? 'Waits for the running evaluation to finish' : undefined}
+                >
                   Re-read stored evidence
                 </button>
                 <p className={styles.cost}>
-                  No paid requests: it re-reads responses this catalog already bought.
+                  {runnerBusy
+                    // Refusing the click before it is made. The modal already polls
+                    // the runner, so letting it be clicked into a 409 was a dead
+                    // button that looked like a bug rather than a rule.
+                    ? 'Available once the running evaluation finishes — re-reading a dimension mid-measurement '
+                      + 'would publish a number from half a run.'
+                    : 'No paid requests: it re-reads responses this catalog already bought.'}
                 </p>
               </div>
             )}
