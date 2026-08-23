@@ -530,31 +530,67 @@ const IDENTITY_NOTE: Record<
 /**
  * How much of this row's story is not visible in the row itself.
  *
- * The count is the point: a row with three conflicts and two refused identity
- * candidates should not look the same as one with a clean provenance trail, or
- * nobody will ever open either.
+ * ONE rule, because five ad-hoc terms is what kept getting this wrong: the flag
+ * means A HUMAN STILL HAS TO DO SOMETHING. It was a sum of everything the row
+ * knew about itself, so five separate categories each took a turn being reported
+ * as "a model with conflicts" — resolved disputes, a pending external benchmark,
+ * and finally refused identity candidates, on rows with no open conflict at all.
+ *
+ * Outstanding, so it is flagged and counted:
+ *  - an OPEN dispute: nobody with standing has answered it
+ *  - a missing fact this catalog is supposed to hold
+ *  - `source_incomplete`: an operational fact is short
+ *  - an incomplete overall score
+ *
+ * Settled or waiting on the world, so it is named in the tooltip and left in the
+ * panel, but never flagged:
+ *  - a RESOLVED dispute — a recorded verdict is finished work
+ *  - a refused identity candidate — a refusal IS the work, decided with evidence
+ *  - `awaiting_external_benchmark` — nobody has published a benchmark yet, and
+ *    the offer is fully scored without one
+ *
+ * The button is on every row regardless, so the provenance trail is always one
+ * click away. A badge that cries wolf teaches the reader to ignore it, which
+ * costs exactly the rows that do need opening.
  */
 function EvidenceToggle({ model, open, onToggle }: { model: ApiModel; open: boolean; onToggle: () => void }) {
-  const resolutionFlag = model.resolution.state === 'complete' ? 0 : 1;
-  const scoreFlag = model.overallScore.status === 'complete' ? 0 : 1;
-  const flags = model.conflicts.length + model.rejectedCandidates.length + model.missingFacts.length + resolutionFlag + scoreFlag;
+  const openConflicts = model.conflicts.filter((c) => c.status !== 'resolved').length;
+  const settledConflicts = model.conflicts.length - openConflicts;
+  const outstanding =
+    openConflicts
+    + model.missingFacts.length
+    + (model.resolution.state === 'source_incomplete' ? 1 : 0)
+    + (model.overallScore.status === 'complete' ? 0 : 1);
+
+  const describe = (): string => {
+    const needs = [
+      ...(model.missingFacts.length ? [`${model.missingFacts.length} missing`] : []),
+      ...(openConflicts ? [`${openConflicts} conflicted`] : []),
+      ...(model.resolution.state === 'source_incomplete' ? ['identity source_incomplete'] : []),
+      ...(model.overallScore.status !== 'complete' ? [`score ${model.overallScore.status}`] : []),
+    ];
+    const decided = [
+      ...(settledConflicts ? [`${settledConflicts} settled`] : []),
+      ...(model.rejectedCandidates.length ? [`${model.rejectedCandidates.length} refused candidate(s)`] : []),
+    ];
+    if (!needs.length && !decided.length) return 'Inspect evidence & provenance trail';
+    if (!needs.length) return `Inspect evidence: ${decided.join(', ')} — nothing outstanding`;
+    return `Inspect evidence: ${[...needs, ...decided].join(', ')}`;
+  };
+
   return (
     <button
       type="button"
-      className={flags > 0 ? styles.evidenceBtnFlagged : styles.evidenceBtn}
+      className={outstanding > 0 ? styles.evidenceBtnFlagged : styles.evidenceBtn}
       onClick={onToggle}
       aria-expanded={open}
-      title={
-        flags > 0
-          ? `Inspect evidence: ${model.missingFacts.length} missing, ${model.conflicts.length} conflicted, ${model.rejectedCandidates.length} refused candidate(s)`
-          : 'Inspect evidence & provenance trail'
-      }
+      title={describe()}
       aria-label={`Inspect evidence for ${model.modelId}`}
       data-testid={`evidence-toggle-${model.modelId}`}
     >
       <LuFileSearch size={13} className={styles.btnIcon} />
       <span className={styles.srOnly}>{open ? 'hide' : 'why'}</span>
-      {flags > 0 && <span className={styles.evidenceCount}>{flags}</span>}
+      {outstanding > 0 && <span className={styles.evidenceCount}>{outstanding}</span>}
     </button>
   );
 }

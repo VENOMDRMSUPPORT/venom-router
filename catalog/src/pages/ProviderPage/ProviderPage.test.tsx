@@ -900,3 +900,199 @@ describe('the bare api id is not printed when the row already shows it', () => {
     expect(screen.getByText('tencent/hy3')).toBeInTheDocument();
   });
 });
+
+describe('the evidence badge counts outstanding work, not settled verdicts', () => {
+  const scored = (over: Record<string, unknown> = {}) => staleWireModel({
+    modelScore: {
+      value: 65.79, display: '65.8%', methodologyVersion: 'model-score-v1',
+      qualityWeight: 0.7, operationalWeight: 0.3, operationalPrecision: 0,
+      uncertainty: 0.035, bound: null, reason: null,
+      qualityEvidenceLevel: 'measured', operationalCoverage: 'complete',
+    },
+    modelRank: 9,
+    overallScore: {
+      value: 65.79, display: '65.8%', status: 'complete', qualityScore: 67.5, operationalScore: 61.8,
+      qualityCoverage: { scored: 5, applicable: 5, percent: 100 },
+      overallCoverage: { scored: 7, applicable: 7, percent: 100 },
+      includedDimensions: ['coding'], excludedDimensions: [], uncertainty: 1, reasons: [],
+      methodologyVersion: 'overall-score-v1', computedAt: '2026-08-19T10:00:00.000Z',
+    },
+    overallRank: 9,
+    resolution: { state: 'complete', reasons: [], firstDetectedAt: null, lastAttemptAt: null, nextAttemptAt: null },
+    missingFacts: [],
+    rejectedCandidates: [],
+    ...over,
+  });
+
+  const structuredConflict = (status: 'open' | 'resolved') => ([{
+    field: 'structured',
+    sides: [{ value: false, by: 'qiniu-ai/gpt-oss-20b' }, { value: true, by: 'nvidia/openai/gpt-oss-20b' }],
+    conflictType: 'source_disagreement',
+    status,
+    resolvedTo: status === 'resolved' ? 'true' : null,
+    detectedAt: '2026-08-23T16:28:53.315Z',
+  }]);
+
+  test('a resolved conflict raises no flag', async () => {
+    // `ollama-cloud/gpt-oss:20b` kept an amber "1" after its dispute was
+    // answered — `structured: true`, cited to OpenRouter's supported_parameters.
+    // The count read `conflicts.length` regardless of status, so a recorded
+    // verdict looked exactly like an outstanding problem.
+    stubStaleService([scored({ modelId: 'gpt-oss:20b', conflicts: structuredConflict('resolved') })]);
+    renderProviderPage();
+
+    const toggle = await screen.findByTestId('evidence-toggle-gpt-oss:20b');
+    expect(toggle.textContent).not.toMatch(/\d/);
+    // The tooltip names the verdict rather than falling back to the generic
+    // line: there IS something to read here, it just needs nobody's attention.
+    expect(toggle.getAttribute('title')).toMatch(/1 settled — nothing outstanding/);
+  });
+
+  test('an open conflict still raises one', async () => {
+    // The other half: a real dispute must keep its flag, or the badge stops
+    // being worth looking at.
+    stubStaleService([scored({ modelId: 'qwen3.5-plus', conflicts: structuredConflict('open') })]);
+    renderProviderPage();
+
+    const toggle = await screen.findByTestId('evidence-toggle-qwen3.5-plus');
+    expect(toggle.textContent).toMatch(/1/);
+    expect(toggle.getAttribute('title')).toMatch(/1 conflicted/);
+  });
+});
+
+describe('waiting on the world is not the same as work to do', () => {
+  const scored = (over: Record<string, unknown> = {}) => staleWireModel({
+    modelScore: {
+      value: 65.79, display: '65.8%', methodologyVersion: 'model-score-v1',
+      qualityWeight: 0.7, operationalWeight: 0.3, operationalPrecision: 0,
+      uncertainty: 0.035, bound: null, reason: null,
+      qualityEvidenceLevel: 'measured', operationalCoverage: 'complete',
+    },
+    modelRank: 9,
+    overallScore: {
+      value: 65.79, display: '65.8%', status: 'complete', qualityScore: 67.5, operationalScore: 61.8,
+      qualityCoverage: { scored: 5, applicable: 5, percent: 100 },
+      overallCoverage: { scored: 7, applicable: 7, percent: 100 },
+      includedDimensions: ['coding'], excludedDimensions: [], uncertainty: 1, reasons: [],
+      methodologyVersion: 'overall-score-v1', computedAt: '2026-08-19T10:00:00.000Z',
+    },
+    overallRank: 9,
+    conflicts: [], missingFacts: [], rejectedCandidates: [],
+    ...over,
+  });
+
+  test('awaiting an external benchmark raises no flag', async () => {
+    // Four offers wore an amber flag for this — `big-pickle`, both `Ox Alpha
+    // Free` rows and `deepseek-v4-flash-vision-exp` — and were read as having
+    // conflicts. This state is reached only when the sole outstanding reasons are
+    // `missing_vq`/`missing_vo`: nobody has published a benchmark for the model
+    // yet. There is no work here for the owner, and the offer is fully scored.
+    stubStaleService([scored({
+      modelId: 'big-pickle',
+      resolution: { state: 'awaiting_external_benchmark', reasons: ['missing_vq'], firstDetectedAt: null, lastAttemptAt: null, nextAttemptAt: null },
+    })]);
+    renderProviderPage();
+
+    const toggle = await screen.findByTestId('evidence-toggle-big-pickle');
+    expect(toggle.textContent).not.toMatch(/\d/);
+  });
+
+  test('an incomplete source still raises one', async () => {
+    // The other half. `source_incomplete` means an operational fact this catalog
+    // is supposed to have is missing, which IS work to do.
+    stubStaleService([scored({
+      modelId: 'qwen3.5-plus',
+      resolution: { state: 'source_incomplete', reasons: ['missing_structured'], firstDetectedAt: null, lastAttemptAt: null, nextAttemptAt: null },
+    })]);
+    renderProviderPage();
+
+    const toggle = await screen.findByTestId('evidence-toggle-qwen3.5-plus');
+    expect(toggle.textContent).toMatch(/1/);
+    expect(toggle.getAttribute('title')).toMatch(/source_incomplete/);
+  });
+});
+
+describe('the evidence flag means a human still has to do something', () => {
+  const base = (over: Record<string, unknown> = {}) => staleWireModel({
+    modelScore: {
+      value: 65.79, display: '65.8%', methodologyVersion: 'model-score-v1',
+      qualityWeight: 0.7, operationalWeight: 0.3, operationalPrecision: 0,
+      uncertainty: 0.035, bound: null, reason: null,
+      qualityEvidenceLevel: 'measured', operationalCoverage: 'complete',
+    },
+    modelRank: 9,
+    overallScore: {
+      value: 65.79, display: '65.8%', status: 'complete', qualityScore: 67.5, operationalScore: 61.8,
+      qualityCoverage: { scored: 5, applicable: 5, percent: 100 },
+      overallCoverage: { scored: 7, applicable: 7, percent: 100 },
+      includedDimensions: ['coding'], excludedDimensions: [], uncertainty: 1, reasons: [],
+      methodologyVersion: 'overall-score-v1', computedAt: '2026-08-19T10:00:00.000Z',
+    },
+    overallRank: 9,
+    resolution: { state: 'complete', reasons: [], firstDetectedAt: null, lastAttemptAt: null, nextAttemptAt: null },
+    conflicts: [], missingFacts: [], rejectedCandidates: [],
+    ...over,
+  });
+
+  const refusal = (candidate: string) => ({
+    candidate, verdict: 'candidate_rejected', why: 'context mismatch of roughly 4x',
+    evidence: ['reference index context_length: 1000000'], source: 'identity_overlay',
+    sourceRef: 'x', sourceUrl: null, evidenceState: 'declared_policy',
+    resolverVersion: 'identity-rejections-v1', candidateMeta: {},
+    reviewedAt: '2026-08-18', recordedAt: '2026-08-23T16:36:54.979Z',
+  });
+
+  test('a refused identity candidate is a decision, not a task', async () => {
+    // The fifth report of "models with conflicts" on rows that had none. Both
+    // survivors were flagged purely by refusals: `cline-pass/glm-5.3` had one and
+    // `qwen3.5-plus` two, with zero open conflicts, nothing missing and a
+    // complete score. A refusal is finished work, recorded with its evidence —
+    // the reader may want to read it, but nobody has to act on it.
+    stubStaleService([base({ modelId: 'cline-pass/glm-5.3', rejectedCandidates: [refusal('z-ai/glm-5.3-0722')] })]);
+    renderProviderPage();
+
+    const toggle = await screen.findByTestId('evidence-toggle-cline-pass/glm-5.3');
+    expect(toggle.textContent).not.toMatch(/\d/);
+    // Still reachable, and the tooltip says what is there to read.
+    expect(toggle.getAttribute('title')).toMatch(/1 refused candidate/);
+  });
+
+  test('a resolved conflict is likewise readable but not flagged', async () => {
+    stubStaleService([base({
+      modelId: 'gpt-oss:20b',
+      conflicts: [{
+        field: 'structured', sides: [{ value: false, by: 'a/m' }, { value: true, by: 'b/m' }],
+        conflictType: 'source_disagreement', status: 'resolved', resolvedTo: 'true',
+        detectedAt: '2026-08-23T16:28:53.315Z',
+      }],
+    })]);
+    renderProviderPage();
+
+    const toggle = await screen.findByTestId('evidence-toggle-gpt-oss:20b');
+    expect(toggle.textContent).not.toMatch(/\d/);
+    expect(toggle.getAttribute('title')).toMatch(/1 settled/);
+  });
+
+  test('a missing fact IS a task and keeps its flag', async () => {
+    stubStaleService([base({ modelId: 'needs-work', missingFacts: ['structured'] })]);
+    renderProviderPage();
+
+    const toggle = await screen.findByTestId('evidence-toggle-needs-work');
+    expect(toggle.textContent).toMatch(/1/);
+    expect(toggle.getAttribute('title')).toMatch(/1 missing/);
+  });
+
+  test('a decision alongside a real task does not hide the task', async () => {
+    stubStaleService([base({
+      modelId: 'both',
+      missingFacts: ['structured'],
+      rejectedCandidates: [refusal('a'), refusal('b')],
+    })]);
+    renderProviderPage();
+
+    const toggle = await screen.findByTestId('evidence-toggle-both');
+    expect(toggle.textContent).toMatch(/1/);
+    expect(toggle.textContent).not.toMatch(/3/);
+    expect(toggle.getAttribute('title')).toMatch(/2 refused candidate/);
+  });
+});
