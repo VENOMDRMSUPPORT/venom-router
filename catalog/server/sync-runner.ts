@@ -79,15 +79,15 @@ export interface RunnerConfig {
   /** Targeted passes wait for a full sync for at most this long. */
   resolutionLockWaitMs?: number;
   /**
-   * What to do about the offers a run discovered.
+   * What to do about the offers the catalog now holds.
    *
    * A callback rather than an EvaluationRunner reference, so this class stays
-   * ignorant of evaluation policy and budgets — it reports what appeared, and
+   * ignorant of evaluation policy and budgets — it reports what is there, and
    * the composition root decides what that costs. Both entry points into a sync
    * (`POST /v1/sync` and the scheduler) go through `run`, so the decision is
    * made in exactly one place instead of at each caller.
    */
-  onRosterAdded?: (offers: AutoEvaluationOffer[]) => AutoEvaluationReport | undefined;
+  onOffersSettled?: (offers: AutoEvaluationOffer[]) => AutoEvaluationReport | undefined;
 }
 
 export class SyncRunner {
@@ -171,16 +171,25 @@ export class SyncRunner {
       const finishedAt = currentDate().toISOString();
       beginResolutionWindow(db, finishedAt);
       this.config.onSnapshot?.(db);
-      // Only what a provider whose refresh actually succeeded reported. A
-      // quarantined or failed provider's roster is not trusted enough to write
-      // a catalog row from, so it is certainly not trusted enough to spend a
-      // provider request on.
-      const discovered: AutoEvaluationOffer[] = result.providers
-        .filter((provider) => provider.outcome === 'ok')
-        .flatMap((provider) => provider.added.map((modelId) => ({ providerId: provider.provider, modelId })));
+      // Every active offer from a provider whose refresh actually succeeded, not
+      // only the ones this run added. A quarantined or failed provider's roster
+      // is not trusted enough to write a catalog row from, so it is certainly
+      // not trusted enough to spend a provider request on — but a provider that
+      // reported fine may still be holding an offer nobody ever measured, and
+      // restricting this to new arrivals left four such dimensions unmeasured
+      // indefinitely. `status = 'active'` only: a missing model is one the
+      // provider is not currently serving, so a request for it would be spent
+      // discovering that again.
+      const healthy = new Set(result.providers.filter((provider) => provider.outcome === 'ok').map((provider) => provider.provider));
+      const settled: AutoEvaluationOffer[] = healthy.size === 0 ? [] : (
+        db.prepare(`SELECT provider_id, model_id FROM models WHERE status = 'active' ORDER BY provider_id, model_id`)
+          .all() as unknown as { provider_id: string; model_id: string }[]
+      )
+        .filter((row) => healthy.has(row.provider_id))
+        .map((row) => ({ providerId: row.provider_id, modelId: row.model_id }));
       const outcome: SyncOutcome = {
         startedAt, finishedAt, providers: result.providers, scoring: result.scoring,
-        autoEvaluation: this.config.onRosterAdded?.(discovered),
+        autoEvaluation: this.config.onOffersSettled?.(settled),
       };
       this.last = outcome;
       return outcome;

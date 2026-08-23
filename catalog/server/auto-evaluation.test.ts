@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { openDb } from '../db/index.ts';
 import type { EvaluationPlan } from '../sync/evaluation/plan.ts';
 import {
-  DEFAULT_MAX_REQUESTS_PER_RUN,
+  DEFAULT_RETRY_COOLDOWN_HOURS,
+  lastAttemptReader,
   MAX_REQUESTS_CEILING,
   autoEvaluate,
   autoEvaluationConfig,
   type AutoEvaluationConfig,
   type AutoEvaluationDeps,
 } from './auto-evaluation.ts';
+
+const HOUR = 60 * 60 * 1000;
 
 function plan(overrides: Partial<EvaluationPlan> = {}): EvaluationPlan {
   return {
@@ -46,7 +50,7 @@ function queue(plans: Record<string, EvaluationPlan>, refuse: Set<string> = new 
 }
 
 const config = (overrides: Partial<AutoEvaluationConfig> = {}): AutoEvaluationConfig =>
-  ({ enabled: true, maxRequestsPerRun: 1_000, ...overrides });
+  ({ enabled: true, maxRequestsPerRun: null, retryCooldownMs: 0, ...overrides });
 
 const offers = (...modelIds: string[]) => modelIds.map((modelId) => ({ providerId: 'p', modelId }));
 
@@ -59,15 +63,28 @@ describe('autoEvaluationConfig', () => {
     assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION: 'yes' }).enabled, true);
   });
 
-  test('the budget is clamped, and nonsense falls back to the default rather than to zero', () => {
-    assert.equal(autoEvaluationConfig({}).maxRequestsPerRun, DEFAULT_MAX_REQUESTS_PER_RUN);
+  test('there is no request ceiling unless one is asked for', () => {
+    // The default the owner asked for: the goal is a complete catalog, and a
+    // ceiling that stops short of it only defers the same spend to the next run.
+    assert.equal(autoEvaluationConfig({}).maxRequestsPerRun, null);
+    assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_MAX_REQUESTS: '' }).maxRequestsPerRun, null);
+    // A value that does not parse is treated as absent, not as a guessed cap:
+    // inventing one from a typo would stop short of a complete catalog silently.
+    assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_MAX_REQUESTS: 'lots' }).maxRequestsPerRun, null);
     assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_MAX_REQUESTS: '500' }).maxRequestsPerRun, 500);
+    assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_MAX_REQUESTS: '0' }).maxRequestsPerRun, 0);
     assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_MAX_REQUESTS: '-5' }).maxRequestsPerRun, 0);
-    assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_MAX_REQUESTS: '999999' }).maxRequestsPerRun, MAX_REQUESTS_CEILING);
-    assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_MAX_REQUESTS: 'lots' }).maxRequestsPerRun, DEFAULT_MAX_REQUESTS_PER_RUN);
+    assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_MAX_REQUESTS: '99999999' }).maxRequestsPerRun, MAX_REQUESTS_CEILING);
   });
 
-  test('a zero budget stops the spending without turning the reporting off', () => {
+  test('the retry cooldown defaults to a day and is tunable in hours', () => {
+    assert.equal(autoEvaluationConfig({}).retryCooldownMs, DEFAULT_RETRY_COOLDOWN_HOURS * HOUR);
+    assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_RETRY_HOURS: '6' }).retryCooldownMs, 6 * HOUR);
+    // Zero is a legitimate instruction: retry on every sync, no guard at all.
+    assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_RETRY_HOURS: '0' }).retryCooldownMs, 0);
+  });
+
+  test('an explicit zero budget stops the spending without turning the reporting off', () => {
     const { deps, enqueued } = queue({ a: plan({ modelId: 'a', estimatedRequests: 63 }) });
     const report = autoEvaluate({ evaluations: deps, config: config({ maxRequestsPerRun: 0 }), log: () => {} }, offers('a'));
 
@@ -193,5 +210,152 @@ describe('autoEvaluate', () => {
     assert.deepEqual(report.enqueued, []);
     assert.deepEqual(report.skipped, []);
     assert.deepEqual(logged, []);
+  });
+});
+
+describe('the retry cooldown', () => {
+  const NOW = '2026-08-23T12:00:00.000Z';
+  const clock = () => new Date(NOW);
+  const ago = (hours: number) => new Date(Date.parse(NOW) - hours * HOUR).toISOString();
+
+  test('an identity measured inside the window is left alone', () => {
+    /**
+     * Not hypothetical, and the reason this guard exists at all. With no request
+     * ceiling, a sweep re-plans every offer on every sync — and
+     * `x-ai/grok-4.5`/vision was attempted on 2026-08-23 at 09:45, returning
+     * `insufficient_evidence: incomplete_valid_scenarios`, which leaves its plan
+     * incomplete. Nothing else would stop a six-hourly schedule from re-buying
+     * that dimension four times a day, forever, for a verdict that asking again
+     * immediately does not produce.
+     */
+    const { deps, enqueued } = queue({ grok: plan({ modelId: 'grok', identityId: 'x-ai/grok-4.5', estimatedRequests: 63 }) });
+    const logged: string[] = [];
+    const report = autoEvaluate({
+      evaluations: deps,
+      config: config({ retryCooldownMs: 24 * HOUR }),
+      lastAttemptAt: () => ago(2),
+      now: clock,
+      log: (message) => logged.push(message),
+    }, offers('grok'));
+
+    assert.deepEqual(enqueued, []);
+    assert.equal(report.committedRequests, 0);
+    assert.deepEqual(report.skipped.map((entry) => entry.reason), ['retry_cooldown']);
+    // Held back, but never silently: a quiet hold reads as "already measured".
+    assert.ok(logged.some((message) => message.includes('cooling down') && message.includes('grok')));
+  });
+
+  test('the same identity is retried once the window has passed', () => {
+    const { deps, enqueued } = queue({ grok: plan({ modelId: 'grok', identityId: 'x-ai/grok-4.5', estimatedRequests: 63 }) });
+    const report = autoEvaluate({
+      evaluations: deps,
+      config: config({ retryCooldownMs: 24 * HOUR }),
+      lastAttemptAt: () => ago(25),
+      now: clock,
+      log: () => {},
+    }, offers('grok'));
+
+    assert.deepEqual(enqueued, ['grok']);
+    assert.equal(report.committedRequests, 63);
+  });
+
+  test('an identity never measured is never held back', () => {
+    const { deps, enqueued } = queue({ fresh: plan({ modelId: 'fresh', identityId: 'vendor/fresh', estimatedRequests: 401 }) });
+    autoEvaluate({
+      evaluations: deps,
+      config: config({ retryCooldownMs: 24 * HOUR }),
+      lastAttemptAt: () => null,
+      now: clock,
+      log: () => {},
+    }, offers('fresh'));
+
+    assert.deepEqual(enqueued, ['fresh']);
+  });
+
+  test('a zero cooldown retries every sync, and a caller that cannot answer is not blocked', () => {
+    const build = () => queue({ a: plan({ modelId: 'a', identityId: 'vendor/a', estimatedRequests: 63 }) });
+
+    const zero = build();
+    autoEvaluate({ evaluations: zero.deps, config: config({ retryCooldownMs: 0 }), lastAttemptAt: () => ago(0.1), now: clock, log: () => {} }, offers('a'));
+    assert.deepEqual(zero.enqueued, ['a'], 'a zero cooldown means no guard');
+
+    const unanswerable = build();
+    autoEvaluate({ evaluations: unanswerable.deps, config: config({ retryCooldownMs: 24 * HOUR }), now: clock, log: () => {} }, offers('a'));
+    assert.deepEqual(unanswerable.enqueued, ['a'], 'no reader means no cooldown, not a silent hold');
+  });
+});
+
+describe('sweeping a whole catalog', () => {
+  test('a complete catalog costs nothing and says so', () => {
+    // The steady state once this has caught up: every offer planned, nothing to
+    // buy. It has to be cheap, and it must not read as a failure.
+    const covered = ['a', 'b', 'c'].reduce((all, modelId) => ({ ...all, [modelId]: plan({ modelId, estimatedRequests: 0 }) }), {});
+    const { deps, enqueued } = queue(covered);
+    const logged: string[] = [];
+    const report = autoEvaluate({ evaluations: deps, config: config(), log: (message) => logged.push(message) }, offers('a', 'b', 'c'));
+
+    assert.deepEqual(enqueued, []);
+    assert.equal(report.committedRequests, 0);
+    assert.equal(report.skipped.filter((entry) => entry.reason === 'already_covered').length, 3);
+    assert.ok(logged.some((message) => message.includes('nothing to measure')));
+  });
+
+  test('with no ceiling every incomplete offer is queued, however many there are', () => {
+    const plans = Object.fromEntries(
+      Array.from({ length: 12 }, (_, index) => [`m${index}`, plan({ modelId: `m${index}`, identityId: `vendor/m${index}`, estimatedRequests: 401 })]),
+    );
+    const { deps, enqueued } = queue(plans);
+    const report = autoEvaluate({ evaluations: deps, config: config(), log: () => {} }, offers(...Object.keys(plans)));
+
+    assert.equal(enqueued.length, 12);
+    assert.equal(report.committedRequests, 12 * 401);
+    assert.deepEqual(report.skipped, [], 'nothing may be deferred when there is no ceiling');
+  });
+});
+
+describe('lastAttemptReader', () => {
+  test('reads the newest attempt for the identity from evaluation_runs', () => {
+    // Anchored to what the service actually did, rather than to a counter this
+    // module would have to keep in agreement with it.
+    const db = openDb(':memory:');
+    try {
+      // provider_id and model_id stay NULL: the table carries a composite
+      // foreign key into `models`, and the reader keys on the identity anyway.
+      const insert = (identityId: string, dimension: string, startedAt: string, finishedAt: string | null, status: string) =>
+        db.prepare(`INSERT INTO evaluation_runs
+          (identity_id, dimension, run_kind, status, evaluator_version, rubric_version,
+           test_set_version, methodology_ver, region, independent_run_key, started_at, finished_at)
+          VALUES (?,?,'runtime',?,'v','r','t','m','region',?,?,?)`)
+          .run(identityId, dimension, status, `${identityId}:${dimension}:${startedAt}`, startedAt, finishedAt);
+
+      insert('x-ai/grok-4.5', 'coding', '2026-08-20T03:00:00.000Z', '2026-08-20T03:10:00.000Z', 'complete');
+      insert('x-ai/grok-4.5', 'vision', '2026-08-23T09:45:00.000Z', '2026-08-23T09:52:00.000Z', 'insufficient_evidence');
+      insert('other/model', 'coding', '2026-08-23T11:00:00.000Z', '2026-08-23T11:05:00.000Z', 'complete');
+
+      const read = lastAttemptReader(db);
+      // A failed attempt still counts as an attempt: the cooldown exists for
+      // exactly the dimension that keeps not producing a verdict.
+      assert.equal(read('x-ai/grok-4.5'), '2026-08-23T09:52:00.000Z');
+      assert.equal(read('other/model'), '2026-08-23T11:05:00.000Z');
+      assert.equal(read('never/measured'), null);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a run that never finished still counts, by its start time', () => {
+    // A service killed mid-evaluation leaves `finished_at` null. Ignoring the
+    // row would let the very next sync re-buy the dimension it was measuring.
+    const db = openDb(':memory:');
+    try {
+      db.prepare(`INSERT INTO evaluation_runs
+        (identity_id, dimension, run_kind, status, evaluator_version, rubric_version,
+         test_set_version, methodology_ver, region, independent_run_key, started_at, finished_at)
+        VALUES ('stranded/one','coding','runtime','running','v','r','t','m','region','stranded','2026-08-23T11:30:00.000Z',NULL)`).run();
+
+      assert.equal(lastAttemptReader(db)('stranded/one'), '2026-08-23T11:30:00.000Z');
+    } finally {
+      db.close();
+    }
   });
 });

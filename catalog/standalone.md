@@ -59,22 +59,31 @@ Roster alerts are **grouped** by change class, provider, observation time and re
 
 A roster alert stays a candidate for seven days after the event, matching the dashboard's default change window, then resolves on its own. Acknowledging one removes it from the open list immediately without waiting for the window to close. Metadata changes — price, context, capability, score movement — are deliberately **not** alerts; they are reported on the change feed, because an alert list that reports everything reports nothing.
 
-## Automatic evaluation of newly discovered models
+## Automatic evaluation
 
-A sync that discovers a new offer plans and queues its measurement in the same run, under a request budget. Only providers whose refresh returned `ok` contribute offers: a quarantined roster is not trusted enough to write a catalog row from, so it is not trusted enough to spend a provider request on.
+After every sync, each **active** offer is re-planned and queued if anything measurable is still missing. The sweep is not restricted to what the run just discovered: that restriction left an already-published offer with an unmeasured dimension unmeasured forever, because nothing asked about it again. The plan is the filter — an offer with nothing left to measure costs nothing and reports `already_covered`, so a sweep over a complete catalog is pure database reads.
+
+Only providers whose refresh returned `ok` contribute offers, and only rows with `status = 'active'`. A quarantined roster is not trusted enough to write a catalog row from, so it is not trusted enough to spend a provider request on; a `missing` model is one the provider is not currently serving, so a request for it would be spent rediscovering that.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CATALOG_AUTO_EVALUATION` | on | Set to `false` to stop queueing automatically. Any other value leaves it on, so a typo cannot silently stop measurement. |
-| `CATALOG_AUTO_EVALUATION_MAX_REQUESTS` | `1200` | Provider requests one sync run may commit to. Clamped to `0`–`20000`. |
+| `CATALOG_AUTO_EVALUATION` | on | Set to `false` to stop queueing. Any other value leaves it on, so a typo cannot silently stop measurement. |
+| `CATALOG_AUTO_EVALUATION_MAX_REQUESTS` | *(none)* | Request ceiling per sync. **Absent means no ceiling** — the goal is a complete catalog, and a ceiling that stops short of it only defers the same spend. A value that does not parse is treated as absent for the same reason. `0` spends nothing while leaving the reporting intact. |
+| `CATALOG_AUTO_EVALUATION_RETRY_HOURS` | `24` | How long an identity is left alone after a measurement attempt. `0` disables the guard. |
 
-The budget is denominated in requests because that is the unit `planEvaluation` computes and the Evaluate modal already shows before a click. A brand-new identity with every dimension unmeasured plans six dimensions at 63 requests plus a 23-request speed run — 401 — so the default buys roughly three per run.
+### Why there is a retry cooldown even with no ceiling
 
-Offers are bought cheapest-first, so a budget buys the most coverage it can rather than being consumed by the single most expensive candidate. The ordering is stable, so two runs over the same roster make the same choices. Every offer not queued is named in the run outcome with a typed reason: a `blocked` plan reports the planner's own reason (`missing_credentials`, `consent_required`, `identity_unresolved`, `model_not_found`), an offer of an already-measured identity reports `already_covered` and costs nothing, and anything the budget could not cover reports `over_budget` and is retried by the next run. `POST /v1/sync` returns this report in its response body as `autoEvaluation`.
+A plan stays incomplete when a dimension was attempted and produced no verdict. `x-ai/grok-4.5`/vision was attempted on 2026-08-23 at 09:45 and returned `insufficient_evidence: incomplete_valid_scenarios`; `xiaomi/mimo-v2.5-pro`/vision did the same at 10:21. With an uncapped sweep on a six-hourly schedule and nothing else in the way, those dimensions would be re-bought four times a day, indefinitely, for a verdict that asking again immediately does not produce.
 
-Automatic queueing produces full dimension **coverage**, not a particular score. A measured value is whatever the evidence supports; a dimension the offer does not support is excluded from coverage rather than counted as satisfied.
+The cooldown is keyed on the **identity**, because that is what the evidence belongs to: two sellers of one model share both the measurement and the reason it is not yet worth re-buying. It reads `evaluation_runs`, so it is anchored to what the service actually did rather than to a separate counter — and an unfinished run counts by its start time, so a service killed mid-evaluation does not hand the next sync a free re-buy.
 
-The Dashboard is intentionally read-only with respect to catalog facts. Acknowledge, resolve, and reopen actions change only the operational alert ledger; they never change provider data, model facts, scores, freshness, or the Catalog release metadata.
+### What "complete" means
+
+Full **coverage**, not a particular score: every *applicable* dimension has a verdict. A dimension the offer does not support is excluded from coverage rather than counted as unsatisfied. In the live catalog 22 of 38 identities lack a `vision` or `structuredOutput` score for exactly that reason — the models have no such capability, and testing one would produce a number with no meaning. Those identities are complete.
+
+Offers are queued cheapest-first. With no ceiling that does not change what gets bought, but it decides what reaches the provider first, so a run interrupted halfway has still closed as many dimensions as it could. The ordering is stable, so two runs over the same roster make the same choices.
+
+Every offer not queued is named with a typed reason: a `blocked` plan reports the planner's own reason (`missing_credentials`, `consent_required`, `identity_unresolved`, `model_not_found`), a fully covered offer reports `already_covered`, one inside its window reports `retry_cooldown`, and anything above a configured ceiling reports `over_budget` and is retried next run. `POST /v1/sync` returns the whole report as `autoEvaluation`.
 
 ## Active-alert notifications
 

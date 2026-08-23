@@ -20,7 +20,7 @@ import { evaluationCredentialReport } from '../sync/evaluation/provider-transpor
 import { reconcileAlertLedger, route } from './app.ts';
 import { writeSnapshot } from './snapshot.ts';
 import { deliverDueNotifications, notificationConfig } from './notifications.ts';
-import { autoEvaluate, autoEvaluationConfig } from './auto-evaluation.ts';
+import { autoEvaluate, autoEvaluationConfig, lastAttemptReader } from './auto-evaluation.ts';
 import type { ScoreProfile } from '../sync/score/venom-score.ts';
 import type { RejectionOverlay } from '../sync/identity-rejections.ts';
 import { CATALOG_API_PORT, CATALOG_BIND_HOST } from '../config/ports.ts';
@@ -99,10 +99,14 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
     // reviewed facts, the overlay is re-read from disk on every run, so a
     // reviewed declaration takes effect on the next sync without a restart.
     onSnapshot: writeSnapshot,
-    // A newly discovered offer is measured by the run that found it, under the
-    // request budget in `auto-evaluation.ts`. What the budget could not cover is
-    // reported, never dropped quietly.
-    onRosterAdded: (offers) => autoEvaluate({ evaluations, config: autoEvaluation }, offers),
+    // Every active offer is re-planned after a sync and measured if anything is
+    // still missing, under the policy in `auto-evaluation.ts`. Whatever it does
+    // not queue — covered, blocked, cooling down, over a ceiling — is reported
+    // rather than dropped quietly.
+    onOffersSettled: (offers) => autoEvaluate(
+      { evaluations, config: autoEvaluation, lastAttemptAt: lastAttemptReader(db) },
+      offers,
+    ),
   });
   const scheduler = startScheduler(runner);
   const startedAt = new Date().toISOString();
@@ -189,7 +193,10 @@ if (import.meta.filename === process.argv[1]) {
     console.log(`  GET  /v1/changes    POST /v1/sync`);
     console.log(`  scheduler: every ${app.scheduler.intervalMs / 3_600_000}h, next ${app.scheduler.nextRunAt()}`);
     console.log(`  notifications: ${deliveryConfig.enabled ? `webhook enabled (${deliveryConfig.webhookUrl})` : 'disabled'}`);
-    console.log(`  auto-evaluation: ${app.autoEvaluation.enabled ? `on, up to ${app.autoEvaluation.maxRequestsPerRun} requests per sync` : 'off'}`);
+    console.log(`  auto-evaluation: ${app.autoEvaluation.enabled
+      ? `on, ${app.autoEvaluation.maxRequestsPerRun === null ? 'no request ceiling' : `up to ${app.autoEvaluation.maxRequestsPerRun} requests per sync`}`
+        + `, ${app.autoEvaluation.retryCooldownMs / 3_600_000}h retry cooldown`
+      : 'off'}`);
     // Said at startup, not on the first click. What the evaluation path can see
     // is a property of THIS process's environment, and the only thing that used
     // to report it was a modal sentence naming no variable.

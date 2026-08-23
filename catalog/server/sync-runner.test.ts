@@ -176,3 +176,82 @@ describe('targeted resolution follow-up', () => {
     assert.equal(loadResolution(db, 'ollama-cloud', 'detail-needed')?.nextAttemptAt, null);
   });
 });
+
+describe('what a finished sync hands to the evaluation policy', () => {
+  test('every active offer is offered, not only the ones this run added', async () => {
+    /**
+     * The defect this closes. The hook used to receive `RunResult.added`, so an
+     * already-published offer with an unmeasured dimension was never asked about
+     * again — four such dimensions were sitting in the live catalog, and the only
+     * route to measuring them was a human clicking Evaluate.
+     *
+     * Proven across two runs: the second adds nothing, and must still offer the
+     * row the first one established.
+     */
+    const db = makeDb();
+    const handed: Array<Array<{ providerId: string; modelId: string }>> = [];
+    const runner = new SyncRunner({
+      db, profile: PROFILE, methodologyVersion: 'venom-score-v1', identityOverlay: {},
+      fetchJson: fakeFetchJson, detailFetchers: fakeDetailFetchers,
+      onOffersSettled: (offers) => { handed.push(offers); return undefined; },
+    });
+
+    const first = await runner.run();
+    assert.deepEqual(
+      first!.providers.find((p) => p.provider === 'ollama-cloud')?.added,
+      ['detail-needed'],
+      'the first run is the one that adds the row',
+    );
+    assert.deepEqual(handed[0], [{ providerId: 'ollama-cloud', modelId: 'detail-needed' }]);
+
+    const second = await runner.run();
+    assert.deepEqual(
+      second!.providers.find((p) => p.provider === 'ollama-cloud')?.added,
+      [],
+      'an unchanged refetch adds nothing — which is exactly when the old hook went silent',
+    );
+    assert.deepEqual(
+      handed[1],
+      [{ providerId: 'ollama-cloud', modelId: 'detail-needed' }],
+      'the offer must still be offered on a run that discovered nothing',
+    );
+  });
+
+  test('a provider whose refresh failed contributes no offers', async () => {
+    // A roster that is not trusted enough to write a catalog row from is not
+    // trusted enough to spend a provider request on either. The three empty
+    // rosters in the fake are quarantined by layer 3, so only ollama-cloud —
+    // the one provider that succeeded — may contribute.
+    const db = makeDb();
+    const handed: Array<Array<{ providerId: string; modelId: string }>> = [];
+    const runner = new SyncRunner({
+      db, profile: PROFILE, methodologyVersion: 'venom-score-v1', identityOverlay: {},
+      fetchJson: fakeFetchJson, detailFetchers: fakeDetailFetchers,
+      onOffersSettled: (offers) => { handed.push(offers); return undefined; },
+    });
+
+    const outcome = await runner.run();
+    const healthy = new Set(outcome!.providers.filter((p) => p.outcome === 'ok').map((p) => p.provider));
+    assert.ok(healthy.size < outcome!.providers.length, 'the fake must include at least one unhealthy provider');
+    assert.ok(handed[0].every((offer) => healthy.has(offer.providerId)));
+  });
+
+  test('the report a sync returns is the one the policy produced', async () => {
+    // It travels in the outcome so `POST /v1/sync` answers "and what will that
+    // cost" in the same response, rather than only in a log line.
+    const db = makeDb();
+    const report = {
+      enabled: true, maxRequestsPerRun: null, committedRequests: 401,
+      enqueued: [{ providerId: 'ollama-cloud', modelId: 'detail-needed', estimatedRequests: 401 }],
+      skipped: [],
+    };
+    const runner = new SyncRunner({
+      db, profile: PROFILE, methodologyVersion: 'venom-score-v1', identityOverlay: {},
+      fetchJson: fakeFetchJson, detailFetchers: fakeDetailFetchers,
+      onOffersSettled: () => report,
+    });
+
+    const outcome = await runner.run();
+    assert.deepEqual(outcome!.autoEvaluation, report);
+  });
+});
