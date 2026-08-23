@@ -143,6 +143,23 @@ describe('the change-history time window and deep links', () => {
   });
 });
 
+describe('the runtime settings panel', () => {
+  test('renders server-reported freshness, scheduler, and database settings', () => {
+    const runtimeHealth: HealthResponse = {
+      service: { status: 'up', databaseReadable: true, startedAt: null, syncInFlight: false, currentRunStartedAt: null, schedulerEnabled: true, nextScheduledRunAt: null },
+      catalog: { status: 'current', liveModels: 116, methodologyVersion: 'catalog-v3', staleAfterHours: 24, staleProviders: [], providers: [] },
+      lastSync: null,
+    };
+    catalogMock.current = { data: baseData(), error: null, loading: false, health: runtimeHealth, healthError: null, healthLoading: false, reload: vi.fn() };
+    renderDashboard();
+
+    expect(screen.getByRole('heading', { name: 'Catalog runtime settings' })).toBeInTheDocument();
+    expect(screen.getByText('24 hours')).toBeInTheDocument();
+    expect(screen.getByText('Enabled')).toBeInTheDocument();
+    expect(screen.getByText('Source: /v1/health')).toBeInTheDocument();
+  });
+});
+
 describe('the Dashboard status and empty-state experience', () => {
   test('shows operational catalog status and offers a clear action after a search', () => {
     catalogMock.current = { data: baseData(), error: null, loading: false };

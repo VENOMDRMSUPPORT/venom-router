@@ -623,6 +623,23 @@
 
 .emptyHint { margin-top: 8px; font-size: 0.82rem; color: var(--foreground-tertiary); }
 
+.settingsPanel {
+  margin: 0 0 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.settingsHeader { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px 10px; }
+.settingsTitle { margin: 2px 0 0; color: var(--foreground); font-size: 0.95rem; font-weight: 680; }
+.settingsSource { color: var(--foreground-tertiary); font-family: var(--font-mono); font-size: 0.68rem; }
+.settingsGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0 12px 12px; }
+.settingRow { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius); background: var(--background); }
+.settingRow dt { color: var(--foreground-tertiary); font-size: 0.67rem; }
+.settingRow dd { margin: 0; overflow: hidden; color: var(--foreground); font-family: var(--font-mono); font-size: 0.75rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.settingsState { padding: 14px 16px; border-top: 1px solid var(--border-subtle); color: var(--foreground-tertiary); font-size: 0.75rem; }
+
 .historyPanel {
   margin: 0 0 20px;
   border: 1px solid var(--border);
@@ -705,6 +722,8 @@
 .historyError { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--foreground-secondary); }
 
 @media (max-width: 760px) {
+  .settingsHeader { align-items: flex-start; flex-direction: column; }
+  .settingsGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .historyHeader { align-items: flex-start; flex-direction: column; }
   .historyHeaderActions { width: 100%; justify-content: space-between; }
   .releaseOrigin { margin-left: 0; }
@@ -1190,6 +1209,7 @@ th.num {
 }
 
 @media (max-width: 480px) {
+  .settingsGrid { grid-template-columns: 1fr; }
   .stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { LuArrowUpRight, LuArrowRight, LuArrowDownUp, LuCircleAlert, LuActivity, LuCircleCheck, LuCpu, LuInfo, LuRefreshCw, LuSearchX, LuTriangleAlert, LuChevronDown, LuChevronUp } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
-import { fetchChanges, formatTokens, formatAgo, type CatalogData, type Change } from '../../api/client';
+import { fetchChanges, formatTokens, formatAgo, type CatalogData, type Change, type HealthResponse } from '../../api/client';
 import { CATALOG_API_CONTRACT_VERSION } from '../../../config/api-contract';
 import { FreshnessBadge } from '../../components/FreshnessBadge/FreshnessBadge';
 import { Toolbar, PROVIDER_FILTERS } from '../../components/Toolbar/Toolbar';
@@ -299,6 +299,8 @@ export function DashboardPage() {
         onToggle={() => setMonitoringOpen((value) => !value)}
         onRetry={handleMonitoringRetry}
       />
+
+      <RuntimeSettingsPanel health={health ?? null} error={healthError ?? null} loading={Boolean(healthLoading && !health)} />
 
       <VersionHistoryPanel
         data={data}
@@ -608,6 +610,47 @@ export function DashboardPage() {
         <Link to="/changes" className={styles.footerLink}>What's new</Link>
       </footer>
     </div>
+  );
+}
+
+function RuntimeSettingsPanel({ health, error, loading }: { health: HealthResponse | null | undefined; error: string | null | undefined; loading: boolean }) {
+  const schedule = health?.service.nextScheduledRunAt;
+  const nextRun = schedule
+    ? new Date(schedule).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+    : 'Not reported';
+
+  const rows = [
+    ['Service status', health?.service.status === 'up' ? 'Up' : health?.service.status === 'degraded' ? 'Degraded' : 'Not reported'],
+    ['Database readable', health ? health.service.databaseReadable ? 'Yes' : 'No' : 'Not reported'],
+    ['Scheduler', health ? health.service.schedulerEnabled ? 'Enabled' : 'Disabled' : 'Not reported'],
+    ['Next scheduled sync', nextRun],
+    ['Freshness policy', health ? `${health.catalog.staleAfterHours} hours` : 'Not reported'],
+    ['Catalog state', health?.catalog.status === 'current' ? 'Current' : health?.catalog.status === 'stale' ? 'Stale' : 'Not reported'],
+  ];
+
+  return (
+    <section className={styles.settingsPanel} aria-labelledby="runtime-settings-title">
+      <div className={styles.settingsHeader}>
+        <div>
+          <span className={styles.monitoringEyebrow}>Read-only configuration</span>
+          <h2 id="runtime-settings-title" className={styles.settingsTitle}>Catalog runtime settings</h2>
+        </div>
+        <span className={styles.settingsSource}>Source: /v1/health</span>
+      </div>
+      {loading && <div className={styles.settingsState} aria-busy="true">Reading runtime settings…</div>}
+      {error && !health && <div className={styles.settingsState} role="status">Runtime settings unavailable until the health endpoint responds.</div>}
+      {!loading && !error && health && (
+        <dl className={styles.settingsGrid}>
+          {rows.map(([label, value]) => (
+            <div key={label} className={styles.settingRow}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {!loading && !health && !error && <div className={styles.settingsState}>The API did not report runtime settings.</div>}
+    </section>
   );
 }
 
