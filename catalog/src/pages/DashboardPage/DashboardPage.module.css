@@ -1286,3 +1286,6 @@ th.num {
   .alertItem { flex-direction: column; }
   .alertActions { width: 100%; justify-content: flex-start; }
 }
+
+.alertDeliveryBadge { padding: 3px 7px; border: 1px solid var(--border-subtle); border-radius: 999px; color: var(--foreground-tertiary); font-size: 0.62rem; font-weight: 600; vertical-align: middle; }
+.alertDeliveryStatus { color: var(--foreground-tertiary); font-size: 0.66rem; font-family: var(--font-mono); }

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { LuArrowUpRight, LuArrowRight, LuArrowDownUp, LuCircleAlert, LuActivity, LuCircleCheck, LuCpu, LuInfo, LuRefreshCw, LuSearchX, LuTriangleAlert, LuChevronDown, LuChevronUp } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
-import { fetchAlerts, fetchChanges, formatTokens, formatAgo, updateAlertStatus, type AlertRecord, type AlertStatus, type CatalogData, type Change, type HealthResponse } from '../../api/client';
+import { fetchAlerts, fetchChanges, formatTokens, formatAgo, updateAlertStatus, type AlertDeliverySummary, type AlertRecord, type AlertStatus, type CatalogData, type Change, type HealthResponse } from '../../api/client';
 import { CATALOG_API_CONTRACT_VERSION } from '../../../config/api-contract';
 import { FreshnessBadge } from '../../components/FreshnessBadge/FreshnessBadge';
 import { Toolbar, PROVIDER_FILTERS } from '../../components/Toolbar/Toolbar';
@@ -42,6 +42,7 @@ export function DashboardPage() {
   const [changeWindow, setChangeWindow] = useState<ChangeWindow>('7d');
   const [changesNonce, setChangesNonce] = useState(0);
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
+  const [alertDelivery, setAlertDelivery] = useState<AlertDeliverySummary | null>(null);
   const [alertsLoading, setAlertsLoading] = useState(true);
   const [alertsError, setAlertsError] = useState<string | null>(null);
   const [alertsNonce, setAlertsNonce] = useState(0);
@@ -73,7 +74,7 @@ export function DashboardPage() {
     const readAlerts = () => {
       setAlertsLoading(true);
       fetchAlerts(undefined)
-        .then((result) => { if (!cancelled) { setAlerts(Array.isArray(result.alerts) ? result.alerts : []); setAlertsError(null); } })
+        .then((result) => { if (!cancelled) { setAlerts(Array.isArray(result.alerts) ? result.alerts : []); setAlertDelivery(result.delivery ?? null); setAlertsError(null); } })
         .catch((reason) => { if (!cancelled) setAlertsError(reason instanceof Error ? reason.message : String(reason)); })
         .finally(() => { if (!cancelled) setAlertsLoading(false); });
     };
@@ -357,6 +358,7 @@ export function DashboardPage() {
       <AlertCenter
         alerts={visibleAlerts}
         allAlerts={alerts}
+        delivery={alertDelivery}
         loading={alertsLoading}
         error={alertsError}
         statusFilter={alertStatusFilter}
@@ -682,6 +684,7 @@ export function DashboardPage() {
 function AlertCenter({
   alerts,
   allAlerts,
+  delivery,
   loading,
   error,
   statusFilter,
@@ -694,6 +697,7 @@ function AlertCenter({
 }: {
   alerts: AlertRecord[];
   allAlerts: AlertRecord[];
+  delivery: AlertDeliverySummary | null;
   loading: boolean;
   error: string | null;
   statusFilter: 'all' | AlertStatus;
@@ -713,7 +717,7 @@ function AlertCenter({
       <div className={styles.alertCenterHeader}>
         <div>
           <span className={styles.monitoringEyebrow}>Operator action center</span>
-          <h2 id="alert-center-title" className={styles.alertCenterTitle}>Alert center <span className={styles.alertCount}>{activeCount} active</span></h2>
+          <h2 id="alert-center-title" className={styles.alertCenterTitle}>Alert center <span className={styles.alertCount}>{activeCount} active</span> <span className={styles.alertDeliveryBadge}>{delivery?.enabled ? 'Webhook on' : 'Webhook off'}</span></h2>
         </div>
         <button type="button" className={styles.monitoringAction} onClick={onRetry} disabled={loading}>Refresh alerts</button>
       </div>
@@ -752,6 +756,11 @@ function AlertCenter({
                 <strong>{alert.title}</strong>
                 <span className={styles.alertDetail}>{alert.detail}</span>
                 <span className={styles.alertOccurrence}>Seen {alert.occurrenceCount} time{alert.occurrenceCount === 1 ? '' : 's'}</span>
+                {(() => {
+                  const latest = alert.notifications?.[0];
+                  const deliveryLabel = latest?.status === 'delivered' ? `Webhook delivered (${latest.responseStatus ?? '2xx'})` : latest?.status === 'retrying' ? `Webhook retrying (${latest.attempts} attempt${latest.attempts === 1 ? '' : 's'})` : latest?.status === 'failed' ? 'Webhook delivery failed' : delivery?.enabled ? 'Webhook queued' : 'Webhook disabled';
+                  return <span className={styles.alertDeliveryStatus}>{deliveryLabel}</span>;
+                })()}
                 {(alert.providerId || alert.modelId) && (
                   <span className={styles.alertTargets}>
                     {alert.providerId && <Link to={`/provider/${encodeURIComponent(alert.providerId)}`} className={styles.alertTargetLink}>{alert.providerId}</Link>}

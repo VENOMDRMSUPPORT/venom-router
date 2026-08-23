@@ -432,3 +432,25 @@ CREATE TABLE IF NOT EXISTS operational_alerts (
 CREATE INDEX IF NOT EXISTS idx_operational_alerts_status ON operational_alerts(status, last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_operational_alerts_provider ON operational_alerts(provider_id, last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_operational_alerts_kind ON operational_alerts(kind, last_seen_at);
+
+-- Outbound alert notifications. The queue is append-oriented and keeps every
+-- delivery attempt auditable; failed delivery never changes alert truth.
+CREATE TABLE IF NOT EXISTS alert_notifications (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  alert_id          TEXT NOT NULL REFERENCES operational_alerts(id),
+  event_type        TEXT NOT NULL,           -- opened | reopened | acknowledged | resolved
+  payload_json      TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'pending', -- pending | delivered | retrying | failed
+  attempts          INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at   TEXT NOT NULL,
+  last_attempt_at   TEXT,
+  delivered_at      TEXT,
+  response_status   INTEGER,
+  last_error        TEXT,
+  created_at        TEXT NOT NULL,
+  UNIQUE(alert_id, event_type, created_at)
+);
+CREATE INDEX IF NOT EXISTS idx_alert_notifications_due
+  ON alert_notifications(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_alert_notifications_alert
+  ON alert_notifications(alert_id, created_at);

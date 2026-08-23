@@ -653,6 +653,23 @@ export interface HealthResponse {
 export type AlertSeverity = 'critical' | 'warning' | 'info';
 export type AlertStatus = 'open' | 'acknowledged' | 'resolved';
 
+export type NotificationEvent = 'opened' | 'reopened' | 'acknowledged' | 'resolved';
+export type NotificationStatus = 'pending' | 'delivered' | 'retrying' | 'failed';
+
+export interface NotificationRecord {
+  id: number;
+  alertId: string;
+  eventType: NotificationEvent;
+  status: NotificationStatus;
+  attempts: number;
+  nextAttemptAt: string;
+  lastAttemptAt: string | null;
+  deliveredAt: string | null;
+  responseStatus: number | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
 export interface AlertRecord {
   id: string;
   kind: string;
@@ -667,6 +684,7 @@ export interface AlertRecord {
   acknowledgedAt: string | null;
   resolvedAt: string | null;
   occurrenceCount: number;
+  notifications?: NotificationRecord[];
 }
 
 export interface AlertSummary {
@@ -680,9 +698,17 @@ export interface AlertSummary {
   info: number;
 }
 
+export interface AlertDeliverySummary {
+  enabled: boolean;
+  webhookConfigured: boolean;
+  pending: number;
+  failed: number;
+}
+
 export interface AlertsResponse {
   alerts: AlertRecord[];
   summary: AlertSummary;
+  delivery?: AlertDeliverySummary;
   generatedAt: string;
 }
 

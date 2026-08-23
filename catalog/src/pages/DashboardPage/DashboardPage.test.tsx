@@ -81,13 +81,18 @@ function renderDashboard() {
   );
 }
 
+async function settleDashboard() {
+  await waitFor(() => expect(screen.queryByText('Loading alert lifecycle…')).not.toBeInTheDocument());
+}
+
 describe('the monitoring panel interaction experience', () => {
-  test('collapses details and exposes retry for an unreachable health endpoint', () => {
+  test('collapses details and exposes retry for an unreachable health endpoint', async () => {
     catalogMock.current = {
       data: baseData(), error: null, loading: false, health: null,
       healthError: 'health endpoint unavailable', healthLoading: false, reload: vi.fn(),
     };
     renderDashboard();
+    await settleDashboard();
 
     expect(screen.getByText('Catalog API is unreachable')).toBeInTheDocument();
     const monitoringHide = screen.getAllByRole('button', { name: /hide details/i }).find((button) => button.getAttribute('aria-controls') === 'monitoring-signals');
@@ -98,11 +103,13 @@ describe('the monitoring panel interaction experience', () => {
     expect(monitoringShow).toBeDefined();
     fireEvent.click(monitoringShow!);
     expect(screen.getByText('Catalog API is unreachable')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const healthPanel = screen.getByRole('region', { name: 'Catalog health' });
+    fireEvent.click(within(healthPanel).getByRole('button', { name: 'Retry' }));
+    await settleDashboard();
     expect(catalogMock.current.reload).toHaveBeenCalled();
   });
 
-  test('shows a nominal status after the health endpoint answers cleanly', () => {
+  test('shows a nominal status after the health endpoint answers cleanly', async () => {
     const cleanHealth: HealthResponse = {
       service: { status: 'up', databaseReadable: true, startedAt: null, syncInFlight: false, currentRunStartedAt: null, schedulerEnabled: true, nextScheduledRunAt: null },
       catalog: { status: 'current', liveModels: 116, methodologyVersion: 'v1', staleAfterHours: 24, staleProviders: [], providers: [] },
@@ -110,6 +117,7 @@ describe('the monitoring panel interaction experience', () => {
     };
     catalogMock.current = { data: baseData({ meta: meta({ needsVerification: 0 }) }), error: null, loading: false, health: cleanHealth, healthError: null, healthLoading: false, reload: vi.fn() };
     renderDashboard();
+    await settleDashboard();
 
     expect(screen.getByText('Catalog monitoring is clear')).toBeInTheDocument();
     expect(screen.getByText('All systems nominal')).toBeInTheDocument();
@@ -130,6 +138,7 @@ describe('the change-history time window and deep links', () => {
     try {
       catalogMock.current = { data: baseData({ meta: meta({ needsVerification: 0 }) }), error: null, loading: false, health: null, healthError: null, healthLoading: false, reload: vi.fn() };
       renderDashboard();
+      await settleDashboard();
 
       await waitFor(() => expect(screen.getByRole('link', { name: 'gpt-5' })).toBeInTheDocument());
       expect(screen.queryByRole('link', { name: 'old-model' })).not.toBeInTheDocument();
@@ -144,7 +153,7 @@ describe('the change-history time window and deep links', () => {
 });
 
 describe('the runtime settings panel', () => {
-  test('renders server-reported freshness, scheduler, and database settings', () => {
+  test('renders server-reported freshness, scheduler, and database settings', async () => {
     const runtimeHealth: HealthResponse = {
       service: { status: 'up', databaseReadable: true, startedAt: null, syncInFlight: false, currentRunStartedAt: null, schedulerEnabled: true, nextScheduledRunAt: null },
       catalog: { status: 'current', liveModels: 116, methodologyVersion: 'catalog-v3', staleAfterHours: 24, staleProviders: [], providers: [] },
@@ -152,6 +161,7 @@ describe('the runtime settings panel', () => {
     };
     catalogMock.current = { data: baseData(), error: null, loading: false, health: runtimeHealth, healthError: null, healthLoading: false, reload: vi.fn() };
     renderDashboard();
+    await settleDashboard();
 
     expect(screen.getByRole('heading', { name: 'Catalog runtime settings' })).toBeInTheDocument();
     expect(screen.getByText('24 hours')).toBeInTheDocument();
@@ -188,6 +198,7 @@ describe('the alert center lifecycle experience', () => {
     try {
       catalogMock.current = { data: baseData(), error: null, loading: false, health: null, healthError: null, healthLoading: false, reload: vi.fn() };
       renderDashboard();
+      await settleDashboard();
 
       expect(await screen.findByText('Catalog service is degraded')).toBeInTheDocument();
       expect(screen.getByRole('link', { name: 'acme' })).toHaveAttribute('href', '/provider/acme');
@@ -212,9 +223,10 @@ describe('the alert center lifecycle experience', () => {
 });
 
 describe('the Dashboard status and empty-state experience', () => {
-  test('shows operational catalog status and offers a clear action after a search', () => {
+  test('shows operational catalog status and offers a clear action after a search', async () => {
     catalogMock.current = { data: baseData(), error: null, loading: false };
     renderDashboard();
+    await settleDashboard();
 
     expect(screen.getByText('Live catalog')).toBeInTheDocument();
     const searchInput = screen.getByPlaceholderText('Search providers, models, or IDs...');
@@ -228,15 +240,16 @@ describe('the Dashboard status and empty-state experience', () => {
 });
 
 describe('the "Identity candidates refused" tile survives a partial meta payload', () => {
-  test('a full meta renders the real counts', () => {
+  test('a full meta renders the real counts', async () => {
     catalogMock.current = { data: baseData(), error: null, loading: false };
     renderDashboard();
+    await settleDashboard();
 
     expect(screen.getByText('9')).toBeInTheDocument();
     expect(screen.getByText('Identity candidates refused')).toBeInTheDocument();
   });
 
-  test('a meta payload missing identityDetail does not crash the page, and does not render 0', () => {
+  test('a meta payload missing identityDetail does not crash the page, and does not render 0', async () => {
     // Simulates a stale server answering with a pre-M5.1 shape: `identityDetail`
     // is simply absent from the JSON, so it is `undefined` at runtime even though
     // `CatalogMeta` declares it required. The component must degrade honestly.
@@ -244,7 +257,8 @@ describe('the "Identity candidates refused" tile survives a partial meta payload
     delete (staleMeta as Partial<typeof staleMeta>).identityDetail;
     catalogMock.current = { data: baseData({ meta: staleMeta }), error: null, loading: false };
 
-    expect(() => renderDashboard()).not.toThrow();
+    renderDashboard();
+    await settleDashboard();
 
     expect(screen.getByText('Identity candidates refused')).toBeInTheDocument();
     // The count must not read as a claimed zero — that says "we looked, there
@@ -256,9 +270,10 @@ describe('the "Identity candidates refused" tile survives a partial meta payload
 });
 
 describe('final evaluation coverage is distinct from operational readiness', () => {
-  test('explains why a working provider can still have no complete overall score', () => {
+  test('explains why a working provider can still have no complete overall score', async () => {
     catalogMock.current = { data: baseData(), error: null, loading: false };
     renderDashboard();
+    await settleDashboard();
 
     expect(screen.getByText('Complete overall scores')).toBeInTheDocument();
     expect(screen.getByTitle(/Operational data is available for 115\/116 models/i)).toBeInTheDocument();
@@ -273,9 +288,10 @@ describe('final evaluation coverage is distinct from operational readiness', () 
  * none at all. That is the same defect the change-class page was just fixed for.
  */
 describe('the dashboard offers the filters it can actually apply', () => {
-  test('the filter menu holds provider filters, and nothing it cannot act on', () => {
+  test('the filter menu holds provider filters, and nothing it cannot act on', async () => {
     catalogMock.current = { data: baseData(), error: null, loading: false };
     renderDashboard();
+    await settleDashboard();
 
     fireEvent.click(screen.getByRole('button', { name: /all providers/i }));
     const offered = within(screen.getByRole('listbox')).getAllByRole('option').map((option) => option.textContent);
@@ -285,9 +301,10 @@ describe('the dashboard offers the filters it can actually apply', () => {
     expect(screen.getByLabelText('Sort by')).toHaveValue('score');
   });
 
-  test('the search box says what it actually searches', () => {
+  test('the search box says what it actually searches', async () => {
     catalogMock.current = { data: baseData(), error: null, loading: false };
     renderDashboard();
+    await settleDashboard();
 
     const searchInput = screen.getByPlaceholderText('Search providers, models, or IDs...');
     expect(searchInput).toBeInTheDocument();
@@ -295,9 +312,10 @@ describe('the dashboard offers the filters it can actually apply', () => {
     expect(screen.getByText(/Advanced search:/i)).toBeInTheDocument();
   });
 
-  test('sort direction toggles and freshness chooses the newest-first default', () => {
+  test('sort direction toggles and freshness chooses the newest-first default', async () => {
     catalogMock.current = { data: baseData(), error: null, loading: false };
     renderDashboard();
+    await settleDashboard();
 
     const sort = screen.getByLabelText('Sort by');
     fireEvent.change(sort, { target: { value: 'freshness' } });

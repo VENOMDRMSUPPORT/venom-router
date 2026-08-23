@@ -1,4 +1,5 @@
 import type { Db } from '../db/index.ts';
+import { enqueueNotification, notificationForTransition } from './notifications.ts';
 
 export type AlertSeverity = 'critical' | 'warning' | 'info';
 export type AlertStatus = 'open' | 'acknowledged' | 'resolved';
@@ -129,6 +130,7 @@ export function reconcileAlerts(db: Db, health: AlertHealthPayload, now = new Da
         candidate.id, candidate.kind, candidate.severity, candidate.title, candidate.detail,
         candidate.providerId, candidate.modelId, now, now,
       );
+      enqueueNotification(db, fromRow(db.prepare('SELECT * FROM operational_alerts WHERE id = ?').get(candidate.id) as Record<string, unknown>), 'opened', now);
       continue;
     }
 
@@ -140,12 +142,16 @@ export function reconcileAlerts(db: Db, health: AlertHealthPayload, now = new Da
       WHERE id = ?`).run(
       candidate.severity, candidate.title, candidate.detail, now, nextStatus, nextStatus, candidate.id,
     );
+    if (currentStatus === 'resolved' && nextStatus === 'open') {
+      enqueueNotification(db, fromRow(db.prepare('SELECT * FROM operational_alerts WHERE id = ?').get(candidate.id) as Record<string, unknown>), 'reopened', now);
+    }
   }
 
   const activeRows = db.prepare(`SELECT id, status FROM operational_alerts WHERE status IN ('open', 'acknowledged')`).all() as unknown as { id: string; status: AlertStatus }[];
   for (const row of activeRows) {
     if (candidateIds.has(row.id)) continue;
     db.prepare(`UPDATE operational_alerts SET status = 'resolved', resolved_at = ? WHERE id = ?`).run(now, row.id);
+    enqueueNotification(db, fromRow(db.prepare('SELECT * FROM operational_alerts WHERE id = ?').get(row.id) as Record<string, unknown>), 'resolved', now);
   }
 
   return listAlerts(db);
@@ -162,12 +168,16 @@ export function transitionAlert(db: Db, id: string, status: AlertStatus, now = n
   if (!['open', 'acknowledged', 'resolved'].includes(status)) return null;
   const existing = db.prepare('SELECT * FROM operational_alerts WHERE id = ?').get(id) as Record<string, unknown> | undefined;
   if (!existing) return null;
+  const previous = existing.status as AlertStatus;
 
   db.prepare(`UPDATE operational_alerts
     SET status = ?, acknowledged_at = CASE WHEN ? = 'acknowledged' THEN COALESCE(acknowledged_at, ?) ELSE acknowledged_at END,
         resolved_at = CASE WHEN ? = 'resolved' THEN COALESCE(resolved_at, ?) ELSE NULL END
     WHERE id = ?`).run(status, status, now, status, now, id);
-  return fromRow(db.prepare('SELECT * FROM operational_alerts WHERE id = ?').get(id) as Record<string, unknown>);
+  const updated = fromRow(db.prepare('SELECT * FROM operational_alerts WHERE id = ?').get(id) as Record<string, unknown>);
+  const eventType = notificationForTransition(previous, status);
+  if (eventType) enqueueNotification(db, updated, eventType, now);
+  return updated;
 }
 
 export function alertSummary(alerts: AlertRecord[]) {

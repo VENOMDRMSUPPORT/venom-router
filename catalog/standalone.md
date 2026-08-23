@@ -48,3 +48,9 @@ Catalog owns the operational alert ledger. The dashboard reads `GET /v1/alerts`,
 An operator may transition a known alert with `PATCH /v1/alerts/:id` and a JSON body such as `{ "status": "acknowledged" }`. The service rejects unknown statuses with HTTP 400 and unknown alert IDs with HTTP 404. A problem that disappears from the health response is automatically marked `resolved`; if the same stable alert identity returns later, Catalog reopens it as a new active occurrence while preserving its occurrence count and timestamps.
 
 The Dashboard is intentionally read-only with respect to catalog facts. Acknowledge, resolve, and reopen actions change only the operational alert ledger; they never change provider data, model facts, scores, freshness, or the Catalog release metadata.
+
+## Active-alert notifications
+
+Outbound notifications are disabled by default. To enable them, set `CATALOG_ALERT_NOTIFICATIONS=true`, `CATALOG_ALERT_WEBHOOK_URL`, and optionally `CATALOG_ALERT_WEBHOOK_SECRET`. Catalog emits signed JSON events for `opened`, `reopened`, `acknowledged`, and `resolved` transitions. The `x-catalog-signature` header is an HMAC-SHA256 digest of the exact request body when a secret is configured.
+
+Delivery is performed by the standalone Catalog process from a durable SQLite queue. Each attempt records its HTTP status or sanitized error, retries with exponential backoff, and becomes `failed` after the configured maximum number of attempts. A delivery failure never changes the underlying alert state or catalog facts. `GET /v1/alerts` includes the notification delivery records for each alert so the Dashboard can distinguish pending, delivered, retrying, and failed notifications.

@@ -13,6 +13,7 @@ import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtu
 import { regradeFromRetainedResponses } from '../sync/evaluation/regrade.ts';
 import { recalculatePublishedOffers } from '../sync/evaluation/recalculate.ts';
 import { alertSummary, reconcileAlerts, transitionAlert, type AlertStatus } from './alerts.ts';
+import { listNotifications, notificationConfig } from './notifications.ts';
 
 export interface AppDeps {
   db: Db;
@@ -168,7 +169,22 @@ export function route(deps: AppDeps, url: URL, method: string, body?: unknown): 
     const filtered = status === 'open' || status === 'acknowledged' || status === 'resolved'
       ? alerts.filter((alert) => alert.status === status)
       : alerts;
-    return { status: 200, body: { alerts: filtered, summary: alertSummary(alerts), generatedAt: now.toISOString() } };
+    const notifications = listNotifications(db);
+    const delivery = notificationConfig();
+    return {
+      status: 200,
+      body: {
+        alerts: filtered.map((alert) => ({ ...alert, notifications: notifications.filter((notification) => notification.alertId === alert.id) })),
+        summary: alertSummary(alerts),
+        delivery: {
+          enabled: delivery.enabled,
+          webhookConfigured: Boolean(delivery.webhookUrl),
+          pending: notifications.filter((notification) => notification.status === 'pending' || notification.status === 'retrying').length,
+          failed: notifications.filter((notification) => notification.status === 'failed').length,
+        },
+        generatedAt: now.toISOString(),
+      },
+    };
   }
 
   const alertRoute = /^\/v1\/alerts\/([^/]+)$/ .exec(path);
@@ -178,7 +194,9 @@ export function route(deps: AppDeps, url: URL, method: string, body?: unknown): 
       return { status: 400, body: { error: 'status must be open, acknowledged, or resolved' } };
     }
     const alert = transitionAlert(db, decodeURIComponent(alertRoute[1]), requested.status as AlertStatus, now.toISOString());
-    return alert ? { status: 200, body: alert } : { status: 404, body: { error: 'alert not found' } };
+    return alert
+      ? { status: 200, body: { ...alert, notifications: listNotifications(db, alert.id) } }
+      : { status: 404, body: { error: 'alert not found' } };
   }
 
   if (path === '/v1/sync' && method === 'POST') {
