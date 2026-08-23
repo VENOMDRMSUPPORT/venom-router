@@ -62,6 +62,19 @@ function parseModalities(value: string | null): string[] {
   }
 }
 
+/**
+ * A row that only restates published facts, with nothing measured behind it.
+ *
+ * The evidence trail is the test rather than the score alone: a withdrawn
+ * measurement also has `score: null`, and re-deriving THAT from a roster fact
+ * would erase the finding that it could not be measured.
+ */
+function isPureProjection(row: OfferDimensionRow): boolean {
+  return row.score === null
+    && row.evidence.length === 1
+    && row.evidence[0] === 'catalog-operational-facts';
+}
+
 function qualityOfferFact(
   row: OperationalFactRow,
   dimension: QualityDimension,
@@ -133,9 +146,28 @@ export function projectOfferOperationalEvidence(
   for (const row of rows) {
     const existingOffer = new Map(repository.offerDimensions(row.provider_id, row.model_id).map((item) => [item.dimension, item]));
     const modalities = parseModalities(row.input_modalities);
-    const vision = row.attachment === null
+    /*
+     * Vision is decided by the image modality alone.
+     *
+     * `attachment` says the endpoint accepts a file; it does not say the model
+     * can SEE one, and the OR that treated it as evidence of sight produced a
+     * measured contradiction. `opencode-go/mimo-v2.5-pro` publishes `["text"]`
+     * with attachment support, was marked vision-supported on that basis, and
+     * answered `400` on all three samples of the first vision scenario — while
+     * its sibling `deepseek-v4-flash`, same `["text"]` but no attachment flag,
+     * was correctly excluded and scored.
+     *
+     * The `attachment === null` branch also used to short-circuit ahead of the
+     * modalities, so `clinepass/cline-pass/qwen3.8-max` — which states
+     * `["text","image","video"]` and no attachment flag — was left `unknown`
+     * without anything ever reading what it plainly declares.
+     *
+     * Absent modalities stay unknown: silence is not evidence of a text-only
+     * model, and unknown is an honest result.
+     */
+    const vision = modalities.length === 0
       ? 'unknown'
-      : row.attachment === 1 || modalities.includes('image') ? 'supported' : 'unsupported';
+      : modalities.includes('image') ? 'supported' : 'unsupported';
     const applicability: Array<[QualityDimension, IdentityDimensionRow['status']]> = [
       ['toolCalling', factApplicability(row.tools)],
       ['reasoning', factApplicability(row.reasoning)],
@@ -144,7 +176,25 @@ export function projectOfferOperationalEvidence(
       ['vision', vision],
     ];
     for (const [dimension, status] of applicability) {
-      if (!existingOffer.has(dimension)) repository.saveOfferDimension(qualityOfferFact(row, dimension, status, computedAt));
+      /*
+       * A projection may be refreshed; a measurement may not.
+       *
+       * This was write-once, which quietly made applicability permanent: the
+       * first projection won and a later correction to the published facts could
+       * never reach the row. `opencode-go/mimo-v2.5-pro` kept a vision status of
+       * `supported` derived from the old attachment rule even after the rule was
+       * corrected, so the fix changed nothing anyone could see.
+       *
+       * Only rows that are pure projections are rewritten — no score, and
+       * `catalog-operational-facts` as their whole evidence trail. A row carrying
+       * a measurement, or any other evidence, is left exactly as it is: this
+       * function derives what is ASKED of a model, and must never overwrite what
+       * was found by asking it.
+       */
+      const existing = existingOffer.get(dimension);
+      if (existing && !isPureProjection(existing)) continue;
+      if (existing && existing.status === status) continue;
+      repository.saveOfferDimension(qualityOfferFact(row, dimension, status, computedAt));
     }
     if (!existingOffer.has('speed')) repository.saveOfferDimension(offerFact(row, 'speed', 'unknown', computedAt));
     if (!existingOffer.has('costEfficiency')) {

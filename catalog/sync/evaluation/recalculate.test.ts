@@ -194,3 +194,127 @@ describe('a reviewed consent requirement withholds the published score', () => {
     assert.equal(overall.reasons[0], 'consent_required', 'the reason leads, so it is not read as missing evidence');
   });
 });
+
+describe('vision applicability is decided by the image modality, not by attachment', () => {
+  /**
+   * `attachment` says the endpoint accepts a file. It does not say the model can
+   * SEE one, and treating it as evidence of sight produced a measured
+   * contradiction: `opencode-go/mimo-v2.5-pro` publishes `["text"]` and no image
+   * modality, was still marked vision-supported, and answered `400` on all three
+   * samples of every vision scenario. Its sibling `deepseek-v4-flash`, with the
+   * same `["text"]` and `attachment=0`, was correctly excluded and scored.
+   */
+  test('a text-only model with attachment support cannot do vision', () => {
+    const { db, repo } = seeded();
+    db.prepare(`UPDATE models SET attachment=1, input_modalities='["text"]'
+      WHERE provider_id='p1' AND model_id='m1'`).run();
+
+    projectOfferOperationalEvidence(db, repo, '2026-08-19T00:00:00.000Z');
+
+    const offer = new Map(repo.offerDimensions('p1', 'm1').map((row) => [row.dimension, row]));
+    assert.equal(offer.get('vision')?.status, 'unsupported');
+  });
+
+  test('a declared image modality is vision support even with attachment unknown', () => {
+    // `clinepass/cline-pass/qwen3.8-max` publishes `["text","image","video"]`
+    // with no attachment flag. The old expression tested `attachment === null`
+    // first and returned `unknown` without ever reading the modalities, so a
+    // model that plainly states it takes images was left unmeasurable.
+    const { db, repo } = seeded();
+    db.prepare(`UPDATE models SET attachment=NULL, input_modalities='["text","image","video"]'
+      WHERE provider_id='p1' AND model_id='m1'`).run();
+
+    projectOfferOperationalEvidence(db, repo, '2026-08-19T00:00:00.000Z');
+
+    const offer = new Map(repo.offerDimensions('p1', 'm1').map((row) => [row.dimension, row]));
+    assert.equal(offer.get('vision')?.status, 'supported');
+  });
+
+  test('an image modality is support regardless of the attachment flag', () => {
+    const { db, repo } = seeded();
+    db.prepare(`UPDATE models SET attachment=0, input_modalities='["text","image"]'
+      WHERE provider_id='p1' AND model_id='m1'`).run();
+
+    projectOfferOperationalEvidence(db, repo, '2026-08-19T00:00:00.000Z');
+
+    const offer = new Map(repo.offerDimensions('p1', 'm1').map((row) => [row.dimension, row]));
+    assert.equal(offer.get('vision')?.status, 'supported');
+  });
+
+  test('no published modalities at all stays unknown rather than guessing', () => {
+    // Unknown is an honest result. Absent modalities are not evidence of a
+    // text-only model, so this must not become `unsupported`.
+    const { db, repo } = seeded();
+    db.prepare(`UPDATE models SET attachment=1, input_modalities=NULL
+      WHERE provider_id='p1' AND model_id='m1'`).run();
+
+    projectOfferOperationalEvidence(db, repo, '2026-08-19T00:00:00.000Z');
+
+    const offer = new Map(repo.offerDimensions('p1', 'm1').map((row) => [row.dimension, row]));
+    assert.equal(offer.get('vision')?.status, 'unknown');
+  });
+});
+
+describe('a projected applicability row refreshes, a measured one does not', () => {
+  test('a corrected fact rewrites a stale pure projection', () => {
+    // The reason the vision fix was invisible: applicability was write-once, so
+    // `mimo-v2.5-pro` kept a `supported` row derived from the old attachment
+    // rule forever.
+    const { db, repo } = seeded();
+    db.prepare(`UPDATE models SET attachment=1, input_modalities='["text","image"]'
+      WHERE provider_id='p1' AND model_id='m1'`).run();
+    projectOfferOperationalEvidence(db, repo, '2026-08-19T00:00:00.000Z');
+    assert.equal(
+      new Map(repo.offerDimensions('p1', 'm1').map((r) => [r.dimension, r])).get('vision')?.status,
+      'supported',
+    );
+
+    // The provider corrects its roster: this offering takes no images.
+    db.prepare(`UPDATE models SET input_modalities='["text"]' WHERE provider_id='p1' AND model_id='m1'`).run();
+    projectOfferOperationalEvidence(db, repo, '2026-08-20T00:00:00.000Z');
+
+    assert.equal(
+      new Map(repo.offerDimensions('p1', 'm1').map((r) => [r.dimension, r])).get('vision')?.status,
+      'unsupported',
+    );
+  });
+
+  test('a withdrawn measurement is not re-derived from a roster fact', () => {
+    // This is the half that matters. A withdrawn row also has `score: null`, so
+    // testing the score alone would let a projection erase the finding that the
+    // dimension could not be measured — exactly what `withdrawn:*` records.
+    const { db, repo } = seeded();
+    db.prepare(`UPDATE models SET attachment=0, input_modalities='["text","image"]'
+      WHERE provider_id='p1' AND model_id='m1'`).run();
+    repo.saveOfferDimension({
+      providerId: 'p1', modelId: 'm1', dimension: 'vision',
+      score: null, rawRate: null, uncertainty: null, confidence: null, sampleCount: null,
+      status: 'unknown', evidence: ['withdrawn:no-evidence-and-run-failed'],
+      evaluatedAt: '2026-08-19', methodologyVersion: 'overall-score-v1',
+    });
+
+    projectOfferOperationalEvidence(db, repo, '2026-08-20T00:00:00.000Z');
+
+    const row = new Map(repo.offerDimensions('p1', 'm1').map((r) => [r.dimension, r])).get('vision');
+    assert.equal(row?.status, 'unknown');
+    assert.deepEqual(row?.evidence, ['withdrawn:no-evidence-and-run-failed']);
+  });
+
+  test('a scored row survives a projection pass untouched', () => {
+    const { db, repo } = seeded();
+    db.prepare(`UPDATE models SET attachment=0, input_modalities='["text"]'
+      WHERE provider_id='p1' AND model_id='m1'`).run();
+    repo.saveOfferDimension({
+      providerId: 'p1', modelId: 'm1', dimension: 'vision',
+      score: 87.5, rawRate: 0.875, uncertainty: 2, confidence: 0.98, sampleCount: 60,
+      status: 'scored', evidence: ['runtime:p1/m1', 'run:9'],
+      evaluatedAt: '2026-08-19', methodologyVersion: 'overall-score-v1',
+    });
+
+    projectOfferOperationalEvidence(db, repo, '2026-08-20T00:00:00.000Z');
+
+    const row = new Map(repo.offerDimensions('p1', 'm1').map((r) => [r.dimension, r])).get('vision');
+    assert.equal(row?.score, 87.5);
+    assert.equal(row?.status, 'scored');
+  });
+});
