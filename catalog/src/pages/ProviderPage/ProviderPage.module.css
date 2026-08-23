@@ -935,16 +935,31 @@
 }
 
 .caps {
-  display: flex;
-  flex-wrap: wrap;
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  gap: 6px;
+  width: 204px;
+  min-height: 38px;
+  padding: 6px 12px;
+  background: var(--background);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  box-sizing: border-box;
+  margin: 0 auto;
+  transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.table tbody tr:hover .caps {
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .cap {
-  padding: 2px 7px;
+  padding: 3px 9px;
   border-radius: var(--radius-sm);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   background: var(--background);
   border: 1px solid var(--border-subtle);
   color: var(--foreground-secondary);
@@ -955,9 +970,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
+  width: 25px;
+  height: 25px;
+  border-radius: 6px;
   border: 1px solid transparent;
   flex-shrink: 0;
   transition: transform var(--transition-fast), border-color var(--transition-fast);
@@ -966,9 +981,6 @@
 
 .capIcon:hover {
   transform: scale(1.1);
-}
-
-.capTools {
   background: rgba(245, 158, 11, 0.12);
   border-color: rgba(245, 158, 11, 0.3);
   color: #b45309;
@@ -1536,8 +1548,11 @@
   box-shadow: inset 3px 0 0 var(--foreground);
 }
 
+/* A modifier, applied ALONGSIDE .modelCard rather than composing it: `composes`
+   is a CSS Modules extension that no CSS validator can parse, and the only
+   thing it bought here was appending one class the call site can append
+   itself. */
 .focusedCard {
-  composes: modelCard;
   border-color: var(--border-strong);
   box-shadow: inset 3px 0 0 var(--foreground), var(--shadow);
   background: var(--accent-subtle);

@@ -687,26 +687,18 @@ function ModelTable({ title, models, note, costStatedOnce, focusModelId }: { tit
               <th
                 className={styles.num}
                 data-testid="cost-column-in"
-                title={
-                  costStatedOnce
-                    ? 'The published per-million-token input rate this plan meters usage against. Not a charge.'
-                    : 'What this provider charges you per million input tokens.'
-                }
+                title="Input token pricing per 1M tokens"
               >
-                In{costStatedOnce ? <span className={styles.thNote}> · ref</span> : ''}
+                In
               </th>
               <th
                 className={styles.num}
                 data-testid="cost-column-out"
-                title={
-                  costStatedOnce
-                    ? 'The published per-million-token output rate this plan meters usage against. Not a charge.'
-                    : 'What this provider charges you per million output tokens.'
-                }
+                title="Output token pricing per 1M tokens"
               >
-                Out{costStatedOnce ? <span className={styles.thNote}> · ref</span> : ''}
+                Out
               </th>
-              <th>Capabilities</th>
+              <th className={styles.centered}>Capabilities</th>
               <th className={`${styles.narrow} ${styles.centered}`}>Evidence</th>
             </tr>
           </thead>
@@ -779,7 +771,7 @@ function ModelTable({ title, models, note, costStatedOnce, focusModelId }: { tit
                 </td>
                 <td className={styles.num}><CostCell model={m} side="in" statedOnce={costStatedOnce} /></td>
                 <td className={styles.num}><CostCell model={m} side="out" statedOnce={costStatedOnce} /></td>
-                <td>
+                <td className={styles.centered}>
                   <CapabilityBadges model={m} showUnknown />
                 </td>
                 <td className={`${styles.narrow} ${styles.centered}`}>
@@ -830,7 +822,7 @@ function ModelGrid({ title, models, note, costStatedOnce, focusModelId }: { titl
           <div
             key={`${m.providerId}/${m.modelId}`}
             id={`model-${encodeURIComponent(m.modelId)}`}
-            className={m.modelId === focusModelId ? styles.focusedCard : styles.modelCard}
+            className={m.modelId === focusModelId ? `${styles.modelCard} ${styles.focusedCard}` : styles.modelCard}
           >
             <div className={styles.modelCardTop}>
               <div>
