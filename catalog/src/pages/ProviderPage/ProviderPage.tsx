@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import {
   LuWrench,
@@ -60,6 +60,33 @@ export function ProviderPage() {
     }
     return window.innerWidth < 768 ? 'grid' : 'table';
   });
+  const [isViewTransitioning, setIsViewTransitioning] = useState(false);
+  const viewTransitionTimer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (viewTransitionTimer.current !== null) window.clearTimeout(viewTransitionTimer.current);
+  }, []);
+
+  const handleViewChange = (nextView: 'grid' | 'table', interaction: 'pointer' | 'keyboard' = 'pointer') => {
+    if (nextView === view) return;
+    if (viewTransitionTimer.current !== null) window.clearTimeout(viewTransitionTimer.current);
+
+    const motionQuery = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)')
+      : null;
+    const prefersReducedMotion = motionQuery?.matches ?? false;
+    const shouldAnimate = interaction === 'pointer' && !prefersReducedMotion;
+
+    setIsViewTransitioning(shouldAnimate);
+    setView(nextView);
+
+    if (shouldAnimate) {
+      viewTransitionTimer.current = window.setTimeout(() => {
+        setIsViewTransitioning(false);
+        viewTransitionTimer.current = null;
+      }, 260);
+    }
+  };
 
   useEffect(() => {
     if (!focusModelId || loading || !provider) return;
@@ -280,25 +307,32 @@ export function ProviderPage() {
         filter={filter}
         onFilterChange={setFilter}
         view={view}
-        onViewChange={setView}
+        onViewChange={handleViewChange}
         placeholder={`Search ${provider.name} models by name or ID...`}
       />
 
-      {view === 'table' ? (
-        <ModelTable
-          costStatedOnce={uniformCostKind !== null}
-          title={`Models (${visibleModels.length})`}
-          models={visibleModels}
-          focusModelId={focusModelId}
-        />
-      ) : (
-        <ModelGrid
-          costStatedOnce={uniformCostKind !== null}
-          title={`Models (${visibleModels.length})`}
-          models={visibleModels}
-          focusModelId={focusModelId}
-        />
-      )}
+      <div
+        className={styles.viewStage}
+        data-view={view}
+        data-transitioning={isViewTransitioning ? 'true' : 'false'}
+        data-testid="provider-view-stage"
+      >
+        {view === 'table' ? (
+          <ModelTable
+            costStatedOnce={uniformCostKind !== null}
+            title={`Models (${visibleModels.length})`}
+            models={visibleModels}
+            focusModelId={focusModelId}
+          />
+        ) : (
+          <ModelGrid
+            costStatedOnce={uniformCostKind !== null}
+            title={`Models (${visibleModels.length})`}
+            models={visibleModels}
+            focusModelId={focusModelId}
+          />
+        )}
+      </div>
 
       {/* Unified Enterprise Context Hub */}
       {hasContext && (

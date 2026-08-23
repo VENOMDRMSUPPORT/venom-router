@@ -13,7 +13,7 @@ interface ToolbarProps {
   filter: string;
   onFilterChange: (value: string) => void;
   view: 'grid' | 'table';
-  onViewChange: (view: 'grid' | 'table') => void;
+  onViewChange: (view: 'grid' | 'table', interaction?: 'pointer' | 'keyboard') => void;
   placeholder?: string;
   /**
    * The filters THIS page has. Defaults to the model filters.
@@ -158,7 +158,7 @@ export function Toolbar({
         <button
           type="button"
           className={`${styles.viewBtn} ${view === 'grid' ? styles.viewActive : ''}`}
-          onClick={() => onViewChange('grid')}
+          onClick={(event) => onViewChange('grid', event.detail === 0 ? 'keyboard' : 'pointer')}
           aria-label="Grid view"
           title="Grid view"
         >
@@ -168,7 +168,7 @@ export function Toolbar({
         <button
           type="button"
           className={`${styles.viewBtn} ${view === 'table' ? styles.viewActive : ''}`}
-          onClick={() => onViewChange('table')}
+          onClick={(event) => onViewChange('table', event.detail === 0 ? 'keyboard' : 'pointer')}
           aria-label="Table view"
           title="Table view"
         >

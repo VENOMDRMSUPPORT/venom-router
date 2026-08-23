@@ -15,7 +15,7 @@
  */
 
 import { describe, test, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { CatalogProvider } from '../../hooks/useCatalog';
 import { ProviderPage } from './ProviderPage';
@@ -140,6 +140,7 @@ function renderProviderPage() {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   providerOver = {};
 });
@@ -247,6 +248,26 @@ describe('the provider table presents one server-derived model score', () => {
     expect(card.querySelectorAll('dt')).toHaveLength(4);
     expect(screen.getByTestId('model-card-footer-cline-pass/deepseek-v4-flash')).toHaveTextContent('Evidence & evaluation');
     expect(screen.getByRole('button', { name: 'Evaluate cline-pass/deepseek-v4-flash' })).toHaveTextContent('Evaluate');
+  });
+
+  test('animates pointer view changes but keeps keyboard view changes immediate', async () => {
+    stubStaleService([scoredModel()]);
+    renderProviderPage();
+
+    await screen.findByText('65.8%');
+    vi.useFakeTimers();
+    const stage = screen.getByTestId('provider-view-stage');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Grid view' }), { detail: 1 });
+    expect(stage).toHaveAttribute('data-view', 'grid');
+    expect(stage).toHaveAttribute('data-transitioning', 'true');
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(260); });
+    expect(stage).toHaveAttribute('data-transitioning', 'false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Table view' }), { detail: 0 });
+    expect(stage).toHaveAttribute('data-view', 'table');
+    expect(stage).toHaveAttribute('data-transitioning', 'false');
   });
 });
 

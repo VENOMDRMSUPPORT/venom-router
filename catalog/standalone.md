@@ -76,3 +76,9 @@ The capability legend contains eight distinct concepts arranged in an equal resp
 The Grid view is a decision-card presentation rather than a miniature table. Each card reads in a fixed order: callable model identity and rank, overall score, four core comparison facts, reported capabilities, then evidence and evaluation actions. The four facts use one shared visual band with internal dividers instead of four nested cards, so cards retain the same hierarchy when prices, context limits, or lifecycle markers vary.
 
 Cards share a minimum desktop height and pin their action footer to the bottom. At narrow desktop and tablet sizes the grid still preserves equal card regions; below 700px it becomes a single-column list. Below 440px, core facts move to a two-by-two grid and footer actions expand into stable touch targets. These layout rules do not alter model ranking, pricing, capability facts, or evidence state.
+
+## Provider view transitions
+
+Pointer-triggered switches between Table and Grid use a 200–260ms opacity-and-transform stage. Entering Grid adds a short 35ms card cadence so the card collection reads as one composed change rather than a sudden wall of content. The implementation uses only `opacity` and `transform`, clears any pending timer when a user switches again, and does not retain stale content during the change.
+
+Keyboard-triggered view changes are immediate, and the stylesheet disables transition rules unless the browser reports `prefers-reduced-motion: no-preference`. The layout controls and model data remain available throughout; the animation is confirmation, never a delay or prerequisite for interaction.
