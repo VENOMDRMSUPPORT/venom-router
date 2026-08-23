@@ -535,3 +535,66 @@ describe('reporting which evaluation credentials this process can see', () => {
     assert.ok(!serialized.includes(secret), 'a diagnostic is exactly where a secret leaks by accident');
   });
 });
+
+describe('a family that rejects a sampling parameter does not receive it', () => {
+  const capture = () => {
+    const seen: Record<string, unknown>[] = [];
+    const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+      seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify({
+        output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] }],
+      }), { status: 200 });
+    }) as typeof fetch;
+    return { seen, fetchImpl };
+  };
+
+  test('the gpt- family is sent no temperature', async () => {
+    // Measured against the live gateway: `gpt-5.6-luna` answers
+    // `400 invalid_request_error: Unsupported parameter: 'temperature' is not
+    // supported with this model.` on every request, so all 60 vision samples
+    // failed and the offer published no score. Dropping the parameter returned
+    // 200 and the fixture graded 5/5 on the first scenario.
+    //
+    // Reasoning models on the Responses API do not take a sampling temperature.
+    // Like `minOutputTokens`, this is how an answer is obtained rather than what
+    // was asked, so it sits outside the test-set digest and re-buys nothing.
+    const { seen, fetchImpl } = capture();
+    const transport = createEvaluationTransport({
+      providerId: 'opencode-go', modelId: 'gpt-5.6-luna', protocol: 'responses', credential: 'secret', fetchImpl,
+    });
+
+    await transport({ messages: [{ role: 'user', content: 'hi' }], max_tokens: 512, temperature: 0 }, 'secret');
+
+    assert.equal(seen[0].temperature, undefined, 'gpt- rejects temperature outright');
+    assert.equal(seen[0].max_output_tokens, 512, 'the rest of the request is unchanged');
+    assert.equal(seen[0].model, 'gpt-5.6-luna');
+  });
+
+  test('a family with no such restriction still gets temperature', async () => {
+    // grok- accepts temperature — its text dimensions score with it — so this
+    // must stay a per-family fact and not become a blanket rule.
+    const { seen, fetchImpl } = capture();
+    const transport = createEvaluationTransport({
+      providerId: 'opencode-go', modelId: 'grok-4.5', protocol: 'responses', credential: 'secret', fetchImpl,
+    });
+
+    await transport({ messages: [{ role: 'user', content: 'hi' }], max_tokens: 512, temperature: 0 }, 'secret');
+
+    assert.equal(seen[0].temperature, 0);
+  });
+
+  test('chat-completions models keep temperature too', async () => {
+    const seen: Record<string, unknown>[] = [];
+    const transport = createEvaluationTransport({
+      providerId: 'opencode-go', modelId: 'glm-5.3', protocol: 'chat-completions', credential: 'secret',
+      fetchImpl: (async (_u: string | URL, init?: RequestInit) => {
+        seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 });
+      }) as typeof fetch,
+    });
+
+    await transport({ messages: [{ role: 'user', content: 'hi' }], max_tokens: 512, temperature: 0 }, 'secret');
+
+    assert.equal(seen[0].temperature, 0);
+  });
+});

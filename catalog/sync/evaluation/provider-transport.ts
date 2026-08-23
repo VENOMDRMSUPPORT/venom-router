@@ -254,8 +254,21 @@ const MODEL_FAMILIES: {
    * Declaring the floor here means the first attempt already pays enough.
    */
   minOutputTokens?: number;
+  /**
+   * A sampling parameter the family rejects outright rather than ignores.
+   *
+   * `gpt-5.6-luna` answers `400 invalid_request_error: Unsupported parameter:
+   * 'temperature' is not supported with this model.` on EVERY request, so all
+   * sixty vision samples failed and the offer published no score at all. The
+   * reasoning families on the Responses API do not take a temperature.
+   *
+   * Outside the test-set digest, for the same reason as `minOutputTokens`: the
+   * digest covers what was ASKED, and this is how the answer is obtained. No
+   * stored score is invalidated and nothing is re-bought.
+   */
+  omitTemperature?: boolean;
 }[] = [
-  { prefix: 'gpt-', protocol: 'responses' },
+  { prefix: 'gpt-', protocol: 'responses', omitTemperature: true },
   { prefix: 'grok-', protocol: 'responses' },
   // Muse Spark commonly spends about 500 tokens on hidden reasoning before it
   // emits any message. The shared 512-token fixture cap therefore produced a
@@ -452,9 +465,14 @@ export function createEvaluationTransport(input: CreateEvaluationTransportInput)
    * would have bought four paid attempts per sample for the same answer.
    */
   return async (payload, credential) => {
-    const body = typeof payload === 'object' && payload !== null && !Array.isArray(payload)
+    const raw = typeof payload === 'object' && payload !== null && !Array.isArray(payload)
       ? payload as Record<string, unknown>
       : { messages: [{ role: 'user', content: String(payload) }] };
+    // Dropped here rather than in the fixture: the fixture's payload is inside
+    // the test-set digest, so editing it would invalidate every stored score.
+    const body = familyFor(input.modelId)?.omitTemperature
+      ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'temperature'))
+      : raw;
     const declared = typeof body.max_tokens === 'number'
       ? Math.max(body.max_tokens, familyFor(input.modelId)?.minOutputTokens ?? 0)
       : null;
