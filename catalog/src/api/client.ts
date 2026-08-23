@@ -132,6 +132,21 @@ export interface ModelResolution {
   nextAttemptAt: string | null;
 }
 
+export type PerformanceStatus = 'measured' | 'not_measured';
+
+export interface ModelPerformance {
+  status: PerformanceStatus;
+  runId: number | null;
+  evaluatedAt: string | null;
+  sampleCount: number;
+  successfulSamples: number;
+  ttftMedianSeconds: number | null;
+  outputTokensPerSecondMedian: number | null;
+  endToEndP95Seconds: number | null;
+  successRate: number | null;
+  speedScore: number | null;
+}
+
 export interface ApiModel {
   /** The vendor's lifecycle marker: 'deprecated' when it says so. */
   lifecycle: string | null;
@@ -183,6 +198,8 @@ export interface ApiModel {
   };
   /** Server-derived composite. The SPA must never calculate this field. */
   modelScore: ApiModelScore;
+  /** Stored speed-probe aggregates; absent on legacy responses and normalized to not_measured. */
+  performance?: ModelPerformance;
   /** Server-derived overall-score-v1 result. The SPA must never calculate it. */
   overallScore: ApiOverallScore;
   resolution: ModelResolution;
@@ -392,6 +409,10 @@ export function normalizeModel(raw: WireModel): ApiModel {
       notApplicableDimensions: vo.notApplicableDimensions ?? [],
     },
     modelScore,
+    performance: raw.performance ?? {
+      status: 'not_measured', runId: null, evaluatedAt: null, sampleCount: 0, successfulSamples: 0,
+      ttftMedianSeconds: null, outputTokensPerSecondMedian: null, endToEndP95Seconds: null, successRate: null, speedScore: null,
+    },
     overallScore,
     resolution: raw.resolution ?? {
       state: 'unknown', reasons: [], firstDetectedAt: null, lastAttemptAt: null, nextAttemptAt: null,

@@ -25,6 +25,7 @@ import { loadResolution, type ModelResolution } from '../sync/resolution-jobs.ts
 import { createEvaluationRepository, type OverallScoreRow } from '../sync/evaluation/repository.ts';
 import { OVERALL_SCORE_POLICY, rankOverallScores } from '../sync/evaluation/score.ts';
 import { resolveIdentity } from '../sync/evaluation/plan.ts';
+import { loadPerformanceByModel, type ModelPerformance } from './performance.ts';
 
 /** Compact provenance, carried on every model row. Enough to explain a score. */
 export interface ProvenanceSummary {
@@ -208,6 +209,8 @@ export interface ApiModel {
   };
   /** Server-derived 70/30 quality and operational score. */
   modelScore: ModelScore;
+  /** Stored speed-probe aggregates; never inferred from availability or score. */
+  performance: ModelPerformance;
   /** Auditable task-quality and offer-operations score used by the catalog UI. */
   overallScore: OverallScoreRow & { display: string };
   /** Server-owned lifecycle for source and benchmark follow-up work. */
@@ -368,6 +371,7 @@ export function loadModels(db: Db, opts: { includeRetired?: boolean; now?: () =>
     .all(...statuses) as unknown as ModelRow[];
   const scores = db.prepare('SELECT * FROM model_scores').all() as unknown as ScoreRow[];
   const evaluation = createEvaluationRepository(db);
+  const performanceByModel = loadPerformanceByModel(db);
 
   const byKey = new Map<string, { VQ?: ScoreRow; VO?: ScoreRow }>();
   for (const s of scores) {
@@ -557,6 +561,10 @@ export function loadModels(db: Db, opts: { includeRetired?: boolean; now?: () =>
         profileId: vo?.profile_id ?? 'balanced',
       },
       modelScore,
+      performance: performanceByModel.get(conflictKey(m.provider_id, m.model_id)) ?? {
+        status: 'not_measured', runId: null, evaluatedAt: null, sampleCount: 0, successfulSamples: 0,
+        ttftMedianSeconds: null, outputTokensPerSecondMedian: null, endToEndP95Seconds: null, successRate: null, speedScore: null,
+      },
       overallScore: { ...overallScore, display: overallScore.value === null ? '—' : `${overallScore.value.toFixed(1)}%` },
       resolution: loadResolution(db, m.provider_id, m.model_id) ?? {
         state: 'complete', reasons: [], firstDetectedAt: null, lastAttemptAt: null, nextAttemptAt: null,

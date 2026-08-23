@@ -10,6 +10,7 @@ import { Toolbar, PROVIDER_FILTERS } from '../../components/Toolbar/Toolbar';
 import { FactState } from '../../components/FactState/FactState';
 import { providerMatchesFilter } from '../../api/filters';
 import { matchesProviderSearch } from '../../api/provider-search';
+import { performanceRows, summarizePerformance, type PerformanceRow, type PerformanceSummary } from '../../api/performance';
 import { buildMonitoringSignals, type MonitoringSeverity } from '../../api/monitoring';
 import styles from './DashboardPage.module.css';
 
@@ -215,6 +216,8 @@ export function DashboardPage() {
     .filter((x): x is string => Boolean(x))
     .sort()[0] ?? null;
   const stale = data.providers.filter((p) => p.freshness !== 'fresh');
+  const performanceSummary = useMemo(() => summarizePerformance(models), [models]);
+  const performanceList = useMemo(() => performanceRows(models).slice(0, 5), [models]);
 
   return (
     <div>
@@ -354,6 +357,8 @@ export function DashboardPage() {
       />
 
       <RuntimeSettingsPanel health={health ?? null} error={healthError ?? null} loading={Boolean(healthLoading && !health)} />
+
+      <PerformancePanel summary={performanceSummary} rows={performanceList} />
 
       <AlertCenter
         alerts={visibleAlerts}
@@ -678,6 +683,62 @@ export function DashboardPage() {
         <Link to="/changes" className={styles.footerLink}>What's new</Link>
       </footer>
     </div>
+  );
+}
+
+function PerformancePanel({ summary, rows }: { summary: PerformanceSummary; rows: PerformanceRow[] }) {
+  const bestThroughput = summary.bestThroughput?.performance.outputTokensPerSecondMedian ?? null;
+  const formatSeconds = (value: number | null) => value === null ? '—' : `${value.toFixed(2)}s`;
+  const formatRate = (value: number | null) => value === null ? '—' : `${(value * 100).toFixed(1)}%`;
+
+  return (
+    <section className={styles.performancePanel} aria-labelledby="performance-panel-title">
+      <div className={styles.performanceHeader}>
+        <div>
+          <span className={styles.monitoringEyebrow}>Measured runtime evidence</span>
+          <h2 id="performance-panel-title" className={styles.performanceTitle}>Latency & model performance</h2>
+          <p className={styles.performanceDescription}>Stored speed-probe aggregates from Catalog evaluations. Unmeasured models are not ranked or treated as slow.</p>
+        </div>
+        <span className={styles.performanceCoverage}>{summary.measuredModels}/{summary.totalModels} measured</span>
+      </div>
+
+      <div className={styles.performanceKpis} role="group" aria-label="Performance summary">
+        <div className={styles.performanceKpi}><strong>{formatSeconds(summary.medianTtftSeconds)}</strong><span>Median TTFT</span></div>
+        <div className={styles.performanceKpi}><strong>{summary.medianOutputTokensPerSecond === null ? '—' : `${summary.medianOutputTokensPerSecond.toFixed(1)}`}</strong><span>Median tokens/s</span></div>
+        <div className={styles.performanceKpi}><strong>{formatSeconds(summary.medianEndToEndP95Seconds)}</strong><span>Median p95 response</span></div>
+        <div className={styles.performanceKpi}><strong>{formatRate(summary.averageSuccessRate)}</strong><span>Average success</span></div>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className={styles.performanceEmpty} role="status">
+          <LuActivity size={20} aria-hidden="true" />
+          <div><strong>No measured performance data</strong><p>Speed evaluations have not produced complete TTFT, throughput, and response-time samples for the current catalog.</p></div>
+        </div>
+      ) : (
+        <div className={styles.performanceTableWrap}>
+          <table className={styles.performanceTable}>
+            <caption className={styles.srOnly}>Top measured models by median output throughput</caption>
+            <thead><tr><th>Model</th><th>Median TTFT</th><th>Tokens/s</th><th>Response p95</th><th>Success</th></tr></thead>
+            <tbody>
+              {rows.map(({ model, performance }) => {
+                const throughput = performance.outputTokensPerSecondMedian ?? 0;
+                const barWidth = bestThroughput ? Math.max(4, Math.round((throughput / bestThroughput) * 100)) : 0;
+                return (
+                  <tr key={`${model.providerId}/${model.modelId}`}>
+                    <td><Link to={`/provider/${encodeURIComponent(model.providerId)}?model=${encodeURIComponent(model.modelId)}`} className={styles.performanceModelLink}>{model.displayName || model.modelId}</Link><span className={styles.performanceProvider}>{model.providerId}</span></td>
+                    <td>{formatSeconds(performance.ttftMedianSeconds)}</td>
+                    <td><div className={styles.performanceMetric}><span>{throughput.toFixed(1)}</span><span className={styles.performanceBar} style={{ width: `${barWidth}%` }} aria-hidden="true" /></div></td>
+                    <td>{formatSeconds(performance.endToEndP95Seconds)}</td>
+                    <td>{formatRate(performance.successRate)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className={styles.performanceFootnote}>Based on {summary.successfulSamples}/{summary.sampleCount} complete speed samples. A blank metric means the server did not publish a complete measurement.</p>
+    </section>
   );
 }
 

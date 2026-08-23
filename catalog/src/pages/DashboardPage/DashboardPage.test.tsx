@@ -222,6 +222,18 @@ describe('the alert center lifecycle experience', () => {
   });
 });
 
+describe('the performance monitoring panel', () => {
+  test('shows an honest no-measurement state when no speed probe is complete', async () => {
+    catalogMock.current = { data: baseData(), error: null, loading: false };
+    renderDashboard();
+    await settleDashboard();
+
+    expect(screen.getByRole('heading', { name: 'Latency & model performance' })).toBeInTheDocument();
+    expect(screen.getByText('No measured performance data')).toBeInTheDocument();
+    expect(screen.getByText('0/0 measured')).toBeInTheDocument();
+  });
+});
+
 describe('the Dashboard status and empty-state experience', () => {
   test('shows operational catalog status and offers a clear action after a search', async () => {
     catalogMock.current = { data: baseData(), error: null, loading: false };
