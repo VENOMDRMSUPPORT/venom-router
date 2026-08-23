@@ -14,15 +14,21 @@
  */
 import type { Db } from '../../db/index.ts';
 import { transaction } from '../../db/index.ts';
-import { buildEvaluationFixtures, fixtureDigest } from './fixtures.ts';
+import { answerWasCutOff, buildEvaluationFixtures, fixtureDigest } from './fixtures.ts';
 import { createEvaluationRepository } from './repository.ts';
 import { OVERALL_SCORE_POLICY, smoothCriterionScore, type QualityDimension } from './score.ts';
 
 export interface RegradeSummary {
   /** Dimensions replayed and re-scored. */
   rescored: Array<{ identityId: string; dimension: string; before: number | null; after: number }>;
-  /** Scored dimensions whose responses were not all retained, so they were left alone. */
-  unreplayable: Array<{ identityId: string; dimension: string; retained: number; samples: number }>;
+  /** Scored dimensions left exactly as they were, and the reason each was. */
+  unreplayable: Array<{
+    identityId: string;
+    dimension: string;
+    retained: number;
+    samples: number;
+    reason: UnreplayableReason;
+  }>;
 }
 
 interface SampleRow {
@@ -32,6 +38,16 @@ interface SampleRow {
   scenario_id: string;
   response_json: string | null;
 }
+
+/**
+ * Why a scored dimension could not be re-derived from what is already stored.
+ *
+ * `answer_truncated` is the one that costs money: the provider never finished
+ * an answer for at least one sample, so there is nothing to re-read and the
+ * dimension needs a real re-run. Naming it separately is the difference between
+ * "replay this for free" and "this must be bought again".
+ */
+export type UnreplayableReason = 'responses_not_retained' | 'answer_truncated' | 'unreadable_response';
 
 export interface RegradeInput {
   db: Db;
@@ -80,6 +96,7 @@ export function regradeFromRetainedResponses(input: RegradeInput): RegradeSummar
       if (retained.length !== samples.length || samples.length !== expected) {
         summary.unreplayable.push({
           identityId, dimension, retained: retained.length, samples: samples.length,
+          reason: 'responses_not_retained',
         });
         continue;
       }
@@ -87,19 +104,24 @@ export function regradeFromRetainedResponses(input: RegradeInput): RegradeSummar
       const scenarios = new Map(fixtures[dimension as QualityDimension].map((f) => [f.id, f]));
       let successes = 0;
       let criteria = 0;
-      let replayable = true;
+      let refusal: UnreplayableReason | null = null;
       for (const sample of retained) {
         const fixture = scenarios.get(sample.scenario_id);
-        if (!fixture) { replayable = false; break; }
+        if (!fixture) { refusal = 'unreadable_response'; break; }
         let body: unknown;
-        try { body = JSON.parse(sample.response_json!) as unknown; } catch { replayable = false; break; }
+        try { body = JSON.parse(sample.response_json!) as unknown; } catch { refusal = 'unreadable_response'; break; }
+        // A sample the provider never finished answering is absence of evidence,
+        // and its trace is not a substitute. Re-reading it would republish a
+        // truncation as a measurement — the exact defect this replay corrects.
+        if (answerWasCutOff(body)) { refusal = 'answer_truncated'; break; }
         const graded = fixture.grade(body);
         successes += graded.weightedSuccesses;
         criteria += graded.weightedCriteria;
       }
-      if (!replayable || criteria === 0) {
+      if (refusal || criteria === 0) {
         summary.unreplayable.push({
           identityId, dimension, retained: retained.length, samples: samples.length,
+          reason: refusal ?? 'unreadable_response',
         });
         continue;
       }

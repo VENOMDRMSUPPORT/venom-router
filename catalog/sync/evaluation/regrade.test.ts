@@ -33,6 +33,12 @@ function seedRun(db: Db, options: {
   answer: (index: number) => string;
   storedScore: number;
   retainedSamples?: number;
+  /**
+   * The whole stored choice, when a test needs a shape `answer` cannot express.
+   * `finish_reason` lives here, not on the message, which is why this option
+   * takes the choice rather than the message.
+   */
+  choice?: (index: number) => Record<string, unknown>;
 }): void {
   const scenarios = buildEvaluationFixtures().reasoning;
   db.prepare("INSERT OR IGNORE INTO providers (id,name,roster_url) VALUES ('p','P','https://p.test')").run();
@@ -57,7 +63,9 @@ function seedRun(db: Db, options: {
         runId, scenarioId: scenario.id, repetition, outcome: 'passed',
         weightedSuccesses: 1, weightedCriteria: 5, metrics: null,
         artifactRef: `fixture:${HASH}#${scenario.id}`,
-        response: written <= keep ? { choices: [{ message: { content: options.answer(index) } }] } : undefined,
+        response: written <= keep
+          ? { choices: [options.choice?.(index) ?? { message: { content: options.answer(index) } }] }
+          : undefined,
         errorCode: null, recordedAt: now(),
       });
     }
@@ -110,7 +118,10 @@ describe('re-scoring from evidence already bought', () => {
 
     assert.equal(summary.rescored.length, 0);
     assert.deepEqual(summary.unreplayable, [
-      { identityId: 'vendor/partial', dimension: 'reasoning', retained: 59, samples: 60 },
+      {
+        identityId: 'vendor/partial', dimension: 'reasoning', retained: 59, samples: 60,
+        reason: 'responses_not_retained',
+      },
     ]);
     assert.equal(scoreOf(db, 'vendor/partial').score, 20, 'the stored score is left exactly as it was');
     db.close();
@@ -124,6 +135,52 @@ describe('re-scoring from evidence already bought', () => {
 
     assert.ok(scoreOf(db, 'vendor/wrong').score < 10,
       'replaying evidence must not flatter a model that did not answer');
+    db.close();
+  });
+
+  test('refuses a corpus the provider never finished answering', () => {
+    const db = openDb(':memory:');
+    // What `opencode-go/hy3` actually returned 174 times out of 180: the whole
+    // output budget spent inside the trace, `finish_reason: 'length'`, and no
+    // answer. Replaying that would republish a truncation as a measurement.
+    seedRun(db, {
+      identityId: 'vendor/truncated', answer: latexAnswer, storedScore: 1.99,
+      choice: () => ({
+        finish_reason: 'length',
+        message: { role: 'assistant', content: '', reasoning_content: 'The user wants me to' },
+      }),
+    });
+
+    const summary = regradeFromRetainedResponses({ db, now, dimension: 'reasoning' });
+
+    assert.equal(summary.rescored.length, 0);
+    assert.deepEqual(summary.unreplayable, [
+      {
+        identityId: 'vendor/truncated', dimension: 'reasoning', retained: 60, samples: 60,
+        reason: 'answer_truncated',
+      },
+    ]);
+    assert.equal(scoreOf(db, 'vendor/truncated').score, 1.99,
+      'the wrong score stays until a real re-run replaces it, rather than being re-derived from nothing');
+    db.close();
+  });
+
+  test('replays a trace the gateway filed under its own name', () => {
+    const db = openDb(':memory:');
+    // A finished answer plus a trace under `reasoning_content`. 1,800 retained
+    // samples look like this, and the grader could not read a single one.
+    seedRun(db, {
+      identityId: 'vendor/trace', answer: latexAnswer, storedScore: 20,
+      choice: (index) => ({
+        finish_reason: 'stop',
+        message: { role: 'assistant', content: '', reasoning_content: latexAnswer(index) },
+      }),
+    });
+
+    const summary = regradeFromRetainedResponses({ db, now, dimension: 'reasoning' });
+
+    assert.equal(summary.unreplayable.length, 0, 'a worked answer in the trace is still an answer');
+    assert.ok(scoreOf(db, 'vendor/trace').score > 20);
     db.close();
   });
 

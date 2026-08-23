@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { RuntimeScenario } from './runtime.ts';
-import type { QualityDimension } from './score.ts';
+import { OVERALL_SCORE_POLICY, type QualityDimension } from './score.ts';
 
 export interface EvaluationFixture extends RuntimeScenario {
   expectedResponse: unknown;
@@ -8,12 +8,62 @@ export interface EvaluationFixture extends RuntimeScenario {
 
 type Grade = { weightedSuccesses: number; weightedCriteria: number };
 
+/**
+ * The assistant message, under the one set of names the graders below read.
+ *
+ * The trace has two names in the wild: the Responses API path folds it into
+ * `reasoning`, and every OpenAI-compatible reasoning gateway here sends
+ * `reasoning_content`. Renaming it at the network boundary would not be enough —
+ * `regrade.ts` replays bodies straight out of the database, and the ones already
+ * stored carry the provider's own spelling. 1,800 of 8,100 retained samples had
+ * their only text in a field nothing looked at.
+ *
+ * So the rename lives at the point of READING, which both a live response and a
+ * replayed one pass through, and the stored corpus stays exactly what the
+ * provider said.
+ */
 function messageFromResponse(response: unknown): Record<string, unknown> {
   if (typeof response !== 'object' || response === null) return {};
   const choices = (response as Record<string, unknown>).choices;
   if (!Array.isArray(choices) || typeof choices[0] !== 'object' || choices[0] === null) return {};
   const message = (choices[0] as Record<string, unknown>).message;
-  return typeof message === 'object' && message !== null ? message as Record<string, unknown> : {};
+  if (typeof message !== 'object' || message === null) return {};
+  const { reasoning_content: trace, ...rest } = message as Record<string, unknown>;
+  return typeof rest.reasoning === 'string' || typeof trace !== 'string' ? rest : { ...rest, reasoning: trace };
+}
+
+/** Every spelling of "I ran out of output budget" this catalog has seen. */
+const CUT_OFF_REASONS = ['length', 'max_tokens', 'max_output_tokens'];
+
+/**
+ * Whether the model ran out of budget before it wrote an answer.
+ *
+ * Not the same question as "is there text here" — deliberately. The regex-graded
+ * dimensions accept a worked answer inside the trace, and always have. What they
+ * cannot accept is a response the provider never finished: a reasoning model
+ * spending the whole 512-token fixture budget thinking returns
+ * `finish_reason: 'length'` with an empty `content`, and grading that scored the
+ * token cap as five failed criteria — 934 samples across eighteen offers.
+ *
+ * So both halves are required. The finish reason alone would discard a complete
+ * answer that merely ran long; an empty answer alone would discard the trace the
+ * graders are meant to read. Tool calls are an answer too: the tool-calling
+ * dimension never fills `content`.
+ *
+ * Exported because two callers must ask this of the identical shape — the
+ * transport before it accepts a response, and `regrade.ts` before it replays a
+ * stored one.
+ */
+export function answerWasCutOff(response: unknown): boolean {
+  if (typeof response !== 'object' || response === null) return false;
+  const choices = (response as Record<string, unknown>).choices;
+  if (!Array.isArray(choices) || typeof choices[0] !== 'object' || choices[0] === null) return false;
+  const reason = (choices[0] as Record<string, unknown>).finish_reason;
+  if (typeof reason !== 'string' || !CUT_OFF_REASONS.includes(reason)) return false;
+  const message = messageFromResponse(response);
+  const answered = typeof message.content === 'string' && message.content.trim() !== '';
+  const calledTools = Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
+  return !answered && !calledTools;
 }
 
 function contentFromResponse(response: unknown): string {
@@ -106,7 +156,7 @@ function fixture(
 ): EvaluationFixture {
   return {
     id,
-    payload: { messages, temperature: 0, max_tokens: 512, ...extra },
+    payload: { messages, temperature: 0, max_tokens: OVERALL_SCORE_POLICY.outputTokens, ...extra },
     expectedResponse,
     grade: evaluator,
   };

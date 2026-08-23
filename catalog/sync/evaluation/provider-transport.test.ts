@@ -264,19 +264,112 @@ describe('translating a tool definition for the Responses API', () => {
   });
 
   test('does not grade an incomplete Responses envelope with no answer', async () => {
+    let calls = 0;
     const transport = createEvaluationTransport({
       providerId: 'opencode-zen', modelId: 'muse-spark-1.2-contributor-free', credential: 'secret',
-      fetchImpl: (async () => new Response(JSON.stringify({
-        status: 'incomplete',
-        incomplete_details: { reason: 'max_output_tokens' },
-        output: [],
-      }), { status: 200 })) as typeof fetch,
+      fetchImpl: (async () => {
+        calls++;
+        return new Response(JSON.stringify({
+          status: 'incomplete',
+          incomplete_details: { reason: 'max_output_tokens' },
+          output: [],
+        }), { status: 200 });
+      }) as typeof fetch,
     });
 
     const outcome = await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
     assert.equal(outcome.kind, 'provider_failure');
     if (outcome.kind !== 'provider_failure') throw new Error('expected provider failure');
-    assert.equal(outcome.status, 503);
+    assert.equal(outcome.errorCode, 'answer_truncated');
+    assert.equal(calls, 2, 'one attempt, one raised-budget attempt, and no transient retry storm');
+  });
+});
+
+/**
+ * A response with no answer in it is not a wrong answer.
+ *
+ * The guard for this existed on the Responses path alone, keyed on that
+ * protocol's `status: incomplete`. Every model served on `/chat/completions`
+ * therefore had none: a reasoning model that spent the whole 512-token fixture
+ * budget inside its trace returned `finish_reason: 'length'` with an empty
+ * `content`, and the grader scored that as five failed criteria. It measured the
+ * token cap and published it as model quality — 934 of 8,100 retained samples
+ * across eighteen offers, `opencode-go/hy3` at 174 of 180.
+ *
+ * So the question is asked of the answer rather than of the envelope: is there
+ * anything here to grade? One raised-budget attempt, and then an honest refusal.
+ */
+describe('an answer cut off before the model produced one', () => {
+  const truncated = { choices: [{ finish_reason: 'length', message: { role: 'assistant', content: '', reasoning_content: 'still thinking' } }] };
+
+  const chatTransport = (fetchImpl: typeof fetch) => createEvaluationTransport({
+    providerId: 'ollama-cloud', modelId: 'kimi-k3', credential: 'secret', fetchImpl,
+  });
+
+  test('raises the output budget once and grades the answer that arrives', async () => {
+    const seen: Record<string, unknown>[] = [];
+    const transport = chatTransport((async (_url: string | URL, init?: RequestInit) => {
+      seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify(seen.length === 1
+        ? truncated
+        : { choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'done' } }] }), { status: 200 });
+    }) as typeof fetch);
+
+    const outcome = await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
+    assert.equal(seen.length, 2);
+    assert.equal(seen[0].max_tokens, 512, 'the first attempt pays the fixture budget, not the ceiling');
+    assert.equal(seen[1].max_tokens, 4096);
+    assert.equal(outcome.kind, 'success');
+    if (outcome.kind !== 'success') throw new Error('expected success');
+    assert.equal((outcome.response.body as { choices: [{ message: { content: string } }] }).choices[0].message.content, 'done');
+  });
+
+  test('refuses to grade an answer still cut off at the raised budget', async () => {
+    let calls = 0;
+    const transport = chatTransport((async () => {
+      calls++;
+      return new Response(JSON.stringify(truncated), { status: 200 });
+    }) as typeof fetch);
+
+    const outcome = await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
+    assert.equal(outcome.kind, 'provider_failure', 'a model_failure would be persisted as a graded zero');
+    if (outcome.kind !== 'provider_failure') throw new Error('expected provider failure');
+    assert.equal(outcome.errorCode, 'answer_truncated');
+    assert.equal(calls, 2, 'the owner authorised one retry at a bigger budget, not four paid attempts');
+  });
+
+  test('an empty answer carrying tool calls is a tool answer, not a truncation', async () => {
+    let calls = 0;
+    const transport = chatTransport((async () => {
+      calls++;
+      return new Response(JSON.stringify({
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: { role: 'assistant', content: '', tool_calls: [{ id: '1', type: 'function', function: { name: 'get_weather', arguments: '{}' } }] },
+        }],
+      }), { status: 200 });
+    }) as typeof fetch);
+
+    const outcome = await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
+    assert.equal(outcome.kind, 'success');
+    assert.equal(calls, 1, 'the tool-calling dimension must not pay twice for every sample');
+  });
+
+  test('hands on what the provider said, in the words the provider used', async () => {
+    // Retained verbatim on purpose. Renaming the trace here would leave the
+    // 1,800 samples ALREADY stored unreadable, because `regrade.ts` replays them
+    // out of the database and never passes this boundary. The rename therefore
+    // lives at the point of reading, in `fixtures.ts`, and the archive stays
+    // exactly what the provider answered.
+    const transport = chatTransport((async () => new Response(JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'answer', reasoning_content: 'worked it out' } }],
+    }), { status: 200 })) as typeof fetch);
+
+    const outcome = await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
+    if (outcome.kind !== 'success') throw new Error('expected success');
+    assert.deepEqual(outcome.response.body, {
+      choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'answer', reasoning_content: 'worked it out' } }],
+    });
   });
 });
 

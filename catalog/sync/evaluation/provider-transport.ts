@@ -1,5 +1,6 @@
 import { deflateSync } from 'node:zlib';
 import { OVERALL_SCORE_POLICY } from './score.ts';
+import { answerWasCutOff } from './fixtures.ts';
 import { fetchForEvaluationProvider } from './proxy-pool.ts';
 import { callWithPolicy, type EvaluationTransport, type TransportResponse } from './transport.ts';
 
@@ -182,6 +183,7 @@ function headersToRecord(headers: Headers): Record<string, string> {
   return Object.fromEntries(headers.entries());
 }
 
+/** ClinePass wraps every answer in a `data` envelope. Nothing downstream should know. */
 function normalizeResponseBody(providerId: string, body: unknown): unknown {
   if (providerId !== 'clinepass' || typeof body !== 'object' || body === null || Array.isArray(body)) {
     return body;
@@ -190,6 +192,11 @@ function normalizeResponseBody(providerId: string, body: unknown): unknown {
   return typeof envelope.data === 'object' && envelope.data !== null && !Array.isArray(envelope.data)
     ? envelope.data
     : body;
+}
+
+/** The same body with the output cap the next attempt should pay for. */
+function withOutputBudget(body: Record<string, unknown>, tokens: number): Record<string, unknown> {
+  return { ...body, max_tokens: tokens };
 }
 
 
@@ -218,7 +225,14 @@ function normalizeResponseBody(providerId: string, body: unknown): unknown {
 const MODEL_FAMILIES: {
   prefix: string;
   protocol: EvaluationProtocol;
-  /** A floor the family needs before it emits any message at all. */
+  /**
+   * A floor the family needs before it emits any message at all.
+   *
+   * A saving, not a guarantee. `answerWasCutOff` now catches a cut-off
+   * answer on every protocol and buys one raised-budget retry, so a family
+   * missing from this table costs one wasted request rather than a wrong score.
+   * Declaring the floor here means the first attempt already pays enough.
+   */
   minOutputTokens?: number;
 }[] = [
   { prefix: 'gpt-', protocol: 'responses' },
@@ -298,19 +312,10 @@ function toResponsesRequest(body: Record<string, unknown>, modelId: string): Rec
       return { ...entry, content: toResponsesContent(entry.content) };
     });
   }
-  if (typeof maxTokens === 'number') {
-    // The family's own floor, from the one table above. Families without one
-    // take the caller's cap unchanged.
-    request.max_output_tokens = Math.max(maxTokens, familyFor(modelId)?.minOutputTokens ?? 0);
-  }
+  // The cap only changes name here. What it should be was decided once, before
+  // the attempt, so both protocols spend the same budget on the same sample.
+  if (typeof maxTokens === 'number') request.max_output_tokens = maxTokens;
   return request;
-}
-
-function incompleteResponsesEnvelope(body: unknown): boolean {
-  return typeof body === 'object'
-    && body !== null
-    && !Array.isArray(body)
-    && (body as Record<string, unknown>).status === 'incomplete';
 }
 
 /** Fold a Responses envelope back into the one message shape every grader reads. */
@@ -345,7 +350,11 @@ function fromResponsesBody(body: unknown): unknown {
   const message: Record<string, unknown> = { role: 'assistant', content };
   if (reasoning) message.reasoning = reasoning;
   if (toolCalls.length > 0) message.tool_calls = toolCalls;
-  return { ...envelope, choices: [{ index: 0, message, finish_reason: 'stop' }] };
+  // The envelope's own verdict, carried across rather than asserted. A retained
+  // sample that says `stop` when the provider said `incomplete` is a diagnostic
+  // that lies about why a dimension has no score.
+  const finishReason = envelope.status === 'incomplete' ? 'length' : 'stop';
+  return { ...envelope, choices: [{ index: 0, message, finish_reason: finishReason }] };
 }
 
 export function createEvaluationTransport(input: CreateEvaluationTransportInput): EvaluationTransport {
@@ -356,46 +365,78 @@ export function createEvaluationTransport(input: CreateEvaluationTransportInput)
     throw new Error(`unsupported_evaluation_protocol:${protocol}`);
   }
   const fetchImpl = input.fetchImpl ?? fetchForEvaluationProvider(input.providerId);
-  return async (payload, credential) => callWithPolicy(async (): Promise<TransportResponse> => {
+  const policy = {
+    timeoutMs: OVERALL_SCORE_POLICY.requestTimeoutMs,
+    transientRetries: OVERALL_SCORE_POLICY.transientRetries,
+  };
+
+  const attempt = (body: Record<string, unknown>, credential: string) =>
+    callWithPolicy(async (): Promise<TransportResponse> => {
+      const normalizedBody = input.providerId === 'clinepass'
+        ? normalizeClinePayload(body) as Record<string, unknown>
+        : body;
+      const path = protocol === 'responses' ? '/responses' : '/chat/completions';
+      const requestBody = protocol === 'responses'
+        ? toResponsesRequest(normalizedBody, input.modelId)
+        : { ...normalizedBody, model: input.modelId, stream: false };
+      const response = await fetchImpl(`${baseUrl}${path}`, {
+        method: 'POST',
+        headers: evaluationHeaders(input.providerId, credential),
+        body: JSON.stringify(requestBody),
+        signal: AbortSignal.timeout(OVERALL_SCORE_POLICY.requestTimeoutMs),
+      });
+      const text = await response.text();
+      let responseBody: unknown = null;
+      if (text) {
+        try {
+          responseBody = JSON.parse(text) as unknown;
+        } catch {
+          responseBody = { error: 'non_json_provider_response' };
+        }
+      }
+      return {
+        status: response.status,
+        body: protocol === 'responses'
+          ? fromResponsesBody(responseBody)
+          : normalizeResponseBody(input.providerId, responseBody),
+        headers: headersToRecord(response.headers),
+      };
+    }, policy);
+
+  /**
+   * One request, and one more only if the first came back with no answer in it.
+   *
+   * A cut-off response is absence of evidence, not a wrong answer, so it must
+   * never reach a grader — and it must not become a `model_failure` either,
+   * which `runtime.ts` persists as zero of five criteria. It resolves as a
+   * `provider_failure`, which the dimension reports as insufficient evidence.
+   *
+   * Exactly one raised-budget retry. Riding the transient-retry loop instead
+   * would have bought four paid attempts per sample for the same answer.
+   */
+  return async (payload, credential) => {
     const body = typeof payload === 'object' && payload !== null && !Array.isArray(payload)
       ? payload as Record<string, unknown>
       : { messages: [{ role: 'user', content: String(payload) }] };
-    const normalizedBody = input.providerId === 'clinepass'
-      ? normalizeClinePayload(body) as Record<string, unknown>
-      : body;
-    const path = protocol === 'responses' ? '/responses' : '/chat/completions';
-    const requestBody = protocol === 'responses'
-      ? toResponsesRequest(normalizedBody, input.modelId)
-      : { ...normalizedBody, model: input.modelId, stream: false };
-    const response = await fetchImpl(`${baseUrl}${path}`, {
-      method: 'POST',
-      headers: evaluationHeaders(input.providerId, credential),
-      body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(OVERALL_SCORE_POLICY.requestTimeoutMs),
-    });
-    const text = await response.text();
-    let responseBody: unknown = null;
-    if (text) {
-      try {
-        responseBody = JSON.parse(text) as unknown;
-      } catch {
-        responseBody = { error: 'non_json_provider_response' };
-      }
+    const declared = typeof body.max_tokens === 'number'
+      ? Math.max(body.max_tokens, familyFor(input.modelId)?.minOutputTokens ?? 0)
+      : null;
+
+    const first = await attempt(declared === null ? body : withOutputBudget(body, declared), credential);
+    if (first.kind !== 'success' || !answerWasCutOff(first.response.body)) return first;
+
+    const ceiling = OVERALL_SCORE_POLICY.truncationRetryOutputTokens;
+    if (declared !== null && declared >= ceiling) {
+      return { kind: 'provider_failure', status: first.response.status, attempts: first.attempts, errorCode: 'answer_truncated' };
     }
+    const retried = await attempt(withOutputBudget(body, ceiling), credential);
+    if (retried.kind !== 'success') return retried;
+    if (!answerWasCutOff(retried.response.body)) return retried;
     return {
-      // A partial Responses envelope is not a model answer. Present it to the
-      // existing retry policy as transient provider state so it can never be
-      // persisted as a final failed grader sample.
-      status: protocol === 'responses' && response.ok && incompleteResponsesEnvelope(responseBody)
-        ? 503
-        : response.status,
-      body: protocol === 'responses'
-        ? fromResponsesBody(responseBody)
-        : normalizeResponseBody(input.providerId, responseBody),
-      headers: headersToRecord(response.headers),
+      kind: 'provider_failure',
+      status: retried.response.status,
+      attempts: first.attempts + retried.attempts,
+      errorCode: 'answer_truncated',
     };
-  }, {
-    timeoutMs: OVERALL_SCORE_POLICY.requestTimeoutMs,
-    transientRetries: OVERALL_SCORE_POLICY.transientRetries,
-  });
+  };
 }

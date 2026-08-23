@@ -24,6 +24,22 @@ export const OVERALL_SCORE_POLICY = {
   scenarioCount: 20,
   repetitions: 3,
   requestTimeoutMs: 120_000,
+  /**
+   * The output cap every quality fixture asks for.
+   *
+   * Part of the test-set digest, so changing it invalidates every stored score
+   * and re-runs the whole paid corpus. Raise the retry ceiling below instead:
+   * that costs one extra request for the models that need it, not all of them.
+   */
+  outputTokens: 512,
+  /**
+   * The one raised cap a cut-off answer is retried at before it is refused.
+   *
+   * Reasoning models spend the fixture budget inside their trace and return an
+   * empty answer, which the grader read as five failed criteria. Outside the
+   * digest by design: this is how an answer is obtained, not what was asked.
+   */
+  truncationRetryOutputTokens: 4096,
   qualityProviderConcurrency: 3,
   // Speed is measured alone under this fixed load. Do not couple it to quality
   // throughput: changing it would make provider speed scores non-comparable.

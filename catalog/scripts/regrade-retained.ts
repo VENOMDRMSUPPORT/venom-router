@@ -41,7 +41,10 @@ try {
   if (summary.unreplayable.length > 0) {
     console.log(`${summary.unreplayable.length} dimension(s) could not be replayed in full and were left alone:`);
     for (const row of summary.unreplayable.slice(0, 10)) {
-      console.log(`  ${row.identityId.padEnd(36)} ${row.dimension.padEnd(17)} ${row.retained}/${row.samples} retained`);
+      // The reason decides what to do next, so it is printed rather than left
+      // to be inferred from the retained count: `answer_truncated` cannot be
+      // fixed by any replay, because the provider never finished an answer.
+      console.log(`  ${row.identityId.padEnd(36)} ${row.dimension.padEnd(17)} ${String(`${row.retained}/${row.samples}`).padStart(7)} retained  ${row.reason}`);
     }
     if (summary.unreplayable.length > 10) console.log(`  … and ${summary.unreplayable.length - 10} more`);
     console.log('Those need a real re-run: `npm run queue -- <providerId>` with --force on the terminal batch.');

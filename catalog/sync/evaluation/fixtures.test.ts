@@ -145,6 +145,28 @@ describe('grading whether the model solved it, not how it wrote it', () => {
     assert.ok(fixtures.reasoning[0].grade(answer('3')).weightedSuccesses < 5);
   });
 
+  test('reads the worked answer whichever name the gateway filed it under', () => {
+    // Same trace, two spellings. `reasoning` is what the Responses path folds it
+    // into; `reasoning_content` is what every OpenAI-compatible reasoning gateway
+    // here actually sends, and reading only the first left 1,800 retained samples
+    // looking empty. Both must grade identically or a replay changes the answer.
+    const trace = 'so 7x + 5 = 26, which gives x = 3';
+    const graded = (message: Record<string, unknown>) =>
+      fixtures.reasoning[0].grade({ choices: [{ message }] });
+
+    assert.deepEqual(graded({ content: '', reasoning: trace }), graded({ content: '', reasoning_content: trace }));
+    assert.equal(graded({ content: '', reasoning_content: trace }).weightedSuccesses, 5);
+  });
+
+  test('a provider spelling never overrides the name already normalised', () => {
+    // The Responses path fills `reasoning` itself. If both arrive, the folded one
+    // wins: it is the answer this transport already committed to.
+    const graded = fixtures.reasoning[0].grade({
+      choices: [{ message: { content: '', reasoning: '7x + 5 = 26 so x = 3', reasoning_content: 'nonsense' } }],
+    });
+    assert.equal(graded.weightedSuccesses, 5);
+  });
+
   test('leaves the test-set digest untouched, so no stored score is invalidated', () => {
     // Grading is outside the digest by design. Repairing a criterion corrects
     // what future evidence means without silently discarding what was paid for.

@@ -377,6 +377,38 @@ model answers. Three repetitions are retained individually in
 `evaluation_samples`; they are not collapsed before the raw success totals are
 computed.
 
+### 13.1a A cut-off answer is not a model answer
+
+A model failure is a failed criterion; a response the provider never finished is
+neither. Quality fixtures ask for `OVERALL_SCORE_POLICY.outputTokens` (512) of
+output, and a reasoning model can spend all of it inside its trace and return
+`finish_reason: 'length'` with an empty `content`. Grading that measures the
+output cap and publishes it as model quality.
+
+`answerWasCutOff` (in `sync/evaluation/fixtures.ts`) decides this, and both
+halves are required: a cut-off finish reason **and** no answer -- no `content`
+and no `tool_calls`. The finish reason alone would discard a complete answer that
+merely ran long; an empty answer alone would discard the trace the regex-graded
+dimensions are meant to read.
+
+- The transport retries once at `truncationRetryOutputTokens` (4096). Still cut
+  off, and it resolves as a `provider_failure` with `answer_truncated`, so the
+  dimension reports insufficient evidence instead of a graded zero. Exactly one
+  raised-budget attempt: riding the transient-retry loop would buy four paid
+  requests per sample for the same answer.
+- `MODEL_FAMILIES.minOutputTokens` remains a saving, not a guarantee -- a family
+  missing from that table now costs one wasted request rather than a wrong score.
+- `regrade.ts` refuses a run containing a cut-off sample (`answer_truncated`)
+  rather than re-deriving a number from it. Those dimensions need a real re-run,
+  and the reason is reported per dimension so the two cases are never confused.
+
+The trace itself has two names on the wire: the Responses path folds it into
+`message.reasoning`, and OpenAI-compatible reasoning gateways send
+`message.reasoning_content`. The rename lives at the point of READING
+(`messageFromResponse`), not at the network boundary, because `regrade.ts`
+replays bodies straight out of the database and never crosses that boundary. The
+stored corpus therefore keeps the provider's own spelling.
+
 ### 13.2 Speed v1
 
 The speed fixture requests a fixed 512-token output. Each metric maps linearly
