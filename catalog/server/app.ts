@@ -12,6 +12,7 @@ import { planEvaluation, resolveIdentity } from '../sync/evaluation/plan.ts';
 import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
 import { regradeFromRetainedResponses } from '../sync/evaluation/regrade.ts';
 import { recalculatePublishedOffers } from '../sync/evaluation/recalculate.ts';
+import { alertSummary, reconcileAlerts, transitionAlert, type AlertStatus } from './alerts.ts';
 
 export interface AppDeps {
   db: Db;
@@ -158,6 +159,26 @@ export function route(deps: AppDeps, url: URL, method: string, body?: unknown): 
     const since = url.searchParams.get('since') ?? undefined;
     const limit = clampChangesLimit(Number(url.searchParams.get('limit') ?? 500));
     return { status: 200, body: loadChanges(db, { since, limit }) };
+  }
+
+  if (path === '/v1/alerts' && method === 'GET') {
+    const currentHealth = health(deps).body as Parameters<typeof reconcileAlerts>[1];
+    const alerts = reconcileAlerts(db, currentHealth, now.toISOString());
+    const status = url.searchParams.get('status');
+    const filtered = status === 'open' || status === 'acknowledged' || status === 'resolved'
+      ? alerts.filter((alert) => alert.status === status)
+      : alerts;
+    return { status: 200, body: { alerts: filtered, summary: alertSummary(alerts), generatedAt: now.toISOString() } };
+  }
+
+  const alertRoute = /^\/v1\/alerts\/([^/]+)$/ .exec(path);
+  if (alertRoute && method === 'PATCH') {
+    const requested = (body ?? {}) as { status?: unknown };
+    if (requested.status !== 'open' && requested.status !== 'acknowledged' && requested.status !== 'resolved') {
+      return { status: 400, body: { error: 'status must be open, acknowledged, or resolved' } };
+    }
+    const alert = transitionAlert(db, decodeURIComponent(alertRoute[1]), requested.status as AlertStatus, now.toISOString());
+    return alert ? { status: 200, body: alert } : { status: 404, body: { error: 'alert not found' } };
   }
 
   if (path === '/v1/sync' && method === 'POST') {

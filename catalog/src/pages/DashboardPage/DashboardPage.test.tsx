@@ -160,6 +160,57 @@ describe('the runtime settings panel', () => {
   });
 });
 
+describe('the alert center lifecycle experience', () => {
+  test('filters alerts and persists acknowledge, resolve, and reopen actions', async () => {
+    const now = '2026-08-23T10:00:00.000Z';
+    let serviceStatus: 'open' | 'acknowledged' | 'resolved' = 'open';
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/alerts/service-degraded')) {
+        const next = JSON.parse(String(init?.body ?? '{}')).status as typeof serviceStatus;
+        serviceStatus = next;
+        return Promise.resolve(new Response(JSON.stringify({ id: 'service-degraded', kind: 'service_degraded', severity: 'critical', title: 'Catalog service is degraded', detail: 'Database is unavailable.', providerId: null, modelId: null, status: serviceStatus, firstSeenAt: now, lastSeenAt: now, acknowledgedAt: serviceStatus === 'acknowledged' ? now : null, resolvedAt: serviceStatus === 'resolved' ? now : null, occurrenceCount: 1 }), { status: 200 }));
+      }
+      if (url.includes('/alerts')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          generatedAt: now,
+          summary: { total: 2, active: serviceStatus === 'resolved' ? 1 : 2, open: serviceStatus === 'open' ? 1 : 0, acknowledged: serviceStatus === 'acknowledged' ? 1 : 0, resolved: serviceStatus === 'resolved' ? 1 : 0, critical: serviceStatus === 'resolved' ? 0 : 1, warning: 1, info: 0 },
+          alerts: [
+            { id: 'service-degraded', kind: 'service_degraded', severity: 'critical', title: 'Catalog service is degraded', detail: 'Database is unavailable.', providerId: null, modelId: null, status: serviceStatus, firstSeenAt: now, lastSeenAt: now, acknowledgedAt: serviceStatus === 'acknowledged' ? now : null, resolvedAt: serviceStatus === 'resolved' ? now : null, occurrenceCount: 1 },
+            { id: 'stale-provider:acme', kind: 'stale_provider', severity: 'warning', title: 'Acme needs a fresh sync', detail: 'Provider data is stale.', providerId: 'acme', modelId: null, status: 'resolved', firstSeenAt: now, lastSeenAt: now, acknowledgedAt: null, resolvedAt: now, occurrenceCount: 2 },
+          ],
+        }), { status: 200 }));
+      }
+      if (url.includes('/changes')) return Promise.resolve(new Response(JSON.stringify({ changes: [], byClass: {}, cursor: null }), { status: 200 }));
+      return Promise.reject(new Error('unexpected request'));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      catalogMock.current = { data: baseData(), error: null, loading: false, health: null, healthError: null, healthLoading: false, reload: vi.fn() };
+      renderDashboard();
+
+      expect(await screen.findByText('Catalog service is degraded')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'acme' })).toHaveAttribute('href', '/provider/acme');
+      fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'resolved' } });
+      expect(screen.getByText('Acme needs a fresh sync')).toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'open' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Acknowledge' }));
+      await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => String(init?.body).includes('acknowledged'))).toBe(true));
+      expect(screen.getByText('Acknowledged', { selector: 'span' })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Resolve' }));
+      await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => String(init?.body).includes('resolved'))).toBe(true));
+      expect(screen.getAllByText('Resolved', { selector: 'span' }).length).toBeGreaterThan(0);
+      fireEvent.click(screen.getByRole('button', { name: 'Reopen' }));
+      await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => String(init?.body).includes('open'))).toBe(true));
+      expect(screen.getByText('Open', { selector: 'span' })).toBeInTheDocument();
+      expect(fetchMock.mock.calls.filter(([, init]) => String(init?.body).includes('acknowledged')).length).toBeGreaterThan(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe('the Dashboard status and empty-state experience', () => {
   test('shows operational catalog status and offers a clear action after a search', () => {
     catalogMock.current = { data: baseData(), error: null, loading: false };

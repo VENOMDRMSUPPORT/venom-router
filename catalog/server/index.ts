@@ -91,7 +91,7 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
       // Buffered rather than streamed: every request this service accepts is a
       // small control message, and a body is only read when one was sent.
       let body: unknown;
-      if (req.method === 'POST' || req.method === 'PUT') {
+      if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
         const chunks: Buffer[] = [];
         let totalBytes = 0;
         for await (const chunk of req) {

@@ -650,8 +650,57 @@ export interface HealthResponse {
   lastSync: HealthLastSync | null;
 }
 
+export type AlertSeverity = 'critical' | 'warning' | 'info';
+export type AlertStatus = 'open' | 'acknowledged' | 'resolved';
+
+export interface AlertRecord {
+  id: string;
+  kind: string;
+  severity: AlertSeverity;
+  title: string;
+  detail: string;
+  providerId: string | null;
+  modelId: string | null;
+  status: AlertStatus;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  acknowledgedAt: string | null;
+  resolvedAt: string | null;
+  occurrenceCount: number;
+}
+
+export interface AlertSummary {
+  total: number;
+  active: number;
+  open: number;
+  acknowledged: number;
+  resolved: number;
+  critical: number;
+  warning: number;
+  info: number;
+}
+
+export interface AlertsResponse {
+  alerts: AlertRecord[];
+  summary: AlertSummary;
+  generatedAt: string;
+}
+
 export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
   return json<HealthResponse>('/health', signal);
+}
+
+export async function fetchAlerts(status?: AlertStatus, signal?: AbortSignal): Promise<AlertsResponse> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : '';
+  return readService<AlertsResponse>(`/alerts${query}`, { signal });
+}
+
+export async function updateAlertStatus(id: string, status: AlertStatus): Promise<AlertRecord> {
+  return readService<AlertRecord>(`/alerts/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -40,3 +40,11 @@ The Vite development server proxies `/v1` requests to the Catalog API. Override 
 ## Integration expectations
 
 Router integrations should use the Catalog API base URL and record the Catalog response version or generation timestamp used by a routing decision. A future contract version should be introduced when the wire shape or ownership semantics change; consumers must fail closed on unsupported versions rather than inventing defaults.
+
+## Operational alert lifecycle
+
+Catalog owns the operational alert ledger. The dashboard reads `GET /v1/alerts`, which reconciles the current health response into durable alert records before returning them. Each record has a stable `id`, a server-owned `severity`, optional `providerId` and `modelId` targets, and one of three statuses: `open`, `acknowledged`, or `resolved`.
+
+An operator may transition a known alert with `PATCH /v1/alerts/:id` and a JSON body such as `{ "status": "acknowledged" }`. The service rejects unknown statuses with HTTP 400 and unknown alert IDs with HTTP 404. A problem that disappears from the health response is automatically marked `resolved`; if the same stable alert identity returns later, Catalog reopens it as a new active occurrence while preserving its occurrence count and timestamps.
+
+The Dashboard is intentionally read-only with respect to catalog facts. Acknowledge, resolve, and reopen actions change only the operational alert ledger; they never change provider data, model facts, scores, freshness, or the Catalog release metadata.

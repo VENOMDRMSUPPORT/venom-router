@@ -410,3 +410,25 @@ CREATE TABLE IF NOT EXISTS provider_quality_overrides (
   PRIMARY KEY (provider_id, model_id, dimension, methodology_ver),
   FOREIGN KEY (provider_id, model_id) REFERENCES models(provider_id, model_id)
 );
+
+-- Operational alert lifecycle. Alert facts are reconciled from Catalog health,
+-- while acknowledgement and resolution are explicit operator actions.
+CREATE TABLE IF NOT EXISTS operational_alerts (
+  id                TEXT PRIMARY KEY,
+  kind              TEXT NOT NULL,
+  severity          TEXT NOT NULL,          -- critical | warning | info
+  title             TEXT NOT NULL,
+  detail            TEXT NOT NULL,
+  provider_id       TEXT,
+  model_id          TEXT,
+  status            TEXT NOT NULL,          -- open | acknowledged | resolved
+  first_seen_at     TEXT NOT NULL,
+  last_seen_at      TEXT NOT NULL,
+  acknowledged_at   TEXT,
+  resolved_at       TEXT,
+  occurrence_count  INTEGER NOT NULL DEFAULT 1,
+  FOREIGN KEY (provider_id, model_id) REFERENCES models(provider_id, model_id)
+);
+CREATE INDEX IF NOT EXISTS idx_operational_alerts_status ON operational_alerts(status, last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_operational_alerts_provider ON operational_alerts(provider_id, last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_operational_alerts_kind ON operational_alerts(kind, last_seen_at);
