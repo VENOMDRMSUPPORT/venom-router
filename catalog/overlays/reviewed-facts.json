@@ -69,6 +69,23 @@
         ],
         "reviewedAt": "2026-08-18"
       }
+    },
+    "opencode-go/grok-4.5": {
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "ref": "opencode Console Go grok-4.5 /responses image input",
+        "sourceUrl": "https://opencode.ai/docs/zen",
+        "evidence": [
+          "models.dev publishes grok-4.5 with input modalities text and image, and the opencode-go roster lists the model, so the catalog planned a vision evaluation for it.",
+          "Measured against the live gateway on 2026-08-23: a text-only /responses request returns 200, while every request carrying an image returns 400 'Error from provider (Console Go): Upstream request failed: [400] invalid request'.",
+          "The refusal is not a payload shape or an encoding. input_image with a string image_url is the shape the API validates (the nested {url} and chat-style image_url forms are rejected earlier with 'validation failed'), and both a PNG data URL and a public https JPEG URL are refused identically.",
+          "It is not the gateway or the protocol either: opencode-go/gpt-5.6-luna is served over the same /responses endpoint and answers image requests 200, grading 5/5 on the vision fixture. The refusal is specific to this offering.",
+          "Recorded as an offer-level fact. It says this provider's grok-4.5 offering serves no images; it makes no claim about the upstream x-ai/grok-4.5 model."
+        ],
+        "reviewedAt": "2026-08-23"
+      }
     }
   }
 }
