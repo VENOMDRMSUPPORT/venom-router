@@ -202,6 +202,48 @@ describe('re-scoring from evidence already bought', () => {
     db.close();
   });
 
+  test('refuses a partial answer the provider was cut off mid-way through', () => {
+    const db = openDb(':memory:');
+    // `gpt-oss:120b` began its answer and was cut at the cap. `content` is not
+    // empty, so the older check passed it straight to the grader, which scored
+    // the fragment as a wrong answer.
+    seedRun(db, {
+      identityId: 'vendor/partial-answer', answer: latexAnswer, storedScore: 30,
+      choice: () => ({
+        finish_reason: 'length',
+        message: { role: 'assistant', content: '{ "first": "alpha-01", "sec' },
+      }),
+    });
+
+    const summary = regradeFromRetainedResponses({ db, now, dimension: 'reasoning' });
+
+    assert.equal(summary.rescored.length, 0);
+    assert.equal(summary.unreplayable[0].reason, 'answer_truncated');
+    assert.equal(scoreOf(db, 'vendor/partial-answer').score, null, 'withdrawn, not re-scored from a fragment');
+    db.close();
+  });
+
+  test('a cut-off answer that still scored full marks is evidence', () => {
+    const db = openDb(':memory:');
+    // Cut off AFTER answering: the interruption cost nothing, so refusing it
+    // would throw away a paid measurement for no gain.
+    seedRun(db, {
+      identityId: 'vendor/cut-after-answer', answer: latexAnswer, storedScore: 20,
+      choice: (index) => ({
+        finish_reason: 'length',
+        message: { role: 'assistant', content: `${latexAnswer(index)}
+
+And here is some extra prose that ran` },
+      }),
+    });
+
+    const summary = regradeFromRetainedResponses({ db, now, dimension: 'reasoning' });
+
+    assert.equal(summary.unreplayable.length, 0);
+    assert.ok((scoreOf(db, 'vendor/cut-after-answer').score ?? 0) > 20);
+    db.close();
+  });
+
   test('replays a trace the gateway filed under its own name', () => {
     const db = openDb(':memory:');
     // A finished answer plus a trace under `reasoning_content`. 1,800 retained

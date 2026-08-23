@@ -385,17 +385,45 @@ output, and a reasoning model can spend all of it inside its trace and return
 `finish_reason: 'length'` with an empty `content`. Grading that measures the
 output cap and publishes it as model quality.
 
-`answerWasCutOff` (in `sync/evaluation/fixtures.ts`) decides this, and both
-halves are required: a cut-off finish reason **and** no answer -- no `content`
-and no `tool_calls`. The finish reason alone would discard a complete answer that
-merely ran long; an empty answer alone would discard the trace the regex-graded
-dimensions are meant to read.
+`ranOutOfRoom` (in `sync/evaluation/fixtures.ts`) reports only what the provider
+said: the finish reason is one of `length`, `max_tokens`, `max_output_tokens`. It
+deliberately ignores what the message contains, and the responsibility splits in
+two, because the two halves need different knowledge:
 
-- The transport retries once at `truncationRetryOutputTokens` (4096). Still cut
-  off, and it resolves as a `provider_failure` with `answer_truncated`, so the
-  dimension reports insufficient evidence instead of a graded zero. Exactly one
-  raised-budget attempt: riding the transient-retry loop would buy four paid
-  requests per sample for the same answer.
+- **The transport buys room, and does not judge.** Any `ranOutOfRoom` response
+  earns exactly one retry at `truncationRetryOutputTokens`, and whatever comes
+  back is handed on. It cannot judge: a cut-off response that scored full marks
+  is a perfectly good measurement, and the transport has no grader. An earlier
+  version decided here, which forced it to require a completely EMPTY answer --
+  so every model that emitted half an answer before the cap was never offered a
+  bigger budget at all. `minimax-m2.5` was about to be published at 1/5 on a
+  long-context scenario it answers 5/5 with room.
+- **`runtime.ts` judges, because it holds the grade.** A cut-off sample counts as
+  evidence only if it scored full marks; below that it becomes a
+  `provider_failure` named `answer_truncated`, retained but not final, so the
+  dimension reports insufficient evidence instead of publishing a fragment as a
+  wrong answer. Nothing in a fragment separates wrong from unfinished.
+  `regrade.ts` applies the identical rule when replaying stored responses.
+- Exactly one raised-budget attempt: riding the transient-retry loop would buy
+  four paid requests per sample for the same answer. A transient failure on that
+  retry stays transient rather than being renamed `answer_truncated`, which would
+  stop a whole dimension over one blip.
+- 8192 is measured. `scripts/probe-output-budget.ts` sends the real fixture for
+  the scenario an offer actually truncated on and reports the finish reason and
+  token count, at two requests per offer against sixty-three per dimension.
+  Probing all eighteen affected offers put sixteen between 178 and 1,760 output
+  tokens and `gpt-oss:120b` at 4,822 -- so an unmeasured 4096 would have failed
+  that family on every sample of a paid run. Run this probe before any corpus
+  re-run; a ceiling nobody measured is the same defect one level up.
+- ONE ceiling for every model. `outputTokens` is inside the test-set digest so
+  that models are compared under identical conditions, and a per-model ceiling
+  would quietly undo that. `gpt-oss:20b` was still mid-trace at 16,384 tokens on
+  a question answered by one equation; it reports insufficient evidence, which is
+  a finding about the model rather than a budget to keep raising.
+- Within one transport -- and a transport is built per offer -- the first
+  truncation is remembered, so later samples open at the ceiling instead of
+  paying to rediscover it. A cap is a limit, not a target: billing follows the
+  tokens actually generated, so opening higher costs nothing on its own.
 - `MODEL_FAMILIES.minOutputTokens` remains a saving, not a guarantee -- a family
   missing from that table now costs one wasted request rather than a wrong score.
 - `regrade.ts` refuses a run containing a cut-off sample (`answer_truncated`)

@@ -37,6 +37,68 @@ describe('runtime evaluation scheduling', () => {
     assert.ok(maxActive <= OVERALL_SCORE_POLICY.qualityProviderConcurrency);
   });
 
+  test('a partly-written answer cut off at the cap is not a wrong answer', async () => {
+    // What `gpt-oss:120b` actually returned: the JSON started, the cap hit, and
+    // the fragment scored 1 of 5 as though the model had answered wrongly.
+    // Nothing in a fragment separates wrong from unfinished, so the dimension
+    // must report insufficient evidence rather than publish the fragment.
+    let calls = 0;
+    // The shared `scenarios` above grade everything 5/5, which is exactly the
+    // case that must still be kept. A fragment has to score below full marks.
+    const fragmentScores: RuntimeScenario[] = scenarios.map((scenario) => ({
+      ...scenario,
+      grade: () => ({ weightedSuccesses: 1, weightedCriteria: 5 }),
+    }));
+    const result = await runDimensionEvaluation({
+      providerId: 'p1', modelId: 'm1', dimension: 'coding', scenarios: fragmentScores,
+      transport: async () => {
+        calls++;
+        return {
+          kind: 'success',
+          response: {
+            status: 200,
+            headers: {},
+            body: { choices: [{ finish_reason: 'length', message: { role: 'assistant', content: 'function isDiv' } }] },
+          },
+          attempts: 1,
+        };
+      },
+      credential: 'secret', now: () => '2026-08-19T00:00:00.000Z',
+    });
+
+    assert.equal(result.status, 'insufficient_evidence');
+    assert.equal(result.reason, 'incomplete_valid_scenarios');
+    const truncated = result.samples.filter((sample) => sample.errorCode === 'answer_truncated');
+    assert.ok(truncated.length > 0, 'the truncation is named on the sample, not hidden');
+    assert.equal(truncated[0].weightedSuccesses, null, 'and it carries no score to be aggregated');
+    // Doomed on the first such sample, so it stops rather than buying sixty more.
+    assert.ok(calls < 63, `expected an early stop, made ${calls} requests`);
+  });
+
+  test('a cut-off response that still scored full marks is kept', async () => {
+    // The answer arrived and the interruption came after it. Refusing this would
+    // discard a paid measurement for nothing.
+    const answered = buildEvaluationFixtures().coding[0].expectedResponse as {
+      choices: [{ message: { content: string } }];
+    };
+    const result = await runDimensionEvaluation({
+      providerId: 'p1', modelId: 'm1', dimension: 'coding', scenarios,
+      transport: async () => ({
+        kind: 'success',
+        response: {
+          status: 200,
+          headers: {},
+          body: { choices: [{ finish_reason: 'length', message: { content: answered.choices[0].message.content } }] },
+        },
+        attempts: 1,
+      }),
+      credential: 'secret', now: () => '2026-08-19T00:00:00.000Z',
+    });
+
+    assert.equal(result.status, 'complete');
+    assert.ok(result.samples.every((sample) => sample.errorCode === null));
+  });
+
   test('missing credentials produces insufficient evidence without a request', async () => {
     let calls = 0;
     const result = await runDimensionEvaluation({

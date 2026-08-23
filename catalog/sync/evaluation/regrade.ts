@@ -14,7 +14,7 @@
  */
 import type { Db } from '../../db/index.ts';
 import { transaction } from '../../db/index.ts';
-import { answerWasCutOff, buildEvaluationFixtures, fixtureDigest } from './fixtures.ts';
+import { buildEvaluationFixtures, fixtureDigest, ranOutOfRoom } from './fixtures.ts';
 import { createEvaluationRepository } from './repository.ts';
 import { OVERALL_SCORE_POLICY, smoothCriterionScore, type QualityDimension } from './score.ts';
 
@@ -127,11 +127,16 @@ export function regradeFromRetainedResponses(input: RegradeInput): RegradeSummar
         if (!fixture) { refusal = 'unreadable_response'; break; }
         let body: unknown;
         try { body = JSON.parse(sample.response_json!) as unknown; } catch { refusal = 'unreadable_response'; break; }
-        // A sample the provider never finished answering is absence of evidence,
-        // and its trace is not a substitute. Re-reading it would republish a
-        // truncation as a measurement — the exact defect this replay corrects.
-        if (answerWasCutOff(body)) { refusal = 'answer_truncated'; break; }
         const graded = fixture.grade(body);
+        // The same rule the live runner applies, for the same reason: a cut-off
+        // response is evidence only if it scored full marks. Below that, nothing
+        // in it separates a wrong answer from an unfinished one, and re-reading it
+        // would republish a truncation as a measurement — the exact defect this
+        // replay exists to correct.
+        if (graded.weightedSuccesses < graded.weightedCriteria && ranOutOfRoom(body)) {
+          refusal = 'answer_truncated';
+          break;
+        }
         successes += graded.weightedSuccesses;
         criteria += graded.weightedCriteria;
       }

@@ -278,9 +278,11 @@ describe('translating a tool definition for the Responses API', () => {
     });
 
     const outcome = await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
-    assert.equal(outcome.kind, 'provider_failure');
-    if (outcome.kind !== 'provider_failure') throw new Error('expected provider failure');
-    assert.equal(outcome.errorCode, 'answer_truncated');
+    // `fromResponsesBody` carries `status: incomplete` across as `finish_reason:
+    // 'length'`, so the one protocol-neutral rule sees it and buys more room.
+    assert.equal(outcome.kind, 'success');
+    if (outcome.kind !== 'success') throw new Error('expected success');
+    assert.equal((outcome.response.body as { choices: [{ finish_reason: string }] }).choices[0].finish_reason, 'length');
     assert.equal(calls, 2, 'one attempt, one raised-budget attempt, and no transient retry storm');
   });
 });
@@ -318,13 +320,16 @@ describe('an answer cut off before the model produced one', () => {
     const outcome = await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
     assert.equal(seen.length, 2);
     assert.equal(seen[0].max_tokens, 512, 'the first attempt pays the fixture budget, not the ceiling');
-    assert.equal(seen[1].max_tokens, 4096);
+    assert.equal(seen[1].max_tokens, 8192);
     assert.equal(outcome.kind, 'success');
     if (outcome.kind !== 'success') throw new Error('expected success');
     assert.equal((outcome.response.body as { choices: [{ message: { content: string } }] }).choices[0].message.content, 'done');
   });
 
-  test('refuses to grade an answer still cut off at the raised budget', async () => {
+  test('stops after one raised-budget attempt and hands the verdict on', async () => {
+    // Still cut off at the ceiling, and the transport does NOT judge that: only
+    // the grader can tell a truncated fragment from a truncated correct answer.
+    // `runtime.ts` turns this into a provider failure named `answer_truncated`.
     let calls = 0;
     const transport = chatTransport((async () => {
       calls++;
@@ -332,10 +337,87 @@ describe('an answer cut off before the model produced one', () => {
     }) as typeof fetch);
 
     const outcome = await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
-    assert.equal(outcome.kind, 'provider_failure', 'a model_failure would be persisted as a graded zero');
+    assert.equal(outcome.kind, 'success');
+    assert.equal(calls, 2, 'one retry at a bigger budget, not four paid attempts');
+  });
+
+  test('buys room for a HALF-written answer too, which is the common shape', async () => {
+    // `minimax-m2.5` and `nemotron-3.5-lightning-free` both emitted part of the
+    // long-context JSON and were cut at 512. Requiring an empty answer before
+    // retrying meant neither was ever offered a bigger budget, so a paid re-run
+    // would have failed them again for the same reason.
+    const seen: Record<string, unknown>[] = [];
+    const transport = chatTransport((async (_url: string | URL, init?: RequestInit) => {
+      seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify(seen.length === 1
+        ? { choices: [{ finish_reason: 'length', message: { role: 'assistant', content: '{ "first": "alpha-01", "sec' } }] }
+        : { choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '{"first":"alpha-01"}' } }] }), { status: 200 });
+    }) as typeof fetch);
+
+    const outcome = await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
+    assert.deepEqual(seen.map((body) => body.max_tokens), [512, 8192]);
+    if (outcome.kind !== 'success') throw new Error('expected success');
+    assert.equal((outcome.response.body as { choices: [{ finish_reason: string }] }).choices[0].finish_reason, 'stop');
+  });
+
+  test('a transient failure on the retry stays transient', async () => {
+    // Falling back to the truncated first response would rename a 429 as
+    // `answer_truncated`, which stops the whole dimension rather than leaving one
+    // sample for the next run.
+    let calls = 0;
+    const transport = chatTransport((async () => {
+      calls++;
+      return calls === 1
+        ? new Response(JSON.stringify(truncated), { status: 200 })
+        : new Response('{}', { status: 429, headers: { 'retry-after': '0' } });
+    }) as typeof fetch);
+
+    const outcome = await transport({ messages: [{ role: 'user', content: 'x' }], max_tokens: 512 }, 'secret');
+    assert.equal(outcome.kind, 'provider_failure');
     if (outcome.kind !== 'provider_failure') throw new Error('expected provider failure');
-    assert.equal(outcome.errorCode, 'answer_truncated');
-    assert.equal(calls, 2, 'the owner authorised one retry at a bigger budget, not four paid attempts');
+    assert.equal(outcome.errorCode, 'http_429');
+  });
+
+  test('does not pay to re-learn the same truncation on every sample', async () => {
+    // `opencode-go/hy3` was cut off on 60 of 60 coding samples. Discovering that
+    // once per sample costs a wasted request and 512 wasted tokens of trace,
+    // sixty times over. A cap is a limit rather than a target, so opening at the
+    // ceiling for a model already known to need it costs nothing extra.
+    const seen: Record<string, unknown>[] = [];
+    const transport = chatTransport((async (_url: string | URL, init?: RequestInit) => {
+      seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      // Cut off at anything under the ceiling, answers when given room.
+      const asked = Number(seen[seen.length - 1].max_tokens);
+      return new Response(JSON.stringify(asked >= 8192
+        ? { choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'done' } }] }
+        : truncated), { status: 200 });
+    }) as typeof fetch);
+
+    const payload = { messages: [{ role: 'user', content: 'x' }], max_tokens: 512 };
+    const first = await transport(payload, 'secret');
+    const second = await transport(payload, 'secret');
+
+    assert.equal(first.kind, 'success');
+    assert.equal(second.kind, 'success');
+    assert.deepEqual(seen.map((body) => body.max_tokens), [512, 8192, 8192],
+      'the second sample opens at the ceiling instead of paying for the same discovery again');
+  });
+
+  test('the conclusion never leaks between models', async () => {
+    // The flag lives on one transport, and a transport is built per offer. A
+    // model that truncates must not change what the next model is asked for.
+    const seen: Record<string, unknown>[] = [];
+    const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+      seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify(truncated), { status: 200 });
+    }) as typeof fetch;
+
+    const payload = { messages: [{ role: 'user', content: 'x' }], max_tokens: 512 };
+    await chatTransport(fetchImpl)(payload, 'secret');
+    seen.length = 0;
+    await chatTransport(fetchImpl)(payload, 'secret');
+
+    assert.equal(seen[0].max_tokens, 512, 'a fresh transport starts from the fixture budget');
   });
 
   test('an empty answer carrying tool calls is a tool answer, not a truncation', async () => {

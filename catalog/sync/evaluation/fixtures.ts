@@ -36,34 +36,27 @@ function messageFromResponse(response: unknown): Record<string, unknown> {
 const CUT_OFF_REASONS = ['length', 'max_tokens', 'max_output_tokens'];
 
 /**
- * Whether the model ran out of budget before it wrote an answer.
+ * Whether the provider stopped for want of room, whatever it emitted first.
  *
- * Not the same question as "is there text here" — deliberately. The regex-graded
- * dimensions accept a worked answer inside the trace, and always have. What they
- * cannot accept is a response the provider never finished: a reasoning model
- * spending the whole 512-token fixture budget thinking returns
- * `finish_reason: 'length'` with an empty `content`, and grading that scored the
- * token cap as five failed criteria — 934 samples across eighteen offers.
+ * One question, asked in two places, and neither of them is the transport's
+ * business to answer alone. The transport uses it to decide whether to buy the
+ * model more room; `runtime.ts` and `regrade.ts` use it together with the grade
+ * to decide whether what came back is evidence at all: a cut-off response counts
+ * only if it scored full marks, because below that nothing in it separates a
+ * wrong answer from an unfinished one.
  *
- * So both halves are required. The finish reason alone would discard a complete
- * answer that merely ran long; an empty answer alone would discard the trace the
- * graders are meant to read. Tool calls are an answer too: the tool-calling
- * dimension never fills `content`.
- *
- * Exported because two callers must ask this of the identical shape — the
- * transport before it accepts a response, and `regrade.ts` before it replays a
- * stored one.
+ * It deliberately ignores what the message contains. The predicate this replaced
+ * required an EMPTY answer as well, and so missed the commonest shape of the
+ * defect — `gpt-oss:120b` and `minimax-m2.5` both began their long-context JSON,
+ * were cut mid-object at 512 tokens, and were graded 1 of 5 and 0 of 5 as though
+ * they had answered wrongly. Neither was ever offered a bigger budget.
  */
-export function answerWasCutOff(response: unknown): boolean {
+export function ranOutOfRoom(response: unknown): boolean {
   if (typeof response !== 'object' || response === null) return false;
   const choices = (response as Record<string, unknown>).choices;
   if (!Array.isArray(choices) || typeof choices[0] !== 'object' || choices[0] === null) return false;
   const reason = (choices[0] as Record<string, unknown>).finish_reason;
-  if (typeof reason !== 'string' || !CUT_OFF_REASONS.includes(reason)) return false;
-  const message = messageFromResponse(response);
-  const answered = typeof message.content === 'string' && message.content.trim() !== '';
-  const calledTools = Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
-  return !answered && !calledTools;
+  return typeof reason === 'string' && CUT_OFF_REASONS.includes(reason);
 }
 
 function contentFromResponse(response: unknown): string {

@@ -1,6 +1,6 @@
 import { deflateSync } from 'node:zlib';
 import { OVERALL_SCORE_POLICY } from './score.ts';
-import { answerWasCutOff } from './fixtures.ts';
+import { ranOutOfRoom } from './fixtures.ts';
 import { fetchForEvaluationProvider } from './proxy-pool.ts';
 import { callWithPolicy, type EvaluationTransport, type TransportResponse } from './transport.ts';
 
@@ -228,9 +228,9 @@ const MODEL_FAMILIES: {
   /**
    * A floor the family needs before it emits any message at all.
    *
-   * A saving, not a guarantee. `answerWasCutOff` now catches a cut-off
-   * answer on every protocol and buys one raised-budget retry, so a family
-   * missing from this table costs one wasted request rather than a wrong score.
+   * A saving, not a guarantee. `ranOutOfRoom` now catches a cut-off answer on
+   * every protocol and buys one raised-budget retry, so a family missing from
+   * this table costs one wasted request rather than a wrong score.
    * Declaring the floor here means the first attempt already pays enough.
    */
   minOutputTokens?: number;
@@ -403,13 +403,32 @@ export function createEvaluationTransport(input: CreateEvaluationTransportInput)
       };
     }, policy);
 
+  const ceiling = OVERALL_SCORE_POLICY.truncationRetryOutputTokens;
+
   /**
-   * One request, and one more only if the first came back with no answer in it.
+   * Whether this model has already shown it cannot answer inside the fixture
+   * budget, so the next sample should not pay to find that out again.
    *
-   * A cut-off response is absence of evidence, not a wrong answer, so it must
-   * never reach a grader — and it must not become a `model_failure` either,
-   * which `runtime.ts` persists as zero of five criteria. It resolves as a
-   * `provider_failure`, which the dimension reports as insufficient evidence.
+   * A model that truncates once on a dimension truncates on nearly all of it:
+   * `opencode-go/hy3` did so on 60 of 60 coding samples. Re-learning it per
+   * sample means a wasted request and a wasted 512 tokens of trace, sixty times
+   * per dimension. Raising the cap costs nothing by itself — a cap is a limit,
+   * not a target, and billing follows the tokens actually generated.
+   *
+   * Scoped to one transport, which is built per offer, so it never leaks a
+   * conclusion about one model into a request for another.
+   */
+  let startAtCeiling = false;
+
+  /**
+   * One request, and one more only if the provider ran out of room.
+   *
+   * This buys the model space; it does not judge what came back. Judging needs
+   * the grade, and the grade lives in `runtime.ts` — a cut-off response that
+   * scored full marks is a perfectly good measurement, and a transport cannot
+   * know that. An earlier version decided here, which meant it could only act on
+   * a cut-off response that was completely EMPTY: every model that emitted half
+   * an answer before the cap was never offered a bigger budget at all.
    *
    * Exactly one raised-budget retry. Riding the transient-retry loop instead
    * would have bought four paid attempts per sample for the same answer.
@@ -421,22 +440,19 @@ export function createEvaluationTransport(input: CreateEvaluationTransportInput)
     const declared = typeof body.max_tokens === 'number'
       ? Math.max(body.max_tokens, familyFor(input.modelId)?.minOutputTokens ?? 0)
       : null;
+    const opening = declared === null ? null : startAtCeiling ? Math.max(declared, ceiling) : declared;
 
-    const first = await attempt(declared === null ? body : withOutputBudget(body, declared), credential);
-    if (first.kind !== 'success' || !answerWasCutOff(first.response.body)) return first;
+    const first = await attempt(opening === null ? body : withOutputBudget(body, opening), credential);
+    if (first.kind !== 'success' || !ranOutOfRoom(first.response.body)) return first;
 
-    const ceiling = OVERALL_SCORE_POLICY.truncationRetryOutputTokens;
-    if (declared !== null && declared >= ceiling) {
-      return { kind: 'provider_failure', status: first.response.status, attempts: first.attempts, errorCode: 'answer_truncated' };
-    }
-    const retried = await attempt(withOutputBudget(body, ceiling), credential);
-    if (retried.kind !== 'success') return retried;
-    if (!answerWasCutOff(retried.response.body)) return retried;
-    return {
-      kind: 'provider_failure',
-      status: retried.response.status,
-      attempts: first.attempts + retried.attempts,
-      errorCode: 'answer_truncated',
-    };
+    startAtCeiling = true;
+    // Already at the ceiling, so there is no more room to offer. The response is
+    // handed on as it is; the grader decides whether it is evidence.
+    if (opening !== null && opening >= ceiling) return first;
+    // The second attempt's outcome is the outcome, including its failures. Falling
+    // back to the truncated first response would turn a transient 429 on the retry
+    // into `answer_truncated`, which stops the whole dimension instead of leaving
+    // one sample to be picked up by the next run.
+    return attempt(withOutputBudget(body, ceiling), credential);
   };
 }

@@ -1,4 +1,5 @@
 import { OVERALL_SCORE_POLICY, scoreSpeed, smoothCriterionScore, type CriterionScore, type QualityDimension, type SpeedScore } from './score.ts';
+import { ranOutOfRoom } from './fixtures.ts';
 import type { EvaluationTransport, TransportOutcome } from './transport.ts';
 
 export interface RuntimeScenario {
@@ -71,9 +72,26 @@ export async function runPool<T>(
 function outcomeSample(scenario: RuntimeScenario, repetition: number, outcome: TransportOutcome): RuntimeSample {
   if (outcome.kind === 'success') {
     const graded = scenario.grade(outcome.response.body);
+    const fullMarks = graded.weightedSuccesses >= graded.weightedCriteria;
+    // A response cut off mid-answer is evidence only if it scored full marks.
+    //
+    // The transport retries when a cut-off response carries no answer at all,
+    // but it cannot see a PARTIAL one: `gpt-oss:120b` began emitting its
+    // long-context JSON, was cut at the cap mid-object, and the fragment was
+    // graded 1 of 5 as though the model had answered wrongly. Nothing in that
+    // fragment distinguishes a wrong answer from an unfinished one, so it is
+    // recorded as a provider failure — retained, not final, and re-run rather
+    // than published. Full marks despite the cut mean the answer was all there.
+    if (!fullMarks && ranOutOfRoom(outcome.response.body)) {
+      return {
+        scenarioId: scenario.id, repetition, outcome: 'provider_failure',
+        weightedSuccesses: null, weightedCriteria: null, errorCode: 'answer_truncated',
+        response: outcome.response.body,
+      };
+    }
     return {
       scenarioId: scenario.id, repetition,
-      outcome: graded.weightedSuccesses >= graded.weightedCriteria ? 'passed' : 'failed',
+      outcome: fullMarks ? 'passed' : 'failed',
       weightedSuccesses: graded.weightedSuccesses, weightedCriteria: graded.weightedCriteria, errorCode: null,
       response: outcome.response.body,
     };

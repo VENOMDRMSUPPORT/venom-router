@@ -14,6 +14,7 @@
     "sync": "node --env-file-if-exists=.env sync/run.ts",
     "evaluate": "node --env-file-if-exists=.env scripts/run-overall-evaluations.ts",
     "evaluate:speed": "node --env-file-if-exists=.env scripts/run-speed-evaluations.ts",
+    "probe:budget": "node --env-file-if-exists=.env scripts/probe-output-budget.ts",
     "test": "npm run test:backend && npm run test:spa",
     "serve": "node --env-file-if-exists=.env server/index.ts",
     "serve:verify": "node scripts/serve-verify.mjs",
