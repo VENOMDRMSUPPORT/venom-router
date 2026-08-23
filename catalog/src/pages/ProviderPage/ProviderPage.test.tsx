@@ -229,9 +229,24 @@ describe('the provider table presents one server-derived model score', () => {
     await screen.findByText('65.8%');
     fireEvent.click(screen.getByRole('button', { name: 'Grid view' }));
 
-    expect(screen.getByText('Score')).toBeInTheDocument();
+    expect(screen.getByText('Overall score')).toBeInTheDocument();
     expect(screen.queryByText('VQ')).not.toBeInTheDocument();
     expect(screen.queryByText('VO')).not.toBeInTheDocument();
+  });
+
+  test('organizes Grid view as one decision card with stable score, stats, capabilities, and footer actions', async () => {
+    stubStaleService([scoredModel()]);
+    renderProviderPage();
+
+    await screen.findByText('65.8%');
+    fireEvent.click(screen.getByRole('button', { name: 'Grid view' }));
+
+    const card = screen.getByTestId('model-card-cline-pass/deepseek-v4-flash');
+    expect(card.tagName).toBe('ARTICLE');
+    expect(screen.getByTestId('model-card-score-cline-pass/deepseek-v4-flash')).toHaveTextContent('Overall score');
+    expect(card.querySelectorAll('dt')).toHaveLength(4);
+    expect(screen.getByTestId('model-card-footer-cline-pass/deepseek-v4-flash')).toHaveTextContent('Evidence & evaluation');
+    expect(screen.getByRole('button', { name: 'Evaluate cline-pass/deepseek-v4-flash' })).toHaveTextContent('Evaluate');
   });
 });
 

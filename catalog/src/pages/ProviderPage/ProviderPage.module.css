@@ -1206,26 +1206,46 @@ color: #b45309;
 .modelGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 14px;
-  margin-top: 12px;
+  align-items: stretch;
+  gap: 16px;
+  margin-top: 14px;
 }
 
 .modelCard {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 15px;
+  min-height: 332px;
+  overflow: hidden;
+  padding: 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-  transition: border-color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast);
+  border-radius: calc(var(--radius-lg) + 2px);
+  background: linear-gradient(160deg, var(--surface) 0%, var(--background-secondary) 100%);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.08);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.modelCard::before {
+  position: absolute;
+  top: 0;
+  right: 18px;
+  left: 18px;
+  height: 2px;
+  content: '';
+  border-radius: 0 0 999px 999px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 60%, transparent), transparent);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
 }
 
 .modelCard:hover {
-  background: var(--surface-hover);
   border-color: var(--border-strong);
-  transform: translateY(-2px);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.15);
+  transform: translateY(-3px);
+}
+
+.modelCard:hover::before {
+  opacity: 1;
 }
 
 .modelCardTop {
@@ -1233,62 +1253,159 @@ color: #b45309;
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  min-height: 62px;
+  padding: 16px 16px 12px;
 }
 
-.modelCardScores {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.modelCardIdentity {
+  min-width: 0;
 }
 
-.scorePill {
-  display: flex;
+.modelCard .modelName {
+  display: block;
+  overflow: hidden;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelCard .canonical {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelCardRank {
+  display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--background);
+  min-height: 26px;
+  padding: 0 8px;
   border: 1px solid var(--border-subtle);
-  font-size: 12px;
+  border-radius: 999px;
+  background: var(--background);
+}
+
+.modelCardScore {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 64px;
+  margin: 0 16px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: calc(var(--radius-sm) + 2px);
+  background: color-mix(in srgb, var(--background) 80%, transparent);
+}
+
+.scoreValueWrap {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
 }
 
 .scoreTag {
-  font-size: 10px;
+  display: block;
+  font-size: 0.64rem;
   font-weight: 700;
   color: var(--foreground-tertiary);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.scoreSupport {
+  display: block;
+  margin-top: 3px;
+  color: var(--foreground-secondary);
+  font-size: 0.72rem;
 }
 
 .modelCardStats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-  padding-top: 10px;
+  gap: 0;
+  margin: 14px 16px 0;
+  padding: 12px 0;
   border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .miniStat {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 5px 4px;
-  border-radius: var(--radius-sm);
-  background: var(--background);
-  border: 1px solid var(--border-subtle);
+  gap: 4px;
+  min-width: 0;
+  padding: 0 8px;
   text-align: center;
 }
 
+.miniStat + .miniStat {
+  border-left: 1px solid var(--border-subtle);
+}
+
 .miniVal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  margin: 0;
   font-size: 0.8rem;
-  font-weight: 650;
+  font-weight: 700;
   color: var(--foreground);
   font-variant-numeric: tabular-nums;
 }
 
 .miniLbl {
+  margin: 0;
   font-size: 0.62rem;
+  font-weight: 600;
   color: var(--foreground-tertiary);
+  letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.modelCardCapabilities {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+}
+
+.cardSectionLabel,
+.cardFooterLabel {
+  flex: 0 0 auto;
+  color: var(--foreground-tertiary);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.modelCard .caps {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.modelCard .capsMore {
+  background: var(--background);
+}
+
+.modelCardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--background) 55%, transparent);
 }
 
 .pendingNote {
@@ -1316,10 +1433,20 @@ color: #b45309;
 }
 
 .rowActions {
-display: flex;
-align-items: center;
+  display: flex;
+  align-items: center;
   justify-content: center;
   gap: 5px;
+}
+
+.modelCardFooter .rowActions {
+  margin-left: auto;
+}
+
+.modelCardFooter .evidenceBtn,
+.modelCardFooter .evidenceBtnFlagged,
+.modelCardFooter .evaluateBtn {
+  height: 30px;
 }
 
 .evidenceBtn,
@@ -1450,9 +1577,9 @@ color: #92400e;
 }
 
 .evaluateBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+display: inline-flex;
+align-items: center;
+justify-content: center;
   width: 26px;
   height: 26px;
   background: var(--pill-bg);
@@ -1460,14 +1587,71 @@ color: #92400e;
   border-radius: var(--radius-sm);
   color: var(--foreground-secondary);
   cursor: pointer;
-  transition: all var(--transition-fast);
+transition: all var(--transition-fast);
+}
+
+.evaluateBtnLabeled {
+  width: auto;
+  gap: 5px;
+  padding: 0 9px;
+  font-family: var(--font-sans);
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+
+.evaluateLabel {
+  white-space: nowrap;
 }
 
 .evaluateBtn:hover {
-  background: var(--accent-subtle);
-  border-color: var(--border-strong);
-  color: var(--foreground);
-  transform: scale(1.06);
+background: var(--accent-subtle);
+border-color: var(--border-strong);
+color: var(--foreground);
+transform: scale(1.06);
+}
+
+@media (max-width: 700px) {
+  .modelGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .modelCard {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 440px) {
+  .modelCardStats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px 0;
+  }
+
+  .miniStat:nth-child(3) {
+    border-left: 0;
+  }
+
+  .miniStat:nth-child(3),
+  .miniStat:nth-child(4) {
+    padding-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .modelCardCapabilities,
+  .modelCardFooter {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .modelCardFooter .rowActions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .modelCardFooter .evidenceBtn,
+  .modelCardFooter .evidenceBtnFlagged,
+  .modelCardFooter .evaluateBtn {
+    flex: 1;
+  }
 }
 
 /* Promotional & Vendor Qualifiers ("New", "8x usage", "50% Off") */

@@ -602,18 +602,18 @@ function EvidenceToggle({ model, open, onToggle }: { model: ApiModel; open: bool
  * "go measure it" are the two things an owner wants from a row that is missing
  * something.
  */
-function EvaluateButton({ model, onOpen }: { model: ApiModel; onOpen: () => void }) {
+function EvaluateButton({ model, onOpen, label = false }: { model: ApiModel; onOpen: () => void; label?: boolean }) {
   return (
     <button
       type="button"
-      className={styles.evaluateBtn}
+      className={`${styles.evaluateBtn} ${label ? styles.evaluateBtnLabeled : ''}`}
       onClick={onOpen}
       title="Run missing evaluations for this model"
       aria-label={`Evaluate ${model.modelId}`}
       data-testid={`evaluate-${model.modelId}`}
     >
       <LuPlay size={12} className={styles.btnIcon} />
-      <span className={styles.srOnly}>run</span>
+      <span className={label ? styles.evaluateLabel : styles.srOnly}>{label ? 'Evaluate' : 'run'}</span>
     </button>
   );
 }
@@ -819,13 +819,14 @@ function ModelGrid({ title, models, note, costStatedOnce, focusModelId }: { titl
 
       <div className={styles.modelGrid}>
         {models.map((m) => (
-          <div
+          <article
             key={`${m.providerId}/${m.modelId}`}
             id={`model-${encodeURIComponent(m.modelId)}`}
             className={m.modelId === focusModelId ? `${styles.modelCard} ${styles.focusedCard}` : styles.modelCard}
+            data-testid={`model-card-${m.modelId}`}
           >
-            <div className={styles.modelCardTop}>
-              <div>
+            <header className={styles.modelCardTop}>
+              <div className={styles.modelCardIdentity}>
                 <span className={styles.modelName}>{m.modelId}</span>
                 {m.lifecycle === 'deprecated' && (
                   <span
@@ -845,50 +846,59 @@ function ModelGrid({ title, models, note, costStatedOnce, focusModelId }: { titl
                   );
                 })()}
               </div>
-              <ModelRankCell model={m} localRanks={localRanks} />
-            </div>
+              <div className={styles.modelCardRank}><ModelRankCell model={m} localRanks={localRanks} /></div>
+            </header>
 
-            <div className={styles.modelCardScores}>
-              <div className={styles.scorePill}>
-                <span className={styles.scoreTag}>Score</span>
+            <section className={styles.modelCardScore} aria-label={`Overall score for ${m.modelId}`} data-testid={`model-card-score-${m.modelId}`}>
+              <div>
+                <span className={styles.scoreTag}>Overall score</span>
+                <span className={styles.scoreSupport}>Catalog signal</span>
+              </div>
+              <div className={styles.scoreValueWrap}>
                 <ModelScoreCell model={m} />
               </div>
-            </div>
+            </section>
 
-            <div className={styles.modelCardStats}>
+            <dl className={styles.modelCardStats} aria-label={`Core model stats for ${m.modelId}`} data-testid={`model-card-stats-${m.modelId}`}>
               <div className={styles.miniStat}>
-                <span className={styles.miniVal}>
+                <dd className={styles.miniVal}>
                   <FactState state={factStateOf(m, 'context', m.contextTokens)}>{formatTokens(m.contextTokens)}</FactState>
-                </span>
-                <span className={styles.miniLbl}>Context</span>
+                </dd>
+                <dt className={styles.miniLbl}>Context</dt>
               </div>
               <div className={styles.miniStat}>
-                <span className={styles.miniVal}>
+                <dd className={styles.miniVal}>
                   <FactState state={factStateOf(m, 'maxOutput', m.maxOutputTokens)}>{formatTokens(m.maxOutputTokens)}</FactState>
-                </span>
-                <span className={styles.miniLbl}>Max out</span>
+                </dd>
+                <dt className={styles.miniLbl}>Max out</dt>
               </div>
               <div className={styles.miniStat}>
-                <span className={styles.miniVal}><CostCell model={m} side="in" statedOnce={costStatedOnce} /></span>
-                <span className={styles.miniLbl}>In</span>
+                <dd className={styles.miniVal}><CostCell model={m} side="in" statedOnce={costStatedOnce} /></dd>
+                <dt className={styles.miniLbl}>Input</dt>
               </div>
               <div className={styles.miniStat}>
-                <span className={styles.miniVal}><CostCell model={m} side="out" statedOnce={costStatedOnce} /></span>
-                <span className={styles.miniLbl}>Out</span>
+                <dd className={styles.miniVal}><CostCell model={m} side="out" statedOnce={costStatedOnce} /></dd>
+                <dt className={styles.miniLbl}>Output</dt>
               </div>
-            </div>
+            </dl>
 
-            <CapabilityBadges model={m} />
-            <div className={styles.rowActions}>
-              <EvidenceToggle
-                model={m}
-                open={openCards.has(rowKey(m))}
-                onToggle={() => toggleCard(rowKey(m))}
-              />
-              <EvaluateButton model={m} onOpen={() => setEvaluating(m)} />
-            </div>
+            <section className={styles.modelCardCapabilities} aria-label={`Capabilities for ${m.modelId}`}>
+              <span className={styles.cardSectionLabel}>Capabilities</span>
+              <CapabilityBadges model={m} />
+            </section>
+            <footer className={styles.modelCardFooter} data-testid={`model-card-footer-${m.modelId}`}>
+              <span className={styles.cardFooterLabel}>Evidence & evaluation</span>
+              <div className={styles.rowActions}>
+                <EvidenceToggle
+                  model={m}
+                  open={openCards.has(rowKey(m))}
+                  onToggle={() => toggleCard(rowKey(m))}
+                />
+                <EvaluateButton model={m} onOpen={() => setEvaluating(m)} label />
+              </div>
+            </footer>
             {openCards.has(rowKey(m)) && <EvidencePanel model={m} />}
-          </div>
+          </article>
         ))}
       </div>
       {evaluating && <EvaluateModal model={evaluating} onClose={() => setEvaluating(null)} />}
