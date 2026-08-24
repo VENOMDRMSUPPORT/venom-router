@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   LuArrowUpRight,
   LuBellRing,
@@ -20,20 +20,15 @@ import {
 } from 'react-icons/lu';
 import { Link } from 'react-router-dom';
 import { useCatalog } from '../../hooks/useCatalog';
+import { saveCatalogSettings, SETTINGS_STORAGE_KEY, useTheme } from '../../hooks/useTheme';
 import styles from './SettingsPage.module.css';
 
 type CatalogSettings = {
-  theme: 'dark' | 'light';
   defaultView: 'grid' | 'table';
-  reduceMotion: boolean;
 };
 
-const SETTINGS_KEY = 'venom-catalog-settings';
-
 const DEFAULT_SETTINGS: CatalogSettings = {
-  theme: 'dark',
   defaultView: 'table',
-  reduceMotion: false,
 };
 
 const SECTIONS = [
@@ -48,12 +43,8 @@ function readSettings(): CatalogSettings {
   if (typeof window === 'undefined') return DEFAULT_SETTINGS;
 
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(SETTINGS_KEY) ?? '{}') as Partial<CatalogSettings>;
-    return {
-      theme: parsed.theme === 'light' ? 'light' : 'dark',
-      defaultView: parsed.defaultView === 'grid' ? 'grid' : 'table',
-      reduceMotion: Boolean(parsed.reduceMotion),
-    };
+    const parsed = JSON.parse(window.localStorage.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as Partial<CatalogSettings>;
+    return { defaultView: parsed.defaultView === 'grid' ? 'grid' : 'table' };
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -70,23 +61,24 @@ function formatSyncTime(value: string | null): string {
 
 export function SettingsPage() {
   const { data, loading, error, reload } = useCatalog();
+  const { theme, setTheme, reduceMotion, setReduceMotion } = useTheme();
   const [settings, setSettings] = useState<CatalogSettings>(readSettings);
   const [saved, setSaved] = useState(false);
   const [syncState, setSyncState] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
   const [syncMessage, setSyncMessage] = useState('');
   const [activeSection, setActiveSection] = useState('workspace');
+  const syncReloadTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (syncReloadTimeoutRef.current !== null) window.clearTimeout(syncReloadTimeoutRef.current);
+  }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-    window.localStorage.setItem('catalog-theme', settings.theme);
-    document.documentElement.setAttribute('data-theme', settings.theme);
-    document.documentElement.dataset.reduceMotion = settings.reduceMotion ? 'true' : 'false';
-    window.dispatchEvent(new CustomEvent('catalog-theme-change', { detail: settings.theme }));
-
+    saveCatalogSettings({ defaultView: settings.defaultView });
     setSaved(true);
     const timeout = window.setTimeout(() => setSaved(false), 1200);
     return () => window.clearTimeout(timeout);
-  }, [settings]);
+  }, [settings.defaultView]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !('IntersectionObserver' in window)) return;
@@ -144,8 +136,14 @@ export function SettingsPage() {
 
   const resetPreferences = () => {
     if (!window.confirm('Reset your saved catalog preferences to the defaults?')) return;
+    setTheme('dark');
+    setReduceMotion(false);
     setSettings(DEFAULT_SETTINGS);
-    window.localStorage.removeItem('venom-catalog-provider-filters');
+    try {
+      window.localStorage.removeItem('venom-catalog-provider-filters');
+    } catch {
+      // Browser storage is optional and reset remains safe when it is unavailable.
+    }
   };
 
   const requestSync = async () => {
@@ -163,7 +161,11 @@ export function SettingsPage() {
 
       setSyncState('success');
       setSyncMessage('Synchronization started. The catalog will refresh when the run completes.');
-      window.setTimeout(() => void reload(), 1500);
+      if (syncReloadTimeoutRef.current !== null) window.clearTimeout(syncReloadTimeoutRef.current);
+      syncReloadTimeoutRef.current = window.setTimeout(() => {
+        syncReloadTimeoutRef.current = null;
+        void reload();
+      }, 1500);
     } catch (syncError) {
       setSyncState('error');
       setSyncMessage(syncError instanceof Error ? syncError.message : 'Unable to start synchronization.');
@@ -174,7 +176,7 @@ export function SettingsPage() {
     setActiveSection(id);
     const element = document.getElementById(id);
     if (element) {
-      element.scrollIntoView({ behavior: 'smooth' });
+      element.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' });
     }
   };
 
@@ -246,25 +248,25 @@ export function SettingsPage() {
           <SettingsSection id="experience" icon={<LuPalette size={18} />} title="Experience" description="Choose a display mode that is comfortable for focused catalog work.">
             <div className={styles.choiceGrid}>
               <ChoiceCard
-                active={settings.theme === 'dark'}
+                active={theme === 'dark'}
                 icon={<LuMoon size={18} />}
                 title="Dark"
                 description="High-focus, low-light workspace."
-                onClick={() => updateSetting('theme', 'dark')}
+                onClick={() => setTheme('dark')}
               />
               <ChoiceCard
-                active={settings.theme === 'light'}
+                active={theme === 'light'}
                 icon={<LuSun size={18} />}
                 title="Light"
                 description="Brighter canvas for daytime review."
-                onClick={() => updateSetting('theme', 'light')}
+                onClick={() => setTheme('light')}
               />
             </div>
             <ToggleRow
               title="Reduce interface motion"
               description="Keeps state changes calm and removes non-essential motion."
-              checked={settings.reduceMotion}
-              onChange={(checked) => updateSetting('reduceMotion', checked)}
+              checked={reduceMotion}
+              onChange={setReduceMotion}
             />
           </SettingsSection>
 

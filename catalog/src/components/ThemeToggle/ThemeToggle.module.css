@@ -8,7 +8,7 @@
   background: var(--background);
   border: 1px solid var(--border);
   color: var(--foreground-secondary);
-  transition: background var(--transition-fast), color var(--transition-fast),
+  transition: transform var(--transition-fast), background var(--transition-fast), color var(--transition-fast),
     border-color var(--transition-fast);
 }
 
@@ -16,4 +16,8 @@
   background: var(--background-hover);
   color: var(--foreground);
   border-color: var(--border-strong);
+}
+
+.toggle:active {
+  transform: scale(0.92);
 }

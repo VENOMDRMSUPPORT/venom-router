@@ -8,6 +8,23 @@
       name="description"
       content="Verified AI model catalogs for coding agents, synchronized with official APIs."
     />
+    <script>
+      (() => {
+        const root = document.documentElement;
+        let theme = 'dark';
+        let reduceMotion = false;
+        try {
+          const direct = localStorage.getItem('catalog-theme');
+          const settings = JSON.parse(localStorage.getItem('venom-catalog-settings') || '{}');
+          if (direct === 'dark' || direct === 'light') theme = direct;
+          else if (direct === null && settings.theme === 'light') theme = 'light';
+          reduceMotion = settings.reduceMotion === true;
+        } catch {}
+        root.dataset.theme = theme;
+        root.style.colorScheme = theme;
+        root.dataset.reduceMotion = reduceMotion ? 'true' : 'false';
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

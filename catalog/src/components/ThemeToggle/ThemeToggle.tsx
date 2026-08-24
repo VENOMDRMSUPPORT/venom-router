@@ -11,10 +11,12 @@ export function ThemeToggle({ theme, onToggle }: ThemeToggleProps) {
   const isDark = theme === 'dark';
   return (
     <button
+      type="button"
       className={styles.toggle}
       onClick={onToggle}
       aria-label={`Switch to ${isDark ? 'light' : 'dark'} theme`}
       title={`Switch to ${isDark ? 'light' : 'dark'} theme`}
+      aria-pressed={isDark}
     >
       {isDark ? <LuSun size={16} /> : <LuMoon size={16} />}
     </button>

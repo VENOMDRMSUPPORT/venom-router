@@ -102,3 +102,11 @@ Database Browser queries accept exactly one `SELECT` statement or a read-only CT
 Rows are represented as value arrays rather than objects so duplicate result-column names are preserved. `NULL` remains JSON `null`; large integers are encoded as `{ "type": "bigint", "value": "..." }`; and BLOBs are encoded as `{ "type": "blob", "value": "<base64>", "bytes": N }`. Internal SQLite errors are logged by the service but are returned to the browser only as a typed generic error. The browser keeps the latest 50 query records in local storage, supports cancellation of stale requests, and exports the typed result payload as JSON.
 
 The query connection uses SQLite's VDBE operation budget and a one-second lock timeout to prevent pathological statements or lock waits from holding the service indefinitely. The API remains local-only and does not change the `catalog-api-v2` contract.
+
+## Theme and motion preferences
+
+The Catalog Dashboard supports two browser themes: `dark` and `light`. `dark` is the default when no valid preference is available. The selected theme is stored under the `catalog-theme` local-storage key; the Settings record also carries the same theme for compatibility, but the runtime state and document application are owned by the single `ThemeProvider` mounted at the application root.
+
+Header and Settings use that same provider, so changing either control updates the other immediately without changing the current route, re-fetching Catalog data, or resetting notifications. The provider applies both `data-theme` and the document `color-scheme` together. Invalid or unavailable storage values fall back safely to `dark`, and storage events synchronize changes from another browser tab without writing the event back.
+
+Settings stores the explicit `reduceMotion` preference in `venom-catalog-settings`. The runtime also observes `prefers-reduced-motion: reduce`; either source enables `data-reduce-motion="true"`. Reduced motion disables non-essential transitions and animations and changes Settings section scrolling to an immediate jump. Theme switching uses a generation-guarded transition blocker with owned animation-frame cleanup, so rapid toggles and unmounts cannot leave stale blockers, style tags, timers, or listeners behind.

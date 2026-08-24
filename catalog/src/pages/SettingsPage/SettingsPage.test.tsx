@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SettingsPage } from './SettingsPage';
+import { ThemeProvider } from '../../hooks/useTheme';
 
 const provider = (id: string, freshness: string) => ({
   id, name: id, rosterUrl: '', liveModels: 3, lastSuccessfulSyncAt: '2026-08-21T00:00:00.000Z',
@@ -26,7 +27,9 @@ vi.mock('../../hooks/useCatalog', () => ({
 function renderSettings() {
   return render(
     <MemoryRouter>
-      <SettingsPage />
+      <ThemeProvider>
+        <SettingsPage />
+      </ThemeProvider>
     </MemoryRouter>,
   );
 }
@@ -45,6 +48,18 @@ describe('SettingsPage', () => {
     expect(JSON.parse(window.localStorage.getItem('venom-catalog-settings') ?? '{}')).toMatchObject({
       defaultView: 'grid',
     });
+  });
+
+  test('changes theme and reduced motion immediately through the shared provider', () => {
+    renderSettings();
+
+    fireEvent.click(screen.getByRole('button', { name: /light brighter canvas/i }));
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(window.localStorage.getItem('catalog-theme')).toBe('light');
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Reduce interface motion' }));
+    expect(document.documentElement.dataset.reduceMotion).toBe('true');
+    expect(window.localStorage.getItem('venom-catalog-settings')).toContain('"reduceMotion":true');
   });
 
   test('keeps the change activity feed reachable', () => {
