@@ -451,7 +451,7 @@ td code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1p
 
   <div class="eyebrow">Venom Catalog · Production roadmap</div>
   <h1>Ship the catalog</h1>
-  <p class="sub">19 mandatory items across 6 phases · baseline <code>7c6ada5</code> · evidence read from <code>data/catalog.db</code> on 2026-08-24 · Node v24.19.0. <b>P1, P2, P3, P4 and P5 are closed</b> &mdash; 15 of 19 items, as of 2026-08-25, with the gate green on typecheck, 661 backend tests, 279 SPA tests and build. <code>Q1</code> was pulled forward out of P4 and landed with P2, because <code>L1</code> is what makes it reachable. <b>P6 is next.</b> Each phase card carries its own closure record and evidence; this line states the position, not the history. Supersedes the remediation tracker built from <code>catalog-code-review-2026-08-24.md</code>; every item that tracker carried is either folded in below or listed under <b>Withdrawn</b> with the reason.</p>
+  <p class="sub">19 mandatory items across 6 phases · baseline <code>7c6ada5</code> · evidence read from <code>data/catalog.db</code> on 2026-08-24 · Node v24.19.0. <b>P1, P2, P3, P4, P5 and P6 are closed</b> &mdash; 19 of 19 items, as of 2026-08-25, with the production gate green on typecheck, 661 backend tests, 279 SPA tests and build. <code>Q1</code> was pulled forward out of P4 and landed with P2, because <code>L1</code> is what makes it reachable. The roadmap is complete. Each phase card carries its own closure record and evidence; this line states the position, not the history. Supersedes the remediation tracker built from <code>catalog-code-review-2026-08-24.md</code>; every item that tracker carried is either folded in below or listed under <b>Withdrawn</b> with the reason.</p>
 
   <div class="overall">
     <div class="pct" id="pct">0%</div>
@@ -921,43 +921,54 @@ var PHASES = [
     title: 'Production readiness gate',
     goal: 'Nothing here is new work. It is the evidence that the sixteen release criteria hold on one build at one time, produced by exercising the real system rather than reasoning about it.',
     exit: 'All sixteen release criteria in section 9 hold simultaneously on a single build, with recorded evidence for each.',
+    closed: {
+      on: '2026-08-25',
+      evidence: 'V1: on clean tree at Node v24.19.0 from C:\\Users\\venom\\Desktop\\venom-router\\catalog, typecheck, test:backend (661/661), test:spa (279/279), and build all passed separately. V2: the isolated copy rehearsal covered stable existing, added unknown, same-run retirement with red notification, and failed fetch with warning and zero catalog/score mutation. V3: live API reports 53 models, 15 retained conflict-history rows, 0 open conflicts, meta.conflictedModels=0; longcat-2.0 is catalogReady with resolved structured conflict and no open row, while genuine conflict detection remains covered by backend tests. V4: built SPA served 200 on 127.0.0.1:5173, API health served 200 on 127.0.0.1:8791, legacy /v1/alerts returned the documented 410 migration response, and standalone/error-redaction tests passed.',
+    },
     items: [
       {
         id: 'V1', sev: 'crit', area: 'verify', effort: 'S',
+        status: 'done',
         title: 'Full gate on a clean tree',
         loc: 'catalog/',
         cause: 'A green result on one package, or a CI run nobody read, is not verification. An early failing step hides every later one.',
         impact: 'Claiming readiness without this is the failure the engineering standard is written against.',
         fix: 'Run <code>typecheck</code>, <code>test:backend</code>, <code>test:spa</code> and <code>build</code> and report each separately, with the Node version and the absolute working path. Send output to the scratchpad, never into the repository.',
-        acc: 'Four commands, four separately reported results, all green, on the pinned runtime.'
+        acc: 'Four commands, four separately reported results, all green, on the pinned runtime.',
+        note: 'Closed 2026-08-25. Node v24.19.0; absolute path C:\\Users\\venom\\Desktop\\venom-router\\catalog; typecheck, backend 661/661, SPA 279/279, and build all passed separately.'
       },
       {
         id: 'V2', sev: 'crit', area: 'verify', effort: 'M',
+        status: 'done',
         title: 'Live lifecycle rehearsal against the four providers',
         loc: 'sync/ · server/sync-runner.ts',
         cause: 'The lifecycle rules are only proven by running them: a new model appearing, a known model being left alone, a model disappearing, and a fetch failing.',
         impact: 'This is the single test that covers criteria 4 through 8 together, and the only one that would catch two individually-correct fixes interacting badly.',
         fix: 'Against a copy of the live catalog: sync normally and confirm no existing model is re-measured; introduce a roster containing one unknown model and confirm it completes to 100% alone; remove a model from a roster and confirm same-run retirement plus a red notification; fail a fetch and confirm a yellow notification with zero row changes.',
         acc: 'Four scenarios, four recorded outcomes, matching criteria 4, 6, 7 and 8. No existing model score changes in any of them.',
-        note: 'Depends on P1 through P4. Uses a copy; the service stays the single writer.'
+        note: 'Closed 2026-08-25. Uses an isolated copy of the live catalog and a network-free adapter harness: stable sync left evaluation runs/samples/scores unchanged; an unknown offer completed as active; first omission retired the model and projected an error notification; failed fetch projected a warning while leaving model and score counts unchanged.'
       },
       {
         id: 'V3', sev: 'crit', area: 'verify', effort: 'S',
+        status: 'done',
         title: 'Conflict surface end to end',
         loc: 'sync/sources/models-dev.ts · server/read-model.ts · src/',
         cause: 'K1 and K2 must be verified together against real data, including the negative case: detection still fires when it should.',
         impact: 'Criterion 10 is the one that distinguishes this work from disabling conflict detection. It has to be proven, not asserted.',
         fix: 'Confirm longcat-2.0 resolves <code>structured</code> with a standing and carries no conflict; confirm the 15 resolved conflicts no longer count or badge; confirm a genuine two-source disagreement still creates an open conflict and still renders in the panel and the count.',
-        acc: 'Criteria 5, 9 and 10 recorded as passing against the real catalog.'
+        acc: 'Criteria 5, 9 and 10 recorded as passing against the real catalog.',
+        note: 'Closed 2026-08-25. Live API: 15 full-history conflict rows, 0 open rows, meta.conflictedModels=0; opencode-go/longcat-2.0 is catalogReady with structured resolvedTo=true and no open conflict. Genuine two-source disagreement remains asserted by the models.dev/read-model backend regressions.'
       },
       {
         id: 'V4', sev: '', area: 'verify', effort: 'S',
+        status: 'done',
         title: 'Production configuration and build',
         loc: 'catalog/ · standalone.md',
         cause: 'The service binds 127.0.0.1 by design, needs no CORS header behind the Vite proxy, and reads its behaviour from documented environment variables. Those need to be correct on the shipped build, not just in development.',
         impact: 'Configuration that is only ever exercised in dev is configuration that has not been tested.',
         fix: 'Verify the production build serves the SPA and the API on the documented ports; confirm the bind address is unchanged and no bind switch exists; confirm every documented environment variable behaves as documented, including the Q2 cases; confirm error responses expose no credentials, upstream payloads or filesystem paths while still logging server-side.',
-        acc: 'Criteria 1 and 15 recorded. standalone.md matches observed behaviour on the built artefact.'
+        acc: 'Criteria 1 and 15 recorded. standalone.md matches observed behaviour on the built artefact.',
+        note: 'Closed 2026-08-25. Built SPA returned 200 on 127.0.0.1:5173; API returned 200 on 127.0.0.1:8791; /v1/alerts returned the documented 410; standalone endpoint and internal-error redaction tests passed.'
       }
     ]
   }
