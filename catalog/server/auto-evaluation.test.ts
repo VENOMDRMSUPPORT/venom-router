@@ -79,8 +79,12 @@ describe('autoEvaluationConfig', () => {
   });
 
   test('the retry cooldown defaults to a day and is tunable in hours', () => {
-    assert.equal(autoEvaluationConfig({}).retryCooldownMs, DEFAULT_RETRY_COOLDOWN_HOURS * HOUR);
-    assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_RETRY_HOURS: '6' }).retryCooldownMs, 6 * HOUR);
+    const defaultCooldown = DEFAULT_RETRY_COOLDOWN_HOURS * HOUR;
+    assert.equal(autoEvaluationConfig({}).retryCooldownMs, defaultCooldown);
+    assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_RETRY_HOURS: '' }).retryCooldownMs, defaultCooldown);
+    assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_RETRY_HOURS: '   ' }).retryCooldownMs, defaultCooldown);
+    assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_RETRY_HOURS: 'not-a-number' }).retryCooldownMs, defaultCooldown);
+    assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_RETRY_HOURS: ' 6 ' }).retryCooldownMs, 6 * HOUR);
     // Zero is a legitimate instruction: retry on every sync, no guard at all.
     assert.equal(autoEvaluationConfig({ CATALOG_AUTO_EVALUATION_RETRY_HOURS: '0' }).retryCooldownMs, 0);
   });

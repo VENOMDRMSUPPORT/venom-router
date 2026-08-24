@@ -148,6 +148,11 @@
   max-width: 82ch;
 }
 
+.sourceCheck {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
 .noteMuted {
   margin: 0;
   font-size: 11.5px;

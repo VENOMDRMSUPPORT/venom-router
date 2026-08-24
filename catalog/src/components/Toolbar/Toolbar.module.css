@@ -173,6 +173,13 @@
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
+.menuItemText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .menuItem:hover {
   background: var(--background-hover);
   color: var(--foreground);

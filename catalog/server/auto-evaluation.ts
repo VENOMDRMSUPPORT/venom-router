@@ -59,9 +59,23 @@ export interface AutoEvaluationConfig {
 export const DEFAULT_RETRY_COOLDOWN_HOURS = 24;
 export const MAX_REQUESTS_CEILING = 1_000_000;
 
-function positiveInt(raw: string | undefined, fallback: number, ceiling: number): number {
-  const value = Number(raw ?? fallback);
-  return Number.isFinite(value) ? Math.min(Math.max(Math.trunc(value), 0), ceiling) : fallback;
+/**
+ * One env-number rule: blank, whitespace, absent, or unparseable all mean "the
+ * operator said nothing", and only a real number overrides the fallback.
+ *
+ * `Number('')` and `Number('   ')` are both 0 and both finite, which is how a
+ * blank variable used to read as an explicit zero and switch a guard off. An
+ * explicit `'0'` still means zero, because that one IS an instruction.
+ *
+ * Overloaded so a caller with a numeric fallback gets `number` back and does not
+ * have to write a `??` branch that can never run.
+ */
+function parseBoundedInt(raw: string | undefined, fallback: number, ceiling: number): number;
+function parseBoundedInt(raw: string | undefined, fallback: null, ceiling: number): number | null;
+function parseBoundedInt(raw: string | undefined, fallback: number | null, ceiling: number): number | null {
+  const normalized = raw?.trim();
+  if (normalized === undefined || normalized === '' || !Number.isFinite(Number(normalized))) return fallback;
+  return Math.min(Math.max(Math.trunc(Number(normalized)), 0), ceiling);
 }
 
 export function autoEvaluationConfig(env: NodeJS.ProcessEnv = process.env): AutoEvaluationConfig {
@@ -73,10 +87,8 @@ export function autoEvaluationConfig(env: NodeJS.ProcessEnv = process.env): Auto
     // Absent means no ceiling. A number that does not parse is treated as absent
     // too — guessing a cap from a typo would silently stop short of a complete
     // catalog, which is the one outcome this is supposed to prevent.
-    maxRequestsPerRun: rawMax === undefined || rawMax === '' || !Number.isFinite(Number(rawMax))
-      ? null
-      : Math.min(Math.max(Math.trunc(Number(rawMax)), 0), MAX_REQUESTS_CEILING),
-    retryCooldownMs: positiveInt(
+    maxRequestsPerRun: parseBoundedInt(rawMax, null, MAX_REQUESTS_CEILING),
+    retryCooldownMs: parseBoundedInt(
       env.CATALOG_AUTO_EVALUATION_RETRY_HOURS, DEFAULT_RETRY_COOLDOWN_HOURS, 24 * 365,
     ) * 60 * 60 * 1000,
   };

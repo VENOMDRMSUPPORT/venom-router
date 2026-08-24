@@ -8,7 +8,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "typecheck": "tsc -b && tsc --noEmit -p tsconfig.node.json",
+    "check:css-modules": "node scripts/check-css-modules.ts",
+    "typecheck": "tsc -b && tsc --noEmit -p tsconfig.node.json && npm run check:css-modules",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "sync": "node --env-file-if-exists=.env sync/run.ts",

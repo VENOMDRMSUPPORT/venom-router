@@ -449,7 +449,7 @@ td code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1p
 
   <div class="eyebrow">Venom Catalog · Production roadmap</div>
   <h1>Ship the catalog</h1>
-  <p class="sub">19 mandatory items across 6 phases · baseline <code>7c6ada5</code> · evidence read from <code>data/catalog.db</code> on 2026-08-24 · Node v24.19.0. <b>P1 is closed</b> as of 2026-08-24 &mdash; gate green on typecheck, 665 backend tests, 277 SPA tests and build. <b>P2 is closed</b> as of 2026-08-24; Q1 was pulled forward because L1 makes it reachable, so P4 stands at 1/3. <b>P3 is closed</b> as of 2026-08-25; badge and panel agree at 135 on live data. P4 is next, standing at 1/3. Supersedes the remediation tracker built from <code>catalog-code-review-2026-08-24.md</code>; every item that tracker carried is either folded in below or listed under <b>Withdrawn</b> with the reason.</p>
+  <p class="sub">19 mandatory items across 6 phases · baseline <code>7c6ada5</code> · evidence read from <code>data/catalog.db</code> on 2026-08-24 · Node v24.19.0. <b>P1 is closed</b> as of 2026-08-24 &mdash; gate green on typecheck, 665 backend tests, 277 SPA tests and build. <b>P2 is closed</b> as of 2026-08-24; Q1 was pulled forward because L1 makes it reachable, so P4 stands at 1/3. <b>P3 is closed</b> as of 2026-08-25; badge and panel agree at 135 on live data. <b>P4 is closed</b> as of 2026-08-25; no <code>undefined</code> class reaches the DOM on any route. <b>P5 is next.</b> Supersedes the remediation tracker built from <code>catalog-code-review-2026-08-24.md</code>; every item that tracker carried is either folded in below or listed under <b>Withdrawn</b> with the reason.</p>
 
   <div class="overall">
     <div class="pct" id="pct">0%</div>
@@ -486,7 +486,7 @@ td code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1p
         <b>Work-once invariant.</b> A model is measured once, when it first appears. An existing model is never re-probed, re-scored, or re-enriched because a sibling changed, a sync ran, or a new model arrived. Re-derivation from already-stored source data is permitted and is not re-testing.
       </div>
 
-      <p><b>CSS-module types are index signatures.</b> <code>src/vite-env.d.ts:4</code> declares <code>{ readonly [key: string]: string }</code>, so <code>styles.anythingAtAll</code> type-checks and renders <code>class="undefined"</code>. Three live cases are open &mdash; see <code>Q3</code>.</p>
+      <p><b>CSS-module types are index signatures.</b> <code>src/vite-env.d.ts:4</code> declares <code>{ readonly [key: string]: string }</code>, so <code>styles.anythingAtAll</code> type-checks and renders <code>class="undefined"</code>. The compiler cannot catch this and never will; <code>npm run check:css-modules</code> does, and runs inside <code>typecheck</code>. Closed by <code>Q3</code> on 2026-08-25.</p>
       <p><b>Do not redirect gate output into <code>catalog/</code>.</b> The root <code>.gitignore</code> hides <code>*.log</code>, so redirected output never reaches a diff and simply accumulates. Read the output, or send it to the session scratchpad.</p>
     </div>
   </div>
@@ -677,7 +677,7 @@ td code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1p
         <tr><td>11</td><td>The bell shows three categories only, with matching icons; the unread badge and the panel contents agree; every notification is reachable. <span class="pill g">met &middot; P3</span> &mdash; 135 against 135 on the live catalog; past the page ceiling the panel names the difference instead of dropping it.</td></tr>
         <tr><td>12</td><td>No fix button, retry action, or recovery workflow exists anywhere in the notification surface. <span class="pill g">met &middot; P3</span></td></tr>
         <tr><td>13</td><td><code>server/alerts.ts</code> and its tests are deleted, and <code>GET /v1/alerts</code> still returns 410.</td></tr>
-        <tr><td>14</td><td>No CSS-module key used in the SPA resolves to <code>undefined</code>, enforced by a check that runs in the gate.</td></tr>
+        <tr><td>14</td><td>No CSS-module key used in the SPA resolves to <code>undefined</code>, enforced by a check that runs in the gate. <span class="pill g">met &middot; P4</span> &mdash; <code>npm run check:css-modules</code>, inside <code>typecheck</code> and after the compiler so a stylesheet slip cannot hide a type error. It verifies dotted keys and the static prefix of a templated one; the nine remaining runtime-keyed accesses cannot be decided by a text scan and are <b>counted and printed</b> rather than skipped in silence.</td></tr>
         <tr><td>15</td><td>The existence invariant, the conflict definition and the work-once invariant are written into <code>catalog/CLAUDE.md</code> in the same change as the behaviour.</td></tr>
         <tr><td>16</td><td>A full sync run against the four live providers completes with outcome <code>ok</code> for each, and the resulting catalog differs from the prior one only where an item in this roadmap intends a change.</td></tr>
       </table>
@@ -840,6 +840,10 @@ var PHASES = [
     title: 'Latent correctness',
     goal: 'Three defects that are real in the code and not currently firing. Each becomes user-visible under a state the system can reach on its own, and P2 makes the first one reachable.',
     exit: 'No stalled resolution job is possible; a blank env var cannot disable a guard; no CSS-module key resolves to undefined.',
+    closed: {
+      on: '2026-08-25',
+      evidence: 'Q1 was already closed with P2. Q2 now uses one trim-aware bounded environment parser, keeping blank and malformed retry values at the documented 24-hour default while preserving explicit 0. Q3 adds the three missing module rules and a gate with proven teeth: renaming a live class was tried against the real tree and the check named the file, line and key. Verified at runtime too &mdash; six routes on the running SPA, <b>zero</b> elements carrying a literal <code>undefined</code> class. Gate: typecheck, <b>680</b> backend tests, <b>279</b> SPA tests, build.',
+    },
     items: [
       {
         id: 'Q1', sev: 'crit', area: 'sync', effort: 'S',
@@ -854,21 +858,25 @@ var PHASES = [
       },
       {
         id: 'Q2', sev: '', area: 'server', effort: 'XS',
+        status: 'done',
         title: 'A blank RETRY_HOURS silently disables the runaway guard',
         loc: 'server/auto-evaluation.ts:62, :79-81',
         cause: '<code>positiveInt</code> is <code>Number(raw ?? fallback)</code>, and <code>Number(\'\')</code> is 0 and finite. So <code>CATALOG_AUTO_EVALUATION_RETRY_HOURS=\'\'</code> yields a cooldown of 0, and <code>cooledDown</code> short-circuits. The sibling option one function up already handles the empty string explicitly &mdash; the same author fixed one and not the other.',
         impact: 'The anti-runaway guard that <code>standalone.md</code> documents is off, startup prints "0h retry cooldown" as though it were configured, and an empty variable in a deployment env file is an easy and invisible way to get there.',
         fix: 'Treat a blank value as absent, the same way <code>MAX_REQUESTS</code> does. Better: give both options one shared parser so the two cannot diverge again.',
-        acc: 'Config test: empty string, whitespace, absent and unparseable all yield the documented default. An explicit <code>0</code> still disables the guard, as documented.'
+        acc: 'Config test: empty string, whitespace, absent and unparseable all yield the documented default. An explicit <code>0</code> still disables the guard, as documented.',
+        note: 'Closed 2026-08-25. One trim-aware bounded parser handles both request budget and retry cooldown values, overloaded so the numeric-fallback caller does not carry an unreachable <code>??</code> branch. <b>Found while reviewing, not fixed here:</b> <code>server/notifications.ts:32-34</code> has the same <code>Number(env.X ?? default)</code> shape for the webhook timeout, attempt count and base delay. It is live code that <code>X1</code> keeps, so it is worth folding into that item &mdash; but every value there is clamped to a sane floor and the webhook path is disabled, so unlike this item it disables no guard and does not block release.'
       },
       {
         id: 'Q3', sev: '', area: 'client', effort: 'S',
+        status: 'done',
         title: 'Three CSS-module keys resolve to undefined',
         loc: 'ProviderPage.tsx:108-109 · EvidencePanel.tsx:178 · Toolbar.tsx:147',
         cause: '<code>src/vite-env.d.ts:4</code> types every module as <code>{ readonly [key: string]: string }</code>, so a key that does not exist type-checks cleanly and renders <code>class="undefined"</code>.',
         impact: '<code>styles.state</code> has no rule in <code>ProviderPage.module.css</code>, so the provider page&rsquo;s "Loading..." and "Catalog unavailable" screens render completely unstyled &mdash; the two screens a user sees when something is already wrong. <code>styles.sourceCheck</code> and <code>styles.menuItemText</code> are the same defect in smaller places.',
         fix: 'Add the three missing rules, then add a check to the gate that cross-references every <code>styles.x</code> reference against its module. Without the check the class of defect returns, because the type system cannot see it.',
-        acc: 'The check runs in the gate and fails on a deliberately introduced missing key. The provider page loading and error states are visually styled.'
+        acc: 'The check runs in the gate and fails on a deliberately introduced missing key. The provider page loading and error states are visually styled.',
+        note: 'Closed 2026-08-25. The typecheck gate runs <code>check:css-modules</code>; the regression test proves both failure and recovery.'
       }
     ]
   },

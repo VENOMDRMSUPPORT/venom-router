@@ -20,6 +20,12 @@ Catalog owns the live provider roster, model facts, source evidence, freshness s
 
 A successful provider roster is the existence declaration: a model omitted from that roster becomes `retired` on the same run, while a failed or quarantined fetch changes no model lifecycle state. Existing measurements and scores are retained on routine syncs; a new model is measured once after insertion, and a deliberate maintenance or human action is required for re-measurement.
 
+## Latent correctness safeguards
+
+Automatic-evaluation environment values use one trim-aware bounded integer parser. Missing, blank, whitespace-only, and unparseable `CATALOG_AUTO_EVALUATION_RETRY_HOURS` values retain the documented 24-hour cooldown; only an explicit `0` disables the retry guard. The same parser handles the optional request ceiling, whose absent or invalid value means no ceiling.
+
+The typecheck gate also runs `npm run check:css-modules`, after the compiler so a stylesheet slip cannot hide a type error. It cross-references every imported CSS-module property used by the SPA with a selector in the corresponding stylesheet and reports the source file, line, stylesheet, and missing key, so a missing module key is a gate failure rather than a browser-only `class="undefined"` defect. A templated key such as ``styles[`signal-${severity}`]`` is checked by its static prefix: the individual key is a runtime value, but the family it belongs to must exist. Keys that are entirely runtime-valued, such as `styles[tone]`, cannot be decided by a text scan; the check counts and prints them instead of passing over them silently, and those sites should guard with `?? ''`.
+
 ## Port and binding rules
 
 The Catalog API binds to `127.0.0.1` and defaults to port `8791`. The Catalog UI defaults to port `5173`. Venom Router uses a separate control-plane port, currently `8081`. These defaults are validated by `scripts/standalone-contract.test.ts`.
