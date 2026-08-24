@@ -213,6 +213,8 @@ hr {
 }
 .card.is-clear .pbadge { background: var(--green-solid); color: #0d1a12; }
 
+.dot.is-fixed { cursor: default; opacity: 1; }
+
 .ptitle { font-size: 14.5px; font-weight: 600; letter-spacing: -0.005em; }
 
 .pcount {
@@ -684,7 +686,7 @@ td code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1p
     </div>
   </div>
 
-  <p class="foot">Progress is stored in this browser only and is not committed with the file. Click a status square to cycle pending &rarr; done &rarr; in progress &rarr; blocked. Evidence in sections 1 and 3 was read from a scratchpad copy of <code>data/catalog.db</code>; the service is the single writer and was not opened for writing.</p>
+  <p class="foot">Items closed in this file carry their status with it and read the same for everyone; their squares are fixed. Every other item is yours to track &mdash; click its square to cycle pending &rarr; done &rarr; in progress &rarr; blocked, stored in this browser only. Evidence in sections 1 and 3 was read from a scratchpad copy of <code>data/catalog.db</code>; the service is the single writer and was not opened for writing.</p>
 </div>
 <script>
 'use strict';
@@ -972,22 +974,28 @@ function esc(s) {
   return String(s).replace(/&(?!#?\w+;)/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 /**
- * Status committed with the file, so a closed phase stays closed for every
- * reader. localStorage still overrides it while someone works a phase; cycling
- * back to pending drops the local entry and returns to the committed record.
+ * Status committed with the file wins over anything this browser remembers.
+ *
+ * The other precedence was tried and was wrong: a click someone made weeks ago,
+ * while an item was still open, kept overriding the record after the item closed
+ * and shipped — so the page showed P4 at 2/3 while the file, the commit and the
+ * closure record all said 3/3. Local state is a personal overlay for work that
+ * is still open; it does not get a vote on what has already landed.
  */
 var COMMITTED = {};
 PHASES.forEach(function (p) {
   p.items.forEach(function (i) { if (i.status) COMMITTED[i.id] = i.status; });
 });
-function st(id) { return state[id] || COMMITTED[id] || 'pending'; }
+function st(id) { return COMMITTED[id] || state[id] || 'pending'; }
 
 var CHEV = '<svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 var CHEV_SM = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 function taskHtml(it) {
   var h = '<div class="task" data-id="' + it.id + '" data-state="' + st(it.id) + '">';
-  h += '<button class="dot" type="button" aria-label="Cycle status for ' + it.id + '"></button>';
+  h += COMMITTED[it.id]
+    ? '<button class="dot is-fixed" type="button" disabled aria-label="' + it.id + ' is recorded ' + COMMITTED[it.id] + ' in this file" title="Recorded in the file, not a local note"></button>'
+    : '<button class="dot" type="button" aria-label="Cycle status for ' + it.id + '"></button>';
   h += '<span class="tid">' + it.id + '</span>';
   h += '<div class="tmain" data-detail><div class="tt">' + esc(it.title) + '</div><div class="tl">' + esc(it.loc) + '</div></div>';
   h += '<span class="tmeta">' + (it.sev ? '<em class="' + (it.sev === 'crit' ? 'crit' : '') + '">' + (it.sev === 'crit' ? 'blocking' : 'high') + '</em> · ' : '') + it.area + ' · ' + it.effort + '</span>';
@@ -1056,6 +1064,7 @@ document.addEventListener('click', function (e) {
   if (dot) {
     var task = dot.closest('.task');
     var id = task.getAttribute('data-id');
+    if (COMMITTED[id]) return;
     var next = ORDER[(ORDER.indexOf(st(id)) + 1) % ORDER.length];
     if (next === 'pending') delete state[id]; else state[id] = next;
     task.setAttribute('data-state', next);
