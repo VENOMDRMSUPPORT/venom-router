@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
-import { LuLayoutGrid, LuHistory, LuSearch, LuCpu, LuInfo } from 'react-icons/lu';
+import { LuLayoutGrid, LuHistory, LuSearch, LuCpu, LuInfo, LuDatabase } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import { ThemeToggle } from '../ThemeToggle/ThemeToggle';
@@ -51,6 +51,14 @@ export function Header({ theme, onToggleTheme }: HeaderProps) {
     } else {
       iconNode = <LuCpu size={16} className={styles.pageIcon} />;
     }
+  } else if (path === '/database') {
+    title = 'Database Browser';
+    subtitle = 'Safe read-only view of Catalog SQLite data';
+    iconNode = <LuDatabase size={16} className={styles.pageIcon} />;
+    breadcrumbs = [
+      { label: 'Overview', to: '/' },
+      { label: 'Database Browser' },
+    ];
   } else if (path === '/changes') {
     title = "What's New";
     subtitle = 'Audit log of model additions, retirements & price changes';

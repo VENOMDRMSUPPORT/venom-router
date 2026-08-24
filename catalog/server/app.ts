@@ -13,9 +13,12 @@ import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtu
 import { regradeFromRetainedResponses } from '../sync/evaluation/regrade.ts';
 import { recalculatePublishedOffers } from '../sync/evaluation/recalculate.ts';
 import { catalogNotificationSummary, listCatalogNotifications, markCatalogNotificationsRead, reconcileCatalogNotifications } from './model-notifications.ts';
+import { isDbError, listDatabaseTables, loadDatabaseSchema, runDatabaseQuery } from './database-browser.ts';
 
 export interface AppDeps {
   db: Db;
+  /** Optional file-backed read-only connection used by Database Browser queries. */
+  readonlyDb?: Db;
   runner: SyncRunner;
   /**
    * Required, not optional: the service always owns an evaluation queue, and an
@@ -218,74 +221,23 @@ export function route(deps: AppDeps, url: URL, method: string, body?: unknown): 
   }
 
   if (path === '/v1/db/query' && method === 'POST') {
-    const input = (body ?? {}) as { sql?: unknown; limit?: unknown };
-    if (typeof input.sql !== 'string' || !input.sql.trim()) {
-      return { status: 400, body: { error: 'sql is required and must be a non-empty string' } };
-    }
-    const sql = input.sql.trim();
-    const limit = typeof input.limit === 'number' && Number.isFinite(input.limit) && input.limit > 0
-      ? Math.min(Math.trunc(input.limit), 1000)
-      : 100;
-
-    // Read-only guard: only allow SELECT statements (including WITH for CTEs)
-    const normalized = sql.replace(/^\s*--.*$/gm, '').replace(/^\s*/, '').toUpperCase();
-    if (!normalized.startsWith('SELECT') && !normalized.startsWith('WITH')) {
-      return { status: 400, body: { error: 'Only SELECT queries are allowed' } };
-    }
-    // Block any modifying keywords
-    const forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'CREATE', 'ALTER', 'TRUNCATE', 'REPLACE', 'ATTACH', 'DETACH', 'PRAGMA', 'VACUUM', 'ANALYZE'];
-    for (const kw of forbidden) {
-      if (normalized.includes(kw)) {
-        return { status: 400, body: { error: `Query contains forbidden keyword: ${kw}` } };
-      }
-    }
-
-    try {
-      const stmt = db.prepare(sql);
-      const columns = stmt.columns();
-      const rows = stmt.all() as Record<string, unknown>[];
-      const limitedRows = rows.slice(0, limit);
-      return {
-        status: 200,
-        body: {
-          columns,
-          rows: limitedRows,
-          rowCount: rows.length,
-          truncated: rows.length > limit,
-          limit,
-        },
-      };
-    } catch (err) {
-      return { status: 400, body: { error: err instanceof Error ? err.message : 'Query execution failed' } };
-    }
+    const result = runDatabaseQuery({ db, readonlyDb: deps.readonlyDb }, (body ?? {}) as { sql?: unknown; limit?: unknown });
+    if (isDbError(result)) return { status: 400, body: result };
+    return { status: 200, body: result };
   }
 
   if (path === '/v1/db/tables' && method === 'GET') {
-    try {
-      const tables = db.prepare(`
-        SELECT name, sql FROM sqlite_master
-        WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-        ORDER BY name
-      `).all() as { name: string; sql: string | null }[];
-      return { status: 200, body: { tables } };
-    } catch (err) {
-      return { status: 500, body: { error: err instanceof Error ? err.message : 'Failed to list tables' } };
-    }
+    const result = listDatabaseTables({ db: deps.readonlyDb ?? db });
+    return isDbError(result) ? { status: 500, body: result } : { status: 200, body: result };
   }
 
   if (path === '/v1/db/schema' && method === 'GET') {
-    const table = url.searchParams.get('table');
-    if (!table) {
-      return { status: 400, body: { error: 'table parameter is required' } };
-    }
-    try {
-      const tableInfo = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }[];
-      const indexes = db.prepare(`PRAGMA index_list(${table})`).all() as { name: string; unique: number; origin: string; partial: number }[];
-      const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${table})`).all() as { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string; match: string }[];
-      return { status: 200, body: { table, columns: tableInfo, indexes, foreignKeys } };
-    } catch (err) {
-      return { status: 400, body: { error: err instanceof Error ? err.message : 'Failed to get schema' } };
-    }
+    const result = loadDatabaseSchema({ db: deps.readonlyDb ?? db }, url.searchParams.get('table'));
+    if (!isDbError(result)) return { status: 200, body: result };
+    return {
+      status: result.code === 'table_not_found' ? 404 : result.code === 'schema_failed' ? 500 : 400,
+      body: result,
+    };
   }
 
   if (path === '/v1/sync' && method === 'POST') {

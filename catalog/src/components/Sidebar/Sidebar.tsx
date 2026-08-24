@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LuLayoutGrid, LuHistory, LuX, LuSettings, LuGitCompareArrows } from "react-icons/lu";
+import { LuLayoutGrid, LuHistory, LuX, LuSettings, LuGitCompareArrows, LuDatabase } from "react-icons/lu";
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import styles from './Sidebar.module.css';
@@ -76,6 +76,16 @@ export function Sidebar({ open, onClose }: SidebarProps) {
             >
               <LuHistory size={15} />
               <span>What's New</span>
+            </NavLink>
+            <NavLink
+              to="/database"
+              className={({ isActive }) =>
+                `${styles.item} ${isActive ? styles.active : ''}`
+              }
+              onClick={onClose}
+            >
+              <LuDatabase size={15} />
+              <span>Database Browser</span>
             </NavLink>
           </div>
 

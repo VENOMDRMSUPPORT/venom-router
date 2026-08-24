@@ -86,3 +86,19 @@ Cards share a minimum desktop height and pin their action footer to the bottom. 
 Pointer-triggered switches between Table and Grid use a 200–260ms opacity-and-transform stage. Entering Grid adds a short 35ms card cadence so the card collection reads as one composed change rather than a sudden wall of content. The implementation uses only `opacity` and `transform`, clears any pending timer when a user switches again, and does not retain stale content during the change.
 
 Keyboard-triggered view changes are immediate, and the stylesheet disables transition rules unless the browser reports `prefers-reduced-motion: no-preference`. The layout controls and model data remain available throughout; the animation is confirmation, never a delay or prerequisite for interaction.
+
+## Database Browser
+
+The local Catalog UI exposes the read-only Database Browser at `/database`. It is an inspection surface for the Catalog database and is not a general SQL console. The service opens a separate SQLite connection in read-only mode for file-backed databases; in-memory test instances use the same connection with an authorizer installed only for the synchronous query and cleared in `finally`.
+
+| Endpoint | Method | Contract |
+|---|---|---|
+| `/v1/db/tables` | `GET` | Returns non-internal Catalog tables as `{ tables: [{ name, sql }] }`. |
+| `/v1/db/schema?table=<name>` | `GET` | Returns the exact known table schema, including columns, indexes, and foreign keys. Unknown table names return `404`; missing or malformed requests return `400`. |
+| `/v1/db/query` | `POST` | Accepts `{ sql, limit }` and returns `{ columns, rows, rowCount, truncated, limit }`. |
+
+Database Browser queries accept exactly one `SELECT` statement or a read-only CTE. SQLite's authorizer rejects inserts, updates, deletes, schema changes, transactions, pragmas, extension loading, attach/detach operations, and other non-read actions. The service also rejects multiple executable statements, bounds SQL text to 64 KiB, and requires `limit` to be an integer from `1` through `1000` (omitted `limit` defaults to `100`). Queries read only `limit + 1` rows, so `truncated` is true only when at least one additional row exists; `rowCount` is the number of rows returned in the response.
+
+Rows are represented as value arrays rather than objects so duplicate result-column names are preserved. `NULL` remains JSON `null`; large integers are encoded as `{ "type": "bigint", "value": "..." }`; and BLOBs are encoded as `{ "type": "blob", "value": "<base64>", "bytes": N }`. Internal SQLite errors are logged by the service but are returned to the browser only as a typed generic error. The browser keeps the latest 50 query records in local storage, supports cancellation of stale requests, and exports the typed result payload as JSON.
+
+The query connection uses SQLite's VDBE operation budget and a one-second lock timeout to prevent pathological statements or lock waits from holding the service indefinitely. The API remains local-only and does not change the `catalog-api-v2` contract.

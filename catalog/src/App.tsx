@@ -9,6 +9,7 @@ import { ProviderPage } from './pages/ProviderPage/ProviderPage';
 import { ComparePage } from './pages/ComparePage/ComparePage';
 import { ChangesPage } from './pages/ChangesPage/ChangesPage';
 import { SettingsPage } from './pages/SettingsPage/SettingsPage';
+import { DatabaseBrowserPage } from './pages/DatabaseBrowserPage/DatabaseBrowserPage';
 import { NotFoundPage } from './pages/NotFoundPage/NotFoundPage';
 
 export default function App() {
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/compare" element={<ComparePage />} />
           <Route path="/changes" element={<ChangesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/database" element={<DatabaseBrowserPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </main>

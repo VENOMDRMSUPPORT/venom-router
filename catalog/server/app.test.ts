@@ -967,3 +967,109 @@ describe('HTTP server payload limit guard', () => {
   });
 });
 
+
+describe('Database Browser — bounded read-only contract', () => {
+  const dbRequest = (path: string, method: string, body?: unknown) =>
+    route(deps(), new URL(`http://127.0.0.1${path}`), method, body) as { status: number; body: any };
+
+  test('lists known tables and returns a validated schema', () => {
+    const tables = dbRequest('/v1/db/tables', 'GET');
+    assert.equal(tables.status, 200);
+    assert.ok(tables.body.tables.some((table: any) => table.name === 'models'));
+
+    const schema = dbRequest('/v1/db/schema?table=models', 'GET');
+    assert.equal(schema.status, 200);
+    assert.equal(schema.body.table, 'models');
+    assert.ok(schema.body.columns.some((column: any) => column.name === 'model_id'));
+  });
+
+  test('rejects unknown and malicious schema identifiers without executing them', () => {
+    assert.equal(dbRequest('/v1/db/schema?table=not_a_table', 'GET').status, 404);
+    assert.equal(dbRequest('/v1/db/schema?table=models%22%29%3B%20DROP%20TABLE%20models%3B--', 'GET').status, 404);
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='models'").get());
+  });
+
+  test('runs SELECT, read-only CTEs, literals, and comments', () => {
+    const select = dbRequest('/v1/db/query', 'POST', { sql: 'SELECT model_id FROM models ORDER BY model_id', limit: 2 });
+    assert.equal(select.status, 200);
+    assert.equal(select.body.columns[0], 'model_id');
+    assert.equal(select.body.rows.length, 2);
+    assert.equal(select.body.rowCount, 2);
+    assert.equal(select.body.limit, 2);
+    assert.equal(select.body.truncated, true);
+
+    const cte = dbRequest('/v1/db/query', 'POST', { sql: 'WITH picked AS (SELECT model_id FROM models LIMIT 1) SELECT model_id FROM picked' });
+    assert.equal(cte.status, 200);
+    assert.equal(cte.body.rowCount, 1);
+
+    const literal = dbRequest('/v1/db/query', 'POST', { sql: "SELECT 'DELETE UPDATE INSERT' AS text -- DELETE\n" });
+    assert.equal(literal.status, 200);
+    assert.equal(literal.body.rows[0].values[0], 'DELETE UPDATE INSERT');
+  });
+
+  test('rejects writes, schema changes, pragmas, attachments, and transaction statements', () => {
+    for (const sql of [
+      'INSERT INTO models (provider_id, model_id, status) VALUES (\'x\', \'y\', \'active\')',
+      'UPDATE models SET status=\'active\'',
+      'DELETE FROM models',
+      'DROP TABLE models',
+      'CREATE TABLE unsafe_table (id INTEGER)',
+      'ALTER TABLE models ADD COLUMN unsafe TEXT',
+      'PRAGMA user_version',
+      "ATTACH DATABASE ':memory:' AS other",
+      'DETACH DATABASE other',
+      'VACUUM',
+      'ANALYZE',
+      'BEGIN',
+      'WITH changed AS (INSERT INTO models (provider_id, model_id, status) VALUES (\'x\', \'z\', \'active\') RETURNING model_id) SELECT * FROM changed',
+    ]) {
+      assert.equal(dbRequest('/v1/db/query', 'POST', { sql }).status, 400, sql);
+    }
+  });
+
+  test('rejects multiple statements and invalid limits at the boundary', () => {
+    for (const sql of ['SELECT 1; DELETE FROM models', 'SELECT 1; SELECT 2', '/* comment */ UPDATE models SET status=\'active\'']) {
+      const result = dbRequest('/v1/db/query', 'POST', { sql });
+      assert.equal(result.status, 400, sql);
+    }
+    for (const limit of [0, -1, 1001, 1.5, '10', null]) {
+      assert.equal(dbRequest('/v1/db/query', 'POST', { sql: 'SELECT 1', limit }).status, 400, String(limit));
+    }
+  });
+
+  test('reads at most limit plus one row and reports returned count and truncation', () => {
+    const result = dbRequest('/v1/db/query', 'POST', { sql: 'SELECT model_id FROM models ORDER BY model_id', limit: 1 });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.rows.length, 1);
+    assert.equal(result.body.rowCount, 1);
+    assert.equal(result.body.truncated, true);
+  });
+
+  test('serializes BigInt and Blob values without JSON failures', () => {
+    db.exec('CREATE TABLE db_browser_types (big INTEGER, payload BLOB)');
+    db.prepare('INSERT INTO db_browser_types (big, payload) VALUES (?, ?)').run(9223372036854775807n, new Uint8Array([0, 1, 255]));
+    const result = dbRequest('/v1/db/query', 'POST', { sql: 'SELECT big, payload FROM db_browser_types' });
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body.rows[0].values, [
+      { type: 'bigint', value: '9223372036854775807' },
+      { type: 'blob', value: 'AAH/', bytes: 3 },
+    ]);
+    assert.doesNotThrow(() => JSON.stringify(result.body));
+  });
+
+  test('does not leave the service writer protected after a rejected query', () => {
+    db.exec('CREATE TABLE db_browser_writer (id INTEGER)');
+    const rejected = dbRequest('/v1/db/query', 'POST', { sql: 'DELETE FROM db_browser_writer' });
+    assert.equal(rejected.status, 400);
+    assert.doesNotThrow(() => db.prepare('INSERT INTO db_browser_writer VALUES (1)').run());
+    assert.equal((db.prepare('SELECT COUNT(*) AS count FROM db_browser_writer').get() as { count: number }).count, 1);
+  });
+
+  test('returns generic errors instead of SQLite internals', () => {
+    const result = dbRequest('/v1/db/query', 'POST', { sql: 'SELECT * FROM missing_table' });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.code, 'query_failed');
+    assert.equal(result.body.error, 'The read-only query could not be executed.');
+    assert.equal(JSON.stringify(result.body).includes('missing_table'), false);
+  });
+});

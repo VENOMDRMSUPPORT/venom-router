@@ -8,6 +8,7 @@
  */
 
 import { createServer } from 'node:http';
+import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -73,6 +74,16 @@ export function loadIdentityRejections(): RejectionOverlay {
  */
 export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) {
   const db = dbPath ? openDb(dbPath) : openDb();
+  const readonlyDb = db.location()
+    ? new DatabaseSync(db.location()!, {
+        readOnly: true,
+        timeout: 1_000,
+        allowExtension: false,
+        // The runtime supports SQLite's VDBE program limit even though the
+        // current @types package has not exposed the option yet.
+        limits: { vdbeOp: 500_000 },
+      } as ConstructorParameters<typeof DatabaseSync>[1])
+    : undefined;
   const { methodologyVersion, profiles } = loadProfiles();
   const testSetHash = fixtureDigest(buildEvaluationFixtures());
   // The service runs evaluations itself, which is what makes it the single
@@ -122,6 +133,8 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
   }, NOTIFICATION_RECONCILE_MS);
   notificationTimer.unref?.();
 
+  const appDeps = { db, readonlyDb, runner, evaluations, scheduler, startedAt };
+
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${BIND_HOST}:${port}`);
     let result;
@@ -153,7 +166,7 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
           }
         }
       }
-      result = await route({ db, runner, evaluations, scheduler, startedAt }, url, req.method ?? 'GET', body);
+      result = await route(appDeps, url, req.method ?? 'GET', body);
     } catch (err) {
       // The response says nothing: an exception message can carry a path, a
       // query or an upstream payload, and the caller is not entitled to any of
@@ -172,9 +185,12 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
     res.end(payload);
   });
 
-  server.on('close', () => clearInterval(notificationTimer));
+  server.on('close', () => {
+    clearInterval(notificationTimer);
+    readonlyDb?.close();
+  });
 
-  return { server, db, runner, evaluations, scheduler, port, autoEvaluation };
+  return { server, db, readonlyDb, runner, evaluations, scheduler, port, autoEvaluation };
 }
 
 if (import.meta.filename === process.argv[1]) {

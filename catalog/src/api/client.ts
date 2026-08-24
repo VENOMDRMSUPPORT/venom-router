@@ -978,7 +978,8 @@ export async function stopEvaluations(): Promise<void> {
   await fetch(`${BASE}/evaluations`, { method: 'DELETE' });
 }
 
-// Database browser API
+// Database Browser API. The rows use arrays rather than object keys because SQL
+// permits duplicate result-column names (for example, SELECT a.id, b.id).
 export interface DbTable {
   name: string;
   sql: string | null;
@@ -991,9 +992,16 @@ export interface DbSchema {
   foreignKeys: { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string; match: string }[];
 }
 
+export type DbValue =
+  | null
+  | number
+  | string
+  | { type: 'bigint'; value: string }
+  | { type: 'blob'; value: string; bytes: number };
+
 export interface DbQueryResponse {
   columns: string[];
-  rows: Record<string, unknown>[];
+  rows: { values: DbValue[] }[];
   rowCount: number;
   truncated: boolean;
   limit: number;
