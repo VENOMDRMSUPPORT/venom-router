@@ -81,6 +81,19 @@ The Grid view is a decision-card presentation rather than a miniature table. Eac
 
 Cards share a minimum desktop height and pin their action footer to the bottom. At narrow desktop and tablet sizes the grid still preserves equal card regions; below 700px it becomes a single-column list. Below 440px, core facts move to a two-by-two grid and footer actions expand into stable touch targets. These layout rules do not alter model ranking, pricing, capability facts, or evidence state.
 
+## Opening view for a model list
+
+The Dashboard and the Provider page decide which view to open in through one
+shared rule, `useModelView`. Precedence is the reader's explicit switch, then the
+`defaultView` preference saved in Settings, then the viewport width at first
+render: below 768px a reader who expressed no preference opens in Grid.
+
+The viewport supplies a default, never an override. Neither page re-applies the
+width rule after mount, so narrowing a window or rotating a device does not move
+a reader off the view they chose, and the view switcher never reports a view the
+page is not showing. Table remains reachable at every width — the table wrapper
+is a horizontal scroll region, and the stylesheet tunes it for touch below 768px.
+
 ## Provider view transitions
 
 Pointer-triggered switches between Table and Grid use a 200–260ms opacity-and-transform stage. Entering Grid adds a short 35ms card cadence so the card collection reads as one composed change rather than a sudden wall of content. The implementation uses only `opacity` and `transform`, clears any pending timer when a user switches again, and does not retain stale content during the change.

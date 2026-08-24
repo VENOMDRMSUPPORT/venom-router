@@ -26,6 +26,7 @@ import {
   LuPlay,
 } from 'react-icons/lu';
 import { useCatalog, useProviderModels } from '../../hooks/useCatalog';
+import { useModelView } from '../../hooks/useModelView';
 import { present } from '../../api/presentation';
 import { formatTokens, type ApiModel } from '../../api/client';
 import { FreshnessBadge } from '../../components/FreshnessBadge/FreshnessBadge';
@@ -48,18 +49,7 @@ export function ProviderPage() {
 
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
-  const [view, setView] = useState<'grid' | 'table'>(() => {
-    if (typeof window === 'undefined') return 'table';
-    try {
-      const saved = JSON.parse(window.localStorage.getItem('venom-catalog-settings') ?? '{}') as {
-        defaultView?: 'grid' | 'table';
-      };
-      if (saved.defaultView === 'grid' || saved.defaultView === 'table') return saved.defaultView;
-    } catch {
-      // Ignore malformed browser preferences and retain the responsive default.
-    }
-    return window.innerWidth < 768 ? 'grid' : 'table';
-  });
+  const [view, setView] = useModelView();
   const [isViewTransitioning, setIsViewTransitioning] = useState(false);
   const viewTransitionTimer = useRef<number | null>(null);
 

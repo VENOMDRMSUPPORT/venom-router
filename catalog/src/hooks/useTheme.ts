@@ -43,6 +43,16 @@ function readStoredSettings(raw?: string | null): StoredSettings {
   }
 }
 
+/**
+ * The view the owner chose in Settings, or `undefined` when they never chose
+ * one. Exported so every page that lists models reads the preference through
+ * the same parser that writes it, instead of each re-implementing `JSON.parse`
+ * against this storage key and disagreeing about what a malformed value means.
+ */
+export function readStoredDefaultView(): 'grid' | 'table' | undefined {
+  return readStoredSettings().defaultView;
+}
+
 function readStoredTheme(): Theme {
   if (typeof window === 'undefined') return 'dark';
 

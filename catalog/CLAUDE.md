@@ -42,6 +42,11 @@ reporting a failed command, include `node --version` and the absolute working
 path. If the failure cannot be reproduced in the stated environment, drop the
 finding rather than acting on an older report.
 
+Do not redirect gate output into `catalog/`. The root `.gitignore` hides `*.log`,
+so these files never reach a diff or a review and simply accumulate — seventy of
+them, 1.5 MB, had collected by 2026-08-24. Read the command output directly, or
+send it to the session scratchpad directory outside the project.
+
 `test:backend` runs `.ts` files directly under `node --test`, which relies on
 the runtime stripping types with no loader. That is why `package.json` pins
 `engines.node`: on an older runtime the script fails for a reason that has

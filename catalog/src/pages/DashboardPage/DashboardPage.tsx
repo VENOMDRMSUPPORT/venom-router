@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { LuArrowUpRight, LuArrowRight, LuArrowDownUp, LuCircleAlert, LuActivity, LuCircleCheck, LuCpu, LuInfo, LuRefreshCw, LuSearchX, LuTriangleAlert, LuChevronDown, LuChevronUp } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
+import { useModelView } from '../../hooks/useModelView';
 import { present } from '../../api/presentation';
 import { fetchCatalogNotifications, fetchChanges, formatTokens, formatAgo, type CatalogNotification, type CatalogData, type Change, type HealthResponse } from '../../api/client';
 import { CATALOG_API_CONTRACT_VERSION } from '../../../config/api-contract';
@@ -30,8 +31,7 @@ export function DashboardPage() {
   const { data, error, loading, reload, health, healthError, healthLoading, revision } = useCatalog();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
-  const [view, setView] = useState<'grid' | 'table'>('table');
-  const [preferredView, setPreferredView] = useState<'grid' | 'table'>('table');
+  const [view, setView] = useModelView();
   const [sortKey, setSortKey] = useState<ProviderSortKey>('score');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [monitoringOpen, setMonitoringOpen] = useState(true);
@@ -85,27 +85,6 @@ export function DashboardPage() {
     const timer = window.setInterval(readNotifications, 30_000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [notificationsNonce]);
-
-  // Dynamic responsive view switcher: automatically adapt view based on window size
-  useEffect(() => {
-    const handleResize = () => {
-      const isMobile = window.innerWidth < 768;
-      if (isMobile) {
-        setView('grid');
-      } else {
-        setView(preferredView);
-      }
-    };
-
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [preferredView]);
-
-  const handleViewChange = (newView: 'grid' | 'table') => {
-    setView(newView);
-    setPreferredView(newView);
-  };
 
   const monitoringSignals = useMemo(() => buildMonitoringSignals({ data, health, healthError, healthLoading }), [data, health, healthError, healthLoading]);
   const recentChanges = useMemo(() => {
@@ -381,7 +360,7 @@ export function DashboardPage() {
         placeholder="Search providers, models, or IDs..."
         searchHintId="dashboard-search-hint"
         view={view}
-        onViewChange={handleViewChange}
+        onViewChange={setView}
       />
 
       <div className={styles.resultBar}>
