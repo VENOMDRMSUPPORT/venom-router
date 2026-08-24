@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { modelMatchesFilter, providerMatchesFilter } from './filters';
+import { modelMatchesFilter } from './filters';
 import type { ApiModel } from './client';
 
 function fakeModel(over: Partial<ApiModel> = {}): ApiModel {
@@ -145,20 +145,5 @@ describe('modelMatchesFilter', () => {
 
     expect(modelMatchesFilter(active, 'current')).toBe(true);
     expect(modelMatchesFilter(deprecated, 'current')).toBe(false);
-  });
-});
-
-describe('providerMatchesFilter', () => {
-  test('matches provider if at least one model matches the filter', () => {
-    const models = [
-      fakeModel({ providerId: 'p1', pricing: { kind: 'free', inputPerMTokens: 0, outputPerMTokens: 0, referenceInPerMTokens: null, referenceOutPerMTokens: null, isFree: true } }),
-      fakeModel({ providerId: 'p2', pricing: { kind: 'per_token', inputPerMTokens: 1, outputPerMTokens: 2, referenceInPerMTokens: null, referenceOutPerMTokens: null, isFree: false } }),
-    ];
-
-    expect(providerMatchesFilter('p1', models, 'free')).toBe(true);
-    expect(providerMatchesFilter('p2', models, 'free')).toBe(false);
-    expect(providerMatchesFilter('p1', models, 'paid')).toBe(false);
-    expect(providerMatchesFilter('p2', models, 'paid')).toBe(true);
-    expect(providerMatchesFilter('p1', models, 'all')).toBe(true);
   });
 });

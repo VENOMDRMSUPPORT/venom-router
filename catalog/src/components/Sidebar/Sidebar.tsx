@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LuLayoutGrid, LuHistory, LuX, LuSettings, LuGitCompareArrows, LuDatabase } from "react-icons/lu";
+import { LuHistory, LuX, LuSettings, LuGitCompareArrows, LuDatabase, LuLayoutDashboard } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import styles from './Sidebar.module.css';
@@ -53,9 +53,8 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               }
               onClick={onClose}
             >
-              <LuLayoutGrid size={15} />
-              <span className={styles.itemLabel}>All Providers</span>
-              <span className={styles.pill}>{providers.length}</span>
+              <LuLayoutDashboard size={15} />
+              <span className={styles.itemLabel}>Dashboard</span>
             </NavLink>
             <NavLink
               to="/compare"

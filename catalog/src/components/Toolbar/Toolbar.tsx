@@ -39,25 +39,6 @@ export const MODEL_FILTERS: FilterOption[] = [
   { value: 'current', label: 'Not Deprecated' },
 ];
 
-/**
- * The filters that apply to a list of PROVIDERS.
- *
- * A provider matches when one of its models does, so most model predicates
- * carry over. `current` does not: "has at least one non-deprecated model" is
- * true of nearly every provider, so offering it there would be a control that
- * cannot narrow anything — the same defect as the change-class page offering
- * "1M+ Context". Declared as its own list rather than derived by subtracting
- * from MODEL_FILTERS, so the next model filter added above cannot silently
- * reach a page that lists sellers.
- */
-export const PROVIDER_FILTERS: FilterOption[] = [
-  { value: 'all', label: 'All Providers' },
-  { value: 'free', label: 'Free Models' },
-  { value: 'paid', label: 'Paid Models' },
-  { value: '1m', label: '1M+ Context' },
-  { value: 'multimodal', label: 'Multimodal' },
-];
-
 export function Toolbar({
   query,
   onQueryChange,

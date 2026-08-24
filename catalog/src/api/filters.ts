@@ -22,15 +22,3 @@ export function modelMatchesFilter(m: ApiModel, filter: string): boolean {
   if (filter === 'current') return m.lifecycle !== 'deprecated';
   return true;
 }
-
-/**
- * Checks whether a provider has at least one model matching the selected filter.
- */
-export function providerMatchesFilter(
-  providerId: string,
-  models: ApiModel[],
-  filter: string,
-): boolean {
-  if (filter === 'all') return true;
-  return models.some((m) => m.providerId === providerId && modelMatchesFilter(m, filter));
-}

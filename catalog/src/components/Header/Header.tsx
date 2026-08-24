@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
-import { LuLayoutGrid, LuHistory, LuSearch, LuCpu, LuInfo, LuDatabase } from 'react-icons/lu';
+import { LuHistory, LuSearch, LuCpu, LuInfo, LuDatabase, LuLayoutDashboard } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import { ThemeToggle } from '../ThemeToggle/ThemeToggle';
@@ -21,22 +21,22 @@ export function Header({ theme, onToggleTheme }: HeaderProps) {
 
   const path = location.pathname;
   const activeProviderId = path.startsWith('/provider/') ? path.split('/provider/')[1] : undefined;
-  let title = 'AI Model Catalogs';
-  let subtitle = 'Live model inventories & benchmark matrix';
-  let iconNode: ReactNode = <LuLayoutGrid size={16} className={styles.pageIcon} />;
+  let title = 'Dashboard';
+  let subtitle = 'Catalog statistics & operational status';
+  let iconNode: ReactNode = <LuLayoutDashboard size={16} className={styles.pageIcon} />;
   let breadcrumbs: Array<{ label: string; to?: string }> | null = null;
 
   if (path === '/') {
-    title = 'AI Model Catalogs';
-    subtitle = 'Live model inventories & benchmark matrix';
-    iconNode = <LuLayoutGrid size={16} className={styles.pageIcon} />;
+    title = 'Dashboard';
+    subtitle = 'Catalog statistics & operational status';
+    iconNode = <LuLayoutDashboard size={16} className={styles.pageIcon} />;
   } else if (activeProviderId) {
     const provider = data?.providers.find((p) => p.id === activeProviderId);
     const pres = present(activeProviderId);
     title = provider?.name ?? activeProviderId;
     subtitle = pres.blurb || 'Provider model roster & quality evidence';
     breadcrumbs = [
-      { label: 'Overview', to: '/' },
+      { label: 'Dashboard', to: '/' },
       { label: 'Providers', to: '/' },
       { label: title },
     ];
@@ -56,7 +56,7 @@ export function Header({ theme, onToggleTheme }: HeaderProps) {
     subtitle = 'Safe read-only view of Catalog SQLite data';
     iconNode = <LuDatabase size={16} className={styles.pageIcon} />;
     breadcrumbs = [
-      { label: 'Overview', to: '/' },
+      { label: 'Dashboard', to: '/' },
       { label: 'Database Browser' },
     ];
   } else if (path === '/changes') {
@@ -64,7 +64,7 @@ export function Header({ theme, onToggleTheme }: HeaderProps) {
     subtitle = 'Audit log of model additions, retirements & price changes';
     iconNode = <LuHistory size={16} className={styles.pageIcon} />;
     breadcrumbs = [
-      { label: 'Overview', to: '/' },
+      { label: 'Dashboard', to: '/' },
       { label: "What's New" },
     ];
   } else {

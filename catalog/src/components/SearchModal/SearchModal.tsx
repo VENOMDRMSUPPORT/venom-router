@@ -58,7 +58,7 @@ const PAGES = [
     type: 'page' as const,
     id: 'page-dashboard',
     title: 'Dashboard',
-    subtitle: 'All AI model providers & benchmark matrix overview',
+    subtitle: 'Catalog statistics & operational status',
     path: '/',
     icon: <LuLayoutGrid size={16} />,
   },

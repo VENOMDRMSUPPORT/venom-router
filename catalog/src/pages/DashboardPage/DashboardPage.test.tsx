@@ -73,6 +73,47 @@ function baseData(over: Partial<CatalogData> = {}): CatalogData {
   };
 }
 
+function provider(over: Partial<CatalogData['providers'][number]> = {}): CatalogData['providers'][number] {
+  return {
+    id: 'acme',
+    name: 'Acme AI',
+    rosterUrl: 'https://acme.test/models',
+    liveModels: 1,
+    lastSuccessfulSyncAt: '2026-08-25T00:00:00.000Z',
+    lastAttemptedSyncAt: '2026-08-25T00:00:00.000Z',
+    lastOutcome: 'ok',
+    freshness: 'fresh',
+    hoursSinceSuccess: 1,
+    qualityScored: 0,
+    modelScoreScored: 0,
+    overallScoreScored: 0,
+    unrated: 0,
+    ...over,
+  };
+}
+
+/**
+ * Only the fields this page reads. The cast is deliberate: building a full
+ * ApiModel here would restate half the client module to test a statistics
+ * paragraph, and the page must not read fields this factory does not declare.
+ */
+function model(over: Record<string, unknown> = {}): CatalogData['models'][number] {
+  return {
+    providerId: 'acme',
+    modelId: 'acme-model',
+    displayName: 'Acme Model',
+    contextTokens: 128_000,
+    inputModalities: ['text'],
+    capabilities: { tools: true, reasoning: true, structured: true, attachment: false },
+    pricing: { isFree: false },
+    overallScore: { value: null, display: '\u2014', status: 'unknown' },
+    performance: { status: 'unmeasured', sampleCount: 0, successfulSamples: 0, ttftMedianSeconds: null, outputTokensPerSecondMedian: null, endToEndP95Seconds: null, successRate: null },
+    resolution: { state: 'complete', reasons: [], firstDetectedAt: null, lastAttemptAt: null, nextAttemptAt: null },
+    vo: { value: null },
+    ...over,
+  } as unknown as CatalogData['models'][number];
+}
+
 function renderDashboard() {
   return render(
     <MemoryRouter>
@@ -219,20 +260,83 @@ describe('the performance monitoring panel', () => {
   });
 });
 
-describe('the Dashboard status and empty-state experience', () => {
-  test('shows operational catalog status and offers a clear action after a search', async () => {
+describe('the Dashboard masthead', () => {
+  test('states the operational status and offers no browsing chrome', async () => {
     catalogMock.current = { data: baseData(), error: null, loading: false };
     renderDashboard();
     await settleDashboard();
 
+    expect(screen.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeInTheDocument();
     expect(screen.getByText('Live catalog')).toBeInTheDocument();
-    const searchInput = screen.getByPlaceholderText('Search providers, models, or IDs...');
-    fireEvent.change(searchInput, { target: { value: 'missing-provider' } });
+    // Browsing lives on the provider pages and in the command palette; this
+    // page is a statistics console and offers no search of its own.
+    expect(screen.queryByPlaceholderText(/Search providers/)).not.toBeInTheDocument();
+  });
+});
 
-    expect(screen.getByText('No providers match this view')).toBeInTheDocument();
-    const clear = screen.getByRole('button', { name: 'Clear search and filters' });
-    fireEvent.click(clear);
-    expect(searchInput).toHaveValue('');
+describe('the provider fleet table', () => {
+  test('lists every provider as a status row linking to its page, most covered first', async () => {
+    catalogMock.current = {
+      data: baseData({
+        providers: [
+          provider({ id: 'beta', name: 'Beta Cloud', liveModels: 2, overallScoreScored: 0, freshness: 'stale' }),
+          provider({ id: 'acme', name: 'Acme AI', liveModels: 3, overallScoreScored: 3 }),
+        ],
+      }),
+      error: null, loading: false,
+    };
+    renderDashboard();
+    await settleDashboard();
+
+    const fleet = screen.getByRole('region', { name: 'Provider status' });
+    expect(within(fleet).getByRole('link', { name: 'Acme AI' })).toHaveAttribute('href', '/provider/acme');
+    expect(within(fleet).getByRole('link', { name: 'Beta Cloud' })).toHaveAttribute('href', '/provider/beta');
+    // Fixed order, most complete scoring coverage first: the row that needs
+    // work is the one that stands out by falling to the bottom.
+    const rows = within(fleet).getAllByRole('row').slice(1);
+    expect(within(rows[0]).getByText('Acme AI')).toBeInTheDocument();
+    expect(within(rows[0]).getByText('100%')).toBeInTheDocument();
+    expect(within(rows[1]).getByText('0%')).toBeInTheDocument();
+  });
+});
+
+describe('the composition section keeps unknown apart from no', () => {
+  test('a capability nobody answered for is counted as unknown, not folded into no', async () => {
+    catalogMock.current = {
+      data: baseData({
+        models: [
+          model({ modelId: 'm-yes', capabilities: { tools: true, reasoning: true, structured: true, attachment: false } }),
+          model({ modelId: 'm-no', capabilities: { tools: false, reasoning: false, structured: false, attachment: false } }),
+          model({ modelId: 'm-unknown', capabilities: { tools: null, reasoning: null, structured: null, attachment: null } }),
+        ],
+      }),
+      error: null, loading: false,
+    };
+    renderDashboard();
+    await settleDashboard();
+
+    const coverage = screen.getByTestId('capability-coverage');
+    expect(within(coverage).getByRole('img', { name: 'Tool calling: 1 yes, 1 no, 1 unknown' })).toBeInTheDocument();
+  });
+
+  test('unscored models are a separate row, never a zero-score bucket', async () => {
+    catalogMock.current = {
+      data: baseData({
+        models: [
+          model({ modelId: 'scored', overallScore: { value: 84, display: '84.0%', status: 'complete' } }),
+          model({ modelId: 'unscored' }),
+        ],
+      }),
+      error: null, loading: false,
+    };
+    renderDashboard();
+    await settleDashboard();
+
+    const scores = screen.getByRole('heading', { name: 'Overall score distribution' }).closest('article')!;
+    const row = (label: string) => within(scores).getByText(label).closest('div')!;
+    expect(within(row('80\u201389')).getByText('1')).toBeInTheDocument();
+    expect(within(row('Not yet scored')).getByText('1')).toBeInTheDocument();
+    expect(within(row('Below 60')).getByText('0')).toBeInTheDocument();
   });
 });
 
@@ -244,6 +348,7 @@ describe('the "Identity candidates refused" tile survives a partial meta payload
 
     expect(screen.getByText('9')).toBeInTheDocument();
     expect(screen.getByText('Identity candidates refused')).toBeInTheDocument();
+    expect(screen.getByText(/across 6 models/)).toBeInTheDocument();
   });
 
   test('a meta payload missing identityDetail does not crash the page, and does not render 0', async () => {
@@ -260,8 +365,9 @@ describe('the "Identity candidates refused" tile survives a partial meta payload
     expect(screen.getByText('Identity candidates refused')).toBeInTheDocument();
     // The count must not read as a claimed zero — that says "we looked, there
     // are none", which is a different fact from "this response didn't say".
-    const tile = screen.getByText('Identity candidates refused').closest('div');
-    expect(tile).not.toHaveTextContent('0');
+    const row = screen.getByText('Identity candidates refused').closest('div');
+    expect(row).not.toHaveTextContent(/[0-9]/);
+    expect(row).toHaveTextContent('unknown, not zero');
     expect(screen.queryByText('9')).not.toBeInTheDocument();
   });
 });
@@ -274,53 +380,6 @@ describe('final evaluation coverage is distinct from operational readiness', () 
 
     expect(screen.getByText('Complete overall scores')).toBeInTheDocument();
     expect(screen.getByTitle(/Operational data is available for 115\/116 models/i)).toBeInTheDocument();
-  });
-});
-
-/**
- * This page lists PROVIDERS, and its filter predicate has branches for free,
- * paid, 1M+ context and multimodal — and for nothing else. It took the model
- * filter list only as the Toolbar's default, so "Not Deprecated" arrived here
- * with no branch to act on: an offered control whose only possible effect was
- * none at all. That is the same defect the change-class page was just fixed for.
- */
-describe('the dashboard offers the filters it can actually apply', () => {
-  test('the filter menu holds provider filters, and nothing it cannot act on', async () => {
-    catalogMock.current = { data: baseData(), error: null, loading: false };
-    renderDashboard();
-    await settleDashboard();
-
-    fireEvent.click(screen.getByRole('button', { name: /all providers/i }));
-    const offered = within(screen.getByRole('listbox')).getAllByRole('option').map((option) => option.textContent);
-
-    expect(offered.slice(0, 5)).toEqual(['All Providers', 'Free Models', 'Paid Models', '1M+ Context', 'Multimodal']);
-    expect(offered).not.toContain('Not Deprecated');
-    expect(screen.getByLabelText('Sort by')).toHaveValue('score');
-  });
-
-  test('the search box says what it actually searches', async () => {
-    catalogMock.current = { data: baseData(), error: null, loading: false };
-    renderDashboard();
-    await settleDashboard();
-
-    const searchInput = screen.getByPlaceholderText('Search providers, models, or IDs...');
-    expect(searchInput).toBeInTheDocument();
-    expect(searchInput).toHaveAttribute('aria-describedby', 'dashboard-search-hint');
-    expect(screen.getByText(/Advanced search:/i)).toBeInTheDocument();
-  });
-
-  test('sort direction toggles and freshness chooses the newest-first default', async () => {
-    catalogMock.current = { data: baseData(), error: null, loading: false };
-    renderDashboard();
-    await settleDashboard();
-
-    const sort = screen.getByLabelText('Sort by');
-    fireEvent.change(sort, { target: { value: 'freshness' } });
-    expect(sort).toHaveValue('freshness');
-    expect(screen.getByRole('button', { name: /sort descending/i })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /sort descending/i }));
-    expect(screen.getByRole('button', { name: /sort ascending/i })).toBeInTheDocument();
   });
 });
 
@@ -349,7 +408,7 @@ describe('the dashboard survives its own loading state', () => {
     // A crashed tree renders nothing, so real content is the check a thrown
     // render cannot fake.
     await settleDashboard();
-    expect(await screen.findByText(/Enterprise Matrix 2026/i)).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Dashboard' })).toBeInTheDocument();
   });
 
   test('an empty catalog still renders instead of tearing down', async () => {
@@ -361,6 +420,6 @@ describe('the dashboard survives its own loading state', () => {
     };
     renderDashboard();
 
-    expect(await screen.findByText(/Enterprise Matrix 2026/i)).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Dashboard' })).toBeInTheDocument();
   });
 });

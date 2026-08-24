@@ -21,6 +21,7 @@ import {
   reconcileCatalogNotifications,
 } from './model-notifications.ts';
 import { isDbError, listDatabaseTables, loadDatabaseSchema, runDatabaseQuery } from './database-browser.ts';
+import { CATALOG_API_CONTRACT_VERSION } from '../config/api-contract.ts';
 
 export interface AppDeps {
   db: Db;
@@ -88,7 +89,7 @@ export function health(deps: HealthDeps): HttpResult {
     // code must not be told everything is fine while serving week-old data.
     status: serviceOk && catalogOk ? 200 : serviceOk ? 503 : 500,
     body: {
-      api: { contractVersion: 'catalog-api-v2' },
+      api: { contractVersion: CATALOG_API_CONTRACT_VERSION },
       service: {
         status: serviceOk ? 'up' : 'degraded',
         databaseReadable: dbReadable,
@@ -147,7 +148,7 @@ export function route(deps: AppDeps, url: URL, method: string, body?: unknown): 
       body: {
         error: 'The alerts contract was replaced by notification history.',
         replacement: '/v1/notifications',
-        contractVersion: 'catalog-api-v2',
+        contractVersion: CATALOG_API_CONTRACT_VERSION,
       },
     };
   }
