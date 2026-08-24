@@ -1,6 +1,21 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import type { Db } from '../db/index.ts';
-import type { AlertRecord, AlertStatus } from './alerts.ts';
+export type AlertSeverity = 'critical' | 'warning' | 'info';
+export type AlertStatus = 'open' | 'acknowledged' | 'resolved';
+
+export interface AlertRecord {
+  id: string;
+  kind: string;
+  severity: AlertSeverity;
+  title: string;
+  detail: string;
+  providerId: string | null;
+  modelId: string | null;
+  status: AlertStatus;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  occurrenceCount: number;
+}
 
 export type NotificationEvent = 'opened' | 'reopened' | 'acknowledged' | 'resolved';
 export type NotificationStatus = 'pending' | 'delivered' | 'retrying' | 'failed';

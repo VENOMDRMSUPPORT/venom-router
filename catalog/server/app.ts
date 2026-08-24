@@ -123,13 +123,11 @@ export function health(deps: HealthDeps): HttpResult {
 }
 
 /**
- * Bring the alert ledger in line with current health, from the one code path.
+ * Reconcile the catalog notification ledger from the one code path.
  *
- * Exported because two callers need it and must not drift: the `/v1/alerts`
- * route, and the service's own reconcile tick. Before the tick existed the
- * ledger only advanced when a browser polled — so with no tab open, no alert was
- * ever raised and no webhook was ever queued. Two copies of this three-line
- * sequence would be two definitions of what the ledger means.
+ * Exported because the service's scheduled tick and the notification API share
+ * this boundary. The legacy `/v1/alerts` route remains only as a migration
+ * response; it does not read or write the retired alert subsystem.
  */
 export function reconcileCatalogNotificationLedger(deps: HealthDeps, now: Date) {
   reconcileCatalogNotifications(deps.db, now.toISOString());

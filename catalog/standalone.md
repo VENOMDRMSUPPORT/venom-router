@@ -26,6 +26,12 @@ Automatic-evaluation environment values use one trim-aware bounded integer parse
 
 The typecheck gate also runs `npm run check:css-modules`, after the compiler so a stylesheet slip cannot hide a type error. It cross-references every imported CSS-module property used by the SPA with a selector in the corresponding stylesheet and reports the source file, line, stylesheet, and missing key, so a missing module key is a gate failure rather than a browser-only `class="undefined"` defect. A templated key such as ``styles[`signal-${severity}`]`` is checked by its static prefix: the individual key is a runtime value, but the family it belongs to must exist. Keys that are entirely runtime-valued, such as `styles[tone]`, cannot be decided by a text scan; the check counts and prints them instead of passing over them silently, and those sites should guard with `?? ''`.
 
+The former operational-alert ledger and its isolated tests are not part of the live catalog path. The old `GET /v1/alerts` route remains as an explicit HTTP 410 migration response pointing consumers to `/v1/notifications`.
+
+`server/notifications.ts`, the optional outbound webhook, is retained but currently **inert**: `alert_notifications.alert_id` is a required reference to `operational_alerts`, and with the alert engine removed no code writes that table, so the queue cannot gain a row and the delivery loop has nothing to deliver. It is disabled by default in any case. Either give it a producer or remove it with its timer and its two tables — until then, read the delivery module as retained-but-unreachable rather than as a live integration.
+
+Generated command output belongs outside the checkout. `npm run typecheck` runs `check:repo-output`, which fails on any `.log` file outside the build/dependency directories; the current allowlist is intentionally empty.
+
 ## Port and binding rules
 
 The Catalog API binds to `127.0.0.1` and defaults to port `8791`. The Catalog UI defaults to port `5173`. Venom Router uses a separate control-plane port, currently `8081`. These defaults are validated by `scripts/standalone-contract.test.ts`.

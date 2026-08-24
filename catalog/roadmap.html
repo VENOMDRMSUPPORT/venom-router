@@ -451,7 +451,7 @@ td code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1p
 
   <div class="eyebrow">Venom Catalog · Production roadmap</div>
   <h1>Ship the catalog</h1>
-  <p class="sub">19 mandatory items across 6 phases · baseline <code>7c6ada5</code> · evidence read from <code>data/catalog.db</code> on 2026-08-24 · Node v24.19.0. <b>P1, P2, P3 and P4 are closed</b> &mdash; 13 of 19 items, as of 2026-08-25, with the gate green on typecheck, 680 backend tests, 279 SPA tests and build. <code>Q1</code> was pulled forward out of P4 and landed with P2, because <code>L1</code> is what makes it reachable. <b>P5 is next.</b> Each phase card carries its own closure record and evidence; this line states the position, not the history. Supersedes the remediation tracker built from <code>catalog-code-review-2026-08-24.md</code>; every item that tracker carried is either folded in below or listed under <b>Withdrawn</b> with the reason.</p>
+  <p class="sub">19 mandatory items across 6 phases · baseline <code>7c6ada5</code> · evidence read from <code>data/catalog.db</code> on 2026-08-24 · Node v24.19.0. <b>P1, P2, P3, P4 and P5 are closed</b> &mdash; 15 of 19 items, as of 2026-08-25, with the gate green on typecheck, 669 backend tests, 279 SPA tests and build. <code>Q1</code> was pulled forward out of P4 and landed with P2, because <code>L1</code> is what makes it reachable. <b>P6 is next</b>, and one decision is open on the P5 card. Each phase card carries its own closure record and evidence; this line states the position, not the history. Supersedes the remediation tracker built from <code>catalog-code-review-2026-08-24.md</code>; every item that tracker carried is either folded in below or listed under <b>Withdrawn</b> with the reason.</p>
 
   <div class="overall">
     <div class="pct" id="pct">0%</div>
@@ -887,25 +887,32 @@ var PHASES = [
     title: 'Delete what does not run',
     goal: 'One dead subsystem accounted for six items on the previous roadmap. Deleting it removes the code, its tests, and the possibility of reviewing it again.',
     exit: 'No module in the tree lacks a production caller. The repository contains no accumulated gate output.',
+    closed: {
+      on: '2026-08-25',
+      evidence: 'X1 removed the alerts ledger and preserved the explicit <code>/v1/alerts</code> HTTP 410 migration response, verified against the running service. Q4 removed all 17 generated logs and added a repository-output check with an empty allowlist &mdash; and nothing in the project writes a log into the checkout, so the gate does not fight the projects own tooling. Gate: typecheck, <b>669</b> backend tests, <b>279</b> SPA tests, build, diff check. <b>The exit is met on its wording and one decision is left open</b> &mdash; see the X1 note.',
+    },
     items: [
       {
         id: 'X1', sev: '', area: 'server', effort: 'S',
+        status: 'done',
         title: 'Delete the alerts subsystem',
         loc: 'server/alerts.ts · server/alerts.test.ts · server/notifications.ts:3',
         cause: '<code>reconcileAlerts</code>, <code>listAlerts</code> and <code>transitionAlert</code> have no production importer. The scheduler calls <code>reconcileCatalogNotificationLedger</code>, and <code>GET /v1/alerts</code> returns 410 pointing at <code>/v1/notifications</code>. The module survives only through its own tests plus a type-only import.',
         impact: 'Six items on the previous roadmap &mdash; two of them marked blocking &mdash; described failures in code that cannot execute. Dead code with tests reads as live code to every reviewer who arrives after the people who retired it.',
         fix: 'Delete the module and its test file. Move the two types <code>notifications.ts</code> still needs to where they are used, or inline them. Keep the 410 route: it is the public contract for callers still on the old endpoint.',
-        acc: 'Gate green after deletion. <code>GET /v1/alerts</code> still returns 410 with the replacement pointer. No import of <code>alerts.ts</code> remains.'
+        acc: 'Gate green after deletion. <code>GET /v1/alerts</code> still returns 410 with the replacement pointer. No import of <code>alerts.ts</code> remains.',
+        note: 'Closed 2026-08-25. Deleted <code>alerts.ts</code>, its test, and the notification-delivery test; moved the alert payload types into <code>notifications.ts</code> and kept the 410 migration route. <b>Review found the deletion is half of one:</b> <code>alert_notifications.alert_id</code> is a required reference to <code>operational_alerts</code>, and with the engine gone <b>no code writes that table</b> &mdash; proven by a constraint failure, not by reading. So the queue cannot gain a row, and the five-second delivery loop in <code>server/index.ts</code> polls a table that can never be non-empty. Four of the seven exports in <code>notifications.ts</code> now have no caller, and the SPA still ships <code>fetchAlerts</code> and <code>updateAlertStatus</code> against the 410 endpoint. The deleted test file also covered code that still ships, so the loop was left running with zero coverage; that coverage is restored and the seam is pinned by a test. <b>Open decision:</b> give the webhook a producer, or delete it with its timer, its two tables and the SPA half. Not taken here &mdash; it is a product call, not a cleanup.'
       },
       {
         id: 'Q4', sev: '', area: 'repo', effort: 'XS',
+        status: 'done',
         title: 'Remove accumulated gate output and stop it recurring',
         loc: 'catalog/*.log · data/*.log · logs/*.log',
         cause: 'Redirected command output was written into the tree. The root <code>.gitignore</code> hides <code>*.log</code>, so it never appears in a diff or a review and simply accumulates.',
         impact: '17 files totalling 0.19 MB today, of which <code>logs/dev.log</code> is 89%. Small, but the mechanism is unbounded and invisible by construction.',
         fix: 'Delete the files, then add a repository check that fails when a <code>*.log</code> appears outside the directories where one legitimately belongs. State that allowlist in the check rather than in prose.',
         acc: 'The check passes on the cleaned tree and fails when a log file is created outside the allowlist.',
-        note: 'Corrected figures. The previous roadmap cited seventy files at 1.5 MB; catalog/CLAUDE.md repeats that figure and is updated in this item.'
+        note: 'Closed 2026-08-25. Removed the 17 generated log files and added <code>check:repo-output</code> to the typecheck gate; the regression test proves it fails on an unexpected log and passes after cleanup.'
       }
     ]
   },
