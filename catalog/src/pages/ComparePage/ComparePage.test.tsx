@@ -74,19 +74,21 @@ const offer = (
 };
 
 const models: ApiModel[] = [];
+let catalogLoading = false;
 
 vi.mock('../../hooks/useCatalog', () => ({
   useCatalog: () => ({
     data: { models, providers: [], meta: { liveModels: models.length } },
-    loading: false,
+    loading: catalogLoading,
     error: null,
     reload: vi.fn(),
   }),
 }));
 
-function renderPage(rows: ApiModel[]) {
+function renderPage(rows: ApiModel[], options: { loading?: boolean } = {}) {
   models.length = 0;
   models.push(...rows);
+  catalogLoading = options.loading ?? false;
   return render(
     <MemoryRouter>
       <ComparePage />
@@ -173,5 +175,15 @@ describe('ComparePage', () => {
 
     expect(screen.getByTestId('compare-empty')).toBeInTheDocument();
     expect(screen.queryAllByTestId(/^compare-group-/)).toHaveLength(0);
+  });
+
+  test('keeps the comparison rendered while existing data is revalidating', () => {
+    renderPage([
+      offer('clinepass', 'moonshotai/kimi-k3', 93.9),
+      offer('opencode-go', 'moonshotai/kimi-k3', 91.0),
+    ], { loading: true });
+
+    expect(screen.getByTestId('compare-group-moonshotai/kimi-k3')).toBeInTheDocument();
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
   });
 });

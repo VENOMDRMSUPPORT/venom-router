@@ -31,7 +31,7 @@ export function ComparePage() {
   const notComparable = groups.filter((g) => !g.comparable).length;
 
   if (error) return <div className={styles.state}>Catalog unavailable: {error}</div>;
-  if (loading) return <div className={styles.state}>Loading…</div>;
+  if (loading && data === null) return <div className={styles.state}>Loading…</div>;
 
   return (
     <div>

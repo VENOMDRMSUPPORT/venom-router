@@ -158,8 +158,9 @@ describe('CostCell — the billingKind FactState branch', () => {
       />,
     );
     expect(screen.getByText('missing')).toBeInTheDocument();
-    expect(screen.getByText('Market ref')).toBeInTheDocument();
+    expect(screen.getByText('Market ref')).toHaveClass(/refLabel/);
     expect(screen.getByText('$3')).toBeInTheDocument();
+    expect(screen.getByText('/M')).toHaveClass(/refUnit/);
   });
 
   test('free and included still take their own, earlier branches — the gap branch does not shadow them', () => {
