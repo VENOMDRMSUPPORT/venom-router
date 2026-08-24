@@ -13,6 +13,7 @@ import { buildIndex } from '../sync/identity.ts';
 import type { BenchmarkSource } from '../sync/sources/openrouter.ts';
 import type { ScoreProfile } from '../sync/score/venom-score.ts';
 import { beginResolutionWindow, finishResolutionAttempt } from '../sync/resolution-jobs.ts';
+import { MAX_MARK_READ_IDS, MAX_NOTIFICATION_LIMIT } from './model-notifications.ts';
 
 const PROFILE: ScoreProfile = {
   id: 'balanced', label: 'Balanced',
@@ -1100,5 +1101,75 @@ describe('Database Browser — bounded read-only contract', () => {
     assert.equal(result.body.code, 'query_failed');
     assert.equal(result.body.error, 'The read-only query could not be executed.');
     assert.equal(JSON.stringify(result.body).includes('missing_table'), false);
+  });
+});
+
+describe('notification API boundaries', () => {
+  /** `count` notifications, returned newest-first-safe with distinct timestamps. */
+  const seedNotifications = (count: number): string[] => {
+    const insert = db.prepare(`INSERT INTO catalog_notifications
+      (id, source_kind, source_id, category, kind, title, detail, observed_at, created_at)
+      VALUES (?, 'sync_run', ?, 'warning', 'fetch_problem', 'title', 'detail', ?, ?)`);
+    const ids = Array.from({ length: count }, (_, index) => `sync-run:${10_000 + index}`);
+    for (let index = 0; index < ids.length; index += 1) {
+      const timestamp = `2026-08-12T02:${String(index % 60).padStart(2, '0')}:00.000Z`;
+      insert.run(ids[index], 10_000 + index, timestamp, timestamp);
+    }
+    return ids;
+  };
+
+  test('rejects a mark-read batch over the limit without partially updating it', async () => {
+    // Sized off the constant, not off a literal: the previous version of this
+    // test hard-coded 100 and would have gone quietly stale the moment the
+    // ceiling moved.
+    const ids = seedNotifications(MAX_MARK_READ_IDS + 1);
+
+    const response = await route(deps(), new URL('http://127.0.0.1/v1/notifications/read'), 'PATCH', { ids });
+    assert.equal(response.status, 400);
+    assert.deepEqual(response.body, {
+      error: `ids must contain at most ${MAX_MARK_READ_IDS} notification ids`,
+      code: 'notification_ids_limit',
+      limit: MAX_MARK_READ_IDS,
+    });
+    assert.equal((db.prepare(`SELECT COUNT(*) count FROM catalog_notifications WHERE read_at IS NOT NULL`).get() as { count: number }).count, 0);
+  });
+
+  test('a full page can be marked read, because a page is what a caller has to mark', async () => {
+    // The two ceilings are one rule seen twice. If the write cap were the
+    // smaller number, GET ?limit=500 would hand back a page whose own PATCH
+    // comes back 400, and the panel could not clear what it just showed.
+    assert.equal(MAX_MARK_READ_IDS, MAX_NOTIFICATION_LIMIT);
+    const ids = seedNotifications(MAX_NOTIFICATION_LIMIT);
+
+    const response = await route(deps(), new URL('http://127.0.0.1/v1/notifications/read'), 'PATCH', { ids });
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, { updated: MAX_NOTIFICATION_LIMIT });
+    assert.equal(
+      (db.prepare(`SELECT COUNT(*) count FROM catalog_notifications WHERE read_at IS NOT NULL`).get() as { count: number }).count,
+      MAX_NOTIFICATION_LIMIT,
+    );
+  });
+});
+
+describe('notification list contract', () => {
+  test('uses the shared limit clamp for absent, invalid, small, and large values', async () => {
+    const limited = await route(deps(), new URL('http://127.0.0.1/v1/notifications?limit=1'), 'GET');
+    const invalid = await route(deps(), new URL('http://127.0.0.1/v1/notifications?limit=not-a-number'), 'GET');
+    const large = await route(deps(), new URL('http://127.0.0.1/v1/notifications?limit=999'), 'GET');
+    const defaultResult = await route(deps(), new URL('http://127.0.0.1/v1/notifications'), 'GET');
+
+    assert.equal((limited.body as { notifications: unknown[] }).notifications.length, 1);
+    assert.ok((invalid.body as { notifications: unknown[] }).notifications.length <= 100);
+    assert.ok((large.body as { notifications: unknown[] }).notifications.length <= 500);
+    assert.ok((defaultResult.body as { notifications: unknown[] }).notifications.length <= 100);
+  });
+
+  test('rejects malformed mark-read ids with a typed boundary error', async () => {
+    const response = await route(deps(), new URL('http://127.0.0.1/v1/notifications/read'), 'PATCH', { ids: ['notification:1', 2] });
+    assert.equal(response.status, 400);
+    assert.deepEqual(response.body, {
+      error: 'ids must be an array of notification ids',
+      code: 'invalid_notification_ids',
+    });
   });
 });

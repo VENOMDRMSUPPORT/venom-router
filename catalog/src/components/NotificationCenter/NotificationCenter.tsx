@@ -19,7 +19,6 @@ import {
 } from '../../api/client';
 import styles from './NotificationCenter.module.css';
 
-const MAX_VISIBLE_NOTIFICATIONS = 5;
 export const NOTIFICATION_REFRESH_INTERVAL_MS = 30_000;
 
 interface NotificationCenterProps {
@@ -99,7 +98,8 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
   );
   const unread = notifications.filter((notification) => notification.readAt === null);
   const unreadCount = summary?.unread ?? unread.length;
-  const visibleNotifications = notifications.slice(0, MAX_VISIBLE_NOTIFICATIONS);
+  const total = summary?.total ?? notifications.length;
+  const withheld = total - notifications.length;
   const triggerLabel = unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications';
 
   const markRead = async (notificationsToMark: CatalogNotification[], markAllInScope = false) => {
@@ -159,9 +159,9 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
             {rows === null && !error && <div className={styles.state}><LuLoaderCircle size={16} className={styles.spinner} aria-hidden="true" />Loading notifications…</div>}
             {error && rows === null && <div className={`${styles.state} ${styles.errorState}`}><LuCircleAlert size={16} aria-hidden="true" />Notifications are unavailable right now.</div>}
             {rows !== null && !error && notifications.length === 0 && <div className={styles.state}>No catalog notifications yet.</div>}
-            {visibleNotifications.length > 0 && (
+            {notifications.length > 0 && (
               <ul className={styles.list} aria-label="Catalog notification history">
-                {visibleNotifications.map((notification) => {
+                {notifications.map((notification) => {
                   const target = notification.providerId ? `/provider/${encodeURIComponent(notification.providerId)}` : '/';
                   const targetLabel = notification.modelId ?? notification.providerId ?? 'Catalog';
                   return (
@@ -188,6 +188,14 @@ export function NotificationCenter({ providerId }: NotificationCenterProps) {
                   );
                 })}
               </ul>
+            )}
+            {withheld > 0 && (
+              // Not an action — a statement. Above the service's page ceiling the
+              // oldest notifications cannot be shown, and a panel that stays
+              // silent about that is the 5-of-135 bug wearing a bigger number.
+              <p className={styles.pageNote} role="status">
+                Showing the {notifications.length} most recent of {total}.
+              </p>
             )}
             {actionError && <p className={styles.actionError} role="alert">{actionError}</p>}
             {error && rows !== null && <p className={styles.refreshError} role="status">Unable to refresh notifications. Showing the latest loaded history.</p>}

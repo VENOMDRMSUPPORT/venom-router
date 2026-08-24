@@ -66,14 +66,47 @@ describe('NotificationCenter', () => {
     expect(trigger).toHaveAccessibleName('Notifications');
   });
 
-  it('uses the server unread total and global scope even when only a limited list is rendered', async () => {
-    mockedFetchNotifications.mockResolvedValue(notificationResponse([notification()], { total: 105, unread: 105, read: 0 }));
-    mockedMarkRead.mockResolvedValue({ updated: 105 });
+  it('says how many it could not show when the service page is shorter than the total', async () => {
+    // The bell counts every unread row; the panel can only show one page. When
+    // those two numbers differ the difference used to be invisible — 135 unread
+    // over a panel of 5. Above the service ceiling it is stated instead.
+    const notifications = Array.from({ length: 3 }, (_, index) => notification({ id: `model-event:${200 + index}` }));
+    mockedFetchNotifications.mockResolvedValue(notificationResponse(notifications, { total: 9, unread: 9, read: 0 }));
     render(<MemoryRouter><NotificationCenter /></MemoryRouter>);
 
     const trigger = screen.getByRole('button', { name: 'Notifications' });
-    await waitFor(() => expect(trigger).toHaveAccessibleName('Notifications, 105 unread'));
+    await waitFor(() => expect(trigger).toHaveAccessibleName('Notifications, 9 unread'));
     fireEvent.click(trigger);
+
+    expect(screen.getByText('Showing the 3 most recent of 9.')).toBeInTheDocument();
+  });
+
+  it('stays silent when the page already holds everything', async () => {
+    const notifications = Array.from({ length: 3 }, (_, index) => notification({ id: `model-event:${300 + index}` }));
+    mockedFetchNotifications.mockResolvedValue(notificationResponse(notifications, { total: 3, unread: 3, read: 0 }));
+    render(<MemoryRouter><NotificationCenter /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Notifications, 3 unread' }));
+
+    expect(screen.queryByText(/most recent of/)).not.toBeInTheDocument();
+  });
+
+  it('renders every fetched notification in the scrollable history and marks the full scope read', async () => {
+    const notifications = Array.from({ length: 30 }, (_, index) => notification({
+      id: `model-event:${101 + index}`,
+      title: `clinepass added model clinepass-code-${index}`,
+      modelId: `clinepass-code-${index}`,
+    }));
+    mockedFetchNotifications.mockResolvedValue(notificationResponse(notifications));
+    mockedMarkRead.mockResolvedValue({ updated: 30 });
+    render(<MemoryRouter><NotificationCenter /></MemoryRouter>);
+
+    const trigger = screen.getByRole('button', { name: 'Notifications' });
+    await waitFor(() => expect(trigger).toHaveAccessibleName('Notifications, 30 unread'));
+    fireEvent.click(trigger);
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(30);
+    expect(screen.getByText('clinepass added model clinepass-code-29')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Mark all as read' }));
 
     await waitFor(() => expect(mockedMarkRead).toHaveBeenCalledWith(null, undefined));

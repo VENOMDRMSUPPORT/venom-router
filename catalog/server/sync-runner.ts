@@ -28,6 +28,17 @@ import type { RejectionOverlay } from '../sync/identity-rejections.ts';
 import type { ScoreProfile } from '../sync/score/venom-score.ts';
 import { beginResolutionWindow, bootstrapResolutionJobs, listDueResolutionJobs } from '../sync/resolution-jobs.ts';
 import type { AutoEvaluationOffer, AutoEvaluationReport } from './auto-evaluation.ts';
+import { SHARED_SOURCE_PROVIDER_ID } from './model-notifications.ts';
+
+function recordSharedSourceFailure(db: Db, startedAt: string, finishedAt: string, error: string): void {
+  // Shared sources are not a provider roster, but sync_runs is the durable source
+  // already projected by the notification ledger. One row per aborted run keeps
+  // the warning idempotent without inventing a second notification channel.
+  db.prepare(`
+    INSERT INTO sync_runs (provider_id, started_at, finished_at, outcome, roster_count, error)
+    VALUES (?, ?, ?, 'failed', 0, ?)
+  `).run(SHARED_SOURCE_PROVIDER_ID, startedAt, finishedAt, error);
+}
 
 export interface SyncOutcome {
   startedAt: string;
@@ -145,9 +156,11 @@ export class SyncRunner {
         // The shared sources are the specs and the benchmarks. Without them a
         // run would rewrite every row with nulls, so it does not start at all
         // and the previous catalog stands untouched.
+        const finishedAt = currentDate().toISOString();
+        const error = err instanceof Error ? err.message : String(err);
+        recordSharedSourceFailure(db, startedAt, finishedAt, error);
         const outcome: SyncOutcome = {
-          startedAt, finishedAt: currentDate().toISOString(), providers: [], scoring: null,
-          aborted: err instanceof Error ? err.message : String(err),
+          startedAt, finishedAt, providers: [], scoring: null, aborted: error,
         };
         this.last = outcome;
         return outcome;
@@ -227,9 +240,11 @@ export class SyncRunner {
           loadBenchmarks(fetchJson),
         ]);
       } catch (err) {
+        const finishedAt = currentDate().toISOString();
+        const error = err instanceof Error ? err.message : String(err);
+        recordSharedSourceFailure(db, startedAt, finishedAt, error);
         return {
-          startedAt, finishedAt: currentDate().toISOString(), attempted: 0, resolved: 0, dormant: 0,
-          aborted: err instanceof Error ? err.message : String(err),
+          startedAt, finishedAt, attempted: 0, resolved: 0, dormant: 0, aborted: error,
         };
       }
 

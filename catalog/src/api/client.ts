@@ -794,12 +794,26 @@ export interface CatalogNotification {
 export interface CatalogNotificationsResponse {
   notifications: CatalogNotification[];
   summary: { total: number; unread: number; read: number };
+  /** The page ceiling the service applied. Absent on a pre-P3 service. */
+  limit?: number;
   generatedAt: string;
 }
 
+/**
+ * Ask for the whole history rather than the service's default page.
+ *
+ * The bell counts every unread notification, so a panel showing one default
+ * page leaves the difference unreachable — the 5-item cap's failure at a bigger
+ * number. The service clamps this to its own maximum and reports the applied
+ * value back as `limit`, so it stays the only owner of the boundary and this
+ * number cannot silently exceed it.
+ */
+const NOTIFICATION_HISTORY_REQUEST = 500;
+
 export async function fetchCatalogNotifications(providerId?: string, signal?: AbortSignal): Promise<CatalogNotificationsResponse> {
-  const query = providerId ? `?provider=${encodeURIComponent(providerId)}` : '';
-  return readService<CatalogNotificationsResponse>(`/notifications${query}`, { signal });
+  const params = new URLSearchParams({ limit: String(NOTIFICATION_HISTORY_REQUEST) });
+  if (providerId) params.set('provider', providerId);
+  return readService<CatalogNotificationsResponse>(`/notifications?${params.toString()}`, { signal });
 }
 
 export async function markCatalogNotificationsRead(ids: string[] | null, providerId?: string): Promise<{ updated: number }> {

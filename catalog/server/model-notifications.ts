@@ -44,6 +44,33 @@ interface SyncFailureRow {
 
 const NOTIFICATION_BATCH_SIZE = 250;
 
+/**
+ * The `sync_runs.provider_id` a shared-source abort is recorded under.
+ *
+ * It is a storage sentinel, not a provider: nothing in `providers` carries this
+ * id, and the SPA turns a notification's `providerId` straight into a link to
+ * `/provider/<id>`. So the projection below must translate it rather than pass
+ * it through, or the one affordance on the warning is a 404.
+ */
+export const SHARED_SOURCE_PROVIDER_ID = 'catalog-shared-sources';
+export const DEFAULT_NOTIFICATION_LIMIT = 100;
+export const MAX_NOTIFICATION_LIMIT = 500;
+/**
+ * The mark-read batch ceiling is the page ceiling, deliberately and by
+ * construction.
+ *
+ * A caller marks read what a page handed it. If this were the smaller number,
+ * `GET ?limit=500` would return a page the matching PATCH rejects with a 400 —
+ * a read the write boundary refuses to honour. Tied together here so the two
+ * cannot drift into that state.
+ */
+export const MAX_MARK_READ_IDS = MAX_NOTIFICATION_LIMIT;
+
+export function clampNotificationLimit(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_NOTIFICATION_LIMIT;
+  return Math.max(1, Math.min(Math.trunc(value), MAX_NOTIFICATION_LIMIT));
+}
+
 function fromRow(row: StoredNotificationRow): CatalogNotification {
   return {
     id: row.id,
@@ -136,13 +163,20 @@ export function reconcileCatalogNotifications(db: Db, now = new Date().toISOStri
       .all(runAfter, NOTIFICATION_BATCH_SIZE) as unknown as SyncFailureRow[];
     if (failedRuns.length === 0) break;
     for (const run of failedRuns) {
+      const shared = run.provider_id === SHARED_SOURCE_PROVIDER_ID;
       insertNotification(db, {
         id: `sync-run:${run.id}`,
         category: 'warning',
         kind: 'fetch_problem',
-        title: `${run.provider_id} data refresh needs attention`,
-        detail: 'The catalog could not refresh this provider’s model data. Review the service log for the recorded failure details.',
-        providerId: run.provider_id,
+        title: shared
+          ? 'Catalog data sources need attention'
+          : `${run.provider_id} data refresh needs attention`,
+        detail: shared
+          ? 'The catalog could not read the shared model data sources, so the scheduled refresh did not start and the previous catalog stands unchanged. Review the service log for the recorded failure details.'
+          : 'The catalog could not refresh this provider’s model data. Review the service log for the recorded failure details.',
+        // Null, not the sentinel: this failure belongs to no provider, and the
+        // panel already renders that case as "Catalog" pointing at the root.
+        providerId: shared ? null : run.provider_id,
         modelId: null,
         observedAt: run.finished_at ?? run.started_at,
       }, now);
@@ -152,7 +186,7 @@ export function reconcileCatalogNotifications(db: Db, now = new Date().toISOStri
 }
 
 export function listCatalogNotifications(db: Db, options: { providerId?: string; limit?: number } = {}): CatalogNotification[] {
-  const limit = Math.max(1, Math.min(Math.trunc(options.limit ?? 100), 500));
+  const limit = clampNotificationLimit(options.limit);
   const rows = options.providerId
     ? db.prepare(`SELECT * FROM catalog_notifications WHERE provider_id = ? ORDER BY observed_at DESC, id DESC LIMIT ?`).all(options.providerId, limit)
     : db.prepare(`SELECT * FROM catalog_notifications ORDER BY observed_at DESC, id DESC LIMIT ?`).all(limit);
@@ -167,7 +201,7 @@ export function markCatalogNotificationsRead(db: Db, ids: string[] | null, optio
       .run(now, ...(options.providerId ? [options.providerId] : []));
     return Number(result.changes);
   }
-  const uniqueIds = [...new Set(ids)].slice(0, 100);
+  const uniqueIds = [...new Set(ids)];
   if (uniqueIds.length === 0) return 0;
   const placeholders = uniqueIds.map(() => '?').join(',');
   const result = db.prepare(`UPDATE catalog_notifications SET read_at = COALESCE(read_at, ?) WHERE id IN (${placeholders})${providerClause}`)

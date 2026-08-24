@@ -128,6 +128,25 @@ describe('the service actually consults provider detail now', () => {
     assert.deepEqual(serviceOutcome!.scoring?.levels, cliResult.scoring.levels);
     assert.equal(serviceOutcome!.providers.length, cliResult.providers.length);
   });
+  test('a shared-source failure records one failed run and leaves the catalog untouched', async () => {
+    const db = makeDb();
+    const runner = new SyncRunner({
+      db, profile: PROFILE, methodologyVersion: 'venom-score-v1', identityOverlay: {},
+      fetchJson: async () => { throw new Error('shared source unavailable'); },
+    });
+
+    const outcome = await runner.run();
+
+    assert.equal(outcome?.aborted, 'shared source unavailable');
+    assert.equal(outcome?.providers.length, 0);
+    const run = db.prepare(`SELECT provider_id, outcome, error FROM sync_runs`).get() as unknown as {
+      provider_id: string; outcome: string; error: string;
+    };
+    assert.deepEqual({ provider_id: run.provider_id, outcome: run.outcome, error: run.error }, {
+      provider_id: 'catalog-shared-sources', outcome: 'failed', error: 'shared source unavailable',
+    });
+    assert.equal((db.prepare('SELECT COUNT(*) count FROM models').get() as { count: number }).count, 0);
+  });
 });
 
 describe('targeted resolution follow-up', () => {

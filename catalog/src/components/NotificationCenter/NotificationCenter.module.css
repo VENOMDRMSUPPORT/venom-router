@@ -33,11 +33,6 @@
 .trigger:focus-visible,
 .acknowledgeAll:focus-visible,
 .targetLink:focus-visible,
-.viewAll:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 .badge {
   position: absolute;
   top: -5px;
@@ -295,23 +290,12 @@
   animation: notification-spin 800ms linear infinite;
 }
 
-.viewAll {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 11px 16px;
+.pageNote {
+  margin: 0;
+  padding: 10px 16px;
   border-top: 1px solid var(--border-subtle);
-  color: var(--accent);
+  color: var(--foreground-tertiary);
   font-size: 11px;
-  font-weight: 600;
-  text-decoration: none;
-  transition: color var(--transition-fast), background var(--transition-fast);
-}
-
-.viewAll:hover {
-  color: var(--foreground);
-  background: var(--accent-subtle);
 }
 
 @keyframes notification-enter {

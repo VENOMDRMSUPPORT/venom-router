@@ -449,7 +449,7 @@ td code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1p
 
   <div class="eyebrow">Venom Catalog · Production roadmap</div>
   <h1>Ship the catalog</h1>
-  <p class="sub">19 mandatory items across 6 phases · baseline <code>7c6ada5</code> · evidence read from <code>data/catalog.db</code> on 2026-08-24 · Node v24.19.0. <b>P1 is closed</b> as of 2026-08-24 &mdash; gate green on typecheck, 665 backend tests, 277 SPA tests and build. <b>P2 is closed</b> as of 2026-08-24; Q1 was pulled forward because L1 makes it reachable, so P4 stands at 1/3. P3 is the next phase to start. Supersedes the remediation tracker built from <code>catalog-code-review-2026-08-24.md</code>; every item that tracker carried is either folded in below or listed under <b>Withdrawn</b> with the reason.</p>
+  <p class="sub">19 mandatory items across 6 phases · baseline <code>7c6ada5</code> · evidence read from <code>data/catalog.db</code> on 2026-08-24 · Node v24.19.0. <b>P1 is closed</b> as of 2026-08-24 &mdash; gate green on typecheck, 665 backend tests, 277 SPA tests and build. <b>P2 is closed</b> as of 2026-08-24; Q1 was pulled forward because L1 makes it reachable, so P4 stands at 1/3. <b>P3 is closed</b> as of 2026-08-25; badge and panel agree at 135 on live data. P4 is next, standing at 1/3. Supersedes the remediation tracker built from <code>catalog-code-review-2026-08-24.md</code>; every item that tracker carried is either folded in below or listed under <b>Withdrawn</b> with the reason.</p>
 
   <div class="overall">
     <div class="pct" id="pct">0%</div>
@@ -509,7 +509,8 @@ td code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1p
         <tr><td>Discovery</td><td>Works. <code>opencode-go/longcat-2.0</code> was detected, inserted, enriched, scored and reached <code>catalogReady</code> in one pass on 2026-08-24T14:34:54Z.</td></tr>
         <tr><td>Conflicts<br><span style="color:var(--muted)">before P1</span></td><td>180 rows in <code>model_conflicts</code>: 165 <code>open</code>, 15 <code>resolved</code>. Only <b>16</b> belong to a model with status <code>active</code>/<code>missing</code>; the other 164 sit on <code>excluded</code> rows and are never rendered. Of the 16, one is <code>open</code> &mdash; the new model &mdash; and 15 are <code>resolved</code> but still render as conflicts.</td></tr>
         <tr><td>Conflicts<br><span style="color:var(--green)">after P1</span></td><td>Measured from <code>GET /v1/models</code> on 2026-08-24 after K1&ndash;K3: 53 live rows, <b>15</b> carry a conflict in their history and <b>0</b> carry an open one. <code>meta.conflictedModels</code> is <code>0</code> and <code>meta.conflictsByField</code> is empty. Every one of the 15 is <code>structured</code>, <code>resolved</code> to <code>true</code> by a source outside the dispute, and stays visible in the evidence panel labelled <code>resolved</code>. The excluded rows are untouched and still unrendered.</td></tr>
-        <tr><td>Notifications</td><td>The three-category contract already exists and is correct: <code>success</code> / <code>error</code> / <code>warning</code>, projected from immutable events, idempotent by source key, simple nullable <code>read_at</code>. 135 rows, all unread.</td></tr>
+        <tr><td>Notifications<br><span style="color:var(--muted)">before P3</span></td><td>The three-category contract already exists and is correct: <code>success</code> / <code>error</code> / <code>warning</code>, projected from immutable events, idempotent by source key, simple nullable <code>read_at</code>. 135 rows, all unread &mdash; and the panel showed five of them.</td></tr>
+        <tr><td>Notifications<br><span style="color:var(--green)">after P3</span></td><td>Measured against the running service on 2026-08-25: the bell reads <b>135 unread</b> and the panel renders <b>135</b> items, requested as one page of the service maximum. Above that ceiling the panel states what it is withholding rather than hiding it. Categories, icons and the <code>read_at</code> rule are unchanged &mdash; still no fix button, retry, or recovery workflow anywhere in the surface.</td></tr>
         <tr><td>Retirement</td><td><code>retireAfterMisses: 3</code> at a 6-hour scheduler interval. A removed model stays served for roughly 12 hours as <code>missing</code>, with no notification during that window.</td></tr>
         <tr><td>Fetch failure</td><td>Per-provider roster failure is handled correctly: <code>sync_runs</code> gets an <code>outcome='failed'</code> row, the catalog is untouched, a yellow warning is projected. The <b>shared-source</b> failure path is not: it aborts before any run row exists, so it produces no notification of any colour.</td></tr>
         <tr><td>Alerts subsystem</td><td><code>server/alerts.ts</code> has no production importer. <code>GET /v1/alerts</code> returns <code>410</code>. The module and its two test files are dead weight.</td></tr>
@@ -609,7 +610,7 @@ td code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1p
         <li><code>server/model-notifications.ts:155</code> &mdash; the ceiling on <code>GET /v1/notifications?limit=</code>, so a caller cannot ask the service to serialize the whole table. It is <b>duplicated inline</b> at <code>server/app.ts:197</code> instead of being imported, which is the only real problem with it. Tracked as <code>N3</code>.</li>
       </ul>
       <p>Both are ordinary boundary limits and both stay. The comment at <code>model-notifications.ts:117</code> that mentions "more than 500" is explaining that reconciliation is deliberately <em>not</em> bounded by them; it is correct as written.</p>
-      <p><b>The cap that actually hides content is 5, not 500.</b> <code>NotificationCenter.tsx:22</code> caps the panel at <code>MAX_VISIBLE_NOTIFICATIONS = 5</code> while the badge reads <code>summary.unread</code>, which counts every row. Today that is a bell reading 135 unread over a panel showing 5, with no pagination and an orphaned <code>.viewAll</code> rule in the stylesheet. Tracked as <code>N2</code>.</p>
+      <p><b>The cap that actually hides content was 5, not 500.</b> <code>NotificationCenter.tsx</code> capped the panel at <code>MAX_VISIBLE_NOTIFICATIONS = 5</code> while the badge read <code>summary.unread</code>, which counts every row &mdash; a bell reading 135 over a panel showing 5, with no pagination and an orphaned <code>.viewAll</code> rule in the stylesheet. <b>Closed by <code>N2</code> on 2026-08-25:</b> the render cap and the dead rule are gone, the client asks for the page maximum instead of the default, and the panel states the shortfall if a catalog ever outgrows one page. The ceiling that remains is the request limit, which is the boundary that should own it.</p>
     </div>
   </div>
 
@@ -670,11 +671,11 @@ td code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1p
         <tr><td>5</td><td>That new model produces <b>zero</b> conflict rows unless two entitled sources genuinely disagree. <code>opencode-go/longcat-2.0</code> specifically resolves <code>structured</code> to a value with a recorded standing. <span class="pill g">met &middot; P1</span> &mdash; two base sellers do genuinely disagree here, so the row is correct; the value resolves to <code>true</code> from this catalog's own measurement and the dispute is <code>resolved</code>, not <code>open</code>.</td></tr>
         <tr><td>6</td><td>A model absent from a successful roster fetch is <code>retired</code> on that same run, disappears from <code>/v1/models</code> and from <code>liveModels</code>, and its row and events survive.</td></tr>
         <tr><td>7</td><td>Removal produces a red notification and <b>no</b> conflict row.</td></tr>
-        <tr><td>8</td><td>A shared-source fetch failure and a provider roster failure each produce exactly one yellow notification, and neither changes a single model row.</td></tr>
+        <tr><td>8</td><td>A shared-source fetch failure and a provider roster failure each produce exactly one yellow notification, and neither changes a single model row. <span class="pill g">met &middot; P3</span></td></tr>
         <tr><td>9</td><td>A <code>resolved</code> conflict does not appear in <code>conflictedModels</code>, does not render a field badge, and is never given as the reason a fact is missing. It <b>does</b> remain in the evidence panel, labelled <code>resolved</code> and showing every side &mdash; a recorded verdict is audit history, and hiding it would delete the proof that the value was settled rather than guessed. <span class="pill g">met &middot; P1</span></td></tr>
         <tr><td>10</td><td>A genuine two-sided disagreement between entitled sources still creates an <code>open</code> conflict and still renders, pinned by a test that would fail if detection were disabled. <span class="pill g">met &middot; P1</span></td></tr>
-        <tr><td>11</td><td>The bell shows three categories only, with matching icons; the unread badge and the panel contents agree; every notification is reachable.</td></tr>
-        <tr><td>12</td><td>No fix button, retry action, or recovery workflow exists anywhere in the notification surface.</td></tr>
+        <tr><td>11</td><td>The bell shows three categories only, with matching icons; the unread badge and the panel contents agree; every notification is reachable. <span class="pill g">met &middot; P3</span> &mdash; 135 against 135 on the live catalog; past the page ceiling the panel names the difference instead of dropping it.</td></tr>
+        <tr><td>12</td><td>No fix button, retry action, or recovery workflow exists anywhere in the notification surface. <span class="pill g">met &middot; P3</span></td></tr>
         <tr><td>13</td><td><code>server/alerts.ts</code> and its tests are deleted, and <code>GET /v1/alerts</code> still returns 410.</td></tr>
         <tr><td>14</td><td>No CSS-module key used in the SPA resolves to <code>undefined</code>, enforced by a check that runs in the gate.</td></tr>
         <tr><td>15</td><td>The existence invariant, the conflict definition and the work-once invariant are written into <code>catalog/CLAUDE.md</code> in the same change as the behaviour.</td></tr>
@@ -783,42 +784,54 @@ var PHASES = [
     title: 'Notification completeness',
     goal: 'The three-category contract is already right. What is missing is one failure mode that produces no notification at all, and a panel that shows 5 of 135.',
     exit: 'Every fetch failure produces exactly one yellow notification. Every notification in the badge count is reachable in the panel. One ceiling constant, one definition.',
+    closed: {
+      on: '2026-08-24',
+      evidence: 'N1&ndash;N4 landed, then three review corrections. Shared-source aborts persist one failed <code>sync_runs</code> row for the existing projection, and the resulting warning carries <b>no</b> provider &mdash; <code>catalog-shared-sources</code> is a storage sentinel, and passing it through made the notification&rsquo;s only affordance a link to the SPA&rsquo;s 404. The panel now asks for the page maximum and renders all of it: measured live, badge <b>135</b> against <b>135</b> rendered, where before the cleanup it was 135 against 100. One exported clamp owns the GET limit, and the mark-read ceiling is tied to the page ceiling so a page the service serves is always a page the caller can mark read. Gate: typecheck, <b>676</b> backend tests, <b>279</b> SPA tests, build.',
+    },
     items: [
       {
         id: 'N1', sev: 'crit', area: 'server', effort: 'S',
+        status: 'done',
         title: 'Shared-source fetch failure is silent',
         loc: 'server/sync-runner.ts:144-154 · server/model-notifications.ts:135',
         cause: 'The warning projection reads <code>sync_runs</code>, but rows there are written only inside <code>syncProvider</code>. When <code>loadSpecs</code> or <code>loadBenchmarks</code> throws, the runner aborts before <code>runSyncPipeline</code> is called, so no run row exists and there is nothing to project.',
         impact: 'Refusing to run is the correct behaviour &mdash; a run without specs would rewrite every row with nulls. But the operator is told nothing: the failure appears only in the <code>POST /v1/sync</code> response body and <code>runner.lastOutcome</code>. A scheduled 6-hourly run can stop refreshing the catalog indefinitely in silence, which is exactly the case the yellow warning exists for.',
         fix: 'Record the aborted run so the existing projection can see it. Reuse the <code>sync_runs</code> path rather than inventing a second failure channel &mdash; one shared-source row per aborted run, so the projection, the idempotency key and the notification shape all stay unchanged.',
-        acc: 'Runner test: <code>loadSpecs</code> throws; the catalog is unchanged, exactly one yellow notification is produced, and a second identical failure does not produce a duplicate.'
+        acc: 'Runner test: <code>loadSpecs</code> throws; the catalog is unchanged, exactly one yellow notification is produced, and a second identical failure does not produce a duplicate.',
+        note: 'Closed 2026-08-24. Full and resolution sync aborts persist a durable failed run for the existing projection. Review correction: the projection translates the <code>catalog-shared-sources</code> sentinel instead of publishing it &mdash; the notification names no provider and links to the catalog root, because no provider failed.'
       },
       {
         id: 'N2', sev: 'crit', area: 'client', effort: 'S',
+        status: 'done',
         title: 'The panel shows 5 while the badge says 135',
         loc: 'src/components/NotificationCenter/NotificationCenter.tsx:22, :101-102',
         cause: '<code>MAX_VISIBLE_NOTIFICATIONS = 5</code> slices the rendered list, while the badge reads <code>summary.unread</code>, which counts every row in the table. The client sends no limit, so the server returns 100 rows and 95 are discarded after being fetched.',
         impact: 'With 135 unread the bell reads a large number, the accessible label states it, and the panel offers five items with no pagination and no way to reach the rest. The <code>.viewAll</code> rule in the stylesheet is orphaned &mdash; a "view all" affordance was designed and never wired.',
         fix: 'Make the panel scroll the notifications it fetched instead of truncating them. Keep the list bounded by the request limit, which is the boundary that should own it, and drop the render-time slice. No new categories, no new actions &mdash; a scrolling list of the same three kinds.',
-        acc: 'Render with 30 notifications: all 30 are in the DOM, the badge matches the unread count among them, and marking read still only marks what the user has seen.'
+        acc: 'Render with 30 notifications: all 30 are in the DOM, the badge matches the unread count among them, and marking read still only marks what the user has seen.',
+        note: 'Closed 2026-08-24. The client no longer applies a second render-time cap; the existing scroll container owns the viewport. Review correction: dropping the cap alone left the exit unmet &mdash; the client still asked for the default page, so 100 of 135 rendered under a badge reading 135. It now requests the page maximum, and states how many it is showing whenever the total is larger. The orphaned <code>.viewAll</code> rule this item named is deleted.'
       },
       {
         id: 'N3', sev: '', area: 'server', effort: 'XS',
+        status: 'done',
         title: 'The notification limit ceiling is defined twice',
         loc: 'server/app.ts:197 · server/model-notifications.ts:155',
         cause: 'The route re-implements the clamp inline instead of importing it, so the same boundary rule exists as two literals that can drift apart.',
         impact: 'A second copy of one rule &mdash; the duplication the project standard names as a defect rather than a variation. It is also the entire substance of the "500" question: two unrelated ceilings, one of them written twice.',
         fix: 'Export the clamp from <code>model-notifications.ts</code> and call it from the route, the way <code>clampChangesLimit</code> is already used one route above.',
-        acc: 'Exactly one definition of the notifications ceiling exists in the tree. The route behaviour is unchanged for valid, invalid and absent limits.'
+        acc: 'Exactly one definition of the notifications ceiling exists in the tree. The route behaviour is unchanged for valid, invalid and absent limits.',
+        note: 'Closed 2026-08-24. The route imports the single clamp from <code>model-notifications.ts</code>.'
       },
       {
         id: 'N4', sev: '', area: 'server', effort: 'XS',
+        status: 'done',
         title: 'markRead silently drops ids past 100',
         loc: 'server/model-notifications.ts:170',
         cause: '<code>[...new Set(ids)].slice(0, 100)</code> truncates the id list, then returns a changed-row count that does not reveal the truncation.',
         impact: 'A caller marking 150 notifications read gets a success response and 50 stay unread with nothing to indicate why. Silent truncation contradicts the fail-closed rule: an over-limit request should be rejected at the boundary, not quietly served in part.',
         fix: 'Validate the id count at the HTTP boundary and reject an over-limit batch with a typed error, rather than truncating inside the repository. The SPA marks what it rendered, so this only ever fires for a direct API caller.',
-        acc: 'A request with more ids than the limit returns a typed 400 and marks nothing. A request at the limit marks everything and reports the true count.'
+        acc: 'A request with more ids than the limit returns a typed 400 and marks nothing. A request at the limit marks everything and reports the true count.',
+        note: 'Closed 2026-08-24. The HTTP boundary rejects oversized batches and the repository no longer truncates direct callers silently.'
       }
     ]
   },

@@ -12,7 +12,14 @@ import { planEvaluation, resolveIdentity } from '../sync/evaluation/plan.ts';
 import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtures.ts';
 import { regradeFromRetainedResponses } from '../sync/evaluation/regrade.ts';
 import { recalculatePublishedOffers } from '../sync/evaluation/recalculate.ts';
-import { catalogNotificationSummary, listCatalogNotifications, markCatalogNotificationsRead, reconcileCatalogNotifications } from './model-notifications.ts';
+import {
+  catalogNotificationSummary,
+  clampNotificationLimit,
+  listCatalogNotifications,
+  markCatalogNotificationsRead,
+  MAX_MARK_READ_IDS,
+  reconcileCatalogNotifications,
+} from './model-notifications.ts';
 import { isDbError, listDatabaseTables, loadDatabaseSchema, runDatabaseQuery } from './database-browser.ts';
 
 export interface AppDeps {
@@ -193,14 +200,17 @@ export function route(deps: AppDeps, url: URL, method: string, body?: unknown): 
   if (path === '/v1/notifications' && method === 'GET') {
     reconcileCatalogNotifications(db, now.toISOString());
     const providerId = url.searchParams.get('provider') ?? undefined;
-    const rawLimit = Number(url.searchParams.get('limit') ?? 100);
-    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(Math.trunc(rawLimit), 500)) : 100;
+    const rawLimit = url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined;
+    const limit = clampNotificationLimit(rawLimit);
     const notifications = listCatalogNotifications(db, { providerId, limit });
     return {
       status: 200,
       body: {
         notifications,
         summary: catalogNotificationSummary(db, providerId),
+        // The applied ceiling, reported so a caller can tell "this is all of it"
+        // from "this is one page of it" without knowing the service's constants.
+        limit,
         generatedAt: now.toISOString(),
       },
     };
@@ -209,7 +219,10 @@ export function route(deps: AppDeps, url: URL, method: string, body?: unknown): 
   if (path === '/v1/notifications/read' && method === 'PATCH') {
     const requested = (body ?? {}) as { ids?: unknown; provider?: unknown };
     if (requested.ids !== undefined && (!Array.isArray(requested.ids) || requested.ids.some((id) => typeof id !== 'string'))) {
-      return { status: 400, body: { error: 'ids must be an array of notification ids' } };
+      return { status: 400, body: { error: 'ids must be an array of notification ids', code: 'invalid_notification_ids' } };
+    }
+    if (Array.isArray(requested.ids) && requested.ids.length > MAX_MARK_READ_IDS) {
+      return { status: 400, body: { error: `ids must contain at most ${MAX_MARK_READ_IDS} notification ids`, code: 'notification_ids_limit', limit: MAX_MARK_READ_IDS } };
     }
     if (requested.provider !== undefined && (typeof requested.provider !== 'string' || requested.provider.length === 0)) {
       return { status: 400, body: { error: 'provider must be a non-empty string when supplied' } };
