@@ -691,88 +691,8 @@ export interface HealthResponse {
   lastSync: HealthLastSync | null;
 }
 
-export type AlertSeverity = 'critical' | 'warning' | 'info';
-export type AlertStatus = 'open' | 'acknowledged' | 'resolved';
-
-export type NotificationEvent = 'opened' | 'reopened' | 'acknowledged' | 'resolved';
-export type NotificationStatus = 'pending' | 'delivered' | 'retrying' | 'failed';
-
-export interface NotificationRecord {
-  id: number;
-  alertId: string;
-  eventType: NotificationEvent;
-  status: NotificationStatus;
-  attempts: number;
-  nextAttemptAt: string;
-  lastAttemptAt: string | null;
-  deliveredAt: string | null;
-  responseStatus: number | null;
-  lastError: string | null;
-  createdAt: string;
-}
-
-export interface AlertRecord {
-  id: string;
-  kind: string;
-  severity: AlertSeverity;
-  title: string;
-  detail: string;
-  providerId: string | null;
-  modelId: string | null;
-  status: AlertStatus;
-  firstSeenAt: string;
-  lastSeenAt: string;
-  acknowledgedAt: string | null;
-  resolvedAt: string | null;
-  occurrenceCount: number;
-  /**
-   * Removed from the polled list response: nothing rendered it, and it was an
-   * unbounded per-alert array rebuilt from a full table scan on every poll. The
-   * single-alert PATCH reply still carries it, where the history is bounded.
-   */
-  notifications?: NotificationRecord[];
-}
-
-export interface AlertSummary {
-  total: number;
-  active: number;
-  open: number;
-  acknowledged: number;
-  resolved: number;
-  critical: number;
-  warning: number;
-  info: number;
-}
-
-export interface AlertDeliverySummary {
-  enabled: boolean;
-  webhookConfigured: boolean;
-  pending: number;
-  failed: number;
-}
-
-export interface AlertsResponse {
-  alerts: AlertRecord[];
-  summary: AlertSummary;
-  delivery?: AlertDeliverySummary;
-  generatedAt: string;
-}
-
 export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
   return json<HealthResponse>('/health', signal);
-}
-
-export async function fetchAlerts(status?: AlertStatus, signal?: AbortSignal): Promise<AlertsResponse> {
-  const query = status ? `?status=${encodeURIComponent(status)}` : '';
-  return readService<AlertsResponse>(`/alerts${query}`, { signal });
-}
-
-export async function updateAlertStatus(id: string, status: AlertStatus): Promise<AlertRecord> {
-  return readService<AlertRecord>(`/alerts/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ status }),
-  });
 }
 
 export type CatalogNotificationCategory = 'success' | 'error' | 'warning';

@@ -411,49 +411,14 @@ CREATE TABLE IF NOT EXISTS provider_quality_overrides (
   FOREIGN KEY (provider_id, model_id) REFERENCES models(provider_id, model_id)
 );
 
--- Operational alert lifecycle. Alert facts are reconciled from Catalog health,
--- while acknowledgement and resolution are explicit operator actions.
-CREATE TABLE IF NOT EXISTS operational_alerts (
-  id                TEXT PRIMARY KEY,
-  kind              TEXT NOT NULL,
-  severity          TEXT NOT NULL,          -- critical | warning | info
-  title             TEXT NOT NULL,
-  detail            TEXT NOT NULL,
-  provider_id       TEXT,
-  model_id          TEXT,
-  status            TEXT NOT NULL,          -- open | acknowledged | resolved
-  first_seen_at     TEXT NOT NULL,
-  last_seen_at      TEXT NOT NULL,
-  acknowledged_at   TEXT,
-  resolved_at       TEXT,
-  occurrence_count  INTEGER NOT NULL DEFAULT 1,
-  FOREIGN KEY (provider_id, model_id) REFERENCES models(provider_id, model_id)
-);
-CREATE INDEX IF NOT EXISTS idx_operational_alerts_status ON operational_alerts(status, last_seen_at);
-CREATE INDEX IF NOT EXISTS idx_operational_alerts_provider ON operational_alerts(provider_id, last_seen_at);
-CREATE INDEX IF NOT EXISTS idx_operational_alerts_kind ON operational_alerts(kind, last_seen_at);
-
--- Outbound alert notifications. The queue is append-oriented and keeps every
--- delivery attempt auditable; failed delivery never changes alert truth.
-CREATE TABLE IF NOT EXISTS alert_notifications (
-  id                INTEGER PRIMARY KEY AUTOINCREMENT,
-  alert_id          TEXT NOT NULL REFERENCES operational_alerts(id),
-  event_type        TEXT NOT NULL,           -- opened | reopened | acknowledged | resolved
-  payload_json      TEXT NOT NULL,
-  status            TEXT NOT NULL DEFAULT 'pending', -- pending | delivered | retrying | failed
-  attempts          INTEGER NOT NULL DEFAULT 0,
-  next_attempt_at   TEXT NOT NULL,
-  last_attempt_at   TEXT,
-  delivered_at      TEXT,
-  response_status   INTEGER,
-  last_error        TEXT,
-  created_at        TEXT NOT NULL,
-  UNIQUE(alert_id, event_type, created_at)
-);
-CREATE INDEX IF NOT EXISTS idx_alert_notifications_due
-  ON alert_notifications(status, next_attempt_at);
-CREATE INDEX IF NOT EXISTS idx_alert_notifications_alert
-  ON alert_notifications(alert_id, created_at);
+/*
+ * The operational-alert ledger and its outbound webhook queue used to live here.
+ * Both were removed on 2026-08-25 with the subsystem that wrote them: nothing
+ * produced an alert row, so the notification queue that required one could not
+ * be written to either. Existing databases keep the two tables - dropping them
+ * would delete recorded history to save nothing - but no code reads or writes
+ * them, and a fresh database is created without them.
+ */
 
 -- Immutable user-facing catalog notifications. Unlike operational alerts, these
 -- are facts about one recorded model event or failed sync run. Reading a row is

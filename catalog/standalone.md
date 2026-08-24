@@ -26,9 +26,9 @@ Automatic-evaluation environment values use one trim-aware bounded integer parse
 
 The typecheck gate also runs `npm run check:css-modules`, after the compiler so a stylesheet slip cannot hide a type error. It cross-references every imported CSS-module property used by the SPA with a selector in the corresponding stylesheet and reports the source file, line, stylesheet, and missing key, so a missing module key is a gate failure rather than a browser-only `class="undefined"` defect. A templated key such as ``styles[`signal-${severity}`]`` is checked by its static prefix: the individual key is a runtime value, but the family it belongs to must exist. Keys that are entirely runtime-valued, such as `styles[tone]`, cannot be decided by a text scan; the check counts and prints them instead of passing over them silently, and those sites should guard with `?? ''`.
 
-The former operational-alert ledger and its isolated tests are not part of the live catalog path. The old `GET /v1/alerts` route remains as an explicit HTTP 410 migration response pointing consumers to `/v1/notifications`.
+The operational-alert ledger and its outbound webhook are gone. They were one subsystem, not two: `alert_notifications.alert_id` required an `operational_alerts` row, and once the alert engine was deleted nothing could write that table, so the delivery queue could never be filled and its five-second timer polled a table that could never be non-empty. The module, its timer, its two tables and the client-side alert API were removed together on 2026-08-25.
 
-`server/notifications.ts`, the optional outbound webhook, is retained but currently **inert**: `alert_notifications.alert_id` is a required reference to `operational_alerts`, and with the alert engine removed no code writes that table, so the queue cannot gain a row and the delivery loop has nothing to deliver. It is disabled by default in any case. Either give it a producer or remove it with its timer and its two tables — until then, read the delivery module as retained-but-unreachable rather than as a live integration.
+Catalog has exactly one notification surface: the immutable three-category ledger read through `GET /v1/notifications`. There is no outbound delivery, no webhook, and no acknowledge/resolve lifecycle. The old `GET /v1/alerts` route remains as an explicit HTTP 410 migration response pointing consumers to `/v1/notifications`. Databases created before this keep the two unused tables — dropping them would delete recorded history to save nothing — but no code reads or writes them and a fresh database is created without them.
 
 Generated command output belongs outside the checkout. `npm run typecheck` runs `check:repo-output`, which fails on any `.log` file outside the build/dependency directories; the current allowlist is intentionally empty.
 
@@ -81,7 +81,7 @@ Planning is keyed by canonical identity. A new provider offer that already maps 
 | `CATALOG_AUTO_EVALUATION_MAX_REQUESTS` | *(none)* | Request ceiling per sync. **Absent means no ceiling** — the goal is a complete catalog, and a ceiling that stops short of it only defers the same spend. A value that does not parse is treated as absent for the same reason. `0` spends nothing while leaving the reporting intact. |
 | `CATALOG_AUTO_EVALUATION_RETRY_HOURS` | `24` | How long an identity is left alone after a measurement attempt. `0` disables the guard. |
 
-The cooldown still protects a just-added identity from duplicate work, and `POST /v1/sync` returns the automatic evaluation report with every skip reason. Outbound alert webhooks remain an optional backend-only feature when explicitly configured. Disabled webhook configuration creates no pending delivery rows, and the UI never makes delivery-state claims.
+The cooldown still protects a just-added identity from duplicate work, and `POST /v1/sync` returns the automatic evaluation report with every skip reason.
 
 ## Header notification center
 

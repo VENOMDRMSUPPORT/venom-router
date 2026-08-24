@@ -20,7 +20,6 @@ import { buildEvaluationFixtures, fixtureDigest } from '../sync/evaluation/fixtu
 import { evaluationCredentialReport } from '../sync/evaluation/provider-transport.ts';
 import { reconcileCatalogNotificationLedger, route } from './app.ts';
 import { writeSnapshot } from './snapshot.ts';
-import { deliverDueNotifications, notificationConfig } from './notifications.ts';
 import { autoEvaluate, autoEvaluationConfig, lastAttemptReader } from './auto-evaluation.ts';
 import type { ScoreProfile } from '../sync/score/venom-score.ts';
 import type { RejectionOverlay } from '../sync/identity-rejections.ts';
@@ -196,19 +195,12 @@ export function createApp(port = DEFAULT_PORT, dbPath = process.env.CATALOG_DB) 
 if (import.meta.filename === process.argv[1]) {
   const port = Number(process.argv.find((a) => a.startsWith('--port='))?.split('=')[1] ?? DEFAULT_PORT);
   const app = createApp(port);
-  const deliveryConfig = notificationConfig();
-  const notificationTimer = deliveryConfig.enabled
-    ? setInterval(() => { deliverDueNotifications(app.db, deliveryConfig).catch((error) => console.error('[notifications] delivery loop failed:', error)); }, 5_000)
-    : null;
-  notificationTimer?.unref();
-  app.server.on('close', () => { if (notificationTimer) clearInterval(notificationTimer); });
 
   app.server.listen(port, BIND_HOST, () => {
     console.log(`catalog service on http://${BIND_HOST}:${port} (loopback only)`);
     console.log(`  GET  /v1/health     GET /v1/providers   GET /v1/models`);
     console.log(`  GET  /v1/changes    POST /v1/sync`);
     console.log(`  scheduler: every ${app.scheduler.intervalMs / 3_600_000}h, next ${app.scheduler.nextRunAt()}`);
-    console.log(`  notifications: ${deliveryConfig.enabled ? `webhook enabled (${deliveryConfig.webhookUrl})` : 'disabled'}`);
     console.log(`  auto-evaluation: ${app.autoEvaluation.enabled
       ? `on, ${app.autoEvaluation.maxRequestsPerRun === null ? 'no request ceiling' : `up to ${app.autoEvaluation.maxRequestsPerRun} requests per sync`}`
         + `, ${app.autoEvaluation.retryCooldownMs / 3_600_000}h retry cooldown`
