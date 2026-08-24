@@ -32,6 +32,8 @@ Catalog has exactly one notification surface: the immutable three-category ledge
 
 Generated command output belongs outside the checkout. `npm run typecheck` runs `check:repo-output`, which fails on any `.log` file outside the build/dependency directories; the current allowlist is intentionally empty.
 
+A resolution window is finished when nothing is left to resolve, whatever status it was parked at. Service startup completes any job whose reasons have all been answered since it was parked, so a fully measured offering cannot keep publishing `source_incomplete` from a reason it already answered; a job that still has real reasons outstanding is left dormant and is not put back in the queue.
+
 ## Port and binding rules
 
 The Catalog API binds to `127.0.0.1` and defaults to port `8791`. The Catalog UI defaults to port `5173`. Venom Router uses a separate control-plane port, currently `8081`. These defaults are validated by `scripts/standalone-contract.test.ts`.

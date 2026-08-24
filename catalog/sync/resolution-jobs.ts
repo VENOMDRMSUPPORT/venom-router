@@ -172,17 +172,21 @@ export function bootstrapResolutionJobs(db: Db, now: string): number {
     const existing = db.prepare(`SELECT status FROM resolution_jobs WHERE provider_id=? AND model_id=?`)
       .get(row.provider_id, row.model_id) as unknown as { status: JobRow['status'] } | undefined;
     if (existing) {
-      // A deploy can tighten the definition of a reason while an old process
-      // is still running. Refresh only the active queue; dormant windows stay
-      // dormant until a real source-change trigger reactivates them.
-      if (existing.status === 'processing') {
-        if (reasons.length === 0) {
-          db.prepare(`UPDATE resolution_jobs SET status='complete', reasons_json='[]', next_attempt_at=NULL, updated_at=?
-            WHERE provider_id=? AND model_id=?`).run(now, row.provider_id, row.model_id);
-        } else {
-          db.prepare(`UPDATE resolution_jobs SET reasons_json=?, updated_at=?
-            WHERE provider_id=? AND model_id=?`).run(JSON.stringify(reasons), now, row.provider_id, row.model_id);
-        }
+      // A job with nothing left to resolve is finished, whatever status it was
+      // parked at. A dormant window used to be skipped entirely here, so an
+      // offering that had since been measured kept publishing the reason it had
+      // already answered: `opencode-go/longcat-2.0` reported `source_incomplete`
+      // on `missing_structured` while carrying a measured `structured`, an empty
+      // `missingFacts` and `catalogReady`. The panel said complete and incomplete
+      // about one row, and only the next full sync cleared it.
+      if (reasons.length === 0 && existing.status !== 'complete') {
+        completeResolutionJob(db, row.provider_id, row.model_id, now);
+      } else if (existing.status === 'processing') {
+        // A deploy can tighten the definition of a reason while an old process is
+        // still running, so the active queue is refreshed. A dormant window with
+        // real reasons left stays dormant until a source change reactivates it.
+        db.prepare(`UPDATE resolution_jobs SET reasons_json=?, updated_at=?
+          WHERE provider_id=? AND model_id=?`).run(JSON.stringify(reasons), now, row.provider_id, row.model_id);
       }
       continue;
     }

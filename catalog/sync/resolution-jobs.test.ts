@@ -186,6 +186,53 @@ describe('resolution job lifecycle', () => {
     assert.deepEqual(loadResolution(db, 'p', 'conflict-model')?.reasons, ['conflicting_official_sources']);
   });
 
+  test('startup finishes a parked job whose reasons have since been answered', () => {
+    // The live case: `opencode-go/longcat-2.0` sat dormant on `missing_structured`
+    // long after a probe measured `structured`. It read `source_incomplete` in the
+    // panel while the same row reported no missing facts and `catalogReady` — one
+    // model, two answers. Only a full sync cleared it, so the lie could stand for
+    // a scheduler interval, or forever if syncs kept failing.
+    const db = openDb(':memory:');
+    seedModel(db, 'answered-while-dormant');
+    beginResolutionWindow(db, T0);
+    finishResolutionAttempt(db, 'p', 'answered-while-dormant', '2026-08-19T10:05:00.000Z');
+    assert.equal(loadResolution(db, 'p', 'answered-while-dormant')?.state, 'source_incomplete');
+
+    db.exec(`UPDATE models SET
+      context_tokens=128000, output_tokens=32000, input_modalities='["text"]',
+      tools=1, reasoning=1, structured=1, attachment=0, cost_kind='free'
+      WHERE provider_id='p' AND model_id='answered-while-dormant'`);
+    for (const [kind, value, level] of [['VQ', 60, 'measured'], ['VO', 70, 'derived']] as const) {
+      db.prepare(`INSERT INTO model_scores (
+        provider_id, model_id, kind, value, evidence_level, precision_dp, methodology_ver, computed_at
+      ) VALUES ('p','answered-while-dormant',?,?,?,0,'venom-score-v2',?)`).run(kind, value, level, T0);
+    }
+
+    bootstrapResolutionJobs(db, '2026-08-19T11:00:00.000Z');
+
+    const resolution = loadResolution(db, 'p', 'answered-while-dormant');
+    assert.equal(resolution?.state, 'complete');
+    assert.deepEqual(resolution?.reasons, []);
+    assert.equal(listDueResolutionJobs(db, '2026-08-19T11:00:00.000Z').length, 0);
+  });
+
+  test('a parked job with real reasons left is still not reactivated', () => {
+    // The other half of the rule: only an answered window is finished at startup.
+    // A dormant job that still has something outstanding stays dormant, or the
+    // repair would cancel work nobody did.
+    const db = openDb(':memory:');
+    seedModel(db, 'still-outstanding');
+    beginResolutionWindow(db, T0);
+    finishResolutionAttempt(db, 'p', 'still-outstanding', '2026-08-19T10:05:00.000Z');
+
+    bootstrapResolutionJobs(db, '2026-08-19T11:00:00.000Z');
+
+    const resolution = loadResolution(db, 'p', 'still-outstanding');
+    assert.equal(resolution?.state, 'source_incomplete');
+    assert.ok((resolution?.reasons.length ?? 0) > 0, 'the outstanding reasons survive the restart');
+    assert.equal(listDueResolutionJobs(db, '2026-08-19T11:00:00.000Z').length, 0, 'and it is not put back in the queue');
+  });
+
   test('startup refreshes active job reasons but preserves dormant lifecycle state', () => {
     const db = openDb(':memory:');
     seedModel(db, 'active-job');
