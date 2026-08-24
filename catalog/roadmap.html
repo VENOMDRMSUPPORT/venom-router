@@ -449,7 +449,7 @@ td code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1p
 
   <div class="eyebrow">Venom Catalog · Production roadmap</div>
   <h1>Ship the catalog</h1>
-  <p class="sub">19 mandatory items across 6 phases · baseline <code>7c6ada5</code> · evidence read from <code>data/catalog.db</code> on 2026-08-24 · Node v24.19.0. <b>P1 is closed</b> as of 2026-08-24 &mdash; gate green on typecheck, 665 backend tests, 277 SPA tests and build; P2 is the next phase to start. Supersedes the remediation tracker built from <code>catalog-code-review-2026-08-24.md</code>; every item that tracker carried is either folded in below or listed under <b>Withdrawn</b> with the reason.</p>
+  <p class="sub">19 mandatory items across 6 phases · baseline <code>7c6ada5</code> · evidence read from <code>data/catalog.db</code> on 2026-08-24 · Node v24.19.0. <b>P1 is closed</b> as of 2026-08-24 &mdash; gate green on typecheck, 665 backend tests, 277 SPA tests and build. <b>P2 is closed</b> as of 2026-08-24; Q1 was pulled forward because L1 makes it reachable, so P4 stands at 1/3. P3 is the next phase to start. Supersedes the remediation tracker built from <code>catalog-code-review-2026-08-24.md</code>; every item that tracker carried is either folded in below or listed under <b>Withdrawn</b> with the reason.</p>
 
   <div class="overall">
     <div class="pct" id="pct">0%</div>
@@ -738,34 +738,43 @@ var PHASES = [
     title: 'Lifecycle invariant',
     goal: 'The catalog tracks provider-declared existence, not model health. That rule is currently implicit in the code and contradicted by a three-miss retirement delay that treats absence as possibly temporary.',
     exit: 'A model absent from a successful roster fetch is retired on that same run. A failed fetch changes nothing. Both rules are stated in catalog/CLAUDE.md and pinned by tests.',
+    closed: {
+      on: '2026-08-24',
+      evidence: 'L1, L2 and L3 landed with Q1 pulled forward. The default is now <code>retireAfterMisses: 1</code>; a successful roster omission retires immediately, a failed or quarantined fetch leaves the catalog unchanged, and the three lifecycle invariants plus decision table are written into <code>catalog/CLAUDE.md</code>. The retired-job regression clears a processing job to <code>complete</code> with no due retry, on the retirement itself and again as a startup sweep for a job stranded by a crash. One definition of "this job is finished" now serves all three callers &mdash; the sync engine no longer writes <code>resolution_jobs</code> SQL of its own. Gate: typecheck, <b>668</b> backend tests, <b>277</b> SPA tests, build. Booted against a copy of the live 45.5&nbsp;MB database on a spare port: 49 complete and 12 dormant jobs, <b>zero</b> processing and zero due.',
+    },
     items: [
       {
         id: 'L1', sev: 'crit', area: 'sync', effort: 'XS',
+        status: 'done',
         title: 'Retire on the first successful sync that omits the model',
         loc: 'sync/engine.ts:110, :392-400',
         cause: '<code>retireAfterMisses: 3</code> models absence as possibly transient and waits for three consecutive syncs. At the 6-hour scheduler interval that is roughly 12 hours in <code>missing</code>.',
         impact: 'A model the provider has stopped offering stays in <code>/v1/models</code>, stays counted in <code>liveModels</code>, and produces no notification for about half a day. The delay only makes sense if absence might mean "the model is temporarily unwell", which is a question outside the catalog&rsquo;s scope.',
         fix: 'Set <code>retireAfterMisses: 1</code>. Absence from a roster this catalog fetched <b>successfully</b> is the provider declaring the model gone. Leave <code>maxRemovalRatio</code> and <code>maxRemovalCount</code> untouched &mdash; they guard a successful-but-truncated roster, which is a different failure.',
-        acc: 'Engine test: a provider whose second roster omits one model retires it on that run, emits the <code>removed</code> event, and leaves the row and its events in place. A roster omitting 40% of a provider still quarantines instead of retiring.'
+        acc: 'Engine test: a provider whose second roster omits one model retires it on that run, emits the <code>removed</code> event, and leaves the row and its events in place. A roster omitting 40% of a provider still quarantines instead of retiring.',
+        note: 'Closed 2026-08-24. The default is first-miss retirement; the delta gate remains unchanged. Consequence worth knowing: <code>missing</code> and the <code>readded</code> event leave the default path entirely &mdash; a returning offering is a fresh <code>added</code>. Both stay supported under a configured <code>retireAfterMisses &gt; 1</code> and are pinned by a test that says so.'
       },
       {
         id: 'L2', sev: 'crit', area: 'sync', effort: 'S',
+        status: 'done',
         title: 'Pin that a failed fetch never counts as absence',
         loc: 'sync/engine.ts:293-298',
         cause: '<code>fail()</code> returns before the absence loop, so a failed roster fetch already cannot increment a miss counter. Nothing states or tests this, and with retireAfterMisses at 1 a future refactor that let a failure reach that loop would retire an entire provider in one run.',
         impact: 'Currently correct, currently unprotected. The blast radius of getting it wrong grows from "12 hours of wrong state" to "a provider erased on one bad fetch" the moment L1 lands.',
         fix: 'Add the regression test and a short comment at the early return naming the invariant. No behaviour change.',
         acc: 'Engine test: a roster fetch that throws leaves every model row byte-identical, writes a <code>sync_runs</code> row with <code>outcome=\'failed\'</code>, and increments no miss counter.',
-        note: 'Must land with L1, not after it.'
+        note: 'Closed 2026-08-24 with L1. The early-return path is explicitly tested as the existence invariant.'
       },
       {
         id: 'L3', sev: '', area: 'docs', effort: 'XS',
+        status: 'done',
         title: 'Write the three invariants into catalog/CLAUDE.md',
         loc: 'catalog/CLAUDE.md',
         cause: 'The existence invariant, the conflict definition and the work-once invariant are the rules this whole roadmap turns on, and none of them is written down. The provenance and lifecycle section says states exist but not what moves a model between them.',
         impact: 'Every one of the withdrawn items in section 7 exists because someone reasoned from an assumption instead of a stated rule. Leaving these unwritten guarantees the next reviewer repeats it.',
         fix: 'Add the three invariants verbatim from the gate card, plus the sync decision table from section 4, to the provenance and lifecycle section. Land it in the same change as L1.',
-        acc: 'The file states: catalog tracks declared existence not runtime health; a conflict needs two entitled sources; a model is measured once. Docs and behaviour agree.'
+        acc: 'The file states: catalog tracks declared existence not runtime health; a conflict needs two entitled sources; a model is measured once. Docs and behaviour agree.',
+        note: 'Closed 2026-08-24 with the lifecycle decision table and the P1 conflict invariants retained in the same document.'
       }
     ]
   },
@@ -821,13 +830,14 @@ var PHASES = [
     items: [
       {
         id: 'Q1', sev: 'crit', area: 'sync', effort: 'S',
+        status: 'done',
         title: 'A retired model pins its resolution job in processing forever',
         loc: 'sync/resolution-jobs.ts:207',
         cause: '<code>finishResolutionAttempt</code> calls <code>issueRow</code>, whose SQL filters <code>m.status IN (\'active\',\'missing\')</code>. If a model retires while its job is processing, <code>issueRow</code> returns undefined and the function returns before the UPDATE that would clear the job. The row keeps <code>status=\'processing\'</code> with <code>next_attempt_at</code> in the past. Neither <code>beginResolutionWindow</code> nor <code>bootstrapResolutionJobs</code> can clear it &mdash; both iterate <code>issueRows</code>, which excludes retired rows.',
         impact: '<code>listDueResolutionJobs</code> re-selects it on every 30-second poll, and each pass runs <code>scoreAll</code> and <code>recalculatePublishedOffers</code> across every active and missing row. In the SPA, any model reported <code>processing</code> re-arms a refetch clamped to 1 second, so the client polls the full catalog once a second and never stops. Verified <b>not currently firing</b> &mdash; zero processing jobs sit on non-live rows today &mdash; but P2 shortens the path into this state from 12 hours to one sync.',
         fix: 'Clear the job when its model leaves the live set, in the same statement that retires the model. A job whose subject no longer exists is finished, not pending.',
         acc: 'Test: retire a model with a processing job; the job leaves <code>processing</code>, <code>listDueResolutionJobs</code> stops returning it, and no recompute is scheduled for it.',
-        note: 'Latent today. L1 makes it reachable, so it ships with P2 or immediately after.'
+        note: 'Pulled forward and closed 2026-08-24 with P2. <code>finishResolutionAttempt</code> now clears a held job when the offering has retired.'
       },
       {
         id: 'Q2', sev: '', area: 'server', effort: 'XS',

@@ -109,6 +109,59 @@ describe('resolution job lifecycle', () => {
     assert.equal(listDueResolutionJobs(db, '2026-08-19T11:00:00.000Z').length, 0);
   });
 
+  test('retirement clears a held processing job instead of leaving it due forever', () => {
+    const db = openDb(':memory:');
+    seedModel(db, 'retired-while-processing');
+    beginResolutionWindow(db, T0);
+    db.prepare(`UPDATE models SET status='retired' WHERE provider_id='p' AND model_id='retired-while-processing'`).run();
+
+    const result = finishResolutionAttempt(db, 'p', 'retired-while-processing', '2026-08-19T10:01:00.000Z');
+    const job = db.prepare(`SELECT status, reasons_json, next_attempt_at FROM resolution_jobs WHERE provider_id='p' AND model_id='retired-while-processing'`).get() as unknown as {
+      status: string; reasons_json: string; next_attempt_at: string | null;
+    };
+
+    assert.equal(result.state, 'complete');
+    assert.equal(job.status, 'complete');
+    assert.equal(job.reasons_json, '[]');
+    assert.equal(job.next_attempt_at, null);
+    assert.equal(listDueResolutionJobs(db, '2026-08-19T10:02:00.000Z').length, 0);
+  });
+
+  test('startup repairs a job stranded on a model that is no longer live', () => {
+    // The crash-and-restart half of the same defect: a process that died between
+    // the retirement and the job update leaves a due `processing` row behind,
+    // and neither the window pass nor the attempt pass can see it — both iterate
+    // live offerings only. Startup is the one pass that can, so it must.
+    const db = openDb(':memory:');
+    seedModel(db, 'stranded');
+    beginResolutionWindow(db, T0);
+    assert.equal(listDueResolutionJobs(db, '2026-08-19T10:02:00.000Z').length, 1, 'due before the retirement');
+    db.prepare(`UPDATE models SET status='retired' WHERE provider_id='p' AND model_id='stranded'`).run();
+
+    bootstrapResolutionJobs(db, '2026-08-19T11:00:00.000Z');
+
+    const job = db.prepare(`SELECT status, reasons_json, next_attempt_at FROM resolution_jobs WHERE provider_id='p' AND model_id='stranded'`).get() as unknown as {
+      status: string; reasons_json: string; next_attempt_at: string | null;
+    };
+    assert.equal(job.status, 'complete');
+    assert.equal(job.reasons_json, '[]');
+    assert.equal(job.next_attempt_at, null);
+    assert.equal(listDueResolutionJobs(db, '2026-08-19T11:00:00.000Z').length, 0, 'and never due again');
+  });
+
+  test('a live job is left alone by that repair', () => {
+    // The repair is scoped by liveness, not by age: a perfectly ordinary due job
+    // must survive a restart, or the sweep would silently cancel real work.
+    const db = openDb(':memory:');
+    seedModel(db, 'still-live');
+    beginResolutionWindow(db, T0);
+
+    bootstrapResolutionJobs(db, '2026-08-19T11:00:00.000Z');
+
+    assert.equal(loadResolution(db, 'p', 'still-live')?.state, 'processing');
+    assert.equal(listDueResolutionJobs(db, '2026-08-19T11:00:00.000Z').length, 1);
+  });
+
   test('only an official-source conflict opens a resolution reason', () => {
     const db = openDb(':memory:');
     seedModel(db, 'conflict-model');

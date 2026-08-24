@@ -2,6 +2,7 @@ import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb } from '../db/index.ts';
 import { syncProvider } from './engine.ts';
+import { beginResolutionWindow } from './resolution-jobs.ts';
 import type { ProviderAdapter, SyncDeps } from './engine.ts';
 import { FetchFailure } from './http.ts';
 import type { Db } from '../db/index.ts';
@@ -69,9 +70,11 @@ describe('layer 2/3 — a failed or malformed fetch writes nothing', () => {
   test('a fetch failure leaves the catalog untouched', async () => {
     await syncProvider(ADAPTER, deps(['a', 'b', 'c']));
     const before = activeIds();
+    const beforeStatus = statusOf('a');
     const r = await syncProvider(ADAPTER, deps(new FetchFailure('boom', 503, 3)));
     assert.equal(r.outcome, 'failed');
     assert.deepEqual(activeIds(), before, 'a provider outage must not change stored data');
+    assert.deepEqual(statusOf('a'), beforeStatus, 'a failed fetch must not count as absence');
   });
 
   test('a shape the parser does not recognise is rejected whole', async () => {
@@ -120,40 +123,55 @@ describe('layer 4 — the delta gate', () => {
   });
 });
 
-describe('layer 5 — two-strike retirement', () => {
+describe('layer 5 — first-miss retirement', () => {
   const ten = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
 
-  test('one absence marks missing, never retired', async () => {
+  test('one absence retires immediately on a successful roster', async () => {
     await syncProvider(ADAPTER, deps(ten));
     await syncProvider(ADAPTER, deps(ten.filter((x) => x !== 'j')));
-    assert.equal(statusOf('j')!.status, 'missing');
+    assert.equal(statusOf('j')!.status, 'retired');
+    assert.equal(statusOf('j')!.miss_count, 1);
   });
 
-  test('a reappearance clears the counter', async () => {
+  test('a reintroduced model becomes active again with a fresh existence event', async () => {
     await syncProvider(ADAPTER, deps(ten));
     await syncProvider(ADAPTER, deps(ten.filter((x) => x !== 'j')));
     await syncProvider(ADAPTER, deps(ten));
     const j = statusOf('j')!;
     assert.equal(j.status, 'active');
-    assert.equal(j.miss_count, 0, 'a flapping model must not accumulate strikes');
+    assert.equal(j.miss_count, 0);
+    const n = db.prepare(`SELECT COUNT(*) c FROM model_events WHERE model_id='j' AND kind='added'`).get() as unknown as { c: number };
+    assert.equal(n.c, 2, 'the reintroduced roster listing is a new existence declaration');
   });
 
-  test('three consecutive absences retire it', async () => {
-    await syncProvider(ADAPTER, deps(ten));
-    const without = ten.filter((x) => x !== 'j');
-    await syncProvider(ADAPTER, deps(without));
-    await syncProvider(ADAPTER, deps(without));
-    assert.equal(statusOf('j')!.status, 'missing');
-    await syncProvider(ADAPTER, deps(without));
-    assert.equal(statusOf('j')!.status, 'retired');
+  test('the configured multi-miss path still parks in missing and still records a readded event', async () => {
+    // `retireAfterMisses` is still a supported option, so `missing` and the
+    // `readded` event are still live code — just off the default path. Deleting
+    // the coverage with the default would leave that branch unpinned, and it is
+    // the branch a future operator turns on when a provider's roster flaps.
+    const strikes = { options: { retireAfterMisses: 3 } };
+    await syncProvider(ADAPTER, deps(ten, strikes));
+    await syncProvider(ADAPTER, deps(ten.filter((x) => x !== 'j'), strikes));
+    assert.equal(statusOf('j')!.status, 'missing', 'one absence of three is not a retirement');
+
+    await syncProvider(ADAPTER, deps(ten, strikes));
+    assert.equal(statusOf('j')!.status, 'active');
+    const n = db.prepare(`SELECT COUNT(*) c FROM model_events WHERE model_id='j' AND kind='readded'`).get() as unknown as { c: number };
+    assert.equal(n.c, 1, 'missing -> active is a reappearance, not a fresh arrival');
   });
 
-  test('a readded event is recorded when a model comes back', async () => {
+  test('retirement terminalizes a processing resolution job in the same run', async () => {
     await syncProvider(ADAPTER, deps(ten));
+    beginResolutionWindow(db, '2026-01-02T00:00:00.000Z');
     await syncProvider(ADAPTER, deps(ten.filter((x) => x !== 'j')));
-    await syncProvider(ADAPTER, deps(ten));
-    const n = db.prepare(`SELECT COUNT(*) c FROM model_events WHERE kind='readded'`).get() as unknown as { c: number };
-    assert.equal(n.c, 1);
+
+    const job = db.prepare(`
+      SELECT status, reasons_json, next_attempt_at
+      FROM resolution_jobs WHERE provider_id='test-provider' AND model_id='j'
+    `).get() as unknown as { status: string; reasons_json: string; next_attempt_at: string | null };
+    assert.equal(job.status, 'complete');
+    assert.equal(job.reasons_json, '[]');
+    assert.equal(job.next_attempt_at, null);
   });
 });
 
@@ -162,7 +180,7 @@ describe('layer 7 — nothing is ever physically deleted', () => {
     const ten = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
     const without = ten.filter((x) => x !== 'j');
     await syncProvider(ADAPTER, deps(ten));
-    for (let i = 0; i < 3; i++) await syncProvider(ADAPTER, deps(without));
+    await syncProvider(ADAPTER, deps(without));
     const row = db.prepare('SELECT status, first_seen_at FROM models WHERE model_id = ?').get('j') as unknown as { status: string; first_seen_at: string };
     assert.equal(row.status, 'retired');
     assert.ok(row.first_seen_at, 'first_seen_at survives retirement');

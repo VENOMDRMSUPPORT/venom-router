@@ -78,12 +78,18 @@ A fallback may be stale only when it is explicitly identified as a snapshot. It
 must never pretend to be a live answer. Unknown is an honest result and must
 remain unknown.
 
-## Evidence and scoring
+### Lifecycle invariants
 
-`unrated` means unknown quality; it is not low-rated and it must not be lowered
-to zero or placed at the end of a quality ranking. VQ, VO, model score, and
-overall score remain server-owned semantics. The client normalizes absence for
-rendering but never recomputes or fabricates a score.
+The catalog tracks **provider-declared existence**, not runtime model health. A
+successful roster fetch is the provider's existence declaration: an offer present
+in the roster is `active`, and an offer absent from that successful roster is
+`retired` on the same run. A failed or quarantined fetch is not a roster
+statement and changes no model lifecycle state.
+
+A conflict requires **two entitled sources** for the same offering to publish
+materially different values, with no standing rule that settles the difference. A
+single declaration, a missing declaration, or a source that has no standing is not
+a conflict.
 
 A plan or mode listing (`:thinking`, `:free`, and the rest of `PLAN_VARIANT`)
 describes a different offering of the same weights, so it never votes on the base
@@ -91,6 +97,32 @@ offering's facts. It is excluded once, before any standing rule is applied, and 
 answers only for its own mode row when the serving seller is the one publishing it.
 When every declaration for a field is a mode variant, the field is unknown - not
 conflicted: nobody answered for the base offering.
+
+A model is **measured once**. Existing measurements, scores, and evidence are
+kept on routine syncs; a new model is measured only after it is inserted, and an
+explicit human or maintenance action is required to re-run measurement. Enriching
+stored facts after a resolver correction is re-derivation, not measurement or
+scoring.
+
+| Sync result | Model state transition | Measurement and score effect |
+|---|---|---|
+| Successful roster, id present | insert as `active`, or keep/re-activate `active` | New rows may be measured; existing rows keep stored data |
+| Successful roster, prior id absent | `retired` immediately; preserve row and events | No probe, evaluation, or re-score |
+| Failed or malformed roster | no lifecycle transition | No model row, fact, or score changes |
+| Quarantined removal | no lifecycle transition | No model row, fact, or score changes |
+
+`missing` is not on the default path. First-miss retirement moves an absent offer
+straight to `retired`, so `missing` - and the `readded` event that leaves it - is
+reachable only for rows written before this rule, or when `retireAfterMisses` is
+deliberately configured above 1. Both remain supported and tested; neither is
+produced by a default sync.
+
+## Evidence and scoring
+
+`unrated` means unknown quality; it is not low-rated and it must not be lowered
+to zero or placed at the end of a quality ranking. VQ, VO, model score, and
+overall score remain server-owned semantics. The client normalizes absence for
+rendering but never recomputes or fabricates a score.
 
 The model API keeps the complete conflict history in `conflicts`, including rows
 whose reviewed verdict is `resolved`. The server derives `openConflicts` as the

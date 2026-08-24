@@ -7,7 +7,7 @@
  * failure layers below.
  *
  * Layers implemented here: 1 isolation, 3 contract validation, 4 delta gate,
- * 5 two-strike retirement, 6 atomicity, 7 no physical delete.
+ * 5 first-miss retirement, 6 atomicity, 7 no physical delete.
  * Layer 2 lives in http.ts; layer 8 is a property of the read path.
  */
 
@@ -15,6 +15,7 @@ import type { Db } from '../db/index.ts';
 import { transaction } from '../db/index.ts';
 import type { FetchJson } from './http.ts';
 import { FetchFailure } from './http.ts';
+import { completeResolutionJob } from './resolution-jobs.ts';
 
 export interface ProviderAdapter {
   id: string;
@@ -107,7 +108,7 @@ export interface EngineOptions {
 export const DEFAULT_OPTIONS: EngineOptions = {
   maxRemovalRatio: 0.3,
   maxRemovalCount: 5,
-  retireAfterMisses: 3,
+  retireAfterMisses: 1,
 };
 
 export interface SyncDeps {
@@ -386,12 +387,18 @@ export async function syncProvider(adapter: ProviderAdapter, deps: SyncDeps): Pr
       for (const d of diffs) event.run(runId, adapter.id, id, 'changed', d.field, d.from, d.to, d.cls, at);
     }
 
-    // Layer 5 + 7: absence increments a counter; only the third consecutive one
-    // retires the model, and even then the row survives with a status change.
+    // Layer 5 + 7: a successful roster is the provider's existence declaration.
+    // Its first omission retires the model, and the row survives with a status
+    // change. Failed or quarantined runs never reach this loop.
     for (const m of absent) {
       const misses = m.miss_count + 1;
       if (misses >= opts.retireAfterMisses) {
         db.prepare(`UPDATE models SET status = 'retired', miss_count = ? WHERE provider_id = ? AND model_id = ?`).run(misses, adapter.id, m.model_id);
+        // A retired offering cannot have a live resolution attempt. Cleared in
+        // this same provider transaction so the scheduler cannot observe a due
+        // job after the lifecycle transition commits — through the queue's own
+        // module, because what "finished" means belongs to it, not to here.
+        completeResolutionJob(db, adapter.id, m.model_id, at);
         event.run(runId, adapter.id, m.model_id, 'removed', null, m.status, 'retired', `absent for ${misses} consecutive syncs`, at);
         retired.push(m.model_id);
       } else {

@@ -18,6 +18,8 @@ Venom Router consumes Catalog through its API. It must not open the Catalog SQLi
 
 Catalog owns the live provider roster, model facts, source evidence, freshness state, change history, and server-derived scores. Unknown values remain unknown. A snapshot is explicitly identified as a snapshot and must not be presented as live data.
 
+A successful provider roster is the existence declaration: a model omitted from that roster becomes `retired` on the same run, while a failed or quarantined fetch changes no model lifecycle state. Existing measurements and scores are retained on routine syncs; a new model is measured once after insertion, and a deliberate maintenance or human action is required for re-measurement.
+
 ## Port and binding rules
 
 The Catalog API binds to `127.0.0.1` and defaults to port `8791`. The Catalog UI defaults to port `5173`. Venom Router uses a separate control-plane port, currently `8081`. These defaults are validated by `scripts/standalone-contract.test.ts`.

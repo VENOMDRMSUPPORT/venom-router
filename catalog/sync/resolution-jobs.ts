@@ -126,11 +126,40 @@ function toJob(row: JobRow): ResolutionJob {
 }
 
 /**
+ * Terminalise one offering's job: no reasons, nothing due, nothing to poll.
+ *
+ * The single definition of "this job is finished". Three paths reach it - a
+ * window that closed with nothing outstanding, an attempt that finished on an
+ * offering which has since retired, and the retirement itself over in the sync
+ * engine - and a second copy of this statement is exactly how those three drift
+ * into disagreeing about what a finished job looks like.
+ */
+export function completeResolutionJob(db: Db, providerId: string, modelId: string, now: string): void {
+  db.prepare(`
+    UPDATE resolution_jobs SET status='complete', reasons_json='[]', last_attempt_at=?,
+      next_attempt_at=NULL, updated_at=? WHERE provider_id=? AND model_id=?
+  `).run(now, now, providerId, modelId);
+}
+
+/**
  * Upgrade an existing catalog to the durable queue without disturbing jobs
  * that already completed a processing window. Newly discovered gaps are due
  * immediately so the service's startup pass becomes their first attempt.
  */
 export function bootstrapResolutionJobs(db: Db, now: string): number {
+  // Repair jobs left by an older process or by a retirement that raced a
+  // scheduler tick. Non-live offerings are terminal and must never be due.
+  db.prepare(`
+    UPDATE resolution_jobs SET status='complete', reasons_json='[]', next_attempt_at=NULL, updated_at=?
+    WHERE status='processing'
+      AND NOT EXISTS (
+        SELECT 1 FROM models m
+         WHERE m.provider_id=resolution_jobs.provider_id
+           AND m.model_id=resolution_jobs.model_id
+           AND m.status IN ('active','missing')
+      )
+  `).run(now);
+
   const insert = db.prepare(`
     INSERT OR IGNORE INTO resolution_jobs (
       provider_id, model_id, status, reasons_json, first_detected_at, window_started_at,
@@ -177,15 +206,11 @@ export function beginResolutionWindow(db: Db, now: string): number {
       window_started_at=excluded.window_started_at, last_attempt_at=excluded.last_attempt_at,
       next_attempt_at=excluded.next_attempt_at, attempt_count=1, updated_at=excluded.updated_at
   `);
-  const complete = db.prepare(`
-    UPDATE resolution_jobs SET status='complete', reasons_json='[]', last_attempt_at=?,
-      next_attempt_at=NULL, updated_at=? WHERE provider_id=? AND model_id=?
-  `);
   let active = 0;
   for (const row of issueRows(db)) {
     const reasons = reasonsOf(row);
     if (reasons.length === 0) {
-      complete.run(now, now, row.provider_id, row.model_id);
+      completeResolutionJob(db, row.provider_id, row.model_id, now);
       continue;
     }
     const existing = db.prepare(`SELECT first_detected_at FROM resolution_jobs WHERE provider_id=? AND model_id=?`)
@@ -204,7 +229,18 @@ export function finishResolutionAttempt(db: Db, providerId: string, modelId: str
   const row = issueRow(db, providerId, modelId);
   const held = db.prepare(`SELECT * FROM resolution_jobs WHERE provider_id=? AND model_id=?`)
     .get(providerId, modelId) as unknown as JobRow | undefined;
-  if (!row || !held) return { state: 'complete', reasons: [], firstDetectedAt: null, lastAttemptAt: now, nextAttemptAt: null };
+  if (!held) return { state: 'complete', reasons: [], firstDetectedAt: null, lastAttemptAt: now, nextAttemptAt: null };
+
+  // Retirement is a terminal lifecycle decision for the offering. It is not an
+  // unresolved resolution attempt, so clear a held job even though issueRow
+  // intentionally excludes retired models from the active queue.
+  if (!row) {
+    completeResolutionJob(db, providerId, modelId, now);
+    return {
+      state: 'complete', reasons: [], firstDetectedAt: held.first_detected_at,
+      lastAttemptAt: now, nextAttemptAt: null,
+    };
+  }
 
   const reasons = reasonsOf(row);
   const resolved = reasons.length === 0;
