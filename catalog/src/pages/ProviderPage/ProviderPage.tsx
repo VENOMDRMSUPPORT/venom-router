@@ -578,7 +578,10 @@ const IDENTITY_NOTE: Record<
  * costs exactly the rows that do need opening.
  */
 function EvidenceToggle({ model, open, onToggle }: { model: ApiModel; open: boolean; onToggle: () => void }) {
-  const openConflicts = model.conflicts.filter((c) => c.status !== 'resolved').length;
+  // Open-ness is decided once, by the service. Re-filtering `conflicts` here
+  // would be a second copy of that rule, free to drift from the one the count
+  // and the field badges read.
+  const openConflicts = model.openConflicts.length;
   const settledConflicts = model.conflicts.length - openConflicts;
   const outstanding =
     openConflicts

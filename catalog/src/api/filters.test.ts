@@ -80,6 +80,7 @@ function fakeModel(over: Partial<ApiModel> = {}): ApiModel {
     catalogReady: true,
     missingFacts: [],
     conflicts: [],
+    openConflicts: [],
     provenanceByField: {},
     qualityRank: 1,
     tiedAtRank: false,

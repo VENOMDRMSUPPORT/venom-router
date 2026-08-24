@@ -361,21 +361,40 @@ export async function loadSpecs(fetchJson: FetchJson, vendors: VendorRegistry = 
   function settle(
     list: Declaration[] | undefined,
     servingStorefront: string | undefined,
+    requestedModelId: string,
   ): { decl: Declaration; standing: FactStanding } | null {
     if (!list?.length) return null;
-    const agreed = unanimous(list);
+
+    const requestedBare = requestedModelId.replace(/^[^/]+\//, '');
+    const requestedIsVariant = PLAN_VARIANT.test(requestedBare);
+
+    // A serving provider can publish a mode-specific offering whose capability
+    // differs from its base offering. That exact declaration answers for the mode
+    // row, and must be checked before the pooled base declaration is considered.
+    if (requestedIsVariant && servingStorefront) {
+      const ownMode = unanimous(list.filter(
+        (d) => d.storefront === servingStorefront && d.rawId.replace(/^[^/]+\//, '') === requestedBare,
+      ));
+      if (ownMode) return { decl: ownMode, standing: 'serving-seller' };
+    }
+
+    // A plan/mode listing describes a different offering of the same weights. It
+    // must not vote in the base model's pooled decision. Filter once here so every
+    // standing rule below receives the same declaration set.
+    const base = list.filter((d) => !PLAN_VARIANT.test(d.rawId));
+    const agreed = unanimous(base);
     if (agreed) return { decl: agreed, standing: 'unanimous' };
 
     // The seller whose offering this is. `reasoning` on `ollama-cloud/gemma4:31b`
     // is a fact about what ollama-cloud serves, and ollama-cloud publishes it.
-    // Its own `:thinking` listing is excluded: that is a different product, and
-    // pooling the two is what turned a mode difference into a disagreement.
+    // The base listing answers for the base offering; its own `:thinking` listing
+    // describes a different product and is excluded above.
     if (servingStorefront) {
-      const own = unanimous(list.filter((d) => d.storefront === servingStorefront && !PLAN_VARIANT.test(d.rawId)));
+      const own = unanimous(base.filter((d) => d.storefront === servingStorefront));
       if (own) return { decl: own, standing: 'serving-seller' };
     }
 
-    const firstParty = unanimous(list.filter(isFirstParty));
+    const firstParty = unanimous(base.filter(isFirstParty));
     if (firstParty) return { decl: firstParty, standing: 'vendor-storefront' };
 
     return null;
@@ -387,14 +406,16 @@ export async function loadSpecs(fetchJson: FetchJson, vendors: VendorRegistry = 
     const out: IntrinsicFacts = { declaredBy: '', conflicts: [], standing: {} };
     for (const field of ['tools', 'reasoning', 'structured', 'attachment', 'inputModalities'] as const) {
       const list = acc.declarations[field];
-      const settled = settle(list, servingStorefront);
+      const settled = settle(list, servingStorefront, modelId);
       if (!settled) {
-        // Keep one entry per DISTINCT value. Fifty sellers agreeing with each
-        // other on two figures is a two-sided disagreement, and repeating each
-        // side once per seller would bury that.
-        if (list && list.length > 1) {
+        // Only base offerings can establish a disagreement. If every declaration
+        // is a plan/mode variant, the honest result is unknown without a conflict:
+        // no source answered for the base offering. Keep one entry per DISTINCT
+        // base value so repeated sellers do not bury the two-sided disagreement.
+        const base = list?.filter((d) => !PLAN_VARIANT.test(d.rawId)) ?? [];
+        if (base.length > 1) {
           const seen = new Map<string, { value: unknown; by: string }>();
-          for (const d of list) {
+          for (const d of base) {
             const key = JSON.stringify(d.value);
             // Projected to the published two-field shape on purpose: `storefront`
             // and `rawId` exist to judge standing, not to widen the wire format

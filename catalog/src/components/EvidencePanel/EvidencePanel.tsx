@@ -138,7 +138,9 @@ export function EvidencePanel({ model }: { model: ApiModel }) {
 
       {model.missingFacts.length > 0 && <MissingSection model={model} />}
       {model.vo.notApplicableDimensions.length > 0 && <NotApplicableSection model={model} />}
-      {model.conflicts.length > 0 && <ConflictSection conflicts={model.conflicts} />}
+      {model.conflicts.length > 0 && (
+        <ConflictSection conflicts={model.conflicts} open={model.openConflicts.length} />
+      )}
       {model.identityState !== 'resolved' && <IdentitySection model={model} />}
       {facts.length > 0 && <ProvenanceSection facts={facts} />}
     </div>
@@ -303,7 +305,7 @@ function MissingSection({ model }: { model: ApiModel }) {
           // Only an OPEN dispute can be the reason a field has no value. A
           // settled one has an answer, so blaming the gap on it sends the
           // reader to a conflict that already concluded.
-          const conflicted = model.conflicts.some((c) => c.field === f && c.status !== 'resolved');
+          const conflicted = model.openConflicts.some((c) => c.field === f);
           return (
             <li key={f} className={styles.item} data-testid={`missing-${f}`}>
               <span className={styles.fieldName}>{label(f)}</span>
@@ -358,8 +360,7 @@ function NotApplicableSection({ model }: { model: ApiModel }) {
  * still kept either way — the audit trail is the point — but a reader must be
  * able to tell a withheld field from a settled one.
  */
-function describeConflicts(conflicts: FieldConflict[]): string {
-  const open = conflicts.filter((c) => c.status !== 'resolved').length;
+function describeConflicts(conflicts: FieldConflict[], open: number): string {
   const kept = 'Both sides are kept: a quietly picked winner is indistinguishable from a bug.';
   if (open === 0) {
     return `Sources contradicted each other and something with standing answered, so a value was taken and the dispute is resolved. ${kept}`;
@@ -370,14 +371,21 @@ function describeConflicts(conflicts: FieldConflict[]): string {
   return `Sources contradicted each other. ${open} of ${conflicts.length} is still open and withholds its value; the rest were answered. ${kept}`;
 }
 
-function ConflictSection({ conflicts }: { conflicts: FieldConflict[] }) {
+/**
+ * The whole history, and the count of it the service still calls open.
+ *
+ * `open` is passed in rather than re-derived from `conflicts` here: which rows
+ * are open is one server-owned judgement, and a copy of it in the panel is free
+ * to disagree with the badge and the summary count that read the real one.
+ */
+function ConflictSection({ conflicts, open }: { conflicts: FieldConflict[]; open: number }) {
   return (
     <section className={styles.alertSection} data-testid="conflict-section">
       <div className={styles.sectionTitleRow}>
         <LuCircleAlert size={14} className={styles.alertIcon} />
         <h4 className={styles.heading}>Source conflicts</h4>
       </div>
-      <p className={styles.note}>{describeConflicts(conflicts)}</p>
+      <p className={styles.note}>{describeConflicts(conflicts, open)}</p>
       <div className={styles.conflictGrid}>
         {conflicts.map((c) => (
           <div key={c.field} className={styles.conflict} data-testid={`conflict-${c.field}`}>

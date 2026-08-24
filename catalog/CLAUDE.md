@@ -85,6 +85,19 @@ to zero or placed at the end of a quality ranking. VQ, VO, model score, and
 overall score remain server-owned semantics. The client normalizes absence for
 rendering but never recomputes or fabricates a score.
 
+A plan or mode listing (`:thinking`, `:free`, and the rest of `PLAN_VARIANT`)
+describes a different offering of the same weights, so it never votes on the base
+offering's facts. It is excluded once, before any standing rule is applied, and it
+answers only for its own mode row when the serving seller is the one publishing it.
+When every declaration for a field is a mode variant, the field is unknown - not
+conflicted: nobody answered for the base offering.
+
+The model API keeps the complete conflict history in `conflicts`, including rows
+whose reviewed verdict is `resolved`. The server derives `openConflicts` as the
+only current-work view; counts, field-state badges, and missing-fact explanations
+must use that field. Resolved history remains visible in evidence panels for audit,
+but must not count as an active conflict or make a field look unresolved.
+
 ## Provider architecture
 
 Provider adapters declare data sources, parsers, billing/access policy, and

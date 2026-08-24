@@ -142,6 +142,7 @@ describe('a pre-M5.1 service response is normalised into renderable absences', (
     // reading `.length` — the exact failure that blanked /provider/clinepass.
     expect(m.rejectedCandidates).toEqual([]);
     expect(m.conflicts).toEqual([]);
+    expect(m.openConflicts).toEqual([]);
     expect(m.provenanceByField).toEqual({});
     expect(m.vo.notApplicableDimensions).toEqual([]);
 
@@ -408,6 +409,7 @@ describe('a current-contract response is not clobbered by the normaliser', () =>
     expect(m.identityState).toBe('identity_review');
     expect(m.rejectedCandidates).toEqual([rejection]);
     expect(m.conflicts).toEqual([conflict]);
+    expect(m.openConflicts).toEqual([conflict]);
     expect(m.provenanceByField).toEqual({ context: provenance });
     expect(m.vq.unratedReason).toBe('identity_ambiguous');
     expect(m.vo.notApplicableDimensions).toEqual(['cost']);
@@ -508,6 +510,7 @@ describe('the offline snapshot is the last live answer, or it is refused', () =>
 
     expect(m.rejectedCandidates).toEqual([]);
     expect(m.conflicts).toEqual([]);
+    expect(m.openConflicts).toEqual([]);
     expect(m.provenanceByField).toEqual({});
     expect(m.vo.notApplicableDimensions).toEqual([]);
     expect(m.vq.unratedReason).toBeNull();

@@ -11,6 +11,7 @@ const BATCH_ENTRYPOINTS = [
   'import-inspect-log.ts',
   'run-overall-evaluations.ts',
   'regrade-retained.ts',
+  'rederive-conflicts.ts',
   join('..', 'sync', 'run.ts'),
 ];
 

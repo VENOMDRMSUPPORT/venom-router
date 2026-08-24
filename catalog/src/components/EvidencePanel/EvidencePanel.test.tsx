@@ -6,6 +6,7 @@ import type { ApiModel } from '../../api/client';
 
 /** A complete, resolved, benchmarked row. Each test bends one thing. */
 function model(over: Partial<ApiModel> = {}): ApiModel {
+  const openConflicts = over.openConflicts ?? (over.conflicts ?? []).filter((conflict) => conflict.status === 'open');
   return {
     providerId: 'p',
     modelId: 'm',
@@ -32,6 +33,7 @@ function model(over: Partial<ApiModel> = {}): ApiModel {
     catalogReady: true,
     missingFacts: [],
     conflicts: [],
+    openConflicts,
     provenanceByField: {},
     modelScore: {
       value: 56,
@@ -564,6 +566,18 @@ describe('a settled dispute reads as settled', () => {
     render(<EvidencePanel model={model({ conflicts: [settled({ status: 'open', resolvedTo: null })] })} />);
 
     expect(screen.getByTestId('conflict-section').textContent).toMatch(/no value was taken/i);
+  });
+
+  test('the mixed case counts what the SERVICE still calls open, not the panel', () => {
+    // The sentence is the only place a number is narrated, so it reads the
+    // server-owned view. `openConflicts` is deliberately narrower than the
+    // history here: a panel that recounted `conflicts` itself would be a second
+    // copy of a judgement the badge and the summary count already read once.
+    const open = settled({ field: 'attachment', status: 'open', resolvedTo: null });
+    render(<EvidencePanel model={model({ conflicts: [settled(), open], openConflicts: [open] })} />);
+
+    const section = screen.getByTestId('conflict-section');
+    expect(section.textContent).toMatch(/1 of 2 is still open/i);
   });
 
   test('a missing fact is not blamed on a dispute that was settled', () => {

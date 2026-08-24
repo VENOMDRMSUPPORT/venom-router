@@ -5,6 +5,7 @@ import type { ApiModel } from '../../api/client';
 
 /** A complete, resolved row. Each test bends one thing. */
 function model(over: Partial<ApiModel> = {}): ApiModel {
+  const openConflicts = over.openConflicts ?? (over.conflicts ?? []).filter((conflict) => conflict.status === 'open');
   return {
     providerId: 'p',
     modelId: 'm',
@@ -31,6 +32,7 @@ function model(over: Partial<ApiModel> = {}): ApiModel {
     catalogReady: true,
     missingFacts: [],
     conflicts: [],
+    openConflicts,
     provenanceByField: {},
     modelScore: {
       value: 56, display: '56.0%', methodologyVersion: 'model-score-v1',

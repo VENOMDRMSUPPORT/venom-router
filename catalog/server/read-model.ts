@@ -235,7 +235,17 @@ export interface ApiModel {
    * that cannot tell them apart cannot tell a data gap from a source dispute.
    * Always present — an empty list is an assertion, an absent key is not.
    */
+  /**
+   * Full conflict history for this offering, including resolved disputes.
+   * Resolved rows remain available for audit and evidence display.
+   */
   conflicts: FieldConflictView[];
+  /**
+   * The server-owned subset that still withholds a field value. Consumers that
+   * decide whether a field is currently conflicted must use this view rather than
+   * re-deriving status from the historical conflict list.
+   */
+  openConflicts: FieldConflictView[];
   /**
    * Where every resolved value came from, keyed by field.
    *
@@ -499,6 +509,9 @@ export function loadModels(db: Db, opts: { includeRetired?: boolean; now?: () =>
       computedAt: '',
     };
 
+    const conflicts = conflictsByModel.get(conflictKey(m.provider_id, m.model_id)) ?? [];
+    const openConflicts = conflicts.filter((conflict) => conflict.status === 'open');
+
     return {
       providerId: m.provider_id,
       modelId: m.model_id,
@@ -569,7 +582,8 @@ export function loadModels(db: Db, opts: { includeRetired?: boolean; now?: () =>
       resolution: loadResolution(db, m.provider_id, m.model_id) ?? {
         state: 'complete', reasons: [], firstDetectedAt: null, lastAttemptAt: null, nextAttemptAt: null,
       },
-      conflicts: conflictsByModel.get(conflictKey(m.provider_id, m.model_id)) ?? [],
+      conflicts,
+      openConflicts,
       provenanceByField: factsByModel.get(conflictKey(m.provider_id, m.model_id)) ?? {},
       catalogReady: false,
       missingFacts: [],
@@ -781,9 +795,9 @@ export function loadMeta(db: Db, models: ApiModel[]): CatalogMeta {
     overallScoreScored: live.filter((m) => m.overallScore.status === 'complete' && m.overallScore.value !== null).length,
     operationalScored: live.filter((m) => m.vo.value !== null).length,
     unrated: live.length - withEvidence,
-    conflictedModels: live.filter((m) => m.conflicts.length > 0).length,
+    conflictedModels: live.filter((m) => m.openConflicts.length > 0).length,
     conflictsByField: live.reduce<Record<string, number>>((acc, m) => {
-      for (const c of m.conflicts) acc[c.field] = (acc[c.field] ?? 0) + 1;
+      for (const c of m.openConflicts) acc[c.field] = (acc[c.field] ?? 0) + 1;
       return acc;
     }, {}),
     // Counted straight off the per-row states, so the summary and the rows can

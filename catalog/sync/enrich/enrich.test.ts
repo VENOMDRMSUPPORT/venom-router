@@ -1013,3 +1013,50 @@ describe('enrichment reaches the measurement, not just the resolver', () => {
     assert.equal(conflictsFor('unscored').find((c) => c.field === 'structured')!.status, 'open');
   });
 });
+
+describe('scoped conflict re-derivation', () => {
+  test('repairs only targeted offerings and leaves stored scores untouched', () => {
+    seed({ modelId: 'target', structured: null });
+    seed({ modelId: 'untouched', structured: null });
+
+    const conflict = JSON.stringify([{ value: true, by: 'a/target' }, { value: false, by: 'b/target' }]);
+    db.prepare(
+      `INSERT INTO model_conflicts (provider_id, model_id, field, sides_json, conflict_type, detected_at)
+       VALUES ('p', ?, 'structured', ?, 'source_disagreement', ?)`,
+    ).run('target', conflict, now());
+    db.prepare(
+      `INSERT INTO model_conflicts (provider_id, model_id, field, sides_json, conflict_type, detected_at)
+       VALUES ('p', ?, 'structured', ?, 'source_disagreement', ?)`,
+    ).run('untouched', conflict, now());
+    db.prepare(
+      `INSERT INTO model_scores (provider_id, model_id, kind, value, evidence_level, methodology_ver, computed_at)
+       VALUES ('p', 'target', 'VQ', 88.5, 'measured', 'test-score', ?)`,
+    ).run(now());
+
+    const beforeScore = db.prepare(
+      `SELECT value, evidence_level, methodology_ver, computed_at
+       FROM model_scores WHERE provider_id='p' AND model_id='target' AND kind='VQ'`,
+    ).get();
+
+    const summary = enrich(deps({
+      targets: new Set(['p/target']),
+      intrinsic: (modelId) => modelId === 'target'
+        ? { structured: true, declaredBy: 'a/target', conflicts: [] }
+        : null,
+    }));
+
+    const afterScore = db.prepare(
+      `SELECT value, evidence_level, methodology_ver, computed_at
+       FROM model_scores WHERE provider_id='p' AND model_id='target' AND kind='VQ'`,
+    ).get();
+    const target = db.prepare(`SELECT structured FROM models WHERE provider_id='p' AND model_id='target'`).get() as { structured: number | null };
+    const untouched = db.prepare(`SELECT structured FROM models WHERE provider_id='p' AND model_id='untouched'`).get() as { structured: number | null };
+
+    assert.equal(summary.rows, 1);
+    assert.equal(target.structured, 1, 'the targeted offering is re-derived');
+    assert.equal(untouched.structured, null, 'the neighbour is not re-derived');
+    assert.equal(conflictsFor('target').length, 0, 'the corrected target conflict is pruned');
+    assert.equal(conflictsFor('untouched').length, 1, 'the untargeted conflict remains historical state');
+    assert.deepEqual(afterScore, beforeScore, 're-derivation does not rescore');
+  });
+});

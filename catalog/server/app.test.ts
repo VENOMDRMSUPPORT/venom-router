@@ -667,6 +667,35 @@ describe('a recorded source disagreement is visible through the API', () => {
     assert.equal(meta.conflictedModels, 2, 'two models, not three conflicts');
     assert.deepEqual(meta.conflictsByField, { attachment: 1, structured: 2 });
   });
+
+  test('one model holding both an open and a settled dispute is counted once, by the open one', () => {
+    // The mixed row is the one that separates "filter the history" from "read
+    // the derived view": the model is still conflicted, but only the field
+    // nobody answered may say so, and only that field may reach the counts.
+    recordConflict('measured-1', 'structured', [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }]);
+    recordConflict('measured-1', 'attachment', [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }]);
+    db.prepare(`UPDATE model_conflicts SET status='resolved', resolved_to='true' WHERE provider_id='acme' AND model_id='measured-1' AND field='structured'`).run();
+
+    const body = get('/v1/models').body;
+    const row = rowFor('measured-1');
+    assert.equal(row.conflicts.length, 2, 'both disputes stay inspectable');
+    assert.deepEqual(row.openConflicts.map((c: any) => c.field), ['attachment']);
+    assert.equal(body.meta.conflictedModels, 1);
+    assert.deepEqual(body.meta.conflictsByField, { attachment: 1 });
+  });
+
+  test('resolved conflicts remain in history but are absent from the open view and meta counts', () => {
+    recordConflict('measured-1', 'structured', [{ value: true, by: 'a/m' }, { value: false, by: 'b/m' }]);
+    db.prepare(`UPDATE model_conflicts SET status='resolved', resolved_to='true' WHERE provider_id='acme' AND model_id='measured-1' AND field='structured'`).run();
+
+    const body = get('/v1/models').body;
+    const row = rowFor('measured-1');
+    assert.equal(row.conflicts.length, 1, 'the historical dispute remains inspectable');
+    assert.equal(row.conflicts[0].status, 'resolved');
+    assert.deepEqual(row.openConflicts, []);
+    assert.equal(body.meta.conflictedModels, 0);
+    assert.deepEqual(body.meta.conflictsByField, {});
+  });
 });
 
 describe('rejected identity candidates reach the HTTP surface', () => {

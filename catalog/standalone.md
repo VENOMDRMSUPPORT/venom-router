@@ -37,6 +37,10 @@ npm test
 
 The Vite development server proxies `/v1` requests to the Catalog API. Override the UI port with `PORT` and the API target with `CATALOG_API` when an isolated verification instance is required.
 
+### Scoped conflict re-derivation
+
+After a resolver correction, `npm run rederive:conflicts` re-derives only active or missing offerings that already have a recorded conflict. It refreshes model facts and conflict rows from the shared source feeds while deliberately skipping provider roster sync, provider detail calls, probes, evaluation, and scoring. The command opens the database through the single-writer batch guard and can target another database with `-- --db=<path>`.
+
 ## Integration expectations
 
 Router integrations should use the Catalog API base URL and record the Catalog response version or generation timestamp used by a routing decision. The current advertised contract is **`catalog-api-v2`**. Version 2 replaces the old `/v1/alerts` lifecycle wire shape with `/v1/notifications` read history; `GET /v1/alerts` returns HTTP 410 with the explicit replacement endpoint. Consumers must fail closed on unsupported versions rather than inventing defaults.

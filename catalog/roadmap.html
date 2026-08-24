@@ -1,0 +1,1051 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Venom Catalog Production Roadmap</title>
+<style>
+:root {
+  --bg: #101310;
+  --card: #171b17;
+  --card-hover: #1c211c;
+  --inset: #12160f;
+  --line: rgba(255, 255, 255, 0.075);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --fg: #e9ece9;
+  --fg-dim: #b7bdb7;
+  --muted: #7f877f;
+  --green: #4ade80;
+  --green-solid: #6fdc9c;
+  --green-track: rgba(74, 222, 128, 0.16);
+  --amber: #d4a13c;
+  --red: #d4645f;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 840px; margin: 0 auto; padding: 56px 24px 96px; }
+
+code, .mono { font-family: var(--mono); font-size: 0.9em; }
+
+/* ---------- Header ---------- */
+
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+h1 {
+  margin: 12px 0 0;
+  font-size: 33px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.sub { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+.sub code { color: var(--fg-dim); }
+
+.overall {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  margin: 30px 0 0;
+}
+.pct {
+  font-size: 33px;
+  font-weight: 700;
+  color: var(--green);
+  letter-spacing: -0.02em;
+  min-width: 92px;
+}
+.overall-right { flex: 1 1 auto; min-width: 0; }
+
+.bar { height: 7px; border-radius: 99px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--green);
+  width: 0;
+  transition: width 260ms ease;
+}
+
+.tally { margin-top: 10px; font-size: 12.5px; color: var(--muted); }
+.tally b { color: var(--fg); font-weight: 600; }
+.tally span { margin-right: 14px; }
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 30px 0;
+}
+
+/* ---------- Cards ---------- */
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 140ms ease;
+}
+.row:hover { background: var(--card-hover); }
+
+.chev {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  transition: transform 180ms ease;
+  margin-left: auto;
+}
+.card.is-open > .row .chev { transform: rotate(180deg); }
+
+.body { display: none; border-top: 1px solid var(--line); padding: 4px 16px 16px; }
+.card.is-open > .body { display: block; }
+
+/* ---------- Gate card ---------- */
+
+.gate-icon {
+  flex: none;
+  width: 26px; height: 26px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.gate-main { min-width: 0; }
+.gate-main .t { font-size: 13.5px; font-weight: 600; }
+.gate-strip {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--green);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gate-strip .off { color: var(--muted); }
+.gate-stamp {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  flex: none;
+}
+
+.gate-cmd {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 11px 13px;
+  margin-top: 12px;
+  color: var(--fg);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.body > p { margin: 12px 0 0; color: var(--fg-dim); font-size: 13px; }
+.body > p:first-child { margin-top: 14px; }
+.body > p b { color: var(--fg); font-weight: 600; }
+
+/* ---------- Legend ---------- */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 26px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  margin-bottom: 26px;
+}
+.leg { display: flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--fg-dim); }
+.sw { width: 13px; height: 13px; border-radius: 3.5px; flex: none; }
+.sw.done { background: var(--green-solid); }
+.sw.prog { border: 1.5px solid var(--amber); }
+.sw.block { border: 1.5px solid var(--red); }
+.sw.pend { border: 1.5px solid rgba(255, 255, 255, 0.22); }
+
+/* ---------- Phase row ---------- */
+
+.pbadge {
+  flex: none;
+  min-width: 38px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--fg-dim);
+}
+.card.is-clear .pbadge { background: var(--green-solid); color: #0d1a12; }
+
+.ptitle { font-size: 14.5px; font-weight: 600; letter-spacing: -0.005em; }
+
+.pcount {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  flex: none;
+}
+.card.is-clear .pcount { color: var(--green); }
+
+.pbar {
+  flex: none;
+  width: 78px;
+  height: 4px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.pbar > i { display: block; height: 100%; width: 0; background: var(--green); transition: width 220ms ease; }
+
+.pgoal {
+  margin: 14px 0 0;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+.pexit {
+  margin: 12px 0 4px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line-strong);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.pexit b { color: var(--fg-dim); font-weight: 600; }
+.pclosed {
+  margin: 12px 0 4px;
+  padding-left: 12px;
+  border-left: 2px solid var(--green-solid);
+  font-size: 12.5px;
+  color: var(--fg-dim);
+}
+.pclosed b { color: var(--green); font-weight: 600; }
+.pclosed code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1px 4px; }
+
+/* ---------- Task row ---------- */
+
+.tasks { margin-top: 14px; }
+
+.task {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+}
+.task:first-child { border-top: 0; }
+
+.dot {
+  flex: none;
+  width: 15px; height: 15px;
+  border-radius: 4px;
+  background: none;
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  cursor: pointer;
+  padding: 0;
+  transition: all 140ms ease;
+}
+.dot:hover { border-color: var(--fg-dim); }
+.task[data-state='done'] .dot { background: var(--green-solid); border-color: var(--green-solid); }
+.task[data-state='prog'] .dot { border-color: var(--amber); }
+.task[data-state='block'] .dot { border-color: var(--red); }
+
+.tid {
+  flex: none;
+  min-width: 36px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.task[data-state='done'] .tid { color: var(--green); }
+
+.tmain { min-width: 0; flex: 1 1 auto; cursor: pointer; }
+.tt { font-size: 13px; color: var(--fg); }
+.task[data-state='done'] .tt { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
+.tl {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-top: 1px;
+  overflow-wrap: anywhere;
+}
+
+.tmeta {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.tmeta em { font-style: normal; color: var(--amber); }
+.tmeta em.crit { color: var(--red); }
+/* Severity is a property of the item, not its state. Once the item is done it
+   stops being an alarm, so it stops being coloured like one — the same reason
+   the title above is struck through rather than deleted. */
+.task[data-state='done'] .tmeta em,
+.task[data-state='done'] .tmeta em.crit { color: var(--muted); }
+
+.tchev {
+  flex: none;
+  background: none;
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  transition: transform 180ms ease;
+}
+.task.is-open .tchev { transform: rotate(180deg); }
+
+.tdetail {
+  display: none;
+  padding: 4px 0 14px 27px;
+  border-top: 1px dashed var(--line);
+  margin-top: -1px;
+}
+.tdetail.is-shown { display: block; }
+
+.f { margin-top: 11px; }
+.f h4 {
+  margin: 0 0 3px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.f p { margin: 0; font-size: 12.5px; color: var(--fg-dim); }
+.f.fix p { color: var(--fg); }
+.f.acc p {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding-left: 11px;
+  border-left: 2px solid var(--line-strong);
+}
+.f p code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1px 4px; color: var(--fg); }
+.tnote { margin-top: 11px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+/* ---------- Appendix ---------- */
+
+.sec-label {
+  margin: 34px 0 12px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 10px 0 7px;
+  border-bottom: 1px solid var(--line);
+}
+td { padding: 9px 0; border-bottom: 1px solid var(--line); color: var(--fg-dim); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-family: var(--mono); font-size: 11.5px; color: var(--fg); white-space: nowrap; padding-right: 16px; }
+td code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1px 4px; color: var(--fg); }
+
+.foot { margin-top: 34px; font-size: 11.5px; color: var(--muted); }
+
+@media (max-width: 620px) {
+  .wrap { padding: 34px 16px 64px; }
+  h1 { font-size: 26px; }
+  .overall { gap: 14px; }
+  .pct { font-size: 27px; min-width: 68px; }
+  .pbar, .gate-stamp, .tmeta { display: none; }
+  .tdetail { padding-left: 0; }
+}
+
+@media print {
+  body { background: #fff; color: #000; }
+  .body, .tdetail { display: block !important; }
+  .chev, .tchev { display: none; }
+}
+
+/* ---------- Roadmap-specific ---------- */
+
+.flow {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin-top: 12px; font-family: var(--mono); font-size: 11.5px;
+}
+.flow span {
+  border: 1px solid var(--line-strong); border-radius: 5px;
+  padding: 4px 9px; color: var(--fg-dim); background: var(--inset);
+}
+.flow span.ok { border-color: rgba(74, 222, 128, 0.4); color: var(--green); }
+.flow span.bad { border-color: rgba(212, 100, 95, 0.45); color: var(--red); }
+.flow span.warn { border-color: rgba(212, 161, 60, 0.45); color: var(--amber); }
+.flow i { color: var(--muted); font-style: normal; }
+
+.pill {
+  display: inline-block; font-family: var(--mono); font-size: 10.5px;
+  border-radius: 4px; padding: 1px 6px; border: 1px solid var(--line-strong);
+  color: var(--fg-dim);
+}
+.pill.g { border-color: rgba(74, 222, 128, 0.4); color: var(--green); }
+.pill.r { border-color: rgba(212, 100, 95, 0.45); color: var(--red); }
+.pill.a { border-color: rgba(212, 161, 60, 0.45); color: var(--amber); }
+
+.rule {
+  margin-top: 14px; padding: 12px 14px; border-radius: 8px;
+  background: var(--inset); border: 1px solid var(--line);
+  border-left: 2px solid var(--green-solid);
+  font-size: 13px; color: var(--fg);
+}
+.rule b { font-weight: 600; }
+.rule code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1px 4px; }
+
+.crit-list { margin: 12px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--fg-dim); }
+.crit-list li { margin: 5px 0; }
+.crit-list code { background: rgba(255, 255, 255, 0.07); border-radius: 3px; padding: 1px 4px; color: var(--fg); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="eyebrow">Venom Catalog · Production roadmap</div>
+  <h1>Ship the catalog</h1>
+  <p class="sub">19 mandatory items across 6 phases · baseline <code>7c6ada5</code> · evidence read from <code>data/catalog.db</code> on 2026-08-24 · Node v24.19.0. <b>P1 is closed</b> as of 2026-08-24 &mdash; gate green on typecheck, 665 backend tests, 277 SPA tests and build; P2 is the next phase to start. Supersedes the remediation tracker built from <code>catalog-code-review-2026-08-24.md</code>; every item that tracker carried is either folded in below or listed under <b>Withdrawn</b> with the reason.</p>
+
+  <div class="overall">
+    <div class="pct" id="pct">0%</div>
+    <div class="overall-right">
+      <div class="bar"><i id="barFill"></i></div>
+      <div class="tally" id="tally"></div>
+    </div>
+  </div>
+
+  <!-- ============ GATE ============ -->
+  <div class="card" id="gateCard">
+    <div class="row" data-toggle>
+      <div class="gate-icon">&#8801;</div>
+      <div class="gate-main">
+        <div class="t">Verification gate &amp; standing invariants</div>
+        <div class="gate-strip" id="gateStrip"></div>
+      </div>
+      <div class="gate-stamp">2026-08-24</div>
+      <svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="body">
+      <p>Run from <code>catalog/</code> and report each command separately. A green SPA run does not stand in for backend tests.</p>
+      <div class="gate-cmd">npm run typecheck &amp;&amp; npm run test:backend &amp;&amp; npm run test:spa &amp;&amp; npm run build</div>
+
+      <div class="rule">
+        <b>Existence invariant.</b> The catalog tracks <b>provider-declared model existence</b> &mdash; not model runtime availability, health, latency, or whether inference currently succeeds. A model is in the catalog because a provider published it in a roster this catalog fetched successfully. Nothing else adds or removes it.
+      </div>
+
+      <div class="rule">
+        <b>Conflict definition.</b> A conflict exists only when <b>two or more sources that are each entitled to speak about this offering</b> declare materially different values for the same field, and no ranking rule can settle it. A model being new, a model being removed, a value changing between runs, and a fetch failing are <b>not</b> conflicts &mdash; each has its own path.
+      </div>
+
+      <div class="rule">
+        <b>Work-once invariant.</b> A model is measured once, when it first appears. An existing model is never re-probed, re-scored, or re-enriched because a sibling changed, a sync ran, or a new model arrived. Re-derivation from already-stored source data is permitted and is not re-testing.
+      </div>
+
+      <p><b>CSS-module types are index signatures.</b> <code>src/vite-env.d.ts:4</code> declares <code>{ readonly [key: string]: string }</code>, so <code>styles.anythingAtAll</code> type-checks and renders <code>class="undefined"</code>. Three live cases are open &mdash; see <code>Q3</code>.</p>
+      <p><b>Do not redirect gate output into <code>catalog/</code>.</b> The root <code>.gitignore</code> hides <code>*.log</code>, so redirected output never reaches a diff and simply accumulates. Read the output, or send it to the session scratchpad.</p>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="leg"><span class="sw done"></span>Done (verified, gate green)</div>
+    <div class="leg"><span class="sw prog"></span>In progress</div>
+    <div class="leg"><span class="sw block"></span>Blocked</div>
+    <div class="leg"><span class="sw pend"></span>Pending</div>
+  </div>
+
+  <!-- ============ 1. CURRENT STATE ============ -->
+  <div class="sec-label">1 · Current state &mdash; measured, not assumed</div>
+  <div class="card is-open">
+    <div class="body" style="border-top:0;padding-top:0">
+      <table>
+        <tr><th>Surface</th><th>State on 2026-08-24</th></tr>
+        <tr><td>Providers</td><td>Four adapters complete and syncing: <code>opencode-go</code>, <code>opencode-zen</code>, <code>ollama-cloud</code>, <code>clinepass</code>.</td></tr>
+        <tr><td>Model rows</td><td>52 active offers across the four providers, plus <code>excluded</code> and <code>retired</code> history retained. Coverage of the scored dimensions is complete for every active offer.</td></tr>
+        <tr><td>Discovery</td><td>Works. <code>opencode-go/longcat-2.0</code> was detected, inserted, enriched, scored and reached <code>catalogReady</code> in one pass on 2026-08-24T14:34:54Z.</td></tr>
+        <tr><td>Conflicts<br><span style="color:var(--muted)">before P1</span></td><td>180 rows in <code>model_conflicts</code>: 165 <code>open</code>, 15 <code>resolved</code>. Only <b>16</b> belong to a model with status <code>active</code>/<code>missing</code>; the other 164 sit on <code>excluded</code> rows and are never rendered. Of the 16, one is <code>open</code> &mdash; the new model &mdash; and 15 are <code>resolved</code> but still render as conflicts.</td></tr>
+        <tr><td>Conflicts<br><span style="color:var(--green)">after P1</span></td><td>Measured from <code>GET /v1/models</code> on 2026-08-24 after K1&ndash;K3: 53 live rows, <b>15</b> carry a conflict in their history and <b>0</b> carry an open one. <code>meta.conflictedModels</code> is <code>0</code> and <code>meta.conflictsByField</code> is empty. Every one of the 15 is <code>structured</code>, <code>resolved</code> to <code>true</code> by a source outside the dispute, and stays visible in the evidence panel labelled <code>resolved</code>. The excluded rows are untouched and still unrendered.</td></tr>
+        <tr><td>Notifications</td><td>The three-category contract already exists and is correct: <code>success</code> / <code>error</code> / <code>warning</code>, projected from immutable events, idempotent by source key, simple nullable <code>read_at</code>. 135 rows, all unread.</td></tr>
+        <tr><td>Retirement</td><td><code>retireAfterMisses: 3</code> at a 6-hour scheduler interval. A removed model stays served for roughly 12 hours as <code>missing</code>, with no notification during that window.</td></tr>
+        <tr><td>Fetch failure</td><td>Per-provider roster failure is handled correctly: <code>sync_runs</code> gets an <code>outcome='failed'</code> row, the catalog is untouched, a yellow warning is projected. The <b>shared-source</b> failure path is not: it aborts before any run row exists, so it produces no notification of any colour.</td></tr>
+        <tr><td>Alerts subsystem</td><td><code>server/alerts.ts</code> has no production importer. <code>GET /v1/alerts</code> returns <code>410</code>. The module and its two test files are dead weight.</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ============ 2. COMPLETE ============ -->
+  <div class="sec-label">2 · Complete &mdash; do not reopen</div>
+  <div class="card is-open">
+    <div class="body" style="border-top:0;padding-top:0">
+      <p>Each line below is settled. Reopening any of them requires a named technical reason, not a re-verification impulse.</p>
+      <ul class="crit-list">
+        <li><b>The four provider adapters.</b> No re-sync, no re-probe, no metadata rebuild.</li>
+        <li><b>Existing model measurements.</b> VQ, VO, model score, overall score and evidence for the 52 active offers are the stable baseline.</li>
+        <li><b>Scoring semantics.</b> Server-owned. <code>unrated</code> means unknown and is never lowered to zero or sorted last.</li>
+        <li><b>Provenance contract.</b> Every fact carries source, ref, url, evidence state, resolver version and resolution time. Model rows and events are never physically deleted.</li>
+        <li><b>Notification categories and read model.</b> Three categories, no fix button, no recovery workflow, no state machine &mdash; <code>read_at IS NULL</code> is the whole unread rule. This already matches the required contract.</li>
+        <li><b>Notification durability.</b> <code>reconcileCatalogNotifications</code> pages through <code>model_events</code> and <code>sync_runs</code> in batches and is deliberately not bounded by any display limit.</li>
+        <li><b>Single-writer discipline.</b> Batches open the database through <code>openBatchDb</code>, which wires the service guard once.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ============ 3. THE CONFLICTS PROBLEM ============ -->
+  <div class="sec-label">3 · The conflicts problem &mdash; root cause</div>
+  <div class="card is-open crit-card">
+    <div class="body" style="border-top:0;padding-top:0">
+      <p>The reported symptom &mdash; a new model, fully processed, appearing under Conflicts &mdash; is real, and it is produced by <b>two independent defects</b>. Neither of them reads prior catalog state, so <em>"the model is new"</em> is not an input to conflict creation anywhere in the code. Nothing needs to learn that new models are exempt; the comparison itself is wrong.</p>
+
+      <p><b>Defect A &mdash; a mode variant is pooled as if it were a rival seller.</b></p>
+      <table>
+        <tr><th>Evidence</th><th>Value</th></tr>
+        <tr><td>Model</td><td><code>opencode-go/longcat-2.0</code>, <code>added</code> at <code>2026-08-24T14:34:54.069Z</code></td></tr>
+        <tr><td>Conflict</td><td>field <code>structured</code>, detected <code>2026-08-24T14:40:04.588Z</code>, status <code>open</code></td></tr>
+        <tr><td>Side 1</td><td><code>nano-gpt/longcat-2.0:thinking</code> &rarr; <code>true</code></td></tr>
+        <tr><td>Side 2</td><td><code>openrouter/meituan/longcat-2.0</code> &rarr; <code>false</code></td></tr>
+        <tr><td>Serving provider</td><td><code>opencode-go</code> &mdash; <b>not a party to either side</b></td></tr>
+        <tr><td>Result</td><td><code>models.structured</code> left <code>NULL</code>; <code>FactState.tsx:37</code> renders <code>conflict</code></td></tr>
+      </table>
+      <p style="margin-top:14px"><code>normalizeId</code> (<code>sync/identity.ts:56-63</code>) strips the <code>PLAN_VARIANT</code> suffix, so <code>longcat-2.0:thinking</code> and <code>longcat-2.0</code> land in the same declaration pool at <code>sync/sources/models-dev.ts:276-288</code>. <code>settle()</code> then applies the <code>PLAN_VARIANT</code> filter in <b>exactly one branch of three</b> &mdash; the serving-seller branch at line 374. The <code>unanimous(list)</code> test that runs first, and the first-party branch that runs last, both count the thinking-mode listing as an independent seller. The code's own comment at lines 371-372 states this is the bug it fixed; the fix was scoped to one branch.</p>
+      <p>Structured output being <code>true</code> in thinking mode and <code>false</code> in the base mode is not a disagreement between sources. It is one source describing two modes of one product.</p>
+
+      <div class="rule" style="border-left-color:var(--amber)">
+        <b>Correction &mdash; 2026-08-24, after K1 landed.</b> The evidence table above misreads its own citation. The <code>true</code> side was attributed to <code>nano-gpt/longcat-2.0:thinking</code> only because the sides list keeps <b>one entry per distinct value</b> and the mode listing happened to be the first declaration carrying <code>true</code>. Read back from <code>models.dev/api.json</code> on 2026-08-24, the base listings are: <code>nano-gpt/longcat-2.0</code> &rarr; <code>true</code>, <code>openrouter/meituan/longcat-2.0</code> &rarr; <code>false</code>, <code>kilo/meituan/longcat-2.0</code> &rarr; <code>false</code>; the serving seller <code>opencode-go</code> and the vendor storefront <code>longcat</code> publish no value. So this dispute is <b>genuine between base sellers</b> and a conflict row is the correct outcome &mdash; excluding the mode variant does not remove the <code>true</code> side, it only re-labels it. Defect A is still real and still fixed: it is proven by the two unit tests on <code>settle()</code>, and by the one live mode-variant conflict K3 dropped. What cleared this row from the Conflicts surface is <b>K2</b> plus the measurement that answered the field &mdash; <code>structured = true</code>, 300 samples, so the dispute now carries a recorded verdict and is <code>resolved</code>, not <code>open</code>.
+      </div>
+
+      <p style="margin-top:18px"><b>Defect B &mdash; a settled conflict still renders as a conflict.</b></p>
+      <p><code>server/read-model.ts:449</code> selects every row of <code>model_conflicts</code> with no <code>status</code> predicate and hands the whole list to the client. Three surfaces then treat presence in that list as "conflicted": the summary count at <code>read-model.ts:784</code>, the panel section at <code>EvidencePanel.tsx:141</code>, and the per-field badge at <code>FactState.tsx:37</code>. Fifteen of the sixteen live conflicts are already <code>status='resolved'</code> with a recorded <code>resolved_to</code> &mdash; a person's verdict &mdash; and they still show as unsettled disputes.</p>
+
+      <div class="rule">
+        <b>What must not change.</b> Real conflict detection stays. The <code>open</code> rows include genuine two-sided disagreements between entitled sources. Neither fix filters the UI to hide a conflict: both stop a false conflict from being <em>created</em> or <em>mis-rendered</em> at the point where the judgement is made.
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 4. LIFECYCLE ============ -->
+  <div class="sec-label">4 · Model lifecycle &mdash; the required contract</div>
+  <div class="card is-open">
+    <div class="body" style="border-top:0;padding-top:0">
+      <p><b>New model</b> &mdash; full processing, once.</p>
+      <div class="flow"><span class="ok">Provider roster</span><i>&rarr;</i><span>Not known locally</span><i>&rarr;</i><span>Insert</span><i>&rarr;</i><span>Probe + enrich</span><i>&rarr;</i><span>Score + evidence</span><i>&rarr;</i><span class="ok">100% complete</span><i>&rarr;</i><span class="ok">Persist</span><i>&rarr;</i><span class="pill g">green notification</span></div>
+
+      <p style="margin-top:20px"><b>Existing model</b> &mdash; nothing happens.</p>
+      <div class="flow"><span class="ok">Provider roster</span><i>&rarr;</i><span>Known locally</span><i>&rarr;</i><span class="ok">Keep stored data</span><i>·</i><span>no probe</span><i>·</i><span>no re-score</span><i>·</i><span>no re-validation</span><i>·</i><span>no notification</span></div>
+
+      <p style="margin-top:20px"><b>Removed model</b> &mdash; absent from a <em>successful</em> roster fetch means gone, immediately.</p>
+      <div class="flow"><span class="ok">Roster fetch succeeds</span><i>&rarr;</i><span class="bad">Model absent</span><i>&rarr;</i><span class="bad">status = retired</span><i>&rarr;</i><span>excluded from every default read</span><i>&rarr;</i><span class="pill r">red notification</span></div>
+      <p>The row and its events are preserved. <code>retired</code> <em>is</em> the removal: it takes the model out of <code>/v1/models</code>, out of <code>liveModels</code>, and out of every published view. That satisfies both the requirement and the never-physically-delete rule in <code>catalog/CLAUDE.md</code> and <code>db/schema.sql</code>. No waiting period, no re-test, and no question about whether the model still answers requests &mdash; that question is outside the catalog's scope.</p>
+
+      <p style="margin-top:20px"><b>Fetch failure</b> &mdash; the catalog does not move.</p>
+      <div class="flow"><span class="warn">Fetch fails</span><i>&rarr;</i><span>record the run</span><i>&rarr;</i><span class="warn">catalog untouched</span><i>·</i><span>no miss counted</span><i>·</i><span>no retirement</span><i>&rarr;</i><span class="pill a">yellow notification</span></div>
+
+      <p style="margin-top:20px"><b>Real conflict</b> &mdash; two entitled sources, materially different values, no ranking rule settles it. Recorded against the offering, surfaced while <code>open</code>, cleared when a reviewed fact settles it.</p>
+
+      <div class="rule">
+        <b>Guards that stay.</b> A roster that returns <code>200 OK</code> but truncated is a different failure from a fetch that errors. <code>maxRemovalRatio: 0.3</code> and <code>maxRemovalCount: 5</code> (<code>sync/engine.ts:108-111</code>) quarantine a run that would drop an implausible share of a provider's catalog. Those layers are unaffected by the change to <code>retireAfterMisses</code> and must not be removed alongside it.
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 5. NOTIFICATIONS ============ -->
+  <div class="sec-label">5 · Notifications &mdash; final behaviour</div>
+  <div class="card is-open">
+    <div class="body" style="border-top:0;padding-top:0">
+      <table>
+        <tr><th>Event</th><th>Category</th><th>Source</th></tr>
+        <tr><td>New model</td><td><span class="pill g">green · check</span></td><td><code>model_events</code> classified <code>added</code> / <code>readded</code></td></tr>
+        <tr><td>Removed model</td><td><span class="pill r">red · error</span></td><td><code>model_events</code> classified <code>retired</code></td></tr>
+        <tr><td>Refresh failed</td><td><span class="pill a">yellow · warning</span></td><td><code>sync_runs</code> with <code>outcome IN ('failed','quarantined')</code></td></tr>
+      </table>
+      <p style="margin-top:14px">No fourth category. No fix button, no retry action, no recovery workflow, no per-notification state beyond <code>read_at</code>. A notification arrives unread; opening the panel marks the shown notifications read. That is the entire model, and it is what the code already does.</p>
+
+      <p style="margin-top:18px"><b>The number 500 &mdash; answered, not guessed.</b> There are two unrelated 500s and neither is a notification state machine:</p>
+      <ul class="crit-list">
+        <li><code>server/changes.ts:57-58</code> &mdash; <code>DEFAULT_CHANGES_LIMIT</code> and <code>MAX_CHANGES_LIMIT</code>, the page-size ceiling on the public <code>GET /v1/changes</code> feed. Unrelated to notifications.</li>
+        <li><code>server/model-notifications.ts:155</code> &mdash; the ceiling on <code>GET /v1/notifications?limit=</code>, so a caller cannot ask the service to serialize the whole table. It is <b>duplicated inline</b> at <code>server/app.ts:197</code> instead of being imported, which is the only real problem with it. Tracked as <code>N3</code>.</li>
+      </ul>
+      <p>Both are ordinary boundary limits and both stay. The comment at <code>model-notifications.ts:117</code> that mentions "more than 500" is explaining that reconciliation is deliberately <em>not</em> bounded by them; it is correct as written.</p>
+      <p><b>The cap that actually hides content is 5, not 500.</b> <code>NotificationCenter.tsx:22</code> caps the panel at <code>MAX_VISIBLE_NOTIFICATIONS = 5</code> while the badge reads <code>summary.unread</code>, which counts every row. Today that is a bell reading 135 unread over a panel showing 5, with no pagination and an orphaned <code>.viewAll</code> rule in the stylesheet. Tracked as <code>N2</code>.</p>
+    </div>
+  </div>
+
+  <!-- ============ 6. PHASES ============ -->
+  <div class="sec-label">6 · Mandatory work</div>
+  <div id="phases"></div>
+
+  <!-- ============ 7. WITHDRAWN ============ -->
+  <div class="sec-label">7 · Withdrawn from the previous roadmap</div>
+  <div class="card is-open">
+    <div class="body" style="border-top:0;padding-top:0">
+      <p>Each of these was a tracked item on the remediation tracker. None survives contact with the current tree. Do not re-raise without new evidence.</p>
+      <table>
+        <tr><th>Item</th><th>Why it is withdrawn</th></tr>
+        <tr><td>F1, F11, F2<br>C2, C3, C4</td><td>All six target <code>server/alerts.ts</code>, which has no production importer &mdash; <code>reconcileAlerts</code>, <code>listAlerts</code> and <code>transitionAlert</code> are referenced only by <code>alerts.test.ts</code> and <code>notifications.test.ts</code>, plus a type-only import at <code>notifications.ts:3</code>. The 30-second tick calls <code>reconcileCatalogNotificationLedger</code>, and <code>GET /v1/alerts</code> returns 410. The described failures cannot occur. Superseded by <code>X1</code>, which deletes the module.</td></tr>
+        <tr><td>F7</td><td>Cites code that exists nowhere in the tree. <code>alert.notifications</code>, <code>notifications?.[0]</code> and the string <code>Webhook queued</code> return no matches under <code>src/</code> or <code>server/</code>. <code>DashboardPage.tsx:838</code> is a scoring tab label.</td></tr>
+        <tr><td>F10</td><td><code>applyThemeSync</code> does not exist; <code>b744655</code> rewrote <code>src/hooks/useTheme.ts</code>. <code>setTheme</code> is a <code>useCallback</code>, not a state updater, so the described StrictMode double-invoke cannot apply, and the claimed dependency-array regression is not present.</td></tr>
+        <tr><td>F3, F5</td><td>Fixed in <code>b97c640</code>. <code>useCatalog.tsx:73</code> is <code>setLoading(dataRef.current === null)</code>, and the renderedCursor / pendingCursor / observedCursor split the item prescribes is the code that is already there.</td></tr>
+        <tr><td>F4</td><td>Fixed in <code>43336d3</code>. <code>isolation: isolate</code> was deleted from <code>.viewStage</code>.</td></tr>
+        <tr><td>F14b</td><td>Fixed in <code>7c6ada5</code>. <code>.refLabel</code> and <code>.refUnit</code> exist in <code>ScoreCell.module.css</code> and are pinned by <code>ScoreCell.test.tsx</code>.</td></tr>
+        <tr><td>F13</td><td>Already fixed for its stated target: <code>CATALOG_AUTO_EVALUATION_MAX_REQUESTS</code> handles the empty string explicitly and is pinned by a test. The identical bug one function up, on <code>RETRY_HOURS</code>, is live and is now tracked as <code>Q2</code>.</td></tr>
+        <tr><td>C6</td><td>Not a defect. The cited line is a synchronous <code>assert.match</code>, and every <code>await</code> in that test is inside the <code>try</code>.</td></tr>
+        <tr><td>D1</td><td>Inverts what the documentation says. <code>standalone.md:48</code> already states that reconciliation does not use the public changes limit, so a catalog with more than 500 changes does not lose a notification. Executing D1 would edit correct documentation into an incorrect state.</td></tr>
+        <tr><td>S1, S3</td><td>Measurements are wrong: 17 <code>*.log</code> files totalling 0.19 MB, not seventy at 1.5 MB; the live database is 45.5 MB, not 49. The acceptance criterion also contradicts the allowlist proposed two items later. Folded into <code>Q4</code> at the corrected figures.</td></tr>
+        <tr><td>S9</td><td>Cannot pass as specified. Its predecessors cover 140 hex literals across 13 files, but 214 numeric <code>rgb()</code>/<code>rgba()</code> literals across 12 files are untouched by any item, and the guard forbids both.</td></tr>
+        <tr><td>S14</td><td>The proposed 600-line ceiling fails on day one against <code>ProviderPage.test.tsx</code> (1171 lines), which no item shrinks, and no proposed ceiling covers <code>src/api/client.ts</code> (1025 lines).</td></tr>
+        <tr><td>T1</td><td>Three of its eight coverage cases already exist and their code is already fixed. The rest are folded into the acceptance criteria of the items that cause them &mdash; which is where the tracker's own backlog card said they belonged.</td></tr>
+        <tr><td>Cosmetic items<br>S5&ndash;S15, G-series</td><td>Repository hygiene and stylesheet consolidation are not production gates. <code>Q3</code> and <code>Q4</code> keep the two with user-visible or correctness impact; the rest are deferred to a post-release cleanup and are not blocking.</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ============ 8. OPTIONAL ============ -->
+  <div class="sec-label">8 · Optional &mdash; accuracy work, not release work</div>
+  <div class="card is-open">
+    <div class="body" style="border-top:0;padding-top:0">
+      <p>Not scheduled. Listed so it is on record, and so nobody promotes it into the mandatory set without a decision.</p>
+      <ul class="crit-list">
+        <li><b>Re-probing existing models to raise measurement confidence.</b> Requires a named technique with a demonstrated accuracy gain, and explicit approval before it becomes work. Not required for release.</li>
+        <li><b>Resolving the <code>open</code> conflicts on excluded rows.</b> They are not rendered and do not affect any published number. Only worth doing if excluded models ever become visible.</li>
+        <li><b>Stylesheet token consolidation.</b> 140 hex and 214 numeric colour literals across the SPA modules. Real duplication, zero user impact.</li>
+        <li><b>Test-file size ceilings.</b> Worth a convention; not worth blocking a release.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ============ 9. RELEASE CRITERIA ============ -->
+  <div class="sec-label">9 · Production release criteria</div>
+  <div class="card is-open">
+    <div class="body" style="border-top:0;padding-top:0">
+      <p>Every line is checkable against the running service or the database. The release is blocked until all of them hold simultaneously on one build.</p>
+      <table>
+        <tr><th>#</th><th>Criterion</th></tr>
+        <tr><td>1</td><td>Gate green: <code>typecheck</code>, <code>test:backend</code>, <code>test:spa</code>, <code>build</code> &mdash; each reported separately, on Node at or above the pinned <code>engines.node</code>.</td></tr>
+        <tr><td>2</td><td>The four providers sync successfully and their 52 active offers retain their existing scores and evidence, verified by diffing <code>model_scores</code> before and after the P1 re-derivation.</td></tr>
+        <tr><td>3</td><td>No mandatory item in this roadmap re-probes or re-scores an existing model.</td></tr>
+        <tr><td>4</td><td>A new model in a provider roster is detected, inserted, measured once, and reaches <code>catalogReady</code> without touching any other model's stored data.</td></tr>
+        <tr><td>5</td><td>That new model produces <b>zero</b> conflict rows unless two entitled sources genuinely disagree. <code>opencode-go/longcat-2.0</code> specifically resolves <code>structured</code> to a value with a recorded standing. <span class="pill g">met &middot; P1</span> &mdash; two base sellers do genuinely disagree here, so the row is correct; the value resolves to <code>true</code> from this catalog's own measurement and the dispute is <code>resolved</code>, not <code>open</code>.</td></tr>
+        <tr><td>6</td><td>A model absent from a successful roster fetch is <code>retired</code> on that same run, disappears from <code>/v1/models</code> and from <code>liveModels</code>, and its row and events survive.</td></tr>
+        <tr><td>7</td><td>Removal produces a red notification and <b>no</b> conflict row.</td></tr>
+        <tr><td>8</td><td>A shared-source fetch failure and a provider roster failure each produce exactly one yellow notification, and neither changes a single model row.</td></tr>
+        <tr><td>9</td><td>A <code>resolved</code> conflict does not appear in <code>conflictedModels</code>, does not render a field badge, and is never given as the reason a fact is missing. It <b>does</b> remain in the evidence panel, labelled <code>resolved</code> and showing every side &mdash; a recorded verdict is audit history, and hiding it would delete the proof that the value was settled rather than guessed. <span class="pill g">met &middot; P1</span></td></tr>
+        <tr><td>10</td><td>A genuine two-sided disagreement between entitled sources still creates an <code>open</code> conflict and still renders, pinned by a test that would fail if detection were disabled. <span class="pill g">met &middot; P1</span></td></tr>
+        <tr><td>11</td><td>The bell shows three categories only, with matching icons; the unread badge and the panel contents agree; every notification is reachable.</td></tr>
+        <tr><td>12</td><td>No fix button, retry action, or recovery workflow exists anywhere in the notification surface.</td></tr>
+        <tr><td>13</td><td><code>server/alerts.ts</code> and its tests are deleted, and <code>GET /v1/alerts</code> still returns 410.</td></tr>
+        <tr><td>14</td><td>No CSS-module key used in the SPA resolves to <code>undefined</code>, enforced by a check that runs in the gate.</td></tr>
+        <tr><td>15</td><td>The existence invariant, the conflict definition and the work-once invariant are written into <code>catalog/CLAUDE.md</code> in the same change as the behaviour.</td></tr>
+        <tr><td>16</td><td>A full sync run against the four live providers completes with outcome <code>ok</code> for each, and the resulting catalog differs from the prior one only where an item in this roadmap intends a change.</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <p class="foot">Progress is stored in this browser only and is not committed with the file. Click a status square to cycle pending &rarr; done &rarr; in progress &rarr; blocked. Evidence in sections 1 and 3 was read from a scratchpad copy of <code>data/catalog.db</code>; the service is the single writer and was not opened for writing.</p>
+</div>
+<script>
+'use strict';
+
+var PHASES = [
+  {
+    n: 'P1',
+    title: 'Conflict truth',
+    goal: 'Two independent defects put a correctly-processed new model under Conflicts. Fix the judgement, not the display. Neither fix touches conflict detection between genuinely disagreeing sources.',
+    exit: 'opencode-go/longcat-2.0 resolves structured to a value with recorded provenance and carries zero OPEN conflict rows; resolved conflicts stop counting and stop badging; a genuine two-sided disagreement still creates and still renders an open conflict.',
+    closed: {
+      on: '2026-08-24',
+      evidence: 'K1, K2 and K3 landed and verified. Live catalog: 53 models, <code>meta.conflictedModels = 0</code>, <code>conflictsByField = {}</code>, 15 rows keep a resolved conflict as history and 0 rows carry an open one. <code>opencode-go/longcat-2.0</code> resolves <code>structured = true</code> from <code>catalog_measurement</code> (<code>structured.run:376</code>, 300 samples, <code>resolver-v2</code>), <code>catalogReady</code>, no missing facts. Gate: typecheck, <b>665</b> backend tests, <b>277</b> SPA tests, build &mdash; each run separately and green. Release criteria 5, 9 and 10 recorded as passing; criterion 2 holds &mdash; the re-derivation wrote no <code>model_scores</code> row.',
+    },
+    items: [
+      {
+        id: 'K1', sev: 'crit', area: 'sync', effort: 'S',
+        status: 'done',
+        title: 'Mode variants are pooled as rival sellers',
+        loc: 'sync/sources/models-dev.ts:361-382',
+        cause: '<code>normalizeId</code> strips <code>PLAN_VARIANT</code> (<code>:thinking</code>, <code>:free</code>, <code>:beta</code>, <code>:online</code>, <code>:nitro</code>, <code>:batch</code>, <code>:extended</code>, <code>:floor</code>) at <code>sync/identity.ts:60</code>, so a mode listing pools into the base model&rsquo;s declaration bucket. <code>settle()</code> filters those listings out in <b>one branch only</b> &mdash; the serving-seller branch at line 374. The <code>unanimous(list)</code> test that runs first, and the <code>isFirstParty</code> branch that runs last, both treat the mode listing as an independent seller.',
+        impact: 'Any field whose value legitimately differs between a base mode and a thinking/free mode becomes a permanent unresolvable dispute: <code>settle()</code> returns null, the fact is left NULL, a conflict row is written, and the field renders as <code>conflict</code>. Proven live on <code>opencode-go/longcat-2.0</code>, where <code>structured</code> disputes <code>nano-gpt/longcat-2.0:thinking</code> against <code>openrouter/meituan/longcat-2.0</code> and the serving provider is party to neither side.',
+        fix: 'Exclude plan/mode-variant declarations from the pooled list <b>once, before any unanimity test</b>, rather than inside a single branch. The base listing is the declaration about the base product; the mode listing describes a different product and must not vote on it. Keep it available for the serving-seller branch when the serving seller is the one publishing the mode. If every declaration for a field is a mode variant, the honest answer is unknown &mdash; not a conflict.',
+        acc: 'Unit test on <code>loadSpecs</code>/<code>intrinsic</code>: a pool of exactly two declarations, one <code>x:thinking</code> and one base, settles to the base value with no conflict. A second test with two genuinely distinct base sellers disagreeing still returns null and still records both sides.',
+        note: 'The comment at models-dev.ts:371-372 already states this rule. This item finishes applying it. Closed 2026-08-24 &mdash; but see the correction in section 3: the live longcat-2.0 dispute turned out to be genuine, so this fix is proven by its unit tests rather than by that row.'
+      },
+      {
+        id: 'K2', sev: 'crit', area: 'server + client', effort: 'S',
+        status: 'done',
+        title: 'Resolved conflicts still count and still render',
+        loc: 'server/read-model.ts:449, :784 · EvidencePanel.tsx:141 · FactState.tsx:37',
+        cause: 'The read model selects every <code>model_conflicts</code> row with no <code>status</code> predicate and ships the list unfiltered. Three consumers then treat mere presence in that list as "this field is disputed", with no consumer checking <code>status</code>.',
+        impact: '15 of the 16 live conflicts are <code>status=\'resolved\'</code> with a recorded <code>resolved_to</code> &mdash; a reviewer&rsquo;s verdict &mdash; and still display as unsettled disputes across the dashboard count, the evidence panel and the per-field badge. A resolved conflict is settled by definition; showing it as open makes the whole conflict surface untrustworthy.',
+        fix: 'Decide the semantics in <b>one</b> place. Keep shipping the full list so history and the resolved verdict remain visible in the panel, and derive an <code>openConflicts</code> view once in the read model. <code>conflictedModels</code>, the panel section test and <code>FactState</code> all read that one derivation. Do not add a status check in three places.',
+        acc: 'Fixture with one open and one resolved conflict on the same model: <code>conflictedModels</code> counts 1; the field with the resolved conflict does not render the <code>conflict</code> badge; the panel still shows the resolved dispute labelled as resolved.'
+      },
+      {
+        id: 'K3', sev: '', area: 'data', effort: 'S',
+        status: 'done',
+        title: 'Re-derive the fields K1 falsely blanked',
+        loc: 'sync/enrich/enrich.ts',
+        cause: 'K1 fixes the judgement going forward, but the 16 rows already carry NULL facts and conflict rows written under the old rule.',
+        impact: 'Without this, longcat-2.0 keeps its false conflict until some unrelated sync happens to touch it, and the reported symptom survives the fix.',
+        fix: 'Run the enrich pass scoped to the affected offerings only. This re-derives from source data already stored &mdash; no probes, no provider calls, no re-scoring, no evaluation. Same <code>RESOLVER_VERSION</code>, same provenance contract. Approved by the owner as re-derivation, explicitly not re-testing.',
+        acc: 'Before/after diff of <code>model_scores</code> shows no change. <code>model_conflicts</code> loses the rows K1 proves were mode-variant artefacts and keeps every genuine one. No row in <code>models</code> outside the affected set is written.',
+        note: 'Depends on K1. Scope is the 16 conflicted active/missing rows, not the catalog. Ran 2026-08-24 against the live database through <code>npm run rederive:conflicts</code>: 16 offerings re-derived, one mode-variant conflict dropped, no <code>model_scores</code> row written.'
+      }
+    ]
+  },
+  {
+    n: 'P2',
+    title: 'Lifecycle invariant',
+    goal: 'The catalog tracks provider-declared existence, not model health. That rule is currently implicit in the code and contradicted by a three-miss retirement delay that treats absence as possibly temporary.',
+    exit: 'A model absent from a successful roster fetch is retired on that same run. A failed fetch changes nothing. Both rules are stated in catalog/CLAUDE.md and pinned by tests.',
+    items: [
+      {
+        id: 'L1', sev: 'crit', area: 'sync', effort: 'XS',
+        title: 'Retire on the first successful sync that omits the model',
+        loc: 'sync/engine.ts:110, :392-400',
+        cause: '<code>retireAfterMisses: 3</code> models absence as possibly transient and waits for three consecutive syncs. At the 6-hour scheduler interval that is roughly 12 hours in <code>missing</code>.',
+        impact: 'A model the provider has stopped offering stays in <code>/v1/models</code>, stays counted in <code>liveModels</code>, and produces no notification for about half a day. The delay only makes sense if absence might mean "the model is temporarily unwell", which is a question outside the catalog&rsquo;s scope.',
+        fix: 'Set <code>retireAfterMisses: 1</code>. Absence from a roster this catalog fetched <b>successfully</b> is the provider declaring the model gone. Leave <code>maxRemovalRatio</code> and <code>maxRemovalCount</code> untouched &mdash; they guard a successful-but-truncated roster, which is a different failure.',
+        acc: 'Engine test: a provider whose second roster omits one model retires it on that run, emits the <code>removed</code> event, and leaves the row and its events in place. A roster omitting 40% of a provider still quarantines instead of retiring.'
+      },
+      {
+        id: 'L2', sev: 'crit', area: 'sync', effort: 'S',
+        title: 'Pin that a failed fetch never counts as absence',
+        loc: 'sync/engine.ts:293-298',
+        cause: '<code>fail()</code> returns before the absence loop, so a failed roster fetch already cannot increment a miss counter. Nothing states or tests this, and with retireAfterMisses at 1 a future refactor that let a failure reach that loop would retire an entire provider in one run.',
+        impact: 'Currently correct, currently unprotected. The blast radius of getting it wrong grows from "12 hours of wrong state" to "a provider erased on one bad fetch" the moment L1 lands.',
+        fix: 'Add the regression test and a short comment at the early return naming the invariant. No behaviour change.',
+        acc: 'Engine test: a roster fetch that throws leaves every model row byte-identical, writes a <code>sync_runs</code> row with <code>outcome=\'failed\'</code>, and increments no miss counter.',
+        note: 'Must land with L1, not after it.'
+      },
+      {
+        id: 'L3', sev: '', area: 'docs', effort: 'XS',
+        title: 'Write the three invariants into catalog/CLAUDE.md',
+        loc: 'catalog/CLAUDE.md',
+        cause: 'The existence invariant, the conflict definition and the work-once invariant are the rules this whole roadmap turns on, and none of them is written down. The provenance and lifecycle section says states exist but not what moves a model between them.',
+        impact: 'Every one of the withdrawn items in section 7 exists because someone reasoned from an assumption instead of a stated rule. Leaving these unwritten guarantees the next reviewer repeats it.',
+        fix: 'Add the three invariants verbatim from the gate card, plus the sync decision table from section 4, to the provenance and lifecycle section. Land it in the same change as L1.',
+        acc: 'The file states: catalog tracks declared existence not runtime health; a conflict needs two entitled sources; a model is measured once. Docs and behaviour agree.'
+      }
+    ]
+  },
+  {
+    n: 'P3',
+    title: 'Notification completeness',
+    goal: 'The three-category contract is already right. What is missing is one failure mode that produces no notification at all, and a panel that shows 5 of 135.',
+    exit: 'Every fetch failure produces exactly one yellow notification. Every notification in the badge count is reachable in the panel. One ceiling constant, one definition.',
+    items: [
+      {
+        id: 'N1', sev: 'crit', area: 'server', effort: 'S',
+        title: 'Shared-source fetch failure is silent',
+        loc: 'server/sync-runner.ts:144-154 · server/model-notifications.ts:135',
+        cause: 'The warning projection reads <code>sync_runs</code>, but rows there are written only inside <code>syncProvider</code>. When <code>loadSpecs</code> or <code>loadBenchmarks</code> throws, the runner aborts before <code>runSyncPipeline</code> is called, so no run row exists and there is nothing to project.',
+        impact: 'Refusing to run is the correct behaviour &mdash; a run without specs would rewrite every row with nulls. But the operator is told nothing: the failure appears only in the <code>POST /v1/sync</code> response body and <code>runner.lastOutcome</code>. A scheduled 6-hourly run can stop refreshing the catalog indefinitely in silence, which is exactly the case the yellow warning exists for.',
+        fix: 'Record the aborted run so the existing projection can see it. Reuse the <code>sync_runs</code> path rather than inventing a second failure channel &mdash; one shared-source row per aborted run, so the projection, the idempotency key and the notification shape all stay unchanged.',
+        acc: 'Runner test: <code>loadSpecs</code> throws; the catalog is unchanged, exactly one yellow notification is produced, and a second identical failure does not produce a duplicate.'
+      },
+      {
+        id: 'N2', sev: 'crit', area: 'client', effort: 'S',
+        title: 'The panel shows 5 while the badge says 135',
+        loc: 'src/components/NotificationCenter/NotificationCenter.tsx:22, :101-102',
+        cause: '<code>MAX_VISIBLE_NOTIFICATIONS = 5</code> slices the rendered list, while the badge reads <code>summary.unread</code>, which counts every row in the table. The client sends no limit, so the server returns 100 rows and 95 are discarded after being fetched.',
+        impact: 'With 135 unread the bell reads a large number, the accessible label states it, and the panel offers five items with no pagination and no way to reach the rest. The <code>.viewAll</code> rule in the stylesheet is orphaned &mdash; a "view all" affordance was designed and never wired.',
+        fix: 'Make the panel scroll the notifications it fetched instead of truncating them. Keep the list bounded by the request limit, which is the boundary that should own it, and drop the render-time slice. No new categories, no new actions &mdash; a scrolling list of the same three kinds.',
+        acc: 'Render with 30 notifications: all 30 are in the DOM, the badge matches the unread count among them, and marking read still only marks what the user has seen.'
+      },
+      {
+        id: 'N3', sev: '', area: 'server', effort: 'XS',
+        title: 'The notification limit ceiling is defined twice',
+        loc: 'server/app.ts:197 · server/model-notifications.ts:155',
+        cause: 'The route re-implements the clamp inline instead of importing it, so the same boundary rule exists as two literals that can drift apart.',
+        impact: 'A second copy of one rule &mdash; the duplication the project standard names as a defect rather than a variation. It is also the entire substance of the "500" question: two unrelated ceilings, one of them written twice.',
+        fix: 'Export the clamp from <code>model-notifications.ts</code> and call it from the route, the way <code>clampChangesLimit</code> is already used one route above.',
+        acc: 'Exactly one definition of the notifications ceiling exists in the tree. The route behaviour is unchanged for valid, invalid and absent limits.'
+      },
+      {
+        id: 'N4', sev: '', area: 'server', effort: 'XS',
+        title: 'markRead silently drops ids past 100',
+        loc: 'server/model-notifications.ts:170',
+        cause: '<code>[...new Set(ids)].slice(0, 100)</code> truncates the id list, then returns a changed-row count that does not reveal the truncation.',
+        impact: 'A caller marking 150 notifications read gets a success response and 50 stay unread with nothing to indicate why. Silent truncation contradicts the fail-closed rule: an over-limit request should be rejected at the boundary, not quietly served in part.',
+        fix: 'Validate the id count at the HTTP boundary and reject an over-limit batch with a typed error, rather than truncating inside the repository. The SPA marks what it rendered, so this only ever fires for a direct API caller.',
+        acc: 'A request with more ids than the limit returns a typed 400 and marks nothing. A request at the limit marks everything and reports the true count.'
+      }
+    ]
+  },
+  {
+    n: 'P4',
+    title: 'Latent correctness',
+    goal: 'Three defects that are real in the code and not currently firing. Each becomes user-visible under a state the system can reach on its own, and P2 makes the first one reachable.',
+    exit: 'No stalled resolution job is possible; a blank env var cannot disable a guard; no CSS-module key resolves to undefined.',
+    items: [
+      {
+        id: 'Q1', sev: 'crit', area: 'sync', effort: 'S',
+        title: 'A retired model pins its resolution job in processing forever',
+        loc: 'sync/resolution-jobs.ts:207',
+        cause: '<code>finishResolutionAttempt</code> calls <code>issueRow</code>, whose SQL filters <code>m.status IN (\'active\',\'missing\')</code>. If a model retires while its job is processing, <code>issueRow</code> returns undefined and the function returns before the UPDATE that would clear the job. The row keeps <code>status=\'processing\'</code> with <code>next_attempt_at</code> in the past. Neither <code>beginResolutionWindow</code> nor <code>bootstrapResolutionJobs</code> can clear it &mdash; both iterate <code>issueRows</code>, which excludes retired rows.',
+        impact: '<code>listDueResolutionJobs</code> re-selects it on every 30-second poll, and each pass runs <code>scoreAll</code> and <code>recalculatePublishedOffers</code> across every active and missing row. In the SPA, any model reported <code>processing</code> re-arms a refetch clamped to 1 second, so the client polls the full catalog once a second and never stops. Verified <b>not currently firing</b> &mdash; zero processing jobs sit on non-live rows today &mdash; but P2 shortens the path into this state from 12 hours to one sync.',
+        fix: 'Clear the job when its model leaves the live set, in the same statement that retires the model. A job whose subject no longer exists is finished, not pending.',
+        acc: 'Test: retire a model with a processing job; the job leaves <code>processing</code>, <code>listDueResolutionJobs</code> stops returning it, and no recompute is scheduled for it.',
+        note: 'Latent today. L1 makes it reachable, so it ships with P2 or immediately after.'
+      },
+      {
+        id: 'Q2', sev: '', area: 'server', effort: 'XS',
+        title: 'A blank RETRY_HOURS silently disables the runaway guard',
+        loc: 'server/auto-evaluation.ts:62, :79-81',
+        cause: '<code>positiveInt</code> is <code>Number(raw ?? fallback)</code>, and <code>Number(\'\')</code> is 0 and finite. So <code>CATALOG_AUTO_EVALUATION_RETRY_HOURS=\'\'</code> yields a cooldown of 0, and <code>cooledDown</code> short-circuits. The sibling option one function up already handles the empty string explicitly &mdash; the same author fixed one and not the other.',
+        impact: 'The anti-runaway guard that <code>standalone.md</code> documents is off, startup prints "0h retry cooldown" as though it were configured, and an empty variable in a deployment env file is an easy and invisible way to get there.',
+        fix: 'Treat a blank value as absent, the same way <code>MAX_REQUESTS</code> does. Better: give both options one shared parser so the two cannot diverge again.',
+        acc: 'Config test: empty string, whitespace, absent and unparseable all yield the documented default. An explicit <code>0</code> still disables the guard, as documented.'
+      },
+      {
+        id: 'Q3', sev: '', area: 'client', effort: 'S',
+        title: 'Three CSS-module keys resolve to undefined',
+        loc: 'ProviderPage.tsx:108-109 · EvidencePanel.tsx:178 · Toolbar.tsx:147',
+        cause: '<code>src/vite-env.d.ts:4</code> types every module as <code>{ readonly [key: string]: string }</code>, so a key that does not exist type-checks cleanly and renders <code>class="undefined"</code>.',
+        impact: '<code>styles.state</code> has no rule in <code>ProviderPage.module.css</code>, so the provider page&rsquo;s "Loading..." and "Catalog unavailable" screens render completely unstyled &mdash; the two screens a user sees when something is already wrong. <code>styles.sourceCheck</code> and <code>styles.menuItemText</code> are the same defect in smaller places.',
+        fix: 'Add the three missing rules, then add a check to the gate that cross-references every <code>styles.x</code> reference against its module. Without the check the class of defect returns, because the type system cannot see it.',
+        acc: 'The check runs in the gate and fails on a deliberately introduced missing key. The provider page loading and error states are visually styled.'
+      }
+    ]
+  },
+  {
+    n: 'P5',
+    title: 'Delete what does not run',
+    goal: 'One dead subsystem accounted for six items on the previous roadmap. Deleting it removes the code, its tests, and the possibility of reviewing it again.',
+    exit: 'No module in the tree lacks a production caller. The repository contains no accumulated gate output.',
+    items: [
+      {
+        id: 'X1', sev: '', area: 'server', effort: 'S',
+        title: 'Delete the alerts subsystem',
+        loc: 'server/alerts.ts · server/alerts.test.ts · server/notifications.ts:3',
+        cause: '<code>reconcileAlerts</code>, <code>listAlerts</code> and <code>transitionAlert</code> have no production importer. The scheduler calls <code>reconcileCatalogNotificationLedger</code>, and <code>GET /v1/alerts</code> returns 410 pointing at <code>/v1/notifications</code>. The module survives only through its own tests plus a type-only import.',
+        impact: 'Six items on the previous roadmap &mdash; two of them marked blocking &mdash; described failures in code that cannot execute. Dead code with tests reads as live code to every reviewer who arrives after the people who retired it.',
+        fix: 'Delete the module and its test file. Move the two types <code>notifications.ts</code> still needs to where they are used, or inline them. Keep the 410 route: it is the public contract for callers still on the old endpoint.',
+        acc: 'Gate green after deletion. <code>GET /v1/alerts</code> still returns 410 with the replacement pointer. No import of <code>alerts.ts</code> remains.'
+      },
+      {
+        id: 'Q4', sev: '', area: 'repo', effort: 'XS',
+        title: 'Remove accumulated gate output and stop it recurring',
+        loc: 'catalog/*.log · data/*.log · logs/*.log',
+        cause: 'Redirected command output was written into the tree. The root <code>.gitignore</code> hides <code>*.log</code>, so it never appears in a diff or a review and simply accumulates.',
+        impact: '17 files totalling 0.19 MB today, of which <code>logs/dev.log</code> is 89%. Small, but the mechanism is unbounded and invisible by construction.',
+        fix: 'Delete the files, then add a repository check that fails when a <code>*.log</code> appears outside the directories where one legitimately belongs. State that allowlist in the check rather than in prose.',
+        acc: 'The check passes on the cleaned tree and fails when a log file is created outside the allowlist.',
+        note: 'Corrected figures. The previous roadmap cited seventy files at 1.5 MB; catalog/CLAUDE.md repeats that figure and is updated in this item.'
+      }
+    ]
+  },
+  {
+    n: 'P6',
+    title: 'Production readiness gate',
+    goal: 'Nothing here is new work. It is the evidence that the sixteen release criteria hold on one build at one time, produced by exercising the real system rather than reasoning about it.',
+    exit: 'All sixteen release criteria in section 9 hold simultaneously on a single build, with recorded evidence for each.',
+    items: [
+      {
+        id: 'V1', sev: 'crit', area: 'verify', effort: 'S',
+        title: 'Full gate on a clean tree',
+        loc: 'catalog/',
+        cause: 'A green result on one package, or a CI run nobody read, is not verification. An early failing step hides every later one.',
+        impact: 'Claiming readiness without this is the failure the engineering standard is written against.',
+        fix: 'Run <code>typecheck</code>, <code>test:backend</code>, <code>test:spa</code> and <code>build</code> and report each separately, with the Node version and the absolute working path. Send output to the scratchpad, never into the repository.',
+        acc: 'Four commands, four separately reported results, all green, on the pinned runtime.'
+      },
+      {
+        id: 'V2', sev: 'crit', area: 'verify', effort: 'M',
+        title: 'Live lifecycle rehearsal against the four providers',
+        loc: 'sync/ · server/sync-runner.ts',
+        cause: 'The lifecycle rules are only proven by running them: a new model appearing, a known model being left alone, a model disappearing, and a fetch failing.',
+        impact: 'This is the single test that covers criteria 4 through 8 together, and the only one that would catch two individually-correct fixes interacting badly.',
+        fix: 'Against a copy of the live catalog: sync normally and confirm no existing model is re-measured; introduce a roster containing one unknown model and confirm it completes to 100% alone; remove a model from a roster and confirm same-run retirement plus a red notification; fail a fetch and confirm a yellow notification with zero row changes.',
+        acc: 'Four scenarios, four recorded outcomes, matching criteria 4, 6, 7 and 8. No existing model score changes in any of them.',
+        note: 'Depends on P1 through P4. Uses a copy; the service stays the single writer.'
+      },
+      {
+        id: 'V3', sev: 'crit', area: 'verify', effort: 'S',
+        title: 'Conflict surface end to end',
+        loc: 'sync/sources/models-dev.ts · server/read-model.ts · src/',
+        cause: 'K1 and K2 must be verified together against real data, including the negative case: detection still fires when it should.',
+        impact: 'Criterion 10 is the one that distinguishes this work from disabling conflict detection. It has to be proven, not asserted.',
+        fix: 'Confirm longcat-2.0 resolves <code>structured</code> with a standing and carries no conflict; confirm the 15 resolved conflicts no longer count or badge; confirm a genuine two-source disagreement still creates an open conflict and still renders in the panel and the count.',
+        acc: 'Criteria 5, 9 and 10 recorded as passing against the real catalog.'
+      },
+      {
+        id: 'V4', sev: '', area: 'verify', effort: 'S',
+        title: 'Production configuration and build',
+        loc: 'catalog/ · standalone.md',
+        cause: 'The service binds 127.0.0.1 by design, needs no CORS header behind the Vite proxy, and reads its behaviour from documented environment variables. Those need to be correct on the shipped build, not just in development.',
+        impact: 'Configuration that is only ever exercised in dev is configuration that has not been tested.',
+        fix: 'Verify the production build serves the SPA and the API on the documented ports; confirm the bind address is unchanged and no bind switch exists; confirm every documented environment variable behaves as documented, including the Q2 cases; confirm error responses expose no credentials, upstream payloads or filesystem paths while still logging server-side.',
+        acc: 'Criteria 1 and 15 recorded. standalone.md matches observed behaviour on the built artefact.'
+      }
+    ]
+  }
+];
+
+var KEY = 'venom-catalog-production-roadmap-v1';
+var ORDER = ['pending', 'done', 'prog', 'block'];
+
+function load() {
+  try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { return {}; }
+}
+function save(s) {
+  try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) { /* private mode */ }
+}
+var state = load();
+
+var ALL = [];
+PHASES.forEach(function (p) { p.items.forEach(function (i) { ALL.push(i); }); });
+
+function esc(s) {
+  return String(s).replace(/&(?!#?\w+;)/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+/**
+ * Status committed with the file, so a closed phase stays closed for every
+ * reader. localStorage still overrides it while someone works a phase; cycling
+ * back to pending drops the local entry and returns to the committed record.
+ */
+var COMMITTED = {};
+PHASES.forEach(function (p) {
+  p.items.forEach(function (i) { if (i.status) COMMITTED[i.id] = i.status; });
+});
+function st(id) { return state[id] || COMMITTED[id] || 'pending'; }
+
+var CHEV = '<svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+var CHEV_SM = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function taskHtml(it) {
+  var h = '<div class="task" data-id="' + it.id + '" data-state="' + st(it.id) + '">';
+  h += '<button class="dot" type="button" aria-label="Cycle status for ' + it.id + '"></button>';
+  h += '<span class="tid">' + it.id + '</span>';
+  h += '<div class="tmain" data-detail><div class="tt">' + esc(it.title) + '</div><div class="tl">' + esc(it.loc) + '</div></div>';
+  h += '<span class="tmeta">' + (it.sev ? '<em class="' + (it.sev === 'crit' ? 'crit' : '') + '">' + (it.sev === 'crit' ? 'blocking' : 'high') + '</em> · ' : '') + it.area + ' · ' + it.effort + '</span>';
+  h += '<button class="tchev" type="button" data-detail aria-label="Toggle detail">' + CHEV_SM + '</button>';
+  h += '</div>';
+
+  h += '<div class="tdetail">';
+  h += '<div class="f"><h4>Root cause</h4><p>' + it.cause + '</p></div>';
+  h += '<div class="f"><h4>Impact</h4><p>' + it.impact + '</p></div>';
+  h += '<div class="f fix"><h4>Fix</h4><p>' + it.fix + '</p></div>';
+  h += '<div class="f acc"><h4>Acceptance</h4><p>' + it.acc + '</p></div>';
+  if (it.note) h += '<div class="tnote">Note · ' + it.note + '</div>';
+  h += '</div>';
+  return h;
+}
+
+function phaseHtml(p) {
+  var h = '<div class="card" data-phase="' + p.n + '">';
+  h += '<div class="row" data-toggle>';
+  h += '<span class="pbadge">' + p.n + '</span>';
+  h += '<span class="ptitle">' + esc(p.title) + '</span>';
+  h += '<span class="pcount" data-count>0/' + p.items.length + '</span>';
+  h += '<span class="pbar"><i></i></span>';
+  h += CHEV + '</div>';
+  h += '<div class="body">';
+  h += '<p class="pgoal">' + esc(p.goal) + '</p>';
+  h += '<p class="pexit"><b>Exit</b> · ' + esc(p.exit) + '</p>';
+  if (p.closed) h += '<p class="pclosed"><b>Closed ' + p.closed.on + '</b> · ' + p.closed.evidence + '</p>';
+  h += '<div class="tasks">' + p.items.map(taskHtml).join('') + '</div>';
+  h += '</div></div>';
+  return h;
+}
+
+document.getElementById('phases').innerHTML = PHASES.map(phaseHtml).join('');
+
+function refresh() {
+  var counts = { done: 0, prog: 0, block: 0, pending: 0 };
+  ALL.forEach(function (i) { counts[st(i.id)]++; });
+
+  var pct = ALL.length ? Math.round((counts.done / ALL.length) * 100) : 0;
+  document.getElementById('pct').textContent = pct + '%';
+  document.getElementById('barFill').style.width = pct + '%';
+  document.getElementById('tally').innerHTML =
+    '<span><b>' + counts.done + '</b> / ' + ALL.length + ' done</span>' +
+    '<span>In progress: <b>' + counts.prog + '</b></span>' +
+    '<span>Blocked: <b>' + counts.block + '</b></span>' +
+    '<span>Pending: <b>' + counts.pending + '</b></span>';
+
+  var strip = [];
+  PHASES.forEach(function (p) {
+    var card = document.querySelector('.card[data-phase="' + p.n + '"]');
+    var done = p.items.filter(function (i) { return st(i.id) === 'done'; }).length;
+    var clear = done === p.items.length;
+    card.classList.toggle('is-clear', clear);
+    card.querySelector('[data-count]').textContent = done + '/' + p.items.length + (clear ? ' ✓' : '');
+    card.querySelector('.pbar > i').style.width = Math.round((done / p.items.length) * 100) + '%';
+    strip.push(clear
+      ? p.n + ' ✓'
+      : '<span class="off">' + p.n + ' ' + done + '/' + p.items.length + '</span>');
+  });
+  document.getElementById('gateStrip').innerHTML = strip.join(' · ');
+}
+
+document.addEventListener('click', function (e) {
+  var dot = e.target.closest('.dot');
+  if (dot) {
+    var task = dot.closest('.task');
+    var id = task.getAttribute('data-id');
+    var next = ORDER[(ORDER.indexOf(st(id)) + 1) % ORDER.length];
+    if (next === 'pending') delete state[id]; else state[id] = next;
+    task.setAttribute('data-state', next);
+    save(state);
+    refresh();
+    return;
+  }
+
+  var det = e.target.closest('[data-detail]');
+  if (det) {
+    var t = det.closest('.task');
+    t.classList.toggle('is-open');
+    t.nextElementSibling.classList.toggle('is-shown');
+    return;
+  }
+
+  var row = e.target.closest('[data-toggle]');
+  if (row) row.parentElement.classList.toggle('is-open');
+});
+
+refresh();
+</script>
+</body>
+</html>

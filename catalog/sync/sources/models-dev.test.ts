@@ -54,6 +54,36 @@ describe('pooling intrinsic facts across sellers', () => {
     assert.deepEqual(sides.map((s) => s.value), [true, false]);
   });
 
+  test('a mode variant does not vote against the base model', async () => {
+    const specs = await feedOf({
+      'nano-gpt': { models: {
+        'longcat-2.0': { id: 'longcat-2.0', structured_output: false },
+        'longcat-2.0:thinking': { id: 'longcat-2.0:thinking', structured_output: true },
+      } },
+      openrouter: { models: { 'longcat-2.0': { id: 'longcat-2.0', structured_output: false } } },
+    });
+
+    const facts = specs.intrinsic('longcat-2.0')!;
+    assert.equal(facts.structured, false);
+    assert.equal(facts.standing?.structured, 'unanimous');
+    assert.deepEqual(facts.conflicts, []);
+  });
+
+  test('mode-only declarations are unknown without creating a conflict', async () => {
+    const specs = await feedOf({
+      'nano-gpt': { models: {
+        'longcat-2.0': { id: 'longcat-2.0', tool_call: true },
+        'longcat-2.0:thinking': { id: 'longcat-2.0:thinking', structured_output: true },
+      } },
+    });
+
+    const facts = specs.intrinsic('longcat-2.0')!;
+    assert.ok(facts);
+    assert.equal(facts.structured, undefined);
+    assert.equal(facts.tools, true);
+    assert.deepEqual(facts.conflicts, []);
+  });
+
   test('a serving limit is never pooled, however many sellers publish one', async () => {
     // Context and price belong to a seller, not to the model. Ollama serving
     // nemotron at 262144 while the model supports 512288 is the measured proof.
@@ -278,7 +308,21 @@ describe('a disagreement is answered by whoever has standing, or not at all', ()
 
     const facts = specs.intrinsic('qwen3.8-max', 'nano-gpt')!;
     assert.equal(facts.reasoning, false, 'the base listing answers, not the mode');
+    assert.equal(facts.standing?.reasoning, 'unanimous');
+  });
+
+  test("the serving seller's exact mode listing can answer that mode offering", async () => {
+    const specs = await feedOf({
+      'nano-gpt': { models: {
+        'qwen3.8-max': { id: 'qwen3.8-max', reasoning: false },
+        'qwen3.8-max:thinking': { id: 'qwen3.8-max:thinking', reasoning: true },
+      } },
+    });
+
+    const facts = specs.intrinsic('qwen3.8-max:thinking', 'nano-gpt')!;
+    assert.equal(facts.reasoning, true);
     assert.equal(facts.standing?.reasoning, 'serving-seller');
+    assert.deepEqual(facts.conflicts, []);
   });
 
   test('the vendor answers when the seller did not publish the field', async () => {

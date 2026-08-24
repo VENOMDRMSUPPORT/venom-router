@@ -5,6 +5,7 @@ import type { ApiModel } from '../../api/client';
 
 /** A complete, resolved row. Each test bends one thing. */
 function model(over: Partial<ApiModel> = {}): ApiModel {
+  const openConflicts = over.openConflicts ?? (over.conflicts ?? []).filter((conflict) => conflict.status === 'open');
   return {
     providerId: 'p',
     modelId: 'm',
@@ -31,6 +32,7 @@ function model(over: Partial<ApiModel> = {}): ApiModel {
     catalogReady: true,
     missingFacts: [],
     conflicts: [],
+    openConflicts,
     provenanceByField: {},
     modelScore: {
       value: 56, display: '56.0%', methodologyVersion: 'model-score-v1',
@@ -79,6 +81,17 @@ describe('factStateOf — the four states', () => {
       }],
     });
     expect(factStateOf(m, 'structured', null)).toBe('conflicted');
+  });
+
+  test('a resolved conflict is history, not a current conflicted state', () => {
+    const m = model({
+      conflicts: [{
+        field: 'structured', sides: [{ value: true, by: 'a' }, { value: false, by: 'b' }],
+        conflictType: 'source_disagreement', status: 'resolved', resolvedTo: 'true',
+        detectedAt: '2026-08-13T00:00:00.000Z',
+      }],
+    });
+    expect(factStateOf(m, 'structured', null)).toBe('missing');
   });
 
   test('a conflict on a DIFFERENT field does not leak into this field\'s state', () => {

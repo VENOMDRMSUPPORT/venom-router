@@ -34,7 +34,7 @@ export function factStateOf(
 ): FactStateKind {
   if (opts.notApplicable) return 'notApplicable';
   if (value !== null && value !== undefined) return 'known';
-  if ((model.conflicts ?? []).some((c) => c.field === field)) return 'conflicted';
+  if (model.openConflicts.some((c) => c.field === field)) return 'conflicted';
   return 'missing';
 }
 

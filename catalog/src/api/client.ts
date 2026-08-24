@@ -205,7 +205,10 @@ export interface ApiModel {
   resolution: ModelResolution;
   catalogReady: boolean;
   missingFacts: string[];
+  /** Full conflict history, including resolved disputes kept for audit. */
   conflicts: FieldConflict[];
+  /** Conflicts still withholding a field value, derived by the service. */
+  openConflicts: FieldConflict[];
   provenanceByField: Record<string, FactProvenance>;
   qualityRank: number | null;
   tiedAtRank: boolean;
@@ -392,6 +395,10 @@ export function normalizeModel(raw: WireModel): ApiModel {
     // is what we know, and it cannot be mistaken for a measured figure.
     rejectedCandidates: raw.rejectedCandidates ?? [],
     conflicts: raw.conflicts ?? [],
+    // Current services provide this server-owned view explicitly. Older responses
+    // may only carry the full history; filtering its explicit statuses preserves
+    // their known open-state without inventing a conflict or a resolution.
+    openConflicts: raw.openConflicts ?? (raw.conflicts ?? []).filter((conflict) => conflict.status === 'open'),
     provenanceByField: raw.provenanceByField ?? {},
 
     // A reason nobody sent is "not recorded", not an invented token — the panel
