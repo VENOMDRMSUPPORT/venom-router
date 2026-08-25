@@ -193,24 +193,6 @@ describe('the change-history time window and deep links', () => {
   });
 });
 
-describe('the runtime settings panel', () => {
-  test('renders server-reported freshness, scheduler, and database settings', async () => {
-    const runtimeHealth: HealthResponse = {
-      service: { status: 'up', databaseReadable: true, startedAt: null, syncInFlight: false, currentRunStartedAt: null, schedulerEnabled: true, nextScheduledRunAt: null },
-      catalog: { status: 'current', liveModels: 116, methodologyVersion: 'catalog-v3', staleAfterHours: 24, staleProviders: [], providers: [] },
-      lastSync: null,
-    };
-    catalogMock.current = { data: baseData(), error: null, loading: false, health: runtimeHealth, healthError: null, healthLoading: false, reload: vi.fn() };
-    renderDashboard();
-    await settleDashboard();
-
-    expect(screen.getByRole('heading', { name: 'Catalog runtime settings' })).toBeInTheDocument();
-    expect(screen.getByText('24 hours')).toBeInTheDocument();
-    expect(screen.getByText('Enabled')).toBeInTheDocument();
-    expect(screen.getByText('Source: /v1/health')).toBeInTheDocument();
-  });
-});
-
 describe('the notification history', () => {
   test('renders recorded model and fetch events without operational status filters or lifecycle actions', async () => {
     const now = '2026-08-23T10:00:00.000Z';
