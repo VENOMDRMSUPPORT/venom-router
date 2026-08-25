@@ -662,18 +662,21 @@ function VendorQualifierBadge({ model }: { model: ApiModel }) {
   const isMultiplier = lower.includes('usage') || /\d+x/i.test(lower);
   const isDiscount = lower.includes('off') || lower.includes('free') || lower.includes('%');
 
-  let typeClass = styles.promoDefault;
-  if (isNew) typeClass = styles.promoNew;
-  else if (isMultiplier) typeClass = styles.promoMultiplier;
-  else if (isDiscount) typeClass = styles.promoDiscount;
+  // Every marker chip shares one anatomy — dot, then text — and one typography.
+  // The type is allowed exactly one signal: the dot's hue. A zap icon on one
+  // chip, a pulsing dot on another and bare text on a third read as three
+  // different controls, which is what made the column look improvised.
+  let dotClass = styles.dotDefault;
+  if (isNew) dotClass = styles.dotNew;
+  else if (isMultiplier) dotClass = styles.dotMultiplier;
+  else if (isDiscount) dotClass = styles.dotDiscount;
 
   return (
     <span
-      className={`${styles.vendorQualifier} ${typeClass}`}
+      className={styles.vendorQualifier}
       title={`The provider lists this model with qualifier: "${qualifier}".`}
     >
-      {isNew && <span className={styles.promoPulseDot} />}
-      {isMultiplier && <LuZap size={12} className={styles.promoIcon} />}
+      <span className={`${styles.chipDot} ${dotClass}`} aria-hidden="true" />
       <span>{qualifier}</span>
     </span>
   );
@@ -760,6 +763,7 @@ function ModelTable({ title, models, note, costStatedOnce, focusModelId }: { tit
                             className={styles.lifecycleBadge}
                             title="The provider has marked this model deprecated. It still answers, and its own app no longer offers it."
                           >
+                            <span className={`${styles.chipDot} ${styles.dotDefault}`} aria-hidden="true" />
                             deprecated
                           </span>
                         )}
@@ -870,6 +874,7 @@ function ModelGrid({ title, models, note, costStatedOnce, focusModelId }: { titl
                     className={styles.lifecycleBadge}
                     title="The provider has marked this model deprecated. It still answers, and its own app no longer offers it."
                   >
+                    <span className={`${styles.chipDot} ${styles.dotDefault}`} aria-hidden="true" />
                     deprecated
                   </span>
                 )}

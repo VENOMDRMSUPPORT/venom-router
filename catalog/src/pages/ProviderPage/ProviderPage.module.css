@@ -1695,6 +1695,7 @@ transform: scale(1.06);
   border: 1px solid var(--border);
   border-radius: var(--radius-full);
   background: var(--background-secondary);
+  color: var(--foreground-secondary);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -1703,75 +1704,38 @@ transform: scale(1.06);
   line-height: 1.4;
 }
 
-.promoNew {
-  border-color: rgba(16, 185, 129, 0.3);
-  color: #047857;
-}
-:global([data-theme="dark"]) .promoNew {
-  border-color: rgba(52, 211, 153, 0.3);
-  color: #34d399;
-}
-
-.promoPulseDot {
+/* The one signal a chip type is allowed. Identical geometry everywhere; only
+   the hue changes, and grey is a hue too - it means "recorded, not promoted". */
+.chipDot {
   width: 6px;
   height: 6px;
+  flex: 0 0 auto;
   border-radius: 50%;
-  background: #10b981;
-  animation: pulsePromoDot 1.8s infinite ease-in-out;
-  flex-shrink: 0;
 }
-:global([data-theme="dark"]) .promoPulseDot {
+
+.dotNew {
+  background: #10b981;
+}
+:global([data-theme='dark']) .dotNew {
   background: #34d399;
 }
 
-@keyframes pulsePromoDot {
-  0%, 100% {
-    transform: scale(0.85);
-    opacity: 0.6;
-  }
-  50% {
-    transform: scale(1.35);
-    opacity: 1;
-  }
+.dotMultiplier {
+  background: #d97706;
+}
+:global([data-theme='dark']) .dotMultiplier {
+  background: #fbbf24;
 }
 
-/* "8x usage" Badge - High Energy Amber/Orange with Zap Icon */
-.promoMultiplier {
-  border-color: rgba(245, 158, 11, 0.3);
-  color: #b45309;
+.dotDiscount {
+  background: #7c3aed;
 }
-:global([data-theme="dark"]) .promoMultiplier {
-  border-color: rgba(251, 191, 36, 0.3);
-  color: #fbbf24;
+:global([data-theme='dark']) .dotDiscount {
+  background: #a78bfa;
 }
 
-.promoIcon {
-  color: currentColor;
-  flex-shrink: 0;
-  animation: promoZapBounce 2.5s infinite ease-in-out;
-}
-
-@keyframes promoZapBounce {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.25) rotate(-6deg);
-  }
-}
-
-/* "50% Off" / Discount Badge - Vibrant Violet */
-.promoDiscount {
-  border-color: rgba(139, 92, 246, 0.3);
-  color: #6d28d9;
-}
-:global([data-theme="dark"]) .promoDiscount {
-  border-color: rgba(167, 139, 250, 0.3);
-  color: #a78bfa;
-}
-
-.promoDefault {
-  color: var(--foreground-secondary);
+.dotDefault {
+  background: var(--foreground-tertiary);
 }
 
 /* The vendor's lifecycle marker. Reported, not enforced: the model still
@@ -1779,16 +1743,18 @@ transform: scale(1.06);
 .lifecycleBadge {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   padding: 3px 10px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-full);
   background: var(--background-secondary);
-  border: 1px solid var(--border);
-  color: var(--text-muted);
+  color: var(--foreground-secondary);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  line-height: 1.4;
   white-space: nowrap;
+  vertical-align: middle;
+  line-height: 1.4;
 }
 
 .focusedRow {
