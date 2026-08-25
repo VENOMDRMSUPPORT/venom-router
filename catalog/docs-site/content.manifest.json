@@ -1,0 +1,120 @@
+{
+  "pages": [
+    {
+      "slug": "/",
+      "file": "overview.md",
+      "title": "Venom Catalog",
+      "description": "Understand the independent catalog source of truth and start exploring the current product boundary.",
+      "section": "Overview",
+      "order": 1
+    },
+    {
+      "slug": "/guides/quick-start",
+      "file": "quick-start.md",
+      "title": "Quick Start",
+      "description": "Run Venom Catalog locally with its separate UI and API processes.",
+      "section": "Getting Started",
+      "order": 2
+    },
+    {
+      "slug": "/guides/how-the-catalog-works",
+      "file": "how-the-catalog-works.md",
+      "title": "How the Catalog Works",
+      "description": "Learn the Catalog ownership, single-writer, provenance, and snapshot model.",
+      "section": "Getting Started",
+      "order": 3
+    },
+    {
+      "slug": "/concepts/providers",
+      "file": "providers.md",
+      "title": "Providers",
+      "description": "Understand provider adapters, roster declarations, and provider-specific facts.",
+      "section": "Concepts",
+      "order": 4
+    },
+    {
+      "slug": "/concepts/models-and-offers",
+      "file": "models-and-offers.md",
+      "title": "Models and Offers",
+      "description": "Understand canonical model identities and provider-specific offerings.",
+      "section": "Concepts",
+      "order": 5
+    },
+    {
+      "slug": "/concepts/lifecycle-and-evidence",
+      "file": "lifecycle-and-evidence.md",
+      "title": "Lifecycle and Evidence",
+      "description": "Learn how roster results, evidence, unknown values, and conflicts are represented.",
+      "section": "Concepts",
+      "order": 6
+    },
+    {
+      "slug": "/concepts/access-model-security-boundaries",
+      "file": "access-model-security-boundaries.md",
+      "title": "Access Model & Security Boundaries",
+      "description": "Understand the current loopback-only API boundary and local diagnostic surfaces.",
+      "section": "Concepts",
+      "order": 7
+    },
+    {
+      "slug": "/api/overview",
+      "file": "api-overview.md",
+      "title": "API Overview",
+      "description": "Learn the current API base URL, contract header, and migration rules.",
+      "section": "API Reference",
+      "order": 8
+    },
+    {
+      "slug": "/api/catalog-endpoints",
+      "file": "catalog-endpoints.md",
+      "title": "Catalog Endpoints",
+      "description": "Explore the current inventory, provenance, notification, and health routes.",
+      "section": "API Reference",
+      "order": 9,
+      "apiEndpoints": [
+        { "method": "GET", "path": "/v1/health" },
+        { "method": "GET", "path": "/v1/providers" },
+        { "method": "GET", "path": "/v1/models" },
+        { "method": "GET", "path": "/v1/models/{providerId}/{modelId}/provenance" },
+        { "method": "GET", "path": "/v1/models/{providerId}/{modelId}/evaluation" },
+        { "method": "GET", "path": "/v1/changes" },
+        { "method": "GET", "path": "/v1/notifications" },
+        { "method": "PATCH", "path": "/v1/notifications/read" }
+      ]
+    },
+    {
+      "slug": "/api/sync-and-evaluations",
+      "file": "sync-and-evaluations.md",
+      "title": "Sync and Evaluations",
+      "description": "Use the current local control operations for synchronization and evaluation work.",
+      "section": "API Reference",
+      "order": 10,
+      "apiEndpoints": [
+        { "method": "POST", "path": "/v1/sync" },
+        { "method": "GET", "path": "/v1/evaluations" },
+        { "method": "POST", "path": "/v1/evaluations" },
+        { "method": "DELETE", "path": "/v1/evaluations" },
+        { "method": "POST", "path": "/v1/evaluations/regrade" }
+      ]
+    },
+    {
+      "slug": "/api/errors-and-pagination",
+      "file": "errors-and-pagination.md",
+      "title": "Errors and Pagination",
+      "description": "Understand status codes, bounded queries, migration responses, and fail-closed behavior.",
+      "section": "API Reference",
+      "order": 11,
+      "apiEndpoints": [
+        { "method": "GET", "path": "/v1/alerts" }
+      ]
+    },
+    {
+      "slug": "/reference/glossary",
+      "file": "glossary.md",
+      "title": "Glossary",
+      "description": "Use the shared vocabulary for Catalog identities, facts, evidence, and lifecycle.",
+      "section": "Reference",
+      "order": 12
+    }
+  ]
+}

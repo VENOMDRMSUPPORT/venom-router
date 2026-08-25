@@ -6,16 +6,19 @@ import { CatalogProvider } from './hooks/useCatalog';
 import { ThemeProvider } from './hooks/useTheme';
 import './index.css';
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <BrowserRouter>
-      {/* One catalog fetch for the whole app: the dashboard and the provider
-          pages read the same payload, so their counts cannot disagree. */}
-      <CatalogProvider>
+const isDocsRoute = window.location.pathname === '/docs' || window.location.pathname.startsWith('/docs/');
+
+function Root() {
+  const app = <App />;
+  return (
+    <StrictMode>
+      <BrowserRouter>
         <ThemeProvider>
-          <App />
+          {isDocsRoute ? app : <CatalogProvider>{app}</CatalogProvider>}
         </ThemeProvider>
-      </CatalogProvider>
-    </BrowserRouter>
-  </StrictMode>,
-);
+      </BrowserRouter>
+    </StrictMode>
+  );
+}
+
+createRoot(document.getElementById('root')!).render(<Root />);

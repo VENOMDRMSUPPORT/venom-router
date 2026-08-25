@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
+import DocsApp from '../docs-site/src/App';
 import { useTheme } from './hooks/useTheme';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { Header } from './components/Header/Header';
@@ -16,6 +17,10 @@ export default function App() {
   const { theme, toggleTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
+
+  // Keep docs on its own public shell instead of mounting dashboard chrome.
+  const isDocsRoute = location.pathname === '/docs' || location.pathname.startsWith('/docs/');
+  if (isDocsRoute) return <DocsApp embedded />;
 
   // Close the mobile drawer whenever the route changes.
   const handleNavigate = () => setMenuOpen(false);
