@@ -62,7 +62,7 @@ func replaceControlWindow(retire func(), open func() error) error {
 // controlpage.html (TestControlPageTitleMatchesConstant guards that) and must
 // not be a prefix of any other Venom window title — the dashboard's is
 // "Venom Router — Dashboard".
-const controlWindowTitle = "Venom Router Control"
+const controlWindowTitle = "Venom Manager"
 
 // chromiumWindowClassPrefix is the window class Chromium gives its top-level
 // windows; the trailing digit is a class generation ("Chrome_WidgetWin_1"), so

@@ -25,7 +25,11 @@ func (winOpener) Open(target string) error { return shellOpen(target) }
 // that calls Controller.ShutdownAndExit. This function locks the OS thread,
 // captures its id for WM_QUIT, installs the UIStop hook, hides the console when
 // solely owned, and blocks in systray.Run until Quit/onExit cancel ctx.
-func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller, dev *DevSupervisor) error {
+func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller, dev *DevSupervisor, catalogs ...*CatalogSupervisor) error {
+	var catalog *CatalogSupervisor
+	if len(catalogs) > 0 {
+		catalog = catalogs[0]
+	}
 	runtime.LockOSThread()
 	if err := cleanupLegacyAutostart(); err != nil {
 		c.log.Warn("tray: could not remove legacy startup script", observability.String("err", err.Error()))
@@ -41,7 +45,7 @@ func RunNativeUI(ctx context.Context, cancel context.CancelFunc, c *Controller, 
 	// app-window drives. Optional — if it fails to bind, the tray still works
 	// (left-click falls back to showing the menu).
 	var controlURL string
-	if server, err := NewControlServer(&trayControlsAdapter{ctx: ctx, c: c, dev: dev, cancel: cancel}); err != nil {
+	if server, err := NewControlServerWithCatalog(&trayControlsAdapter{ctx: ctx, c: c, dev: dev, catalog: catalog, cancel: cancel}, catalog); err != nil {
 		c.log.Error("tray: control server unavailable", observability.String("err", err.Error()))
 	} else {
 		server.Start()

@@ -1,171 +1,289 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
-<title>Venom Router Control</title>
+<title>Venom Manager</title>
 <style>
-  :root {
-    color-scheme: dark;
-    --bg: #0b0e13;
-    --surface: #141922;
-    --surface-2: #1a202b;
-    --line: #293241;
-    --line-strong: #3b485a;
-    --text: #eef2f7;
-    --muted: #98a5b5;
-    --accent: #37d6a3;
-    --accent-soft: rgba(55, 214, 163, .14);
-    --blue: #70a7ff;
-    --danger: #ff6f78;
-    --shadow: 0 12px 34px rgba(0, 0, 0, .28);
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; min-width: 420px; background: var(--bg); color: var(--text); }
-  body {
-    padding: 14px;
-    font: 13px/1.4 "Segoe UI", Inter, system-ui, sans-serif;
-  }
-  button, input { font: inherit; }
-  .shell { width: 100%; }
-  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  .brand-mark { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid rgba(55,214,163,.45); border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-size: 17px; line-height: 1; }
-  .brand-copy { min-width: 0; }
-  .brand-title { font-weight: 700; letter-spacing: .2px; }
-  .brand-subtitle { color: var(--muted); font-size: 11px; margin-top: 1px; }
-  .live { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; white-space: nowrap; }
-  .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
-  .stack { display: grid; gap: 10px; }
-  .surface { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; box-shadow: var(--shadow); }
-  .surface-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-  .section-title { font-weight: 700; letter-spacing: .15px; }
-  .section-status { color: var(--muted); font-size: 11px; margin-top: 2px; }
-  .badge { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 600; white-space: nowrap; }
-  .b-running { color: var(--accent); border-color: rgba(55,214,163,.5); background: var(--accent-soft); }
-  .b-starting { color: #f2c45d; border-color: rgba(242,196,93,.45); }
-  .b-error { color: var(--danger); border-color: rgba(255,111,120,.5); }
-  .b-stopped, .b-n\/a { color: var(--muted); }
-  .actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
-  button { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: var(--surface-2); color: var(--text); cursor: pointer; transition: background .15s ease, border-color .15s ease, transform .15s ease; }
-  button:hover:not(:disabled) { background: #222b39; border-color: var(--line-strong); transform: translateY(-1px); }
-  button:disabled { opacity: .38; cursor: not-allowed; }
-  button.primary { border-color: rgba(112,167,255,.55); color: #dce9ff; }
-  button.danger { border-color: rgba(255,111,120,.55); color: var(--danger); }
-  .notice { display: none; margin-top: 8px; padding: 7px 9px; border: 1px solid rgba(255,111,120,.35); border-radius: 8px; color: #ffabb0; background: rgba(255,111,120,.08); font-size: 11px; overflow-wrap: anywhere; }
-  .settings { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .settings-left { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
-  .settings-left input { width: 15px; height: 15px; accent-color: var(--accent); margin: 0; }
-  .settings-actions { display: flex; gap: 7px; }
-  .footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; color: var(--muted); font-size: 11px; }
-  .footer button { padding: 6px 9px; font-size: 12px; }
+:root {
+  color-scheme: dark;
+  --bg: #080b12;
+  --panel: #111722;
+  --panel-strong: #151d2b;
+  --panel-soft: #0d131d;
+  --line: #263246;
+  --line-soft: #1b2534;
+  --text: #edf3fb;
+  --muted: #8d9bb0;
+  --faint: #607086;
+  --accent: #45dbad;
+  --accent-soft: rgba(69,219,173,.12);
+  --blue: #78aafc;
+  --blue-soft: rgba(120,170,252,.12);
+  --amber: #f4c968;
+  --amber-soft: rgba(244,201,104,.12);
+  --danger: #ff7885;
+  --danger-soft: rgba(255,120,133,.11);
+  --radius-lg: 16px;
+  --radius-md: 11px;
+  --shadow: 0 20px 60px rgba(0,0,0,.22);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-width: 760px; min-height: 100%; background: var(--bg); color: var(--text); }
+body { padding: 22px; font: 13px/1.45 "Segoe UI", Inter, system-ui, sans-serif; }
+button, input { font: inherit; }
+button { border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px; background: var(--panel-strong); color: var(--text); cursor: pointer; transition: .18s ease; }
+button:hover:not(:disabled) { transform: translateY(-1px); border-color: #41536e; background: #1a2535; }
+button:disabled { opacity: .38; cursor: not-allowed; }
+button.primary { border-color: rgba(120,170,252,.5); color: #dce9ff; background: var(--blue-soft); }
+button.success { border-color: rgba(69,219,173,.5); color: #b9f6e1; background: var(--accent-soft); }
+button.danger { border-color: rgba(255,120,133,.5); color: #ffb8bf; background: var(--danger-soft); }
+button.ghost { background: transparent; }
+.app { max-width: 1180px; margin: 0 auto; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+.brand { display: flex; align-items: center; gap: 13px; }
+.brand-mark { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid rgba(69,219,173,.45); border-radius: 13px; background: var(--accent-soft); color: var(--accent); font-size: 22px; box-shadow: 0 0 0 5px rgba(69,219,173,.035); }
+.eyebrow { color: var(--accent); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; font-weight: 700; }
+.title { margin-top: 2px; font-size: 21px; font-weight: 750; letter-spacing: -.02em; }
+.subtitle { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.live { display: inline-flex; align-items: center; gap: 9px; color: var(--muted); font-size: 12px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-soft); }
+.live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 5px var(--accent-soft); }
+.hero { display: grid; grid-template-columns: 1fr auto; gap: 20px; padding: 22px; margin-bottom: 18px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: linear-gradient(120deg, #121a28 0%, #0e141f 68%); box-shadow: var(--shadow); }
+.hero h1 { margin: 0; font-size: 18px; letter-spacing: -.01em; }
+.hero p { max-width: 690px; margin: 7px 0 0; color: var(--muted); }
+.hero-meta { display: flex; align-items: flex-end; gap: 18px; }
+.metric { min-width: 78px; }
+.metric-value { font-size: 24px; font-weight: 750; }
+.metric-label { color: var(--muted); font-size: 11px; margin-top: 1px; }
+.section { margin-top: 20px; }
+.section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.section-title { font-size: 15px; font-weight: 730; }
+.section-note { color: var(--muted); font-size: 11px; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.card { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); box-shadow: 0 10px 30px rgba(0,0,0,.12); }
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.card-title { display: flex; align-items: center; gap: 9px; font-weight: 720; }
+.product-icon { width: 25px; height: 25px; display: grid; place-items: center; border-radius: 8px; color: var(--blue); background: var(--blue-soft); font-size: 12px; font-weight: 800; }
+.product-icon.catalog { color: var(--accent); background: var(--accent-soft); }
+.card-env { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.badge { border: 1px solid var(--line); border-radius: 999px; padding: 4px 9px; color: var(--muted); font-size: 10px; font-weight: 700; white-space: nowrap; text-transform: uppercase; letter-spacing: .04em; }
+.badge.ready, .badge.running, .badge.available { color: var(--accent); border-color: rgba(69,219,173,.45); background: var(--accent-soft); }
+.badge.starting, .badge.waiting, .badge.preparing { color: var(--amber); border-color: rgba(244,201,104,.45); background: var(--amber-soft); }
+.badge.error, .badge.unreachable { color: var(--danger); border-color: rgba(255,120,133,.45); background: var(--danger-soft); }
+.card-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 16px 0 13px; padding: 11px 12px; border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--panel-soft); }
+.status-main { font-weight: 650; }
+.status-detail { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.status-time { color: var(--faint); font-size: 10px; white-space: nowrap; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+.stat { padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 9px; background: rgba(255,255,255,.015); }
+.stat-value { font-size: 15px; font-weight: 700; }
+.stat-label { color: var(--muted); font-size: 10px; margin-top: 2px; }
+.actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.actions button { padding: 7px 9px; font-size: 12px; }
+.catalog-extra { display: none; margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.catalog-extra.visible { display: block; }
+.catalog-row { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 11px; padding: 3px 0; }
+.catalog-row strong { color: var(--text); font-weight: 650; text-align: right; }
+.timeline { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); overflow: hidden; }
+.timeline-row { display: grid; grid-template-columns: 94px 1fr auto; gap: 12px; align-items: center; padding: 12px 15px; border-bottom: 1px solid var(--line-soft); }
+.timeline-row:last-child { border-bottom: 0; }
+.timeline-time { color: var(--faint); font-variant-numeric: tabular-nums; font-size: 11px; }
+.timeline-text { color: var(--muted); }
+.timeline-text strong { color: var(--text); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.dot.warn { background: var(--amber); }
+.dot.error { background: var(--danger); }
+.bottom { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel-soft); }
+.bottom-copy { color: var(--muted); font-size: 11px; }
+.bottom-actions { display: flex; gap: 7px; }
+@media (max-width: 900px) { html, body { min-width: 0; } body { padding: 14px; } .grid { grid-template-columns: 1fr; } .hero { grid-template-columns: 1fr; } .hero-meta { align-items: flex-start; } }
 </style>
 </head>
 <body>
-<div class="shell">
+<div class="app">
   <header class="topbar">
     <div class="brand">
       <div class="brand-mark">▲</div>
-      <div class="brand-copy">
-        <div class="brand-title">Venom Router</div>
-        <div class="brand-subtitle">Local control center</div>
+      <div>
+        <div class="eyebrow">Local operations</div>
+        <div class="title">Venom Manager</div>
+        <div class="subtitle">Router and Catalog control center</div>
       </div>
     </div>
     <div class="live">Live status</div>
   </header>
 
-  <main class="stack">
-    <section class="surface">
-      <div class="surface-head">
-        <div>
-          <div class="section-title">Production</div>
-          <div class="section-status" id="prod-status">Loading status…</div>
-        </div>
-        <span id="prod-badge" class="badge b-stopped">…</span>
-      </div>
-      <div class="actions">
-        <button id="prod-open" class="primary">Open Dashboard</button>
-        <button id="prod-start">Start</button>
-        <button id="prod-stop">Stop</button>
-      </div>
-    </section>
+  <section class="hero">
+    <div>
+      <h1>System overview</h1>
+      <p>Manage independent Production and Development environments from one place. Operations return immediately while readiness continues in the background.</p>
+    </div>
+    <div class="hero-meta">
+      <div class="metric"><div class="metric-value" id="ready-count">0</div><div class="metric-label">Ready services</div></div>
+      <div class="metric"><div class="metric-value" id="active-count">0</div><div class="metric-label">Active groups</div></div>
+      <div class="metric"><div class="metric-value" id="error-count">0</div><div class="metric-label">Errors</div></div>
+    </div>
+  </section>
 
-    <section class="surface">
-      <div class="surface-head">
-        <div>
-          <div class="section-title">Development</div>
-          <div class="section-status" id="dev-status">Loading status…</div>
-        </div>
-        <span id="dev-badge" class="badge b-stopped">…</span>
-      </div>
-      <div id="dev-error" class="notice"></div>
-      <div class="actions">
-        <button id="dev-open" class="primary">Open Dashboard</button>
-        <button id="dev-start">Start</button>
-        <button id="dev-stop">Stop</button>
-        <button id="dev-logs">View Log</button>
-      </div>
-    </section>
+  <section class="section">
+    <div class="section-head"><div><div class="section-title">Router environments</div><div class="section-note">Production and live-reload Development share the Router control plane rules.</div></div></div>
+    <div class="grid">
+      <article class="card" id="router-production-card">
+        <div class="card-head"><div><div class="card-title"><span class="product-icon">R</span>Router Production</div><div class="card-env">Embedded dashboard · 127.0.0.1:8081</div></div><span id="prod-badge" class="badge">loading</span></div>
+        <div class="card-status"><div><div id="prod-status" class="status-main">Loading status</div><div class="status-detail">In-process Router server</div></div><div id="prod-time" class="status-time">—</div></div>
+        <div class="stats"><div class="stat"><div id="prod-port" class="stat-value">8081</div><div class="stat-label">Control port</div></div><div class="stat"><div id="prod-health" class="stat-value">—</div><div class="stat-label">Health</div></div><div class="stat"><div id="prod-lock" class="stat-value">Single</div><div class="stat-label">Writer policy</div></div></div>
+        <div class="actions"><button id="prod-open" class="primary">Open dashboard</button><button id="prod-start" class="success">Start</button><button id="prod-stop">Stop</button><button id="prod-restart">Restart</button></div>
+      </article>
 
-    <section class="surface">
-      <div class="settings">
-        <label class="settings-left"><input type="checkbox" id="autostart"> <span>Start with Windows</span></label>
-        <div class="settings-actions"><button id="logs">View Logs</button></div>
-      </div>
-      <div class="footer">
-        <span>Venom Router is running in the system tray.</span>
-        <button id="quit" class="danger">Quit</button>
-      </div>
-    </section>
-  </main>
+      <article class="card" id="router-development-card">
+        <div class="card-head"><div><div class="card-title"><span class="product-icon">R</span>Router Development</div><div class="card-env">Vite HMR · 127.0.0.1:8088</div></div><span id="dev-badge" class="badge">loading</span></div>
+        <div class="card-status"><div><div id="dev-status" class="status-main">Loading status</div><div id="dev-detail" class="status-detail">Watched backend and frontend</div></div><div id="dev-time" class="status-time">—</div></div>
+        <div class="stats"><div class="stat"><div id="dev-backend" class="stat-value">—</div><div class="stat-label">Backend</div></div><div class="stat"><div id="dev-frontend" class="stat-value">—</div><div class="stat-label">Frontend</div></div><div class="stat"><div id="dev-root" class="stat-value">—</div><div class="stat-label">Repo status</div></div></div>
+        <div class="actions"><button id="dev-open" class="primary">Open dashboard</button><button id="dev-start" class="success">Start</button><button id="dev-stop">Stop</button><button id="dev-restart">Restart</button><button id="dev-logs" class="ghost">View logs</button></div>
+      </article>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><div><div class="section-title">Catalog environments</div><div class="section-note">Catalog remains an independent service and owns its own database, freshness, and scores.</div></div><button id="catalog-refresh" class="ghost">Refresh catalog</button></div>
+    <div class="grid">
+      <article class="card" id="catalog-production-card">
+        <div class="card-head"><div><div class="card-title"><span class="product-icon catalog">C</span>Catalog Production</div><div class="card-env">API 127.0.0.1:8791 · UI 127.0.0.1:5173</div></div><span id="catalog-prod-badge" class="badge">checking</span></div>
+        <div class="card-status"><div><div id="catalog-prod-status" class="status-main">Checking Catalog API</div><div class="status-detail">Read-only health projection</div></div><div id="catalog-prod-time" class="status-time">—</div></div>
+        <div class="stats"><div class="stat"><div id="catalog-prod-models" class="stat-value">—</div><div class="stat-label">Live models</div></div><div class="stat"><div id="catalog-prod-sync" class="stat-value">—</div><div class="stat-label">Sync</div></div><div class="stat"><div id="catalog-prod-db" class="stat-value">—</div><div class="stat-label">Database</div></div></div>
+        <div class="actions"><button id="catalog-prod-open" class="primary">Open catalog</button><button id="catalog-prod-start" class="success">Start</button><button id="catalog-prod-stop">Stop</button><button id="catalog-prod-restart">Restart</button></div>
+        <div id="catalog-prod-extra" class="catalog-extra"><div class="catalog-row"><span>Catalog freshness</span><strong id="catalog-prod-freshness">—</strong></div><div class="catalog-row"><span>Methodology</span><strong id="catalog-prod-methodology">—</strong></div><div class="catalog-row"><span>Last sync</span><strong id="catalog-prod-last-sync">—</strong></div></div>
+      </article>
+
+      <article class="card" id="catalog-development-card">
+        <div class="card-head"><div><div class="card-title"><span class="product-icon catalog">C</span>Catalog Development</div><div class="card-env">API 127.0.0.1:8792 · UI 127.0.0.1:5174</div></div><span id="catalog-dev-badge" class="badge">checking</span></div>
+        <div class="card-status"><div><div id="catalog-dev-status" class="status-main">Checking Catalog API</div><div class="status-detail">Independent development profile</div></div><div id="catalog-dev-time" class="status-time">—</div></div>
+        <div class="stats"><div class="stat"><div id="catalog-dev-models" class="stat-value">—</div><div class="stat-label">Live models</div></div><div class="stat"><div id="catalog-dev-sync" class="stat-value">—</div><div class="stat-label">Sync</div></div><div class="stat"><div id="catalog-dev-db" class="stat-value">—</div><div class="stat-label">Database</div></div></div>
+        <div class="actions"><button id="catalog-dev-open" class="primary">Open catalog</button><button id="catalog-dev-start" class="success">Start</button><button id="catalog-dev-stop">Stop</button><button id="catalog-dev-restart">Restart</button></div>
+        <div id="catalog-dev-extra" class="catalog-extra"><div class="catalog-row"><span>Catalog freshness</span><strong id="catalog-dev-freshness">—</strong></div><div class="catalog-row"><span>Methodology</span><strong id="catalog-dev-methodology">—</strong></div><div class="catalog-row"><span>Last sync</span><strong id="catalog-dev-last-sync">—</strong></div></div>
+      </article>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><div><div class="section-title">Activity timeline</div><div class="section-note">Lifecycle events are local and secret-free.</div></div><button id="logs" class="ghost">Open Router logs</button></div>
+    <div id="timeline" class="timeline"><div class="timeline-row"><span class="timeline-time">now</span><span class="timeline-text"><strong>Manager ready.</strong> Waiting for service activity.</span><span class="dot"></span></div></div>
+  </section>
+
+  <footer class="bottom">
+    <div class="bottom-copy"><strong>Safe local control.</strong> Router and Catalog data remain owned by their respective services.</div>
+    <div class="bottom-actions"><label style="display:flex;align-items:center;gap:7px;color:var(--muted);font-size:11px"><input type="checkbox" id="autostart"> Start with Windows</label><button id="quit" class="danger">Quit manager</button></div>
+  </footer>
 </div>
 <script>
 const TOKEN = "__VENOM_CONTROL_TOKEN__";
-async function post(path, body) {
-  const opts = { method: "POST", headers: { "X-Control-Token": TOKEN } };
-  if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
-  try { await fetch(path, opts); } catch (e) {}
-  setTimeout(refresh, 250);
+const events = [];
+const el = id => document.getElementById(id);
+async function getJSON(path) {
+  const response = await fetch(path, { headers: { "X-Control-Token": TOKEN }, cache: "no-store" });
+  if (!response.ok) throw new Error("request failed");
+  return response.json();
 }
-function badge(el, state) {
-  const s = (state || "Stopped").toLowerCase().replace(/[^a-z/]/g, "-");
-  el.textContent = state || "Stopped";
-  el.className = "badge b-" + s;
+async function post(path, body) {
+  const options = { method: "POST", headers: { "X-Control-Token": TOKEN } };
+  if (body !== undefined) { options.headers["Content-Type"] = "application/json"; options.body = JSON.stringify(body); }
+  try { await fetch(path, options); } catch (_) {}
+  setTimeout(refresh, 200);
+}
+function setBadge(node, value) {
+  const normalized = String(value || "unknown").toLowerCase().replace(/[^a-z_]/g, "-");
+  node.textContent = String(value || "unknown").replaceAll("_", " ");
+  node.className = "badge " + normalized;
+}
+function addEvent(text, kind = "ok") {
+  events.unshift({ text, kind, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) });
+  while (events.length > 5) events.pop();
+  el("timeline").innerHTML = events.map(event => `<div class="timeline-row"><span class="timeline-time">${event.time}</span><span class="timeline-text">${event.text}</span><span class="dot ${event.kind === "warn" ? "warn" : event.kind === "error" ? "error" : ""}"></span></div>`).join("");
+}
+function renderRouter(st) {
+  const prod = st.prod || "stopped";
+  setBadge(el("prod-badge"), prod);
+  el("prod-status").textContent = prod === "running" ? "Ready to accept requests" : prod === "error" ? "Startup or shutdown error" : "Stopped";
+  el("prod-health").textContent = prod === "running" ? "OK" : "—";
+  el("prod-open").disabled = prod !== "running";
+  el("prod-start").disabled = prod === "running";
+  el("prod-stop").disabled = prod !== "running";
+  el("prod-restart").disabled = prod === "starting";
+
+  const available = !!st.devAvailable;
+  const overall = available ? (st.devOverall || "Stopped") : "unavailable";
+  setBadge(el("dev-badge"), overall);
+  el("dev-status").textContent = available ? (st.devError || "Development environment available") : "Development repository not found";
+  el("dev-detail").textContent = available ? "Watched backend and Vite frontend" : "Set VENOM_DEV_ROOT or place the executable in the repository";
+  el("dev-backend").textContent = available ? (st.devBackend || "—") : "—";
+  el("dev-frontend").textContent = available ? (st.devFrontend || "—") : "—";
+  el("dev-root").textContent = available ? "Found" : "Missing";
+  const active = available && overall !== "Stopped";
+  el("dev-open").disabled = !(st.devBackend === "Running" && st.devFrontend === "Running");
+  el("dev-start").disabled = !available || active;
+  el("dev-stop").disabled = !active;
+  el("dev-restart").disabled = !available || active === false;
+  el("dev-logs").style.display = st.devLogAvailable ? "inline-block" : "none";
+  el("autostart").checked = !!st.autostart;
+}
+function renderCatalogTarget(prefix, target) {
+  const available = target && target.status === "available";
+  const status = available ? (target.catalogStatus || target.serviceStatus || "available") : "unreachable";
+  setBadge(el(prefix + "-badge"), status);
+  el(prefix + "-status").textContent = available ? (target.serviceStatus === "up" ? "Catalog service available" : "Catalog service degraded") : "Catalog API unavailable";
+  const processState = target.processState || (available ? "ready" : "unavailable");
+  const configured = processState !== "unavailable";
+  const active = ["preparing", "starting", "waiting_readiness", "ready", "degraded"].includes(processState);
+  el(prefix + "-start").disabled = !configured || active;
+  el(prefix + "-stop").disabled = !configured || !active;
+  el(prefix + "-restart").disabled = !configured || processState === "starting" || processState === "stopping";
+  el(prefix + "-models").textContent = available ? String(target.liveModels ?? "—") : "—";
+  el(prefix + "-sync").textContent = available ? (target.syncInFlight ? "Running" : "Idle") : "—";
+  el(prefix + "-db").textContent = available ? (target.databaseReadable ? "Readable" : "Unavailable") : "—";
+  el(prefix + "-freshness").textContent = available ? (target.catalogStatus || "unknown") : "—";
+  el(prefix + "-methodology").textContent = available ? (target.methodologyVersion || "unknown") : "—";
+  el(prefix + "-last-sync").textContent = available ? (target.lastSyncAt ? new Date(target.lastSyncAt).toLocaleString() : "unknown") : "—";
+  el(prefix + "-extra").classList.toggle("visible", available);
+  el(prefix + "-open").disabled = !available;
+  el(prefix + "-time").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 async function refresh() {
-  let st;
-  try { const r = await fetch("/state", { headers: { "X-Control-Token": TOKEN } }); st = await r.json(); } catch (e) { return; }
-  const prodState = st.prod.charAt(0).toUpperCase() + st.prod.slice(1);
-  badge(document.getElementById("prod-badge"), prodState);
-  document.getElementById("prod-status").textContent = "Status: " + prodState;
-  const prodRunning = st.prod === "running";
-  const devActive = st.devAvailable && st.devOverall !== "Stopped";
-  document.getElementById("prod-open").disabled = !prodRunning;
-  document.getElementById("prod-start").disabled = prodRunning || devActive;
-  document.getElementById("prod-stop").disabled = !prodRunning;
-
-  badge(document.getElementById("dev-badge"), st.devAvailable ? st.devOverall : "N/A");
-  document.getElementById("dev-status").textContent = st.devAvailable ? ("Backend: " + st.devBackend + " · Frontend: " + st.devFrontend) : "No dev repo found";
-  document.getElementById("dev-open").disabled = !(st.devFrontend === "Running" && st.devBackend === "Running");
-  document.getElementById("dev-start").disabled = !st.devAvailable || devActive;
-  document.getElementById("dev-stop").disabled = !devActive;
-  const devError = document.getElementById("dev-error");
-  devError.textContent = st.devError || "";
-  devError.style.display = st.devError ? "block" : "none";
-  document.getElementById("dev-logs").style.display = st.devLogAvailable ? "inline-block" : "none";
-  document.getElementById("autostart").checked = !!st.autostart;
+  try {
+    const router = await getJSON("/state");
+    renderRouter(router);
+    const catalog = await getJSON("/catalog/state");
+    renderCatalogTarget("catalog-prod", catalog.production);
+    renderCatalogTarget("catalog-dev", catalog.development);
+    const ready = [router.prod === "running", router.devBackend === "Running" && router.devFrontend === "Running", catalog.production?.status === "available", catalog.development?.status === "available"].filter(Boolean).length;
+    const active = [router.prod === "running", router.devOverall && router.devOverall !== "Stopped"].filter(Boolean).length;
+    const errors = [router.prod === "error", router.devOverall === "Error", catalog.production?.status === "unreachable", catalog.development?.status === "unreachable"].filter(Boolean).length;
+    el("ready-count").textContent = String(ready);
+    el("active-count").textContent = String(active);
+    el("error-count").textContent = String(errors);
+  } catch (_) {}
 }
-document.getElementById("prod-open").onclick = () => post("/prod/open");
-document.getElementById("prod-start").onclick = () => post("/prod/start");
-document.getElementById("prod-stop").onclick = () => post("/prod/stop");
-document.getElementById("dev-open").onclick = () => post("/dev/open");
-document.getElementById("dev-start").onclick = () => post("/dev/start");
-document.getElementById("dev-stop").onclick = () => post("/dev/stop");
-document.getElementById("dev-logs").onclick = () => post("/dev/logs");
-document.getElementById("logs").onclick = () => post("/logs");
-document.getElementById("autostart").onchange = e => post("/autostart", { enabled: e.target.checked });
-document.getElementById("quit").onclick = () => { if (confirm("Stop Venom Router completely and exit?")) post("/quit"); };
+el("prod-open").onclick = () => post("/prod/open");
+el("prod-start").onclick = () => { addEvent("Starting <strong>Router Production</strong>."); post("/prod/start"); };
+el("prod-stop").onclick = () => { addEvent("Stopping <strong>Router Production</strong>."); post("/prod/stop"); };
+el("prod-restart").onclick = () => { addEvent("Restarting <strong>Router Production</strong>.", "warn"); post("/prod/restart"); };
+el("dev-open").onclick = () => post("/dev/open");
+el("dev-start").onclick = () => { addEvent("Starting <strong>Router Development</strong>; readiness will continue in the background."); post("/dev/start"); };
+el("dev-stop").onclick = () => { addEvent("Stopping <strong>Router Development</strong>."); post("/dev/stop"); };
+el("dev-restart").onclick = () => { addEvent("Restarting <strong>Router Development</strong>.", "warn"); post("/dev/restart"); };
+el("dev-logs").onclick = () => post("/dev/logs");
+el("catalog-prod-open").onclick = () => window.open("http://127.0.0.1:5173/", "_blank");
+el("catalog-prod-start").onclick = () => { addEvent("Starting <strong>Catalog Production</strong>."); post("/catalog/production/start"); };
+el("catalog-prod-stop").onclick = () => { addEvent("Stopping <strong>Catalog Production</strong>."); post("/catalog/production/stop"); };
+el("catalog-prod-restart").onclick = () => { addEvent("Restarting <strong>Catalog Production</strong>.", "warn"); post("/catalog/production/restart"); };
+el("catalog-dev-open").onclick = () => window.open("http://127.0.0.1:5174/", "_blank");
+el("catalog-dev-start").onclick = () => { addEvent("Starting <strong>Catalog Development</strong>."); post("/catalog/development/start"); };
+el("catalog-dev-stop").onclick = () => { addEvent("Stopping <strong>Catalog Development</strong>."); post("/catalog/development/stop"); };
+el("catalog-dev-restart").onclick = () => { addEvent("Restarting <strong>Catalog Development</strong>.", "warn"); post("/catalog/development/restart"); };
+el("catalog-refresh").onclick = () => { addEvent("Refreshing <strong>Catalog health</strong>."); refresh(); };
+el("logs").onclick = () => post("/logs");
+el("autostart").onchange = event => post("/autostart", { enabled: event.target.checked });
+el("quit").onclick = () => { if (confirm("Stop managed services and exit Venom Manager?")) post("/quit"); };
 refresh();
 setInterval(refresh, 1500);
 </script>

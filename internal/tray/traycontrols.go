@@ -8,10 +8,11 @@ import "context"
 // stop, dev teardown) are launched in their own goroutine so a control-server
 // HTTP handler returns promptly and the page polls /state for the result.
 type trayControlsAdapter struct {
-	ctx    context.Context
-	c      *Controller
-	dev    *DevSupervisor
-	cancel context.CancelFunc
+	ctx     context.Context
+	c       *Controller
+	dev     *DevSupervisor
+	catalog *CatalogSupervisor
+	cancel  context.CancelFunc
 }
 
 var _ TrayControls = (*trayControlsAdapter)(nil)
@@ -34,10 +35,43 @@ func (a *trayControlsAdapter) State() ControlState {
 	}
 }
 
-func (a *trayControlsAdapter) StartProd() { go a.c.Start(a.ctx) }
-func (a *trayControlsAdapter) StopProd()  { go a.c.Stop() }
-func (a *trayControlsAdapter) StartDev()  { go EnterDevMode(a.ctx, a.c, a.dev) }
-func (a *trayControlsAdapter) StopDev()   { go ExitDevMode(a.ctx, a.c, a.dev) }
+func (a *trayControlsAdapter) StartProd()   { go a.c.Start(a.ctx) }
+func (a *trayControlsAdapter) StopProd()    { go a.c.Stop() }
+func (a *trayControlsAdapter) RestartProd() { go a.c.Restart(a.ctx) }
+func (a *trayControlsAdapter) StartDev()    { go EnterDevMode(a.ctx, a.c, a.dev) }
+func (a *trayControlsAdapter) StopDev()     { go ExitDevMode(a.ctx, a.c, a.dev) }
+func (a *trayControlsAdapter) RestartDev()  { go a.dev.Restart() }
+
+func (a *trayControlsAdapter) StartCatalogProduction() {
+	if a.catalog != nil {
+		go a.catalog.StartProduction()
+	}
+}
+func (a *trayControlsAdapter) StopCatalogProduction() {
+	if a.catalog != nil {
+		go a.catalog.StopProduction()
+	}
+}
+func (a *trayControlsAdapter) RestartCatalogProduction() {
+	if a.catalog != nil {
+		go a.catalog.RestartProduction()
+	}
+}
+func (a *trayControlsAdapter) StartCatalogDevelopment() {
+	if a.catalog != nil {
+		go a.catalog.StartDevelopment()
+	}
+}
+func (a *trayControlsAdapter) StopCatalogDevelopment() {
+	if a.catalog != nil {
+		go a.catalog.StopDevelopment()
+	}
+}
+func (a *trayControlsAdapter) RestartCatalogDevelopment() {
+	if a.catalog != nil {
+		go a.catalog.RestartDevelopment()
+	}
+}
 
 func (a *trayControlsAdapter) OpenProdDashboard() { a.c.OpenDashboard() }
 func (a *trayControlsAdapter) OpenDevDashboard()  { a.c.OpenURL(a.dev.DashboardURL()) }

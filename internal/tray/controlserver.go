@@ -11,6 +11,10 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
+
+	"github.com/VENOMDRMSUPPORT/venom-router/internal/manager"
 )
 
 // controlPageTemplate is the self-contained control window (inline CSS + JS, no
@@ -39,6 +43,37 @@ type ControlState struct {
 	DevError        string `json:"devError,omitempty"`
 	DevLogAvailable bool   `json:"devLogAvailable"`
 	Autostart       bool   `json:"autostart"`
+}
+
+// CatalogState is a manager-owned view of two independent Catalog API targets.
+// The values are projections returned by Catalog itself; Manager never opens a
+// Catalog database or derives freshness and score semantics locally.
+type CatalogState struct {
+	Production  CatalogTargetState `json:"production"`
+	Development CatalogTargetState `json:"development"`
+}
+
+type CatalogTargetState struct {
+	Environment        string `json:"environment"`
+	APIURL             string `json:"apiUrl"`
+	DashboardURL       string `json:"dashboardUrl"`
+	Status             string `json:"status"`
+	ProcessState       string `json:"processState,omitempty"`
+	ServiceStatus      string `json:"serviceStatus,omitempty"`
+	CatalogStatus      string `json:"catalogStatus,omitempty"`
+	DatabaseReadable   bool   `json:"databaseReadable"`
+	LiveModels         int    `json:"liveModels"`
+	SyncInFlight       bool   `json:"syncInFlight"`
+	MethodologyVersion string `json:"methodologyVersion,omitempty"`
+	LastSyncAt         string `json:"lastSyncAt,omitempty"`
+	Error              string `json:"error,omitempty"`
+}
+
+type catalogTargets struct {
+	production       *manager.CatalogAdapter
+	development      *manager.CatalogAdapter
+	productionState  func() string
+	developmentState func() string
 }
 
 // TrayControls is the set of operations the control window drives. It is
@@ -73,6 +108,24 @@ type ControlServer struct {
 // NewControlServer binds the loopback listener, mints a per-startup token, and
 // builds the hardened handler. Call Start to serve and Shutdown to stop.
 func NewControlServer(controls TrayControls) (*ControlServer, error) {
+	return newControlServer(controls, catalogTargets{})
+}
+
+// NewControlServerWithCatalog adds the standalone Catalog service projection and
+// lifecycle actions to the manager window. Catalog remains an independent writer.
+func NewControlServerWithCatalog(controls TrayControls, supervisor *CatalogSupervisor) (*ControlServer, error) {
+	if supervisor == nil {
+		return newControlServer(controls, catalogTargets{})
+	}
+	return newControlServer(controls, catalogTargets{
+		production:       supervisor.ProductionAdapter(),
+		development:      supervisor.DevelopmentAdapter(),
+		productionState:  func() string { return supervisor.State("catalog.production") },
+		developmentState: func() string { return supervisor.State("catalog.development") },
+	})
+}
+
+func newControlServer(controls TrayControls, catalogs catalogTargets) (*ControlServer, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("tray: control listener: %w", err)
@@ -84,7 +137,7 @@ func NewControlServer(controls TrayControls) (*ControlServer, error) {
 	}
 	selfOrigin := "http://" + ln.Addr().String()
 	return &ControlServer{
-		srv: &http.Server{Handler: newControlHandler(controls, token, selfOrigin)},
+		srv: &http.Server{Handler: newControlHandler(controls, token, selfOrigin, catalogs)},
 		ln:  ln,
 		url: selfOrigin + "/",
 	}, nil
@@ -110,7 +163,11 @@ func randomToken() (string, error) {
 // newControlHandler builds the control server's HTTP handler. token and
 // selfOrigin drive the security middleware (added by securityMiddleware); the
 // route mux dispatches each path to the matching TrayControls method.
-func newControlHandler(controls TrayControls, token, selfOrigin string) http.Handler {
+func newControlHandler(controls TrayControls, token, selfOrigin string, configured ...catalogTargets) http.Handler {
+	catalogs := catalogTargets{}
+	if len(configured) > 0 {
+		catalogs = configured[0]
+	}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
@@ -139,6 +196,8 @@ func newControlHandler(controls TrayControls, token, selfOrigin string) http.Han
 		_, _ = io.WriteString(w, strings.ReplaceAll(controlPageTemplate, "__VENOM_CONTROL_TOKEN__", token))
 	})
 
+	mux.HandleFunc("/catalog/state", catalogStateHandler(catalogs))
+
 	mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -153,11 +212,51 @@ func newControlHandler(controls TrayControls, token, selfOrigin string) http.Han
 
 	mux.Handle("/prod/start", postAction(controls.StartProd))
 	mux.Handle("/prod/stop", postAction(controls.StopProd))
+	mux.Handle("/prod/restart", postAction(func() {
+		if restart, ok := controls.(interface{ RestartProd() }); ok {
+			restart.RestartProd()
+		}
+	}))
 	mux.Handle("/prod/open", postAction(controls.OpenProdDashboard))
 	mux.Handle("/dev/start", postAction(controls.StartDev))
 	mux.Handle("/dev/stop", postAction(controls.StopDev))
+	mux.Handle("/dev/restart", postAction(func() {
+		if restart, ok := controls.(interface{ RestartDev() }); ok {
+			restart.RestartDev()
+		}
+	}))
 	mux.Handle("/dev/open", postAction(controls.OpenDevDashboard))
 	mux.Handle("/dev/logs", postAction(controls.OpenDevLogs))
+	mux.Handle("/catalog/production/start", postAction(func() {
+		if action, ok := controls.(interface{ StartCatalogProduction() }); ok {
+			action.StartCatalogProduction()
+		}
+	}))
+	mux.Handle("/catalog/production/stop", postAction(func() {
+		if action, ok := controls.(interface{ StopCatalogProduction() }); ok {
+			action.StopCatalogProduction()
+		}
+	}))
+	mux.Handle("/catalog/production/restart", postAction(func() {
+		if action, ok := controls.(interface{ RestartCatalogProduction() }); ok {
+			action.RestartCatalogProduction()
+		}
+	}))
+	mux.Handle("/catalog/development/start", postAction(func() {
+		if action, ok := controls.(interface{ StartCatalogDevelopment() }); ok {
+			action.StartCatalogDevelopment()
+		}
+	}))
+	mux.Handle("/catalog/development/stop", postAction(func() {
+		if action, ok := controls.(interface{ StopCatalogDevelopment() }); ok {
+			action.StopCatalogDevelopment()
+		}
+	}))
+	mux.Handle("/catalog/development/restart", postAction(func() {
+		if action, ok := controls.(interface{ RestartCatalogDevelopment() }); ok {
+			action.RestartCatalogDevelopment()
+		}
+	}))
 	mux.Handle("/logs", postAction(controls.OpenLogs))
 	mux.Handle("/quit", postAction(controls.Quit))
 
@@ -191,6 +290,57 @@ func newControlHandler(controls TrayControls, token, selfOrigin string) http.Han
 // refused before any side effect. GET / is exempt because it is the top-level
 // navigation from the app-window, which cannot set a custom header; it only
 // returns the page, and same-origin policy keeps the baked-in token secret.
+func catalogStateHandler(targets catalogTargets) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2200*time.Millisecond)
+		defer cancel()
+		result := CatalogState{
+			Production:  CatalogTargetState{Environment: "production", APIURL: "http://127.0.0.1:8791/v1", DashboardURL: "http://127.0.0.1:5173", Status: "unreachable"},
+			Development: CatalogTargetState{Environment: "development", APIURL: "http://127.0.0.1:8792/v1", DashboardURL: "http://127.0.0.1:5174", Status: "unreachable"},
+		}
+		if targets.productionState != nil {
+			result.Production.ProcessState = targets.productionState()
+		}
+		if targets.developmentState != nil {
+			result.Development.ProcessState = targets.developmentState()
+		}
+		var wg sync.WaitGroup
+		read := func(adapter *manager.CatalogAdapter, target *CatalogTargetState) {
+			defer wg.Done()
+			if adapter == nil {
+				target.Error = "Catalog target is not configured"
+				return
+			}
+			health, err := adapter.Health(ctx)
+			if err != nil {
+				target.Error = "Catalog API is unavailable"
+				return
+			}
+			target.Status = "available"
+			target.ServiceStatus = health.ServiceStatus
+			target.CatalogStatus = health.CatalogStatus
+			target.DatabaseReadable = health.DatabaseReadable
+			target.LiveModels = health.LiveModels
+			target.SyncInFlight = health.SyncInFlight
+			target.MethodologyVersion = health.MethodologyVersion
+			if health.LastSync != nil && health.LastSync.FinishedAt != nil {
+				target.LastSyncAt = health.LastSync.FinishedAt.Format(time.RFC3339)
+			}
+		}
+		wg.Add(2)
+		go read(targets.production, &result.Production)
+		go read(targets.development, &result.Development)
+		wg.Wait()
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
+	}
+}
+
 func securityMiddleware(token, selfOrigin string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/favicon.ico") {

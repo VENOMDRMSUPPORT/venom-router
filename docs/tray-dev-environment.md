@@ -6,19 +6,27 @@ to what, and how the dev child is contained. Accurate to the code as of
 
 ## Two tray sections
 
-- **Production** — the in-process server serving the **embedded** dashboard at
+The tray now opens a Manager control center rather than a compact three-card
+window. The Manager has separate cards for Router Production, Router
+Development, Catalog Production, and Catalog Development, plus system overview,
+activity, and diagnostics-oriented status details.
+
+- **Router Production** — the in-process server serving the **embedded** dashboard at
   `http://127.0.0.1:8081`. Menu items: Open Production Dashboard,
   Start/Stop/Restart Production.
-- **Development** — live-reload development. Menu items: Open Development
-  Dashboard, Start/Stop/Restart Development, plus a `Dev Status:` info line
-  (Stopped / Starting / Running / Error). Development stops the embedded
-  production server, starts the Vite frontend plus a watched source backend on
-  8081, and keeps using the single canonical database.
+- **Router Development** — live-reload development. The Manager stops the
+  embedded production server before starting the Vite frontend and watched source
+  backend. The backend remains on 8081 and keeps using the single canonical database.
+- **Catalog Production / Development** — independent Catalog service groups. The
+  Manager controls them through process lifecycle and Catalog HTTP health only;
+  it never opens the Catalog database. Production uses API 8791/UI 5173, while
+  Development uses API 8792/UI 5174 and a separate data root.
 
-Before Vite starts, a dependency-free bootstrap validates the dashboard's
-lockfile, local Vite executable, and `Design_System/package.json`. A missing,
-partial, or lockfile-stale installation is repaired once with deterministic
-`npm ci`; subsequent starts take a no-network fast path.
+The legacy manual Development path uses a dependency-free bootstrap that
+validates the dashboard lockfile and local Vite executable. The Manager's normal
+path now invokes the locally installed Vite entrypoint directly after a valid
+local installation is present; dependency repair is not hidden inside Start.
+A missing or stale installation must be repaired explicitly before retrying.
 
 ## The key fact: edits under `dashboard/` do NOT appear on 8081
 
@@ -37,7 +45,11 @@ edits under `dashboard/` immediately.
 | Port | What | Notes |
 | ---- | ---- | ----- |
 | 8081 | Production server + embedded dashboard + the single database | default `VENOM_BIND` (`internal/config`); serves both prod and dev API |
-| 8088 | Dev frontend (vite, hot reload); proxies `/api` -> 8081 | `--strictPort`: vite fails loudly if 8088 is taken — it never silently hops to another port. Bound to `--host 127.0.0.1` |
+| 8088 | Router Development frontend (vite, hot reload); proxies `/api` -> 8081 | `--strictPort`: vite fails loudly if 8088 is taken — it never silently hops to another port. Bound to `--host 127.0.0.1` |
+| 8791 | Catalog Production API | Standalone Catalog service, loopback only |
+| 5173 | Catalog Production UI | Standalone Catalog UI |
+| 8792 | Catalog Development API | Independent Catalog development service, loopback only |
+| 5174 | Catalog Development UI | Independent Catalog development UI |
 
 ## Dev repo root resolution
 

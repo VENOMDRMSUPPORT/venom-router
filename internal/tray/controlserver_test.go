@@ -212,3 +212,28 @@ func TestControlServer_StateReturnsJSON(t *testing.T) {
 		t.Errorf("cache-control = %q, want no-store so polling observes lifecycle changes", cacheControl)
 	}
 }
+
+func TestControlServer_CatalogStateReturnsIndependentTargets(t *testing.T) {
+	f := &fakeControls{}
+	h := newControlHandler(f, testToken, testOrigin)
+
+	req := httptest.NewRequest(http.MethodGet, "/catalog/state", nil)
+	req.Header.Set("X-Control-Token", testToken)
+	req.Header.Set("Origin", testOrigin)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	var got CatalogState
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body is not valid JSON: %v", err)
+	}
+	if got.Production.Environment != "production" || got.Development.Environment != "development" {
+		t.Fatalf("catalog environments = %+v, want production and development", got)
+	}
+	if got.Production.Status != "unreachable" || got.Development.Status != "unreachable" {
+		t.Fatalf("catalog statuses = %+v, want unreachable without configured adapters", got)
+	}
+}

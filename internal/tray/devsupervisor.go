@@ -147,6 +147,13 @@ type DevSupervisorOptions struct {
 	Logger *observability.Logger
 	// LogPath receives append-only stdout/stderr from both dev children.
 	LogPath string
+	// DirectFrontend skips the dependency-repair bootstrap and invokes the
+	// locally installed Vite entrypoint directly. It is the normal Manager path;
+	// the legacy false value remains available to explicit manual compatibility.
+	DirectFrontend bool
+	// PinnedWatcher is a locally available watcher executable. An empty value
+	// keeps the legacy command for compatibility; Manager supplies a pinned value.
+	PinnedWatcher string
 }
 
 type devComponent struct {
@@ -168,11 +175,13 @@ type devComponent struct {
 // DevSupervisor drives the single dev child (the vite frontend) through
 // ProcessRunner. Platform-neutral; no syscalls, no os/exec.
 type DevSupervisor struct {
-	root    string
-	runner  ProcessRunner
-	probe   HealthProbe
-	log     *observability.Logger
-	logPath string
+	root           string
+	runner         ProcessRunner
+	probe          HealthProbe
+	log            *observability.Logger
+	logPath        string
+	directFrontend bool
+	pinnedWatcher  string
 
 	mu       sync.Mutex
 	frontend devComponent
@@ -188,11 +197,13 @@ type DevSupervisor struct {
 // NewDevSupervisor builds a DevSupervisor, filling defaults.
 func NewDevSupervisor(opts DevSupervisorOptions) *DevSupervisor {
 	s := &DevSupervisor{
-		root:    opts.Root,
-		runner:  opts.Runner,
-		probe:   opts.Probe,
-		log:     opts.Logger,
-		logPath: opts.LogPath,
+		root:           opts.Root,
+		runner:         opts.Runner,
+		probe:          opts.Probe,
+		log:            opts.Logger,
+		logPath:        opts.LogPath,
+		directFrontend: opts.DirectFrontend,
+		pinnedWatcher:  opts.PinnedWatcher,
 	}
 	if s.log == nil {
 		s.log = observability.Default()
@@ -284,10 +295,14 @@ func (s *DevSupervisor) StatusLine() string {
 }
 
 func (s *DevSupervisor) frontendSpec() ProcessSpec {
+	args := []string{"scripts/dev-bootstrap.mjs", "--port", "8088", "--strictPort", "--host", "127.0.0.1"}
+	if s.directFrontend {
+		args = []string{"node_modules/vite/bin/vite.js", "--port", "8088", "--strictPort", "--host", "127.0.0.1"}
+	}
 	return ProcessSpec{
 		Dir:        filepath.Join(s.root, "dashboard"),
 		Name:       "node",
-		Args:       []string{"scripts/dev-bootstrap.mjs", "--port", "8088", "--strictPort", "--host", "127.0.0.1"},
+		Args:       args,
 		ExtraEnv:   []string{devAPITarget},
 		OutputPath: s.logPath,
 	}
@@ -301,6 +316,14 @@ func (s *DevSupervisor) frontendSpec() ProcessSpec {
 // executable, so it is exec'd directly (unlike npm, which is a .cmd shim
 // needing cmd /c).
 func (s *DevSupervisor) backendSpec() ProcessSpec {
+	if s.pinnedWatcher != "" {
+		return ProcessSpec{
+			Dir:        s.root,
+			Name:       s.pinnedWatcher,
+			Args:       []string{"-c", ".air.toml"},
+			OutputPath: s.logPath,
+		}
+	}
 	return ProcessSpec{
 		Dir:        s.root,
 		Name:       "go",
@@ -309,19 +332,29 @@ func (s *DevSupervisor) backendSpec() ProcessSpec {
 	}
 }
 
-// Start spawns the frontend then the backend watcher, each unless it is
-// already Starting/Running. No-op when the dev root is unavailable. The
-// caller (EnterDevMode) must have stopped production first: both the backend
-// watcher and production bind 8081 and take the single-instance lock on the
-// one DB, so only one may run at a time.
+// Start spawns the frontend and backend watcher concurrently, each unless it
+// is already Starting/Running. No-op when the dev root is unavailable. The
+// normal Manager path launches the local Vite entrypoint directly and never
+// performs dependency installation inside this call. The caller (EnterDevMode)
+// must have stopped production first: both the backend watcher and production
+// bind 8081 and take the single-instance lock on the one DB, so only one may run.
 func (s *DevSupervisor) Start() {
 	if !s.Available() {
 		return
 	}
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
-	s.startComponent(&s.frontend, "frontend", s.frontendSpec())
-	s.startComponent(&s.backend, "backend", s.backendSpec())
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		s.startComponent(&s.frontend, "frontend", s.frontendSpec())
+	}()
+	go func() {
+		defer wg.Done()
+		s.startComponent(&s.backend, "backend", s.backendSpec())
+	}()
+	wg.Wait()
 }
 
 // Stop kills both dev children and marks them Stopped. The frontend (vite,

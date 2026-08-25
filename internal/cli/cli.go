@@ -200,22 +200,41 @@ func runTrayLoop(parent context.Context, stdout io.Writer) error {
 
 	devRoot := tray.ResolveDevRoot()
 	dev := tray.NewDevSupervisor(tray.DevSupervisorOptions{
-		Root:    devRoot,
-		Runner:  tray.NewProcessRunner(),
-		Probe:   tray.DefaultHealthProbe,
-		Logger:  logger,
-		LogPath: filepath.Join(filepath.Dir(logPath), "development.log"),
+		Root:           devRoot,
+		Runner:         tray.NewProcessRunner(),
+		Probe:          tray.DefaultHealthProbe,
+		Logger:         logger,
+		LogPath:        filepath.Join(filepath.Dir(logPath), "development.log"),
+		DirectFrontend: true,
 	})
+
 	if devRoot == "" {
 		devRoot = "unavailable"
 	}
 	logger.Info("tray: dev root", observability.String("root", devRoot))
 
-	// On Quit/shutdown, gracefully stop any active dev session (dev.Stop kills
-	// the children and WAITS for the backend to fully exit — lock freed, WAL
-	// quiescent) before the prod shutdown, instead of leaving it to the OS's
-	// kill-on-exit of the dev Job Object. No-op when dev is idle.
-	ctrl.SetPreShutdown(dev.Stop)
+	var catalogs *tray.CatalogSupervisor
+	if devRoot != "" && devRoot != "unavailable" {
+		dataDir, dataErr := platform.EnsureDataDir()
+		if dataErr != nil {
+			logger.Warn("tray: catalog manager unavailable", observability.String("err", dataErr.Error()))
+		} else {
+			catalogs, err = tray.NewCatalogSupervisor(devRoot, dataDir, filepath.Dir(logPath), tray.NewProcessRunner())
+			if err != nil {
+				logger.Warn("tray: catalog manager unavailable", observability.String("err", err.Error()))
+			}
+		}
+	}
+
+	// On Quit/shutdown, gracefully stop active development and Catalog process
+	// groups before the production shutdown. This keeps every child tree
+	// contained and releases the Router single-writer lock before exit.
+	ctrl.SetPreShutdown(func() {
+		dev.Stop()
+		if catalogs != nil {
+			catalogs.Shutdown()
+		}
+	})
 
 	if err := lc.Boot(ctx); err != nil {
 		// Bare tray mode has no console: a double-click user whose boot
@@ -237,7 +256,7 @@ func runTrayLoop(parent context.Context, stdout io.Writer) error {
 		ctrl.ShutdownAndExit()
 	}()
 
-	if err := tray.RunNativeUI(ctx, cancel, ctrl, dev); err != nil {
+	if err := tray.RunNativeUI(ctx, cancel, ctrl, dev, catalogs); err != nil {
 		return err
 	}
 	// Termination is owned by the ctx.Done() watcher above (watchdog-first

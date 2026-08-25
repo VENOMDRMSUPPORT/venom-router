@@ -60,6 +60,28 @@ func (r *fakeRunner) spawned() []ProcessSpec {
 	return append([]ProcessSpec(nil), r.specs...)
 }
 
+func specByName(t *testing.T, specs []ProcessSpec, name string) ProcessSpec {
+	t.Helper()
+	for _, spec := range specs {
+		if spec.Name == name {
+			return spec
+		}
+	}
+	t.Fatalf("no process spec named %q in %v", name, specs)
+	return ProcessSpec{}
+}
+
+func handleByName(t *testing.T, r *fakeRunner, name string) *fakeHandle {
+	t.Helper()
+	for i, spec := range r.spawned() {
+		if spec.Name == name {
+			return r.handle(i)
+		}
+	}
+	t.Fatalf("no process handle named %q", name)
+	return nil
+}
+
 func (r *fakeRunner) handle(i int) *fakeHandle {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -252,7 +274,7 @@ func TestDevSupervisor_StartSpawnsFrontendWithApprovedSpec(t *testing.T) {
 	if len(specs) != 2 {
 		t.Fatalf("spawned %d processes, want 2 (frontend + backend)", len(specs))
 	}
-	fe := specs[0]
+	fe := specByName(t, specs, "node")
 
 	if fe.Dir != filepath.Join("C:", "repo", "dashboard") {
 		t.Errorf("frontend dir = %q", fe.Dir)
@@ -293,7 +315,7 @@ func TestDevSupervisor_StartSpawnsBackendWatcher(t *testing.T) {
 	if len(specs) != 2 {
 		t.Fatalf("spawned %d processes, want 2 (frontend + backend watcher)", len(specs))
 	}
-	be := specs[1]
+	be := specByName(t, specs, "go")
 
 	if be.Dir != filepath.Join("C:", "repo") {
 		t.Errorf("backend dir = %q, want the repo root", be.Dir)
@@ -395,7 +417,7 @@ func TestDevSupervisor_UnexpectedExitMarksError(t *testing.T) {
 	s := newTestSupervisor(t, r, probeAlways(false))
 	s.Start()
 
-	r.handle(0).exit(nil) // frontend dies on its own — even a clean exit is unexpected
+	handleByName(t, r, "node").exit(nil) // frontend dies on its own — even a clean exit is unexpected
 
 	eventually(t, func() bool { return s.Status().Frontend == DevError },
 		"frontend never reached Error after its process exited")
@@ -406,7 +428,7 @@ func TestDevSupervisor_UnexpectedFrontendExitRetainsDetail(t *testing.T) {
 	s := newTestSupervisor(t, r, probeAlways(false))
 	s.Start()
 
-	r.handle(0).exit(errors.New("exit status 1: Vite executable is still missing"))
+	handleByName(t, r, "node").exit(errors.New("exit status 1: Vite executable is still missing"))
 	eventually(t, func() bool { return s.Status().Frontend == DevError },
 		"frontend never reached Error")
 
@@ -455,7 +477,7 @@ func TestDevSupervisor_RefreshNeverResurrectsStoppedOrErrored(t *testing.T) {
 
 	// Crashed while starting: Error must survive a healthy probe.
 	s.Start()
-	r.handle(0).exit(errors.New("crash"))
+	handleByName(t, r, "node").exit(errors.New("crash"))
 	eventually(t, func() bool { return s.Status().Frontend == DevError },
 		"frontend never reached Error after its process exited")
 	s.Refresh(context.Background())
@@ -475,7 +497,7 @@ func TestDevSupervisor_RestartAfterErrorSpawnsFreshProcess(t *testing.T) {
 	r := &fakeRunner{}
 	s := newTestSupervisor(t, r, probeAlways(false))
 	s.Start()
-	r.handle(0).exit(errors.New("crash")) // frontend (index 0) crashes
+	handleByName(t, r, "node").exit(errors.New("crash")) // frontend crashes
 	eventually(t, func() bool { return s.Status().Frontend == DevError },
 		"frontend never reached Error")
 

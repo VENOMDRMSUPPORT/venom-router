@@ -14,6 +14,8 @@ The default local endpoints are:
 |---|---|
 | Catalog UI | `http://127.0.0.1:5173/` |
 | Catalog API | `http://127.0.0.1:8791/v1` |
+| Catalog Development UI | `http://127.0.0.1:5174/` |
+| Catalog Development API | `http://127.0.0.1:8792/v1` |
 | Venom Router control plane | `http://127.0.0.1:8081` |
 
 The UI and API ports are intentionally separate from the Router control-plane port.
