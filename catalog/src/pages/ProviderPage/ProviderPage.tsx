@@ -745,54 +745,54 @@ function ModelTable({ title, models, note, costStatedOnce, focusModelId }: { tit
                 <td className={styles.narrow}><ModelRankCell model={m} localRanks={localRanks} /></td>
                 <td>
                   <div className={styles.nameCell}>
-                    <div className={styles.nameCellMain}>
+                    {/* The markers share the NAME's line, right-aligned - not
+                        the row's vertical centre, where a lone pill floats in
+                        the gap between the name block and the next column. */}
+                    <div className={styles.nameLine}>
                       {/* The name is printed without the qualifier the badge
                           beside it lifts out, so a promoted model reads
                           "DeepSeek V4 Pro" + a New pill, not "DeepSeek V4 Pro
                           (New)" + a New pill. One fact, one place. */}
                       <span className={styles.modelName}>{splitVendorName(m.modelId, m.displayName).base}</span>
-                      {/* The official name leads, because it is what the
-                          provider's own app calls this model. The API id
-                          follows it unless the row already shows that id
-                          somewhere else. */}
-                      <ModelApiId model={m} />
-                      {/* Identity findings (identity_review, unresolved) print
-                          nothing inline — owner decision 2026-08-21. Their
-                          state and refused candidates stay one click away on
-                          the evidence badge, which carries the count. Only
-                          `unknown` keeps a note, because it reports a missing
-                          field in the response, not a finding about the model,
-                          and nothing else on the row can say it. Suppressed
-                          once an id can be shown instead: the column asks
-                          which model this is, and an id answers it. */}
-                      {m.identityState === 'unknown' && !displayIdentity(m)?.fromVendor && (
-                        <span className={styles.identityNote} title={IDENTITY_NOTE.unknown.title(m)}>
-                          {IDENTITY_NOTE.unknown.label(m)}
-                        </span>
-                      )}
-                      {(() => {
-                        const shown = displayIdentity(m);
-                        return shown && (
-                          <span className={styles.canonical} title={shown.title}>
-                            {shown.id}
+                      <span className={styles.nameCellBadges}>
+                        {m.lifecycle === 'deprecated' && (
+                          <span
+                            className={styles.lifecycleBadge}
+                            title="The provider has marked this model deprecated. It still answers, and its own app no longer offers it."
+                          >
+                            deprecated
                           </span>
-                        );
-                      })()}
+                        )}
+                        <VendorQualifierBadge model={m} />
+                      </span>
                     </div>
-                    {/* The provider's own markers sit at the cell's edge, off
-                        the reading line of the name, and read at badge size
-                        rather than footnote size. */}
-                    <div className={styles.nameCellBadges}>
-                      {m.lifecycle === 'deprecated' && (
-                        <span
-                          className={styles.lifecycleBadge}
-                          title="The provider has marked this model deprecated. It still answers, and its own app no longer offers it."
-                        >
-                          deprecated
+                    {/* The official name leads, because it is what the
+                        provider's own app calls this model. The API id follows
+                        it unless the row already shows that id somewhere
+                        else. */}
+                    <ModelApiId model={m} />
+                    {/* Identity findings (identity_review, unresolved) print
+                        nothing inline — owner decision 2026-08-21. Their state
+                        and refused candidates stay one click away on the
+                        evidence badge, which carries the count. Only `unknown`
+                        keeps a note, because it reports a missing field in the
+                        response, not a finding about the model, and nothing
+                        else on the row can say it. Suppressed once an id can
+                        be shown instead: the column asks which model this is,
+                        and an id answers it. */}
+                    {m.identityState === 'unknown' && !displayIdentity(m)?.fromVendor && (
+                      <span className={styles.identityNote} title={IDENTITY_NOTE.unknown.title(m)}>
+                        {IDENTITY_NOTE.unknown.label(m)}
+                      </span>
+                    )}
+                    {(() => {
+                      const shown = displayIdentity(m);
+                      return shown && (
+                        <span className={styles.canonical} title={shown.title}>
+                          {shown.id}
                         </span>
-                      )}
-                      <VendorQualifierBadge model={m} />
-                    </div>
+                      );
+                    })()}
                   </div>
                 </td>
                 <td className={styles.centered}><ModelScoreCell model={m} /></td>
