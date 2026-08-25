@@ -413,26 +413,19 @@ export function DashboardPage() {
         )}
       </section>
 
-      <div className={styles.columns}>
-        <div className={styles.columnMain}>
-          <PerformancePanel summary={performanceSummary} rows={measuredRows} />
-        </div>
-        <div className={styles.columnSide}>
-          <NotificationHistory
-            notifications={recentNotifications}
-            total={notifications.length}
-            loading={notificationsLoading}
-            error={notificationsError}
-            unread={unreadNotifications}
-            onRetry={handleMonitoringRetry}
-          />
-        </div>
-      </div>
-
-      {/* Equal halves: what the catalog is made of, beside how it has moved.
-          The two are one reading — composition is the state, history is the
-          derivative — so they share a row and share its height. */}
-      <div className={styles.pairRow}>
+      {/* One 2x2 grid, one seam: the four operational panels share the same
+          column split, and each row's borders stretch to one height. Two rows
+          with different splits is what read as clutter. */}
+      <div className={styles.opsGrid}>
+        <PerformancePanel summary={performanceSummary} rows={measuredRows} />
+        <NotificationHistory
+          notifications={recentNotifications}
+          total={notifications.length}
+          loading={notificationsLoading}
+          error={notificationsError}
+          unread={unreadNotifications}
+          onRetry={handleMonitoringRetry}
+        />
         <CompositionSection composition={composition} meta={meta} liveModels={meta.liveModels} />
         <VersionHistoryPanel
           data={data}

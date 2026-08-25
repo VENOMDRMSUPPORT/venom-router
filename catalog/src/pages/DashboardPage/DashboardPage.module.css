@@ -465,28 +465,11 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------- Two-column operational layout ---------- */
+/* ---------- Operational grid ----------
+   One 2x2 grid for the four operational panels: a single column split, a
+   single vertical seam, and per-row borders stretched to one height. */
 
-.columns {
-  display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: 16px;
-  align-items: start;
-  margin-bottom: 16px;
-}
-
-.columnMain,
-.columnSide {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-width: 0;
-}
-
-/* Equal halves for composition and change history. Grid stretch keeps the two
-   borders the same height, so the row reads as one unit whatever either side
-   holds. */
-.pairRow {
+.opsGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
@@ -494,14 +477,9 @@
   margin-bottom: 16px;
 }
 
-.pairRow > * {
+.opsGrid > * {
   margin: 0;
   min-width: 0;
-}
-
-.columnMain > *,
-.columnSide > * {
-  margin: 0;
 }
 
 /* ---------- Health chips beside the monitor verdict ---------- */
@@ -962,7 +940,9 @@
 .performanceFootnote { margin: 0; padding: 12px 16px 14px; color: var(--foreground-tertiary); font-size: .67rem; }
 
 .alertCenter {
-  margin: 0 0 20px;
+  /* Spacing belongs to the grid that places this panel; a margin of its own is
+     subtracted from the stretched cell and shows up as unequal borders. */
+  margin: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -1345,8 +1325,7 @@
 }
 
 @media (max-width: 1200px) {
-  .columns,
-  .pairRow {
+  .opsGrid {
     grid-template-columns: 1fr;
   }
 }
