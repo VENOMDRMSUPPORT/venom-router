@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { LuArrowUpRight, LuCircleAlert, LuActivity, LuCircleCheck, LuInfo, LuRefreshCw, LuTriangleAlert, LuChevronDown, LuChevronUp } from 'react-icons/lu';
+import { LuArrowUpRight, LuCircleAlert, LuActivity, LuCircleCheck, LuChevronLeft, LuChevronRight, LuCpu, LuInfo, LuRefreshCw, LuTriangleAlert, LuChevronDown, LuChevronUp } from 'react-icons/lu';
 import { useCatalog } from '../../hooks/useCatalog';
 import { present } from '../../api/presentation';
 import { fetchCatalogNotifications, fetchChanges, formatTokens, formatAgo, type ApiModel, type CatalogNotification, type CatalogData, type Change, type HealthResponse } from '../../api/client';
@@ -12,6 +12,10 @@ import { buildMonitoringSignals, type MonitoringSeverity } from '../../api/monit
 import styles from './DashboardPage.module.css';
 
 type ChangeWindow = '24h' | '7d' | '30d' | 'all';
+
+const FLEET_PAGE_SIZE = 4;
+/** Static lookups, so the CSS-module gate can verify every class by name. */
+const FLEET_ACCENTS = [styles.fleetBlue, styles.fleetNeutral, styles.fleetGreen, styles.fleetViolet];
 
 /**
  * Yes, no, and unknown are three different facts, and every distribution on
@@ -98,6 +102,7 @@ function summarizeComposition(models: ApiModel[]): Composition {
 export function DashboardPage() {
   const { data, error, loading, reload, health, healthError, healthLoading, revision } = useCatalog();
   const [monitoringOpen, setMonitoringOpen] = useState(true);
+  const [fleetPage, setFleetPage] = useState(0);
   const [changes, setChanges] = useState<Change[] | null>(null);
   const [changesError, setChangesError] = useState<string | null>(null);
   const [changesLoading, setChangesLoading] = useState(true);
@@ -173,7 +178,7 @@ export function DashboardPage() {
    * the guards have passed. Every helper accepts an empty list.
    */
   const performanceSummary = useMemo(() => summarizePerformance(data?.models ?? []), [data]);
-  const performanceList = useMemo(() => performanceRows(data?.models ?? []).slice(0, 5), [data]);
+  const measuredRows = useMemo(() => performanceRows(data?.models ?? []), [data]);
   const composition = useMemo(() => summarizeComposition(data?.models ?? []), [data]);
   const fleet = useMemo(() => {
     if (!data) return [];
@@ -225,6 +230,11 @@ export function DashboardPage() {
   // panel states what it withholds, because a silent cap under a bigger badge
   // is the exact defect the notification center was just cured of.
   const recentNotifications = notifications.slice(0, 12);
+  const fleetPages = Math.max(1, Math.ceil(fleet.length / FLEET_PAGE_SIZE));
+  // Clamped on read, not in an effect: a provider list that shrinks must not
+  // strand the pager on a page that no longer exists.
+  const safeFleetPage = Math.min(fleetPage, fleetPages - 1);
+  const visibleFleet = fleet.slice(safeFleetPage * FLEET_PAGE_SIZE, safeFleetPage * FLEET_PAGE_SIZE + FLEET_PAGE_SIZE);
 
   return (
     <div className={styles.page}>
@@ -278,25 +288,24 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* One ruled strip of instruments, not six floating cards: these figures
-          are read together as one statement of catalog state. Each carries the
-          provenance of its number, because a figure with no source is exactly
-          what this catalog refuses to publish. */}
-      <section className={styles.instruments} aria-label="Catalog key figures">
-        <Instrument
+      {/* Four headline figures. Each carries the provenance of its number,
+          because a figure with no source is exactly what this catalog refuses
+          to publish; a missing figure renders as the catalog's missing chip. */}
+      <section className={styles.kpiGrid} aria-label="Catalog key figures">
+        <Kpi
           value={String(meta.liveModels)}
           label="Live models"
-          caption={`across ${data.providers.length} provider${data.providers.length === 1 ? '' : 's'} · provider live APIs`}
+          caption={`across ${data.providers.length} provider fleet${data.providers.length === 1 ? '' : 's'} · provider live APIs`}
           hint="Models currently present in a provider roster this catalog fetched successfully."
         />
-        <Instrument
+        <Kpi
           value={String(meta.catalogReady)}
           ratio={meta.liveModels > 0 ? meta.catalogReady / meta.liveModels : 0}
-          label="Catalog-ready"
+          label="Catalog ready"
           caption={`of ${meta.liveModels} · every operational fact resolved`}
           hint={`Every operational fact resolved. ${meta.needsVerification} more are served by the providers but have an unresolved fact and are listed separately on their provider page.`}
         />
-        <Instrument
+        <Kpi
           value={String(meta.overallScoreScored)}
           ratio={meta.liveModels > 0 ? meta.overallScoreScored / meta.liveModels : 0}
           label="Complete overall scores"
@@ -306,10 +315,11 @@ export function DashboardPage() {
         {/* The identity breakdown arrives as one answer or not at all, so one
             null here means the whole figure is unknown — rendered as unknown,
             never interpolated into "undefined/116" or a fabricated zero. */}
-        <Instrument
+        <Kpi
           value={meta.identity.resolved === null ? null : String(meta.identity.resolved)}
           ratio={meta.identity.resolved === null || meta.liveModels === 0 ? null : meta.identity.resolved / meta.liveModels}
           label="Identity proven"
+          tone="ok"
           caption={meta.identity.resolved === null ? 'not carried by this response' : `of ${meta.liveModels} · ${meta.identity.identityReview ?? 0} in review`}
           hint={
             meta.identity.resolved === null
@@ -317,27 +327,11 @@ export function DashboardPage() {
               : `${meta.identity.identityReview} are in identity review — candidates were examined and refused, with the evidence recorded — and ${meta.identity.unresolved} matched nothing upstream at all. Identity is a separate question from quality: a proven identity does not imply a benchmark exists.`
           }
         />
-        <Instrument
-          value={meta.conflictedModels === null ? null : String(meta.conflictedModels)}
-          label="Open source conflicts"
-          tone={meta.conflictedModels === null ? undefined : meta.conflictedModels === 0 ? 'ok' : 'warn'}
-          caption={meta.conflictedModels === null ? 'not carried by this response' : 'server-derived open view'}
-          hint={
-            meta.conflictedModels === null
-              ? 'This catalog service response did not carry this figure — unknown, not zero. A zero here would say the catalog compared its sources and found no disagreement, which is a different fact.'
-              : "Models with a field withheld because entitled sources still disagree. Resolved disputes stay visible in each model's evidence panel but no longer count here."
-          }
-        />
-        <Instrument
-          value={String(meta.unrated)}
-          label="Unrated models"
-          caption="each with a recorded reason"
-          hint="Every model without a quality score carries a machine-readable reason: identity unresolved, identity ambiguous, no published benchmark, or a vendor the calibration has no predictive power for. None of these prevents a model from being operationally complete."
-        />
       </section>
 
       <MonitoringPanel
         signals={monitoringSignals}
+        meta={meta}
         loading={Boolean(healthLoading && !health)}
         open={monitoringOpen}
         onToggle={() => setMonitoringOpen((value) => !value)}
@@ -348,74 +342,94 @@ export function DashboardPage() {
         <div className={styles.panelHeader}>
           <div>
             <span className={styles.monitoringEyebrow}>Provider fleet · /v1/providers</span>
-            <h2 id="fleet-title" className={styles.panelTitle}>Provider status</h2>
+            <h2 id="fleet-title" className={styles.panelTitle}>Provider fleet</h2>
           </div>
-          <span className={styles.panelAside}>{data.providers.length} provider{data.providers.length === 1 ? '' : 's'} syncing</span>
+          {fleetPages > 1 ? (
+            <div className={styles.fleetPager} role="group" aria-label="Provider fleet pages">
+              <button
+                type="button"
+                className={styles.fleetPagerBtn}
+                onClick={() => setFleetPage((page) => Math.max(0, page - 1))}
+                disabled={safeFleetPage === 0}
+                aria-label="Previous providers"
+              >
+                <LuChevronLeft size={15} aria-hidden="true" />
+              </button>
+              <span className={styles.fleetPagerState} aria-live="polite">{safeFleetPage + 1} / {fleetPages}</span>
+              <button
+                type="button"
+                className={styles.fleetPagerBtn}
+                onClick={() => setFleetPage((page) => Math.min(fleetPages - 1, page + 1))}
+                disabled={safeFleetPage === fleetPages - 1}
+                aria-label="Next providers"
+              >
+                <LuChevronRight size={15} aria-hidden="true" />
+              </button>
+            </div>
+          ) : (
+            <span className={styles.panelAside}>{data.providers.length} provider{data.providers.length === 1 ? '' : 's'} syncing</span>
+          )}
         </div>
         {fleet.length === 0 ? (
           <div className={styles.panelEmpty} role="status">No providers are registered in the catalog yet.</div>
         ) : (
-          <div className={styles.tableWrap}>
-            <div className={styles.tableScroll}>
-              <table className={styles.table}>
-                <caption className={styles.srOnly}>Provider sync status and scoring coverage</caption>
-                <thead>
-                  <tr>
-                    <th>Provider</th>
-                    <th>Sync status</th>
-                    <th className={styles.num}>Live models</th>
-                    <th className={styles.num} title="Models with complete overall-score-v1 task, speed, and cost evidence.">Scored</th>
-                    <th className={styles.num}>Free models</th>
-                    <th className={styles.num}>Last successful sync</th>
-                    <th className={styles.num}><span className={styles.srOnly}>Open provider</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {fleet.map(({ provider, free, scoredRatio }) => {
-                    const pres = present(provider.id);
-                    const percent = Math.round(scoredRatio * 100);
-                    return (
-                      <tr key={provider.id} className={styles.tableRow}>
-                        <td>
-                          <Link to={`/provider/${provider.id}`} className={styles.providerCell}>
-                            {pres.logo && (
-                              <img src={pres.logo} alt="" className={`${styles.providerCellLogo} ${pres.invertInDark ? 'logo-invert-dark' : ''}`} />
-                            )}
-                            <span className={styles.providerCellName}>{provider.name}</span>
-                          </Link>
-                        </td>
-                        <td><FreshnessBadge provider={provider} compact /></td>
-                        <td className={styles.num}>{provider.liveModels}</td>
-                        <td className={styles.num}>
-                          <div className={styles.tableProgressCell}>
-                            <div className={styles.tableProgressValue}>
-                              {percent}% <span className={styles.tableProgressRatio}>({provider.overallScoreScored}/{provider.liveModels})</span>
-                            </div>
-                            <div className={styles.tableProgressBarBg}>
-                              <div className={styles.tableProgressBarFill} style={{ width: `${percent}%` }} />
-                            </div>
-                          </div>
-                        </td>
-                        <td className={styles.num}>{free > 0 ? free : '—'}</td>
-                        <td className={styles.num}>{formatAgo(provider.lastSuccessfulSyncAt)}</td>
-                        <td className={styles.num}>
-                          <Link to={`/provider/${provider.id}`} className={styles.actionBtn} aria-label={`Open ${provider.name}`}>
-                            <LuArrowUpRight size={15} aria-hidden="true" />
-                          </Link>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+          <div className={styles.fleetGrid}>
+            {visibleFleet.map(({ provider, free, scoredRatio }, index) => {
+              const pres = present(provider.id);
+              const percent = Math.round(scoredRatio * 100);
+              // The reference design gives each card its own cast. The accent
+              // cycles by position, so it decorates without claiming to encode
+              // any fact about the provider.
+              const accent = FLEET_ACCENTS[(safeFleetPage * FLEET_PAGE_SIZE + index) % FLEET_ACCENTS.length];
+              return (
+                <Link key={provider.id} to={`/provider/${provider.id}`} className={`${styles.fleetCard} ${accent}`} aria-label={provider.name}>
+                  <div className={styles.fleetCardHead}>
+                    <span className={styles.fleetLogoBox}>
+                      {pres.logo
+                        ? <img src={pres.logo} alt="" className={`${styles.fleetLogo} ${pres.invertInDark ? 'logo-invert-dark' : ''}`} />
+                        : <LuCpu size={20} aria-hidden="true" />}
+                    </span>
+                    <span className={styles.fleetName}>{provider.name}</span>
+                  </div>
+                  <div className={styles.fleetCount}>
+                    <strong className={styles.fleetCountValue}>{provider.liveModels}</strong>
+                    <span className={styles.fleetCountLabel}>Live models</span>
+                  </div>
+                  <div className={styles.fleetSync}><FreshnessBadge provider={provider} compact /></div>
+                  <dl className={styles.fleetStats}>
+                    <div className={styles.fleetStat}>
+                      <dt>Scored</dt>
+                      <dd>{provider.overallScoreScored} {percent}%</dd>
+                    </div>
+                    <div className={styles.fleetStat}>
+                      <dt>Free models</dt>
+                      <dd>{free > 0 ? free : '—'}</dd>
+                    </div>
+                  </dl>
+                </Link>
+              );
+            })}
           </div>
         )}
       </section>
 
-      <CompositionSection composition={composition} meta={meta} liveModels={meta.liveModels} />
-
-      <PerformancePanel summary={performanceSummary} rows={performanceList} />
+      <div className={styles.columns}>
+        <div className={styles.columnMain}>
+          <PerformancePanel summary={performanceSummary} rows={measuredRows} />
+          <CompositionSection composition={composition} meta={meta} liveModels={meta.liveModels} />
+        </div>
+        <div className={styles.columnSide}>
+          <NotificationHistory
+            notifications={recentNotifications}
+            total={notifications.length}
+            loading={notificationsLoading}
+            error={notificationsError}
+            unread={unreadNotifications}
+            onRetry={handleMonitoringRetry}
+          />
+          <RuntimeSettingsPanel health={health ?? null} error={healthError ?? null} loading={Boolean(healthLoading && !health)} />
+        </div>
+      </div>
 
       <VersionHistoryPanel
         data={data}
@@ -431,17 +445,6 @@ export function DashboardPage() {
         onToggle={() => setChangesOpen((value) => !value)}
         onRetry={handleMonitoringRetry}
       />
-
-      <NotificationHistory
-        notifications={recentNotifications}
-        total={notifications.length}
-        loading={notificationsLoading}
-        error={notificationsError}
-        unread={unreadNotifications}
-        onRetry={handleMonitoringRetry}
-      />
-
-      <RuntimeSettingsPanel health={health ?? null} error={healthError ?? null} loading={Boolean(healthLoading && !health)} />
 
       <footer className={styles.footer}>
         <span>Venom Router Catalog</span>
@@ -595,21 +598,94 @@ function CompositionSection({ composition, meta, liveModels }: { composition: Co
   );
 }
 
+/**
+ * A hand-rolled SVG area chart. No chart library: the pinned runtime and 40
+ * lines of path arithmetic cover everything this page needs, and every point
+ * is a real measurement — the x-axis is the catalog's measured models in rank
+ * order, not an invented time series.
+ */
+function AreaChart({ values, tone, ariaLabel, yUnit, xStartLabel, xEndLabel }: {
+  values: number[];
+  tone: 'blue' | 'green';
+  ariaLabel: string;
+  yUnit: string;
+  xStartLabel: string;
+  xEndLabel: string;
+}) {
+  const W = 600;
+  const H = 170;
+  const PAD = { top: 12, right: 8, bottom: 8, left: 44 };
+  const innerW = W - PAD.left - PAD.right;
+  const innerH = H - PAD.top - PAD.bottom;
+  const max = Math.max(...values, 0.0001);
+  const x = (index: number) => PAD.left + (values.length === 1 ? innerW / 2 : (index / (values.length - 1)) * innerW);
+  const y = (value: number) => PAD.top + innerH - (value / max) * innerH;
+  const line = values.map((value, index) => `${index === 0 ? 'M' : 'L'}${x(index).toFixed(1)},${y(value).toFixed(1)}`).join(' ');
+  const area = `${line} L${x(values.length - 1).toFixed(1)},${PAD.top + innerH} L${x(0).toFixed(1)},${PAD.top + innerH} Z`;
+  const gradientId = `chart-${tone}`;
+  const ticks = [0, 0.5, 1];
+  const format = (value: number) => value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2);
+
+  return (
+    <div className={styles.chartFrame}>
+      <svg viewBox={`0 0 ${W} ${H}`} className={`${styles.chartSvg} ${tone === 'blue' ? styles.chartBlue : styles.chartGreen}`} role="img" aria-label={ariaLabel} preserveAspectRatio="none">
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="currentColor" stopOpacity="0.32" />
+            <stop offset="100%" stopColor="currentColor" stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        {ticks.map((tick) => (
+          <g key={tick}>
+            <line
+              x1={PAD.left} x2={W - PAD.right}
+              y1={PAD.top + innerH - tick * innerH} y2={PAD.top + innerH - tick * innerH}
+              className={styles.chartGrid}
+            />
+            <text x={PAD.left - 6} y={PAD.top + innerH - tick * innerH + 3} className={styles.chartTick} textAnchor="end">
+              {format(max * tick)}{yUnit}
+            </text>
+          </g>
+        ))}
+        <path d={area} fill={`url(#${gradientId})`} />
+        <path d={line} className={styles.chartLine} fill="none" />
+      </svg>
+      <div className={styles.chartXAxis} aria-hidden="true">
+        <span>{xStartLabel}</span>
+        <span>{xEndLabel}</span>
+      </div>
+    </div>
+  );
+}
+
 function PerformancePanel({ summary, rows }: { summary: PerformanceSummary; rows: PerformanceRow[] }) {
-  const bestThroughput = summary.bestThroughput?.performance.outputTokensPerSecondMedian ?? null;
   const formatSeconds = (value: number | null) => value === null ? '—' : `${value.toFixed(2)}s`;
   const formatRate = (value: number | null) => value === null ? '—' : `${(value * 100).toFixed(1)}%`;
+  // Rank order is the honest x-axis this catalog can draw: each point is one
+  // measured model. A dated "trend" would require history the API does not
+  // serve, and inventing one is the kind of chart this product exists to end.
+  const ttftProfile = [...rows]
+    .map((row) => row.performance.ttftMedianSeconds)
+    .filter((value): value is number => value !== null)
+    .sort((a, b) => a - b);
+  const p95Profile = [...rows]
+    .map((row) => row.performance.endToEndP95Seconds)
+    .filter((value): value is number => value !== null)
+    .sort((a, b) => a - b);
 
   return (
     <section className={styles.performancePanel} aria-labelledby="performance-panel-title">
-      <div className={styles.performanceHeader}>
+      <div className={styles.panelHeader}>
         <div>
           <span className={styles.monitoringEyebrow}>Measured runtime evidence</span>
-          <h2 id="performance-panel-title" className={styles.performanceTitle}>Latency & model performance</h2>
-          <p className={styles.performanceDescription}>Stored speed-probe aggregates from Catalog evaluations. Unmeasured models are not ranked or treated as slow.</p>
+          <h2 id="performance-panel-title" className={styles.panelTitle}>Model performance</h2>
         </div>
         <span className={styles.performanceCoverage}>{summary.measuredModels}/{summary.totalModels} measured</span>
       </div>
+      <p className={styles.panelDescription}>
+        Stored speed-probe aggregates from Catalog evaluations. Unmeasured models
+        are not drawn, ranked, or treated as slow.
+      </p>
 
       <div className={styles.performanceKpis} role="group" aria-label="Performance summary">
         <div className={styles.performanceKpi}><strong>{formatSeconds(summary.medianTtftSeconds)}</strong><span>Median TTFT</span></div>
@@ -618,32 +694,41 @@ function PerformancePanel({ summary, rows }: { summary: PerformanceSummary; rows
         <div className={styles.performanceKpi}><strong>{formatRate(summary.averageSuccessRate)}</strong><span>Average success</span></div>
       </div>
 
-      {rows.length === 0 ? (
+      {ttftProfile.length < 2 ? (
         <div className={styles.performanceEmpty} role="status">
           <LuActivity size={20} aria-hidden="true" />
           <div><strong>No measured performance data</strong><p>Speed evaluations have not produced complete TTFT, throughput, and response-time samples for the current catalog.</p></div>
         </div>
       ) : (
-        <div className={styles.performanceTableWrap}>
-          <table className={styles.performanceTable}>
-            <caption className={styles.srOnly}>Top measured models by median output throughput</caption>
-            <thead><tr><th>Model</th><th>Median TTFT</th><th>Tokens/s</th><th>Response p95</th><th>Success</th></tr></thead>
-            <tbody>
-              {rows.map(({ model, performance }) => {
-                const throughput = performance.outputTokensPerSecondMedian ?? 0;
-                const barWidth = bestThroughput ? Math.max(4, Math.round((throughput / bestThroughput) * 100)) : 0;
-                return (
-                  <tr key={`${model.providerId}/${model.modelId}`}>
-                    <td><Link to={`/provider/${encodeURIComponent(model.providerId)}?model=${encodeURIComponent(model.modelId)}`} className={styles.performanceModelLink}>{model.displayName || model.modelId}</Link><span className={styles.performanceProvider}>{model.providerId}</span></td>
-                    <td>{formatSeconds(performance.ttftMedianSeconds)}</td>
-                    <td><div className={styles.performanceMetric}><span>{throughput.toFixed(1)}</span><span className={styles.performanceBar} style={{ width: `${barWidth}%` }} aria-hidden="true" /></div></td>
-                    <td>{formatSeconds(performance.endToEndP95Seconds)}</td>
-                    <td>{formatRate(performance.successRate)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className={styles.chartStack}>
+          <div className={styles.chartBlock}>
+            <div className={styles.chartHead}>
+              <h3 className={styles.chartTitle}>Time to first token</h3>
+              <span className={styles.chartMeta}>median TTFT per measured model · fastest → slowest</span>
+            </div>
+            <AreaChart
+              values={ttftProfile}
+              tone="blue"
+              ariaLabel={`Median time to first token across ${ttftProfile.length} measured models, from ${ttftProfile[0].toFixed(2)} to ${ttftProfile[ttftProfile.length - 1].toFixed(2)} seconds`}
+              yUnit="s"
+              xStartLabel="fastest model"
+              xEndLabel="slowest model"
+            />
+          </div>
+          <div className={styles.chartBlock}>
+            <div className={styles.chartHead}>
+              <h3 className={styles.chartTitle}>End-to-end response, p95</h3>
+              <span className={styles.chartMeta}>per measured model · fastest → slowest</span>
+            </div>
+            <AreaChart
+              values={p95Profile}
+              tone="green"
+              ariaLabel={`95th percentile end-to-end response across ${p95Profile.length} measured models, from ${p95Profile[0].toFixed(2)} to ${p95Profile[p95Profile.length - 1].toFixed(2)} seconds`}
+              yUnit="s"
+              xStartLabel="fastest model"
+              xEndLabel="slowest model"
+            />
+          </div>
         </div>
       )}
       <p className={styles.performanceFootnote}>Based on {summary.successfulSamples}/{summary.sampleCount} complete speed samples. A blank metric means the server did not publish a complete measurement.</p>
@@ -880,12 +965,14 @@ function VersionHistoryPanel({
 
 function MonitoringPanel({
   signals,
+  meta,
   loading,
   open,
   onToggle,
   onRetry,
 }: {
   signals: ReturnType<typeof buildMonitoringSignals>;
+  meta: CatalogData['meta'];
   loading: boolean;
   open: boolean;
   onToggle: () => void;
@@ -907,6 +994,14 @@ function MonitoringPanel({
           </div>
         </div>
         <div className={styles.monitoringHeaderActions}>
+          {/* The two integrity figures an operator triages by, kept beside the
+              health verdict they qualify. Null renders as the missing chip. */}
+          <span className={styles.healthChip} title="Models with a field withheld because entitled sources still disagree. Resolved disputes no longer count here.">
+            {meta.conflictedModels === null ? <FactState state="missing" /> : <strong>{meta.conflictedModels}</strong>} open conflicts
+          </span>
+          <span className={styles.healthChip} title="Models without a quality score, each carrying a machine-readable reason.">
+            <strong>{meta.unrated}</strong> unrated
+          </span>
           <span className={styles.monitoringSummary} role="status" aria-live="polite">
             {loading ? 'Checking service…' : mostUrgent?.severity === 'success' ? 'All systems nominal' : `${signals.length} active signal${signals.length === 1 ? '' : 's'}`}
           </span>
@@ -957,8 +1052,8 @@ function DashboardSkeleton() {
         <span className={styles.skeletonTitle} />
         <span className={styles.skeletonText} />
       </div>
-      <div className={styles.skeletonInstruments} aria-hidden="true">
-        {Array.from({ length: 6 }, (_, index) => <div key={index} className={styles.skeletonKpi} />)}
+      <div className={styles.skeletonKpis} aria-hidden="true">
+        {Array.from({ length: 4 }, (_, index) => <div key={index} className={styles.skeletonKpi} />)}
       </div>
       <div className={styles.skeletonTable} aria-hidden="true">
         <span className={styles.skeletonTableHeader} />
@@ -970,15 +1065,14 @@ function DashboardSkeleton() {
 }
 
 /**
- * One instrument on the key-figures strip.
+ * One headline figure.
  *
  * `value === null` means the figure is unknown, not zero — rendered with the
  * same "missing" chip the rest of the catalog uses for a fact nobody sent.
- * `ratio` draws the thin completeness meter; `tone` tints the value only when
- * the number itself is a health state (conflicts), because colour on this page
- * is reserved for state.
+ * `ratio` draws the thin completeness meter; `tone` tints the value where the
+ * design calls a figure out, and never replaces the number itself.
  */
-function Instrument({ value, label, caption, hint, ratio, tone }: {
+function Kpi({ value, label, caption, hint, ratio, tone }: {
   value: string | null;
   label: string;
   caption: string;
@@ -987,8 +1081,8 @@ function Instrument({ value, label, caption, hint, ratio, tone }: {
   tone?: 'ok' | 'warn';
 }) {
   return (
-    <div className={styles.instrument} title={hint}>
-      <span className={`${styles.instrumentValue} ${tone === 'ok' ? styles.toneOk : ''} ${tone === 'warn' ? styles.toneWarn : ''}`}>
+    <div className={styles.kpiCard} title={hint}>
+      <span className={`${styles.kpiValue} ${tone === 'ok' ? styles.toneOk : ''} ${tone === 'warn' ? styles.toneWarn : ''}`}>
         {value === null ? <FactState state="missing" /> : value}
       </span>
       {typeof ratio === 'number' && (
@@ -996,8 +1090,8 @@ function Instrument({ value, label, caption, hint, ratio, tone }: {
           <i className={styles.meterFill} style={{ width: `${Math.round(Math.min(1, Math.max(0, ratio)) * 100)}%` }} />
         </span>
       )}
-      <span className={styles.instrumentLabel}>{label}</span>
-      <span className={styles.instrumentCaption}>{caption}</span>
+      <span className={styles.kpiLabel}>{label}</span>
+      <span className={styles.kpiCaption}>{caption}</span>
     </div>
   );
 }

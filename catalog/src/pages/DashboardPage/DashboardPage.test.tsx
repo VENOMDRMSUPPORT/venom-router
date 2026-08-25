@@ -254,7 +254,7 @@ describe('the performance monitoring panel', () => {
     renderDashboard();
     await settleDashboard();
 
-    expect(screen.getByRole('heading', { name: 'Latency & model performance' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Model performance' })).toBeInTheDocument();
     expect(screen.getByText('No measured performance data')).toBeInTheDocument();
     expect(screen.getByText('0/0 measured')).toBeInTheDocument();
   });
@@ -288,15 +288,75 @@ describe('the provider fleet table', () => {
     renderDashboard();
     await settleDashboard();
 
-    const fleet = screen.getByRole('region', { name: 'Provider status' });
-    expect(within(fleet).getByRole('link', { name: 'Acme AI' })).toHaveAttribute('href', '/provider/acme');
-    expect(within(fleet).getByRole('link', { name: 'Beta Cloud' })).toHaveAttribute('href', '/provider/beta');
-    // Fixed order, most complete scoring coverage first: the row that needs
-    // work is the one that stands out by falling to the bottom.
-    const rows = within(fleet).getAllByRole('row').slice(1);
-    expect(within(rows[0]).getByText('Acme AI')).toBeInTheDocument();
-    expect(within(rows[0]).getByText('100%')).toBeInTheDocument();
-    expect(within(rows[1]).getByText('0%')).toBeInTheDocument();
+    const fleet = screen.getByRole('region', { name: 'Provider fleet' });
+    const cards = within(fleet).getAllByRole('link');
+    expect(cards).toHaveLength(2);
+    // Fixed order, most complete scoring coverage first: the card that needs
+    // work is the one that stands out by falling to the end.
+    expect(cards[0]).toHaveAccessibleName('Acme AI');
+    expect(cards[0]).toHaveAttribute('href', '/provider/acme');
+    expect(within(cards[0]).getByText(/100%/)).toBeInTheDocument();
+    expect(cards[1]).toHaveAccessibleName('Beta Cloud');
+    expect(cards[1]).toHaveAttribute('href', '/provider/beta');
+    expect(within(cards[1]).getByText(/0%/)).toBeInTheDocument();
+  });
+});
+
+describe('the provider fleet pager', () => {
+  test('appears only past four providers and pages without losing anyone', async () => {
+    catalogMock.current = {
+      data: baseData({
+        providers: Array.from({ length: 6 }, (_, index) => provider({
+          id: `p${index}`, name: `Provider ${index}`, overallScoreScored: 1, liveModels: 1,
+        })),
+      }),
+      error: null, loading: false,
+    };
+    renderDashboard();
+    await settleDashboard();
+
+    const fleet = screen.getByRole('region', { name: 'Provider fleet' });
+    expect(within(fleet).getAllByRole('link')).toHaveLength(4);
+    expect(within(fleet).getByText('1 / 2')).toBeInTheDocument();
+    expect(within(fleet).getByRole('button', { name: 'Previous providers' })).toBeDisabled();
+
+    fireEvent.click(within(fleet).getByRole('button', { name: 'Next providers' }));
+    expect(within(fleet).getAllByRole('link')).toHaveLength(2);
+    expect(within(fleet).getByText('2 / 2')).toBeInTheDocument();
+    expect(within(fleet).getByRole('button', { name: 'Next providers' })).toBeDisabled();
+    expect(within(fleet).getByRole('link', { name: 'Provider 5' })).toBeInTheDocument();
+  });
+
+  test('four or fewer providers get no pager at all', async () => {
+    catalogMock.current = { data: baseData({ providers: [provider()] }), error: null, loading: false };
+    renderDashboard();
+    await settleDashboard();
+
+    expect(screen.queryByRole('button', { name: 'Next providers' })).not.toBeInTheDocument();
+  });
+});
+
+describe('the performance charts draw measurements, not inventions', () => {
+  test('two measured models produce both latency profiles with honest bounds', async () => {
+    const measured = (id: string, ttft: number, p95: number) => model({
+      modelId: id,
+      performance: {
+        status: 'measured', sampleCount: 10, successfulSamples: 10,
+        ttftMedianSeconds: ttft, outputTokensPerSecondMedian: 50,
+        endToEndP95Seconds: p95, successRate: 1,
+      },
+    });
+    catalogMock.current = {
+      data: baseData({ models: [measured('fast', 0.4, 3.1), measured('slow', 2.2, 9.8), model({ modelId: 'unmeasured' })] }),
+      error: null, loading: false,
+    };
+    renderDashboard();
+    await settleDashboard();
+
+    expect(screen.getByText('2/3 measured')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Median time to first token across 2 measured models, from 0.40 to 2.20 seconds' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '95th percentile end-to-end response across 2 measured models, from 3.10 to 9.80 seconds' })).toBeInTheDocument();
+    expect(screen.queryByText('No measured performance data')).not.toBeInTheDocument();
   });
 });
 
