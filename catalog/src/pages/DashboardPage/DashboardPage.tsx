@@ -416,7 +416,6 @@ export function DashboardPage() {
       <div className={styles.columns}>
         <div className={styles.columnMain}>
           <PerformancePanel summary={performanceSummary} rows={measuredRows} />
-          <CompositionSection composition={composition} meta={meta} liveModels={meta.liveModels} />
         </div>
         <div className={styles.columnSide}>
           <NotificationHistory
@@ -430,20 +429,26 @@ export function DashboardPage() {
         </div>
       </div>
 
-      <VersionHistoryPanel
-        data={data}
-        changes={recentChanges}
-        totalChanges={changes?.length ?? 0}
-        loading={changesLoading}
-        error={changesError}
-        open={changesOpen}
-        filter={changeFilter}
-        onFilterChange={setChangeFilter}
-        changeWindow={changeWindow}
-        onChangeWindow={setChangeWindow}
-        onToggle={() => setChangesOpen((value) => !value)}
-        onRetry={handleMonitoringRetry}
-      />
+      {/* Equal halves: what the catalog is made of, beside how it has moved.
+          The two are one reading — composition is the state, history is the
+          derivative — so they share a row and share its height. */}
+      <div className={styles.pairRow}>
+        <CompositionSection composition={composition} meta={meta} liveModels={meta.liveModels} />
+        <VersionHistoryPanel
+          data={data}
+          changes={recentChanges}
+          totalChanges={changes?.length ?? 0}
+          loading={changesLoading}
+          error={changesError}
+          open={changesOpen}
+          filter={changeFilter}
+          onFilterChange={setChangeFilter}
+          changeWindow={changeWindow}
+          onChangeWindow={setChangeWindow}
+          onToggle={() => setChangesOpen((value) => !value)}
+          onRetry={handleMonitoringRetry}
+        />
+      </div>
 
       <footer className={styles.footer}>
         <span>Venom Router Catalog</span>
